@@ -63,7 +63,7 @@ story validates real phenomena on real chains, not in isolation. Each story belo
 explicit *Validate* gate — don't start the next story until it's green. Phenomena are validated in
 the story where their prerequisites first exist, never batched at the end.
 
-### Story 1.1 — Scaffold & core numeric types
+### Story 1.1 — Scaffold & core numeric types — ✅ **Done**
 *Goal:* a Cargo workspace and the **analog** type vocabulary everything else builds on. We model
 the analog world first — continuous-proxy voltage only. Digital buffers, sample rates, and word
 clocks are deliberately **not** here; they emerge with the AD/DA converters (Story 1.6).
@@ -85,18 +85,22 @@ are *measurement units* realized by conversion helpers, never a storage format. 
 buffer that stores dB is a category error. Derive everything from the physical (volts) model, not the
 other way around.
 
-- **Task 1.1.1** — Cargo workspace + crate layout: `engine` (core lib) now, plus placeholder members for the future `wasm-bindings` and a render/CLI test-harness crate so the workspace shape doesn't churn later. CI: `cargo test` / `clippy` / `fmt` **and `cargo check --target wasm32-unknown-unknown`** from day one (catch non-portable code — threads, `std::time`, incidental allocs — before Epic 3). Crate-level lint config (deny the relevant clippy groups), note `panic = "abort"` intent for the WASM profile. Test conventions (`approx` for float asserts).
-- **Task 1.1.2** — Scalar policy (`f32` storage / `f64` accumulation) made concrete. `Volts` newtype. `VoltageBuffer` (linear volts, single-conductor for now) carried at the one `AnalogRate` — the engine's fundamental continuous-proxy clock, a constructor parameter, never a constant. No oversample-factor field anywhere.
-- **Task 1.1.3** — Analog level conversions with tests: dBu↔V (0 dBu = 0.775 V), dBV↔V (−10 dBV ≈ 0.316 V). Pure linear↔log helpers; buffers stay linear. *(dBFS and the reference-voltage→dBFS calibration are a digital-domain concept owned by the AD — deferred to Story 1.6, where they emerge from the converter.)*
-- **Task 1.1.4** — Seeded deterministic RNG abstraction: **uniform + Gaussian** draws (thermal/device noise is normal-distributed), and **splittable / sub-seedable** so each device gets its own independent, reproducible stream. Reproducibility test: same seed ⇒ identical sequences; independent streams stay uncorrelated yet stable.
+- ✅ **Task 1.1.1** — Cargo workspace + crate layout: `engine` (core lib) now, plus placeholder members for the future `wasm-bindings` and a render/CLI test-harness crate so the workspace shape doesn't churn later. CI: `cargo test` / `clippy` / `fmt` **and `cargo check --target wasm32-unknown-unknown`** from day one (catch non-portable code — threads, `std::time`, incidental allocs — before Epic 3). Crate-level lint config (deny the relevant clippy groups), note `panic = "abort"` intent for the WASM profile. Test conventions (`approx` for float asserts).
+- ✅ **Task 1.1.2** — Scalar policy (`f32` storage / `f64` accumulation) made concrete. `Volts` newtype. `VoltageBuffer` (linear volts, single-conductor for now) carried at the one `AnalogRate` — the engine's fundamental continuous-proxy clock, a constructor parameter, never a constant. No oversample-factor field anywhere.
+- ✅ **Task 1.1.3** — Analog level conversions with tests: dBu↔V (0 dBu = 0.775 V), dBV↔V (−10 dBV ≈ 0.316 V). Pure linear↔log helpers; buffers stay linear. *(dBFS and the reference-voltage→dBFS calibration are a digital-domain concept owned by the AD — deferred to Story 1.6, where they emerge from the converter.)*
+- ✅ **Task 1.1.4** — Seeded deterministic RNG abstraction: **uniform + Gaussian** draws (thermal/device noise is normal-distributed), and **splittable / sub-seedable** so each device gets its own independent, reproducible stream. Reproducibility test: same seed ⇒ identical sequences; independent streams stay uncorrelated yet stable.
 
 *Deferred to Story 1.6 (stated so it's a decision, not a gap):* `SampleBuffer`, per-converter
 `sample_rate` / `bit_depth`, the dBFS/reference-voltage calibration, and word-clock concerns. The
 "two distinct signal types, never conflated" discipline is honored when the second type first has a
 producer (the AD) — until then nothing makes a digital buffer, so there is no conversion to police.
 
-*Validate:* dBu↔V and dBV↔V round-trip and fixed-level conversions match hand calcs; same seed ⇒
+*Validate (✅ met):* dBu↔V and dBV↔V round-trip and fixed-level conversions match hand calcs; same seed ⇒
 identical noise, and independent device streams are reproducible yet uncorrelated. Self-contained, no graph needed.
+
+*Delivered:* engine public surface — `Volts`, `VoltageBuffer`, `AnalogRate`, the four dBu/dBV↔V
+conversions, and a seeded splittable `Rng` (uniform + Gaussian). Cargo workspace, CI (incl. wasm32
+check), lint policy, and cargo aliases in place. 31 tests green.
 
 ### Story 1.2 — Electrical primitives & local solve
 *Goal:* Thévenin sources, input impedances, the voltage-divider solve, and the electrical cable.
