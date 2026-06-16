@@ -7,7 +7,9 @@
 //! (no `std::thread`, no ambient `std::time`).
 
 mod level;
+mod rng;
 mod signal;
 
 pub use level::{dbu_to_volts, dbv_to_volts, volts_to_dbu, volts_to_dbv};
+pub use rng::Rng;
 pub use signal::{AnalogRate, VoltageBuffer, Volts};

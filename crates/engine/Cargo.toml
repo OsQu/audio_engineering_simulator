@@ -9,5 +9,14 @@ publish.workspace = true
 [lints]
 workspace = true
 
+[dependencies]
+# RNG via the `rand` ecosystem. `rand_pcg` is a reproducible generator with no
+# `getrandom` dependency, so the engine stays portable to wasm32; we always seed
+# explicitly (no ambient entropy). default-features = false keeps `getrandom`/`std`
+# out of the tree on every target.
+rand = { version = "0.8", default-features = false }
+rand_pcg = "0.3"
+rand_distr = { version = "0.4", default-features = false }
+
 [dev-dependencies]
 approx.workspace = true

@@ -109,9 +109,13 @@ day one while still headless — retrofitting it is painful.
   places that *are* allowed to be fallible and allocate.
 
 ### Determinism
-All randomness flows through the seeded RNG abstraction (uniform + Gaussian, splittable per-device).
+All randomness flows through the seeded `Rng` (uniform + Gaussian, splittable per-device), built on
+`rand_pcg` + `rand_distr` with `default-features = false` and seeded explicitly via `seed_from_u64`.
 **No `thread_rng`, no ambient `Instant::now`/`SystemTime`** in the engine — they break reproducibility
 and WASM portability. Same seed ⇒ identical output.
+
+> Do **not** add `rand` with default features: it pulls `getrandom`, which fails to compile on
+> `wasm32-unknown-unknown` (and we never want ambient entropy anyway). Keep `default-features = false`.
 
 ### Testing
 - `approx` for float assertions; never `==` on floats.
