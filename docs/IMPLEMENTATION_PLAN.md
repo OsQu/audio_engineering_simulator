@@ -107,11 +107,57 @@ check), lint policy, and cargo aliases in place. 31 tests green.
 *Watch out:* the cable is a real **frequency-dependent** element (R + C → one-pole low-pass at the
 oversampled rate), not a scalar loss — the "instrument into a long cable" lesson depends on it.
 
-- **Task 1.2.1** — `Port` (impedance), `Thevenin` output (ideal source + `Zout`), input `Zin`. (Single-conductor for now; balanced lands in 1.5.)
-- **Task 1.2.2** — Voltage-divider solve `V_in = V_src · Zin/(Zout+Zcable+Zin)`. Tests: bridging (≈0 dB), matching 600 Ω (−6 dB), fan-out as parallel `Zin`.
-- **Task 1.2.3** — Cable as series R + shunt C → one-pole LPF at oversample rate. Test: high-Z source + long cable produces the expected RC corner frequency.
+*Design notes (settled):*
+- **Impedance is an `Ohms` newtype** (same discipline as `Volts`): series `Add`, a `parallel`
+  combinator `(a·b)/(a+b)` for fan-out, finite/≥0 construct-time validation. The cable's
+  capacitance is a `Farads` newtype.
+- **Name the input descriptor `InputZ`, not `Port`.** `Port` is reserved for the Story 1.3 graph
+  connection point, which will *contain* these electrical faces (`Thevenin` for an output, `InputZ`
+  for an input). Keeps the layering clean.
+- **The divider solves to a dimensionless gain**, not a voltage: `gain = Zin/(Zout+Zcable+Zin)`,
+  impedance-only and compile-time-constant; the per-sample `v_src` is multiplied in by the caller.
+  This is exactly the seam Story 1.3 needs — gain baked at `compile`, signal flowing through
+  `process`.
+- **Divider and cable-LPF compose exactly.** A shunt-C input divider factors into
+  `[Zin/(Zs+Zin)] · 1/(1 + s·C·(Zs∥Zin))` (`Zs = Zout+Rcable`) — i.e. the constant resistive
+  divider gain × a unity-DC-gain one-pole whose corner is `f_c = 1/(2π·R_thev·C)`,
+  `R_thev = (Zout+Rcable)∥Zin`. So splitting 1.2.2 (resistive gain) from 1.2.3 (the LPF) is
+  physically honest, not an approximation.
+- **One-pole fidelity limit (accepted for now):** modeling the source as a resistive high-Z gives
+  the treble-loss rolloff but **not** the inductive-pickup *resonance peak* (that needs a reactive
+  `Zout` → a 2nd-order resonant low-pass). Deferred per §5.3 "decide per-feature whether deeper
+  fidelity earns its complexity"; revisit with reactive source impedance later. What's lost is the
+  narrow but signature class of *emergent, cross-device, load-dependent resonance* (passive pickup
+  tone + volume/tone-knob interaction, ribbon/dynamic mic loading, transformer character, speaker
+  damping, passive resonant EQ/crossovers) — none of it needed through Epic 2; it surfaces with the
+  first reactive *device* (Epic 5 breadth). Resonance *inside* a device stays available as designed
+  DSP (biquads), unaffected by this.
+- **Keep the connection seam open (no implementation now):** frequency-shaping is conceptually a
+  property of the whole **edge** (source Z + cable + load Z), not of the cable alone. Today it
+  degenerates exactly to *constant resistive gain × a cable-owned one-pole*, which only holds with
+  ≤1 reactive element on the edge; a reactive source makes the edge a 2nd-order transfer function
+  whose coefficients depend on *both* endpoints. So `Ohms` stays a real scalar and the gain stays an
+  `f32` for now — just don't let later code (esp. the Story 1.3 connection model) enshrine "an edge
+  is a flat gain plus a cable LPF" as a permanent contract.
 
-*Validate:* impedance/divider physics proven as unit tests on the solve before anything else runs — bridging ≈0 dB, matching −6 dB, RC corner at the computed frequency.
+- **Task 1.2.1** — `electrical` module: `Ohms` newtype (series/parallel), `Thevenin { v_src, z_out }`
+  output face, `InputZ { z_in }` input face. Construct-time only, single-conductor (balanced lands in 1.5).
+- **Task 1.2.\*** — Test-signal helpers (`#[cfg(test)]`): `sine`, `rms`, and a `measure_gain` that
+  drives a steady tone through a stateful filter and returns the steady-state amplitude ratio. Shared
+  infra — Story 1.4 reuses it for SNR. (We now need real audio signals to test filter behavior.)
+- **Task 1.2.2** — Voltage-divider gain solve `divider_gain(Zout, Zcable, InputZ) -> f32`
+  (`V_in = V_src · gain`). Tests assert hand-calc ratios: bridging (gain ≈ 1, ≈0 dB), matching 600 Ω
+  (gain = 0.5, −6.02 dB), fan-out as parallel `Zin`.
+- **Task 1.2.3** — `Cable { r, c }` as series R + shunt C → a stateful one-pole LPF
+  (backward-Euler `a = dt/(RC+dt)`, `f64` state, zero-alloc/panic-free/denormal-flushed) at the
+  oversampled rate. Tests via the helper: corner `≈ −3 dB` at the computed `f_c` (with `f_c ≪ rate`
+  so the discretization warp stays within epsilon); plus a **capstone** test — high-Z source → long
+  cable → typical `InputZ` — asserting the resistive loss **and** the treble rolloff together, proving
+  the divider + LPF compose.
+
+*Validate:* impedance/divider physics proven as unit tests on the solve before anything else runs —
+bridging ≈0 dB, matching −6 dB, RC corner at the computed frequency, and the capstone showing loss +
+rolloff compose.
 
 ### Story 1.3 — Minimal runnable engine *(first end-to-end milestone)*
 *Goal:* device + graph + schedule + block loop — the smallest thing that actually **runs** a patch.
