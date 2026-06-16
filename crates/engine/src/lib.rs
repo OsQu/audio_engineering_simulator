@@ -6,6 +6,8 @@
 //! `IMPLEMENTATION_PLAN.md` for the design; this crate stays portable to `wasm32`
 //! (no `std::thread`, no ambient `std::time`).
 
+mod level;
 mod signal;
 
+pub use level::{dbu_to_volts, dbv_to_volts, volts_to_dbu, volts_to_dbv};
 pub use signal::{AnalogRate, VoltageBuffer, Volts};
