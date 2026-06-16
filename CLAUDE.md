@@ -83,6 +83,9 @@ A Cargo workspace: `engine` (core lib) now, plus placeholder `wasm-bindings` and
 test-harness crate so the shape doesn't churn later. Platform-specific code is gated and kept out of
 `engine` core; the core stays portable to `wasm32`.
 
+Module files use the **`<name>.rs` + `<name>/` folder** style (e.g. `signal.rs` alongside
+`signal/buffer.rs`), not `mod.rs`. Leaf modules are just `<name>.rs`.
+
 ### Type design
 - **Units are newtypes.** `Volts` (and peers) are distinct types, not bare `f32`. No implicit numeric
   conversion between domains — conversions are explicit, named helpers (e.g. `dbu_to_volts`), tested
