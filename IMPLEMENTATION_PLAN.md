@@ -12,16 +12,18 @@ Three levels, mirroring Epic → Story → Task:
   *engine → offline audio → real-time audio → UI → breadth.* Each delivers something
   usable and retires the riskiest remaining unknown.
 - **Story** — a coherent slice within an Epic, with its own goal and watch-outs.
-  Roughly a week-ish of focused work; the unit at which we think about design.
-- **Task** — small, **1–10 commits**, **its own branch**, merged to `main` when green.
-  The unit of execution.
+  Roughly a week-ish of focused work; the unit at which we think about design, **and the
+  unit of branching**.
+- **Task** — small, **1–10 commits**, the unit of execution. Tasks land as commits on the
+  Story's branch; the Story merges to `main` when its *Validate* gate is green.
 
 **Detail gradient (intentional):** Epic 1 is broken to Task level because we start there.
 Epics 2–3 have Tasks but expect churn. Epics 4–5 stay at Story level — their Tasks get
 written when we reach them. Don't over-plan work whose shape the earlier work will change.
 
-**Branch convention:** `e<epic>-s<story>/<short-task-slug>`, e.g. `e1-s2/cable-rc-filter`.
-One branch per Task, PR (or fast-forward) to `main`, delete on merge.
+**Branch convention:** one branch per **Story**, `e<epic>-s<story>/<short-story-slug>`,
+e.g. `e1-s2/electrical-primitives`. Its Tasks are commits on that branch; PR (or
+fast-forward) to `main` and delete on merge once the Story's *Validate* gate is green.
 
 ### Architecture decisions baked into this plan
 

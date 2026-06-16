@@ -128,8 +128,9 @@ and WASM portability. Same seed ⇒ identical output.
 
 ## 8. Workflow conventions
 
-- **Branches:** one per Task, `e<epic>-s<story>/<short-task-slug>` (e.g. `e1-s2/cable-rc-filter`). A Task
-  is 1–10 commits; PR (or fast-forward) to `main`, delete on merge.
+- **Branches:** one per **Story**, `e<epic>-s<story>/<short-story-slug>` (e.g. `e1-s2/electrical-primitives`).
+  A Story's Tasks are commits on that branch; PR (or fast-forward) to `main` and delete on merge once
+  the Story's *Validate* gate is green.
 - **Cargo aliases** (in `.cargo/config.toml`) shortcut the commands with fiddly flags:
   - `cargo lint` → clippy, all targets, warnings-as-errors
   - `cargo wasm` → wasm32 portability check (engine + bindings)
