@@ -1,0 +1,6 @@
+# Pins the toolchain so local and CI agree. rustup auto-installs the listed
+# components and targets on first cargo invocation.
+[toolchain]
+channel = "stable"
+components = ["clippy", "rustfmt"]
+targets = ["wasm32-unknown-unknown"]

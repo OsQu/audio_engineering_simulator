@@ -1,0 +1,33 @@
+# Workspace manifest. See IMPLEMENTATION_PLAN.md, Task 1.1.1.
+#
+# Crate layout:
+#   crates/engine        — the core voltage engine (portable to wasm32; no std::thread/std::time)
+#   crates/wasm-bindings — browser bindings (placeholder; filled in Epic 3, Task 3.1.1)
+#   crates/harness       — render/CLI test harness (placeholder; filled in Epic 2)
+[workspace]
+resolver = "3"
+members = ["crates/engine", "crates/wasm-bindings", "crates/harness"]
+
+[workspace.package]
+edition = "2024"
+rust-version = "1.96"
+authors = ["Oskari Virtaoja"]
+publish = false
+
+[workspace.dependencies]
+engine = { path = "crates/engine" }
+approx = "0.5"
+
+# Lint policy applied to every crate via `[lints] workspace = true`.
+# `unsafe_code` is denied by default; opt in per-module with an explicit
+# `#[allow(unsafe_code)]` and a justifying comment when SIMD/perf needs it.
+[workspace.lints.rust]
+unsafe_code = "deny"
+
+[workspace.lints.clippy]
+all = { level = "deny", priority = -1 }
+
+# A panic in a WASM AudioWorklet kills the audio stream — abort instead of unwind
+# in release/wasm builds. (Cargo automatically uses unwind for test/bench harnesses.)
+[profile.release]
+panic = "abort"

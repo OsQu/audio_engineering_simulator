@@ -14,7 +14,29 @@ purpose, so the workspace grows in the right direction from the first commit.
 When real infrastructure exists, this file should gain a concrete **Commands** section (exact `cargo`
 invocations, how to run one test) — re-run `/init` after Story 1.1.
 
-## 2. Source of truth: read the plans first
+## 2. How we work (the task loop)
+
+This governs every body of work:
+
+1. **Create tasks** for the work before starting.
+2. After completing a task, make sure it **compiles, lints, and passes tests** before reporting it done.
+3. **Do not commit.** Stop and let the user verify what was done.
+4. **Discuss and follow up** on any changes together — the user commits the code himself.
+5. When the user says he has verified and committed, **review his commit message** to confirm it
+   accurately reflects the work.
+
+Never run `git commit` unless explicitly asked. Committing is the user's verification gate, not a
+mechanical step.
+
+**System-modifying commands are the user's to run** — package installs, `brew`, global toolchain/config
+changes, network installers. Surface the exact command and let the user run it (via `! <command>`).
+Editing repo files and running project-local tooling (`cargo build`/`test`, etc.) is normal work.
+
+> Toolchain note: this tool's non-interactive shell doesn't source `~/.zshenv`, so `cargo` isn't on
+> PATH by default. Prefix cargo invocations with `source "$HOME/.cargo/env" &&`. Rust is managed by
+> rustup (stable 1.96+); the `wasm32-unknown-unknown` target is installed.
+
+## 3. Source of truth: read the plans first
 
 Two documents govern everything. Keep them authoritative; update them when a decision changes.
 
@@ -27,7 +49,7 @@ Before working a task: find it in `IMPLEMENTATION_PLAN.md` and honor its **Goal 
 notes — they encode decisions and traps not recoverable from code. Each Story ends with a **Validate**
 gate; don't start the next Story until it's green.
 
-## 3. What this project is
+## 4. What this project is
 
 A headless-first, voltage-native audio-engineering simulator. The central idea: in the analog domain the
 signal **is a real oversampled voltage waveform in volts**, not a buffer with metadata. Levels, impedance
@@ -35,7 +57,7 @@ loss, clipping, noise, DC, phantom power, and hum must **emerge from the voltage
 flagged or special-cased. Digital samples exist only *after* a modeled AD converter. **Derive everything
 from the physical (volts) model, never the reverse.**
 
-## 4. Architecture decisions — non-negotiable
+## 5. Architecture decisions — non-negotiable
 
 Settled in design; these constrain every epic. Violating one is a bug, not a style choice.
 
@@ -52,7 +74,7 @@ Settled in design; these constrain every epic. Violating one is a bug, not a sty
   timestamped **events** (note-on/off, gate). Keep them genuinely separate.
 - **Deterministic given a seed** (noise, hum phase) so tests and golden-file renders are stable.
 
-## 5. Rust engineering conventions
+## 6. Rust engineering conventions
 
 These flow from the decisions above and should hold from day one.
 
@@ -94,7 +116,7 @@ and WASM portability. Same seed ⇒ identical output.
   the oracle there (you can't hear cable loss or impedance ratios).
 - Determinism makes golden-file render tests viable later (Epic 2).
 
-## 6. Numeric & rate model — settled
+## 7. Numeric & rate model — settled
 
 - **One fundamental clock: the analog rate** — the proxy for "continuous." A parameter, never a constant.
   There is **no global oversample factor and no global digital base rate.** Digital sample rates are
@@ -104,15 +126,19 @@ and WASM portability. Same seed ⇒ identical output.
 - **Scalar policy:** `f32` storage; reach for `f64` only where precision demands it (accumulators —
   summing nodes, filter state, the AD anti-alias filter).
 
-## 7. Workflow conventions
+## 8. Workflow conventions
 
 - **Branches:** one per Task, `e<epic>-s<story>/<short-task-slug>` (e.g. `e1-s2/cable-rc-filter`). A Task
   is 1–10 commits; PR (or fast-forward) to `main`, delete on merge.
-- **Tooling (planned in Task 1.1.1, not yet present):** CI runs `cargo test`, `cargo clippy`, `cargo fmt`,
-  **and `cargo check --target wasm32-unknown-unknown`** from day one to catch non-portable code early.
-  WASM profile intends `panic = "abort"`. Crate-level lints deny the relevant clippy groups.
+- **Cargo aliases** (in `.cargo/config.toml`) shortcut the commands with fiddly flags:
+  - `cargo lint` → clippy, all targets, warnings-as-errors
+  - `cargo wasm` → wasm32 portability check (engine + bindings)
+  - `cargo test` and `cargo fmt --check` are used as-is (already short; `fmt` isn't aliasable)
+  - **Full pre-push gate** (mirrors CI): `cargo fmt --check && cargo lint && cargo test && cargo wasm`
+- **CI** (`.github/workflows/ci.yml`) runs those same four gates plus `Swatinem/rust-cache`. WASM
+  release profile is `panic = "abort"`; crate-level lints deny `clippy::all` and `unsafe_code`.
 
-## 8. Validation philosophy
+## 9. Validation philosophy
 
 Audio is the ground-truth oracle for DSP (you can hear wrong dynamics/filters). **Tests are the oracle for
 the analog domain** — cable loss, impedance ratios, noise floors, and calibration can't be heard reliably,

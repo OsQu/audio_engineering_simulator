@@ -1,0 +1,40 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # rust-toolchain.toml drives the channel; ensure components + wasm target.
+      - name: Toolchain
+        run: |
+          rustup show
+          rustup component add clippy rustfmt
+          rustup target add wasm32-unknown-unknown
+
+      - name: Cache
+        uses: Swatinem/rust-cache@v2
+
+      # These mirror the local pre-push gate exactly, via the aliases in
+      # .cargo/config.toml — one definition shared by local and CI.
+      - name: Format
+        run: cargo fmt --all --check
+
+      - name: Clippy
+        run: cargo lint
+
+      - name: Test
+        run: cargo test --workspace
+
+      # Portability of engine + bindings on wasm32 (the native-only harness is excluded).
+      - name: Wasm check
+        run: cargo wasm
