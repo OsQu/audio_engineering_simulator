@@ -102,7 +102,7 @@ identical noise, and independent device streams are reproducible yet uncorrelate
 conversions, and a seeded splittable `Rng` (uniform + Gaussian). Cargo workspace, CI (incl. wasm32
 check), lint policy, and cargo aliases in place. 31 tests green.
 
-### Story 1.2 — Electrical primitives & local solve
+### Story 1.2 — Electrical primitives & local solve — ✅ **Done**
 *Goal:* Thévenin sources, input impedances, the voltage-divider solve, and the electrical cable.
 *Watch out:* the cable is a real **frequency-dependent** element (R + C → one-pole low-pass at the
 oversampled rate), not a scalar loss — the "instrument into a long cable" lesson depends on it.
@@ -140,15 +140,15 @@ oversampled rate), not a scalar loss — the "instrument into a long cable" less
   `f32` for now — just don't let later code (esp. the Story 1.3 connection model) enshrine "an edge
   is a flat gain plus a cable LPF" as a permanent contract.
 
-- **Task 1.2.1** — `electrical` module: `Ohms` newtype (series/parallel), `Thevenin { v_src, z_out }`
+- ✅ **Task 1.2.1** — `electrical` module: `Ohms` newtype (series/parallel), `Thevenin { v_src, z_out }`
   output face, `InputZ { z_in }` input face. Construct-time only, single-conductor (balanced lands in 1.5).
-- **Task 1.2.\*** — Test-signal helpers (`#[cfg(test)]`): `sine`, `rms`, and a `measure_gain` that
+- ✅ **Task 1.2.\*** — Test-signal helpers (`#[cfg(test)]`): `sine`, `rms`, and a `measure_gain` that
   drives a steady tone through a stateful filter and returns the steady-state amplitude ratio. Shared
   infra — Story 1.4 reuses it for SNR. (We now need real audio signals to test filter behavior.)
-- **Task 1.2.2** — Voltage-divider gain solve `divider_gain(Zout, Zcable, InputZ) -> f32`
+- ✅ **Task 1.2.2** — Voltage-divider gain solve `divider_gain(Zout, Zcable, InputZ) -> f32`
   (`V_in = V_src · gain`). Tests assert hand-calc ratios: bridging (gain ≈ 1, ≈0 dB), matching 600 Ω
   (gain = 0.5, −6.02 dB), fan-out as parallel `Zin`.
-- **Task 1.2.3** — `Cable { r, c }` as series R + shunt C → a stateful one-pole LPF
+- ✅ **Task 1.2.3** — `Cable { r, c }` as series R + shunt C → a stateful one-pole LPF
   (matched/exact coefficient `a = 1 − e^(−dt/RC)`, `f64` state, zero-alloc/panic-free/denormal-flushed)
   at the oversampled rate. *(Matched, not naive backward-Euler `dt/(RC+dt)`: it places the discrete
   pole exactly, so the corner is accurate to a fraction of a percent even at a treble corner — at no
@@ -157,9 +157,15 @@ oversampled rate), not a scalar loss — the "instrument into a long cable" less
   `InputZ` — asserting the resistive loss **and** the treble rolloff together, proving the divider +
   LPF compose.
 
-*Validate:* impedance/divider physics proven as unit tests on the solve before anything else runs —
-bridging ≈0 dB, matching −6 dB, RC corner at the computed frequency, and the capstone showing loss +
-rolloff compose.
+*Validate (✅ met):* impedance/divider physics proven as unit tests on the solve before anything else
+runs — bridging ≈0 dB, matching −6 dB, RC corner at the computed frequency, and the capstone showing
+loss + rolloff compose.
+
+*Delivered:* `electrical` module — `Ohms` (series/`parallel`), `Farads` (own module), `Thevenin`,
+`InputZ`, `divider_gain`, and `Cable` + `OnePole` (matched-coefficient one-pole LPF, zero-alloc /
+panic-free / denormal-flushed hot path). A `#[cfg(test)]` `test_util` (`sine` / `rms` / `measure_gain`),
+reused from Story 1.4 on. Doc-link + bare-URL lints (`cargo docs`) added to the pre-push gate and CI.
+62 engine tests green.
 
 ### Story 1.3 — Minimal runnable engine *(first end-to-end milestone)*
 *Goal:* device + graph + schedule + block loop — the smallest thing that actually **runs** a patch.
