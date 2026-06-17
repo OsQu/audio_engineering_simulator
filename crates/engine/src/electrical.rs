@@ -18,6 +18,7 @@ mod divider;
 mod farads;
 mod input_z;
 mod ohms;
+mod output_z;
 mod thevenin;
 
 pub use cable::{Cable, OnePole};
@@ -25,4 +26,5 @@ pub use divider::divider_gain;
 pub use farads::Farads;
 pub use input_z::InputZ;
 pub use ohms::Ohms;
+pub use output_z::OutputZ;
 pub use thevenin::Thevenin;
