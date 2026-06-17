@@ -10,6 +10,8 @@ mod electrical;
 mod level;
 mod rng;
 mod signal;
+#[cfg(test)]
+mod test_util;
 
 pub use electrical::{InputZ, Ohms, Thevenin, divider_gain};
 pub use level::{dbu_to_volts, dbv_to_volts, volts_to_dbu, volts_to_dbv};
