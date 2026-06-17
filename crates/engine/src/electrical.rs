@@ -13,12 +13,16 @@
 //!
 //! Single-conductor throughout; balanced (V+/V−) lines arrive in Story 1.5.
 
+mod cable;
 mod divider;
+mod farads;
 mod input_z;
 mod ohms;
 mod thevenin;
 
+pub use cable::{Cable, OnePole};
 pub use divider::divider_gain;
+pub use farads::Farads;
 pub use input_z::InputZ;
 pub use ohms::Ohms;
 pub use thevenin::Thevenin;
