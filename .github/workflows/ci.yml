@@ -38,3 +38,7 @@ jobs:
       # Portability of engine + bindings on wasm32 (the native-only harness is excluded).
       - name: Wasm check
         run: cargo wasm
+
+      # Doc build with broken-intra-doc-link and bare-URL lints denied (see .cargo/config.toml).
+      - name: Docs
+        run: cargo docs

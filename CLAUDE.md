@@ -146,9 +146,11 @@ and WASM portability. Same seed ⇒ identical output.
 - **Cargo aliases** (in `.cargo/config.toml`) shortcut the commands with fiddly flags:
   - `cargo lint` → clippy, all targets, warnings-as-errors
   - `cargo wasm` → wasm32 portability check (engine + bindings)
+  - `cargo docs` → doc build with broken-intra-doc-link and bare-URL lints denied (via
+    `[build] rustdocflags`, which apply only to rustdoc — never rustc)
   - `cargo test` and `cargo fmt --check` are used as-is (already short; `fmt` isn't aliasable)
-  - **Full pre-push gate** (mirrors CI): `cargo fmt --check && cargo lint && cargo test && cargo wasm`
-- **CI** (`.github/workflows/ci.yml`) runs those same four gates plus `Swatinem/rust-cache`. WASM
+  - **Full pre-push gate** (mirrors CI): `cargo fmt --check && cargo lint && cargo test && cargo wasm && cargo docs`
+- **CI** (`.github/workflows/ci.yml`) runs those same five gates plus `Swatinem/rust-cache`. WASM
   release profile is `panic = "abort"`; crate-level lints deny `clippy::all` and `unsafe_code`.
 
 ## 9. Validation philosophy

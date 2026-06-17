@@ -4,7 +4,7 @@ use super::Ohms;
 use crate::signal::Volts;
 
 /// The Thévenin equivalent of a device output: an ideal voltage source in series with an
-/// output impedance (PROJECT_PLAN §5.3). See https://en.wikipedia.org/wiki/Th%C3%A9venin%27s_theorem
+/// output impedance (PROJECT_PLAN §5.3). See <https://en.wikipedia.org/wiki/Th%C3%A9venin%27s_theorem>
 ///
 /// `v_src` is the **open-circuit** source voltage — what the output would produce into an
 /// infinite load. The voltage a real receiver sees is lower, set by the voltage divider the

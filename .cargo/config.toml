@@ -1,13 +1,23 @@
 # Cargo aliases — shortcuts for the commands whose flags aren't worth memorizing.
 # Each alias maps to a single `cargo <subcommand>` invocation (aliases can't chain),
 # so the full pre-push gate is run as separate commands:
-#   cargo fmt --check && cargo lint && cargo test && cargo wasm
+#   cargo fmt --check && cargo lint && cargo test && cargo wasm && cargo docs
 #
 # (`cargo test` and `cargo fmt` are already short/memorable, so they get no alias —
-# and `fmt` couldn't be aliased anyway, since cargo ignores aliases shadowing built-ins.)
+# and `fmt` couldn't be aliased anyway, since cargo ignores aliases shadowing built-ins.
+# `docs` is spelled with the trailing `s` for the same reason — `doc` is a built-in.)
 [alias]
 # Lint with warnings-as-errors across the whole workspace and all targets (tests, benches).
 lint = "clippy --workspace --all-targets -- -D warnings"
 
 # Portability check: engine + bindings compiled for wasm32 (excludes the native harness).
 wasm = "check -p engine -p wasm-bindings --target wasm32-unknown-unknown"
+
+# Build the docs (incl. private items) so doc defects fail the gate. The lints that turn
+# broken intra-doc links and bare URLs into errors are set in [build] rustdocflags below,
+# which apply only to rustdoc — never to rustc, so the other gates are untouched.
+docs = "doc --workspace --no-deps --document-private-items"
+
+# rustdoc-only flags: catch doc-link rot and bare URLs at gate/CI time.
+[build]
+rustdocflags = ["-D", "rustdoc::broken_intra_doc_links", "-D", "rustdoc::bare_urls"]

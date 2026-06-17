@@ -149,11 +149,13 @@ oversampled rate), not a scalar loss — the "instrument into a long cable" less
   (`V_in = V_src · gain`). Tests assert hand-calc ratios: bridging (gain ≈ 1, ≈0 dB), matching 600 Ω
   (gain = 0.5, −6.02 dB), fan-out as parallel `Zin`.
 - **Task 1.2.3** — `Cable { r, c }` as series R + shunt C → a stateful one-pole LPF
-  (backward-Euler `a = dt/(RC+dt)`, `f64` state, zero-alloc/panic-free/denormal-flushed) at the
-  oversampled rate. Tests via the helper: corner `≈ −3 dB` at the computed `f_c` (with `f_c ≪ rate`
-  so the discretization warp stays within epsilon); plus a **capstone** test — high-Z source → long
-  cable → typical `InputZ` — asserting the resistive loss **and** the treble rolloff together, proving
-  the divider + LPF compose.
+  (matched/exact coefficient `a = 1 − e^(−dt/RC)`, `f64` state, zero-alloc/panic-free/denormal-flushed)
+  at the oversampled rate. *(Matched, not naive backward-Euler `dt/(RC+dt)`: it places the discrete
+  pole exactly, so the corner is accurate to a fraction of a percent even at a treble corner — at no
+  hot-path cost, since the `exp` is computed once at construction.)* Tests via the helper: corner
+  `≈ −3 dB` at the computed `f_c`; plus a **capstone** test — high-Z source → long cable → typical
+  `InputZ` — asserting the resistive loss **and** the treble rolloff together, proving the divider +
+  LPF compose.
 
 *Validate:* impedance/divider physics proven as unit tests on the solve before anything else runs —
 bridging ≈0 dB, matching −6 dB, RC corner at the computed frequency, and the capstone showing loss +
