@@ -15,7 +15,7 @@ mod signal;
 #[cfg(test)]
 mod test_util;
 
-pub use device::Device;
+pub use device::{Device, GainStage, PassiveSum, TestSource};
 pub use electrical::{Cable, Farads, InputZ, Ohms, OnePole, OutputZ, Thevenin, divider_gain};
 pub use graph::{Graph, NodeId};
 pub use level::{dbu_to_volts, dbv_to_volts, volts_to_dbu, volts_to_dbv};

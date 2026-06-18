@@ -11,6 +11,14 @@
 //! device, and applied by the schedule, so a device's output is always its **open-circuit**
 //! `v_src` (what it would produce into an infinite load).
 
+mod gain;
+mod source;
+mod sum;
+
+pub use gain::GainStage;
+pub use source::TestSource;
+pub use sum::PassiveSum;
+
 use crate::electrical::{InputZ, OutputZ};
 use crate::signal::VoltageBuffer;
 
