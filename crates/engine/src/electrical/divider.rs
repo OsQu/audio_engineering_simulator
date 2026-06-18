@@ -33,6 +33,65 @@ pub fn divider_gain(z_out: Ohms, z_cable: Ohms, load: InputZ) -> f32 {
     (z_in / denom) as f32
 }
 
+/// Per-branch open-circuit-to-receiver gains for a fan-out output node.
+///
+/// A single output drives one or more branches, each a cable series resistance in series with
+/// a load `InputZ`, all hanging in parallel off the source's `z_out`. The source sets the node
+/// voltage against the **combined** parallel load; each receiver then sees its own branch
+/// divider. Returns one gain per branch, in the order given:
+///
+/// ```text
+///   Z_load = ∥_i (R_cable_i + Zin_i)
+///   node   = Z_load / (Zout + Z_load)              // source  → node
+///   gain_i = node · Zin_i / (R_cable_i + Zin_i)    // node    → receiver i
+/// ```
+///
+/// For a single branch this collapses to exactly [`divider_gain`]. This is the **resistive**
+/// solve; each branch's treble rolloff (the cable's shunt-C one-pole) is built separately by
+/// [`Cable::lowpass`](super::Cable::lowpass), and under genuine fan-out its corner is the
+/// per-branch single-load approximation (documented there) — exact for the no-fan-out chains
+/// we run through Epic 2.
+///
+/// Allocates (compile-time only, never the hot path). Empty `branches` ⇒ empty result.
+///
+/// # Panics
+/// Panics if any branch's `R_cable + Zin == 0`, or if `Zout + Z_load == 0` — only possible
+/// with all-zero impedances, a construction bug rather than a silent `NaN` on the path.
+#[allow(dead_code, reason = "first consumer is compile (Task 1.3.5)")]
+#[must_use]
+pub(crate) fn fan_out_gains(z_out: Ohms, branches: &[(Ohms, InputZ)]) -> Vec<f32> {
+    if branches.is_empty() {
+        return Vec::new();
+    }
+
+    // Combined parallel load the source drives: the branches' (R_cable + Zin) in parallel.
+    let z_load = branches
+        .iter()
+        .map(|(r_cable, load)| *r_cable + load.z_in())
+        .reduce(Ohms::parallel)
+        .expect("branches is non-empty");
+
+    let denom_node = f64::from(z_out.get()) + f64::from(z_load.get());
+    assert!(
+        denom_node > 0.0,
+        "fan-out node needs Zout + Zload > 0, got {denom_node}"
+    );
+    let node_gain = f64::from(z_load.get()) / denom_node;
+
+    branches
+        .iter()
+        .map(|(r_cable, load)| {
+            let z_in = f64::from(load.z_in().get());
+            let branch_denom = f64::from(r_cable.get()) + z_in;
+            assert!(
+                branch_denom > 0.0,
+                "fan-out branch needs R_cable + Zin > 0, got {branch_denom}"
+            );
+            (node_gain * (z_in / branch_denom)) as f32
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -106,5 +165,68 @@ mod tests {
     #[should_panic(expected = "Zout + Zcable + Zin > 0")]
     fn rejects_all_zero_impedances() {
         let _ = divider_gain(Ohms::ZERO, Ohms::ZERO, InputZ::new(Ohms::ZERO));
+    }
+
+    #[test]
+    fn single_branch_fan_out_equals_divider_gain() {
+        // One branch must collapse to the plain divider: 100 Ω source, 50 Ω cable, 10 kΩ in.
+        let g_div = divider_gain(Ohms::new(100.0), Ohms::new(50.0), input(10_000.0));
+        let g_fan = fan_out_gains(Ohms::new(100.0), &[(Ohms::new(50.0), input(10_000.0))]);
+        assert_eq!(g_fan.len(), 1);
+        assert_relative_eq!(g_fan[0], g_div, epsilon = 1e-7);
+    }
+
+    #[test]
+    fn two_equal_branches_share_a_lower_node_voltage() {
+        // 100 Ω source, no cable, into two equal 10 kΩ loads.
+        // Z_load = 10k ∥ 10k = 5k; node = 5000/5100 = 0.980392; each branch divider = 1.
+        let g = fan_out_gains(
+            Ohms::new(100.0),
+            &[(Ohms::ZERO, input(10_000.0)), (Ohms::ZERO, input(10_000.0))],
+        );
+        assert_eq!(g.len(), 2);
+        assert_relative_eq!(g[0], 0.980_392, epsilon = 1e-5);
+        assert_relative_eq!(g[1], 0.980_392, epsilon = 1e-5);
+        // Loading down to the parallel 5 kΩ loses more than a single 10 kΩ load (0.990099).
+        let single = divider_gain(Ohms::new(100.0), Ohms::ZERO, input(10_000.0));
+        assert!(g[0] < single);
+    }
+
+    #[test]
+    fn unequal_branches_divide_off_a_shared_node() {
+        // 100 Ω source into a 10 kΩ load and a 1 kΩ load (no cables).
+        // Z_load = 10k ∥ 1k = 909.0909 Ω; node = 909.0909 / 1009.0909 = 0.900901.
+        // Each branch divider is unity (no cable), so both see the node; the heavier (1 kΩ)
+        // load is what drags the shared node down.
+        let g = fan_out_gains(
+            Ohms::new(100.0),
+            &[(Ohms::ZERO, input(10_000.0)), (Ohms::ZERO, input(1_000.0))],
+        );
+        assert_relative_eq!(g[0], 0.900_901, epsilon = 1e-5);
+        assert_relative_eq!(g[1], 0.900_901, epsilon = 1e-5);
+    }
+
+    #[test]
+    fn cable_on_one_branch_attenuates_only_that_branch_further() {
+        // Source 100 Ω; branch A: 10 kΩ via 1 kΩ of cable R; branch B: 10 kΩ direct.
+        // Z_load = (1000+10000) ∥ 10000 = 11000·10000/21000 = 5238.095 Ω.
+        // node = 5238.095 / 5338.095 = 0.981268.
+        // A divider = 10000/11000 = 0.909091 → gain_A = 0.981268·0.909091 = 0.892062.
+        // B divider = 1.0               → gain_B = 0.981268.
+        let g = fan_out_gains(
+            Ohms::new(100.0),
+            &[
+                (Ohms::new(1_000.0), input(10_000.0)),
+                (Ohms::ZERO, input(10_000.0)),
+            ],
+        );
+        assert_relative_eq!(g[0], 0.892_062, epsilon = 1e-5);
+        assert_relative_eq!(g[1], 0.981_268, epsilon = 1e-5);
+        assert!(g[0] < g[1], "the cabled branch should lose a little more");
+    }
+
+    #[test]
+    fn empty_branches_is_empty() {
+        assert!(fan_out_gains(Ohms::new(100.0), &[]).is_empty());
     }
 }
