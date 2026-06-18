@@ -174,7 +174,37 @@ This is the big de-risking moment: after this story we run real chains and valid
 contract is won — arena/pool the buffers, the `process` loop must not allocate. Build the atomic-swap
 seam now even though single-threaded.
 
-- **Task 1.3.1** — `Device` trait (declare ports, `process(block)` over voltage), internal-state pattern.
+*Design notes (settled):*
+- **Node vs. device — naming.** The schedulable unit is a **`Node`** (a black-box processing element
+  with electrical faces); the trait was renamed `Device → Node`. "Device" is reserved for the *physical
+  chassis* (a mixer, an interface), which may map to **several** nodes. Matches audio-graph convention
+  (Web Audio's `AudioNode`) and the graph's existing `NodeId`/`nodes` vocabulary.
+- **One chassis → many nodes (deferred).** When a device's signal path *leaves and re-enters* the box —
+  an **insert** (send → external gear → return) or a routed **audio interface** — it is not one atomic
+  node but several **stages** of a path, scheduled separately. Modeling the whole chassis as one node
+  manufactures a false cycle (`mixer → comp → mixer`), which cycle detection correctly rejects. The honest
+  model splits at the seam into multiple nodes (state partitions cleanly: pre-insert vs post-insert). A
+  *logical device* is then a **group of nodes** sharing identity — the grouping the UI/save-load uses (Epic 4+).
+- **The schedulable unit is a *stage*** (a set of output ports + the input ports they're computed from). A
+  simple node today is the **single-stage (N=1)** case — exactly `Node::process` (read-all-inputs,
+  write-all-outputs). Multi-stage nodes declare internal **port-level dependencies**, which the compiler
+  folds into the topo sort alongside the external cable edges.
+- **Internal routing is dynamic, declared not hard-coded.** A device's internal dependency structure
+  reflects its *current configuration* (route in1→out2 vs in1→out3), queried at `compile`. Re-routing that
+  changes the dependency graph ⇒ **recompile off-path + atomic swap** (the 1.3.7 seam); cycle detection then
+  validates the routing. A device may instead declare *conservative* (all-to-all) deps so routing becomes
+  gain changes with **no recompile** — at the cost of coupling all its ports (unusable for re-entrant gear).
+- **Parameters vs. structure.** A param that changes processing but not topology (a fader, EQ freq,
+  threshold) is a value read inside `process` via the control lane (Story 1.7) — **no recompile**. `compile`
+  owns *structure* (topo order, buffers, baked edge solves, stage graph); `process` owns *values*. Recompile
+  is reserved for structural change (add/remove node, repatch a cable, reroute topology).
+- **Decision: defer the multi-stage / node-grouping machinery** until the first device that needs it (insert
+  mixer / routable interface). Single-stage `Node`s cover Story 1.3. The retrofit is additive (a
+  `stages()`-style declaration defaulting to one all-ports stage) and localized to the `Node` trait +
+  `compile` + `schedule`, with per-port buffers already in place — so deferring doesn't corner us. Don't bake
+  "one schedule step per node" in as a permanent assumption.
+
+- **Task 1.3.1** — `Node` trait (declare ports, `process(block)` over voltage), internal-state pattern. *(Renamed from `Device`; "device" reserved for the chassis grouping above.)*
 - **Task 1.3.2** — `Graph`: nodes + typed connections, validation (no dangling/duplicate), construct-in-code API.
 - **Task 1.3.3** — Minimal device set: test source with real `Zout`, a gain/preamp stage (with a rail voltage), a passive summing node.
 - **Task 1.3.4** — Topological sort of the DAG.
