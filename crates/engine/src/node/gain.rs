@@ -1,6 +1,6 @@
 //! A gain / preamp stage.
 
-use super::Device;
+use super::Node;
 use crate::electrical::{InputZ, Ohms, OutputZ};
 use crate::signal::{VoltageBuffer, Volts};
 
@@ -45,7 +45,7 @@ impl GainStage {
     }
 }
 
-impl Device for GainStage {
+impl Node for GainStage {
     fn inputs(&self) -> &[InputZ] {
         &self.inputs
     }

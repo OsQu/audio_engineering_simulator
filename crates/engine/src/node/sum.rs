@@ -1,6 +1,6 @@
 //! A passive summing node.
 
-use super::Device;
+use super::Node;
 use crate::electrical::{InputZ, Ohms, OutputZ};
 use crate::signal::VoltageBuffer;
 
@@ -38,7 +38,7 @@ impl PassiveSum {
     }
 }
 
-impl Device for PassiveSum {
+impl Node for PassiveSum {
     fn inputs(&self) -> &[InputZ] {
         &self.inputs
     }
@@ -83,7 +83,10 @@ mod tests {
     fn sums_its_inputs() {
         // Open-circuit output = 0.3 + 0.4 = 0.7 V (unity sum).
         let mut s = sum(2);
-        let mut ins = [VoltageBuffer::zeros(4, rate()), VoltageBuffer::zeros(4, rate())];
+        let mut ins = [
+            VoltageBuffer::zeros(4, rate()),
+            VoltageBuffer::zeros(4, rate()),
+        ];
         ins[0].fill(Volts::new(0.3));
         ins[1].fill(Volts::new(0.4));
         let mut out = [VoltageBuffer::zeros(4, rate())];
@@ -95,7 +98,10 @@ mod tests {
     fn opposite_signals_cancel() {
         // +0.5 and −0.5 sum to silence — the difference falls out of the same add.
         let mut s = sum(2);
-        let mut ins = [VoltageBuffer::zeros(2, rate()), VoltageBuffer::zeros(2, rate())];
+        let mut ins = [
+            VoltageBuffer::zeros(2, rate()),
+            VoltageBuffer::zeros(2, rate()),
+        ];
         ins[0].fill(Volts::new(0.5));
         ins[1].fill(Volts::new(-0.5));
         let mut out = [VoltageBuffer::zeros(2, rate())];

@@ -1,0 +1,115 @@
+//! Nodes: black-box processing elements that transform voltage between electrical terminals.
+//!
+//! A [`Node`] is the engine's unit of processing and scheduling — the thing the graph wires
+//! together and the schedule sorts and runs. It presents **real electrical faces**
+//! (PROJECT_PLAN §5.3): each input has an input impedance ([`InputZ`]), each output an output
+//! impedance ([`OutputZ`] — the `Zout` of a [`Thevenin`](crate::Thevenin) source). We model
+//! the *observable I/O*, not the circuitry inside — the transform from input voltages to
+//! output (open-circuit) voltages.
+//!
+//! **Node vs. device.** A *node* is one schedulable processing element. A physical *device*
+//! (a chassis — a mixer, an audio interface) may map to **several** nodes when its signal
+//! path leaves and re-enters the box (an insert, a routed interface): those are distinct
+//! stages of the path, scheduled separately. Today every node is a whole simple device
+//! (the single-stage case); the node ⇄ logical-device grouping arrives with the first
+//! multi-stage device (see `IMPLEMENTATION_PLAN.md`, Story 1.3 design notes).
+//!
+//! The fixed electrical faces are declared up front ([`Node::inputs`] / [`Node::outputs`]);
+//! the dynamic per-block signal flows through [`Node::process`]. The voltage *between* nodes
+//! — the loading divider and cable rolloff — is owned by the connection, not the node, and
+//! applied by the schedule, so a node's output is always its **open-circuit** `v_src` (what
+//! it would produce into an infinite load).
+
+mod gain;
+mod source;
+mod sum;
+
+pub use gain::GainStage;
+pub use source::TestSource;
+pub use sum::PassiveSum;
+
+use crate::electrical::{InputZ, OutputZ};
+use crate::signal::VoltageBuffer;
+
+/// A black-box processing element: fixed electrical faces plus a per-block voltage transform.
+///
+/// # Hot-path contract
+/// [`process`](Self::process) is on the audio path: it must **not allocate, panic, or
+/// block**. All fallible setup (sizing, validation) happens earlier, at graph construction
+/// and compile. The schedule owns every buffer and hands `process` the node's own input and
+/// output blocks as already-sized slices — the node only reads inputs and writes outputs.
+///
+/// # Buffers
+/// `inputs` and `outputs` are the node's ports in declaration order: `inputs[i]` carries the
+/// (already loaded-and-filtered) voltage arriving at input port `i`; the node writes the
+/// open-circuit voltage of output port `j` into `outputs[j]`. Every block is the same length,
+/// fixed at compile. An input port with nothing connected reads silence.
+pub trait Node {
+    /// The input impedance of each input port, in declaration order. Its length is the node's
+    /// input-port count and must stay constant for the node's lifetime.
+    fn inputs(&self) -> &[InputZ];
+
+    /// The output impedance ([`OutputZ`]) of each output port, in declaration order. Its
+    /// length is the node's output-port count and must stay constant for the node's lifetime.
+    fn outputs(&self) -> &[OutputZ];
+
+    /// Transform a block: read `inputs`, write each output port's **open-circuit** voltage
+    /// into `outputs`. Hot path — no allocation, no panic. `inputs.len()` equals
+    /// [`inputs`](Self::inputs)`.len()` and likewise for `outputs`.
+    fn process(&mut self, inputs: &[VoltageBuffer], outputs: &mut [VoltageBuffer]);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::electrical::Ohms;
+    use crate::signal::{AnalogRate, Volts};
+
+    fn rate() -> AnalogRate {
+        AnalogRate::new(384_000.0)
+    }
+
+    /// A minimal node exercising the trait shape: one input, one output, doubles the signal.
+    /// Confirms the declared port counts line up with the slices `process` receives.
+    struct Doubler {
+        inputs: [InputZ; 1],
+        outputs: [OutputZ; 1],
+    }
+
+    impl Node for Doubler {
+        fn inputs(&self) -> &[InputZ] {
+            &self.inputs
+        }
+
+        fn outputs(&self) -> &[OutputZ] {
+            &self.outputs
+        }
+
+        fn process(&mut self, inputs: &[VoltageBuffer], outputs: &mut [VoltageBuffer]) {
+            for (out, &v) in outputs[0]
+                .as_mut_slice()
+                .iter_mut()
+                .zip(inputs[0].as_slice())
+            {
+                *out = v * 2.0;
+            }
+        }
+    }
+
+    #[test]
+    fn port_declarations_match_the_process_slices() {
+        let mut node = Doubler {
+            inputs: [InputZ::new(Ohms::new(10_000.0))],
+            outputs: [OutputZ::new(Ohms::new(150.0))],
+        };
+        assert_eq!(node.inputs().len(), 1);
+        assert_eq!(node.outputs().len(), 1);
+
+        let mut input = [VoltageBuffer::zeros(4, rate())];
+        input[0].fill(Volts::new(0.5));
+        let mut output = [VoltageBuffer::zeros(4, rate())];
+        node.process(&input, &mut output);
+
+        assert!(output[0].as_slice().iter().all(|&v| (v - 1.0).abs() < 1e-6));
+    }
+}

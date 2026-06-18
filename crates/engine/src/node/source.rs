@@ -1,6 +1,6 @@
 //! A test signal source.
 
-use super::Device;
+use super::Node;
 use crate::electrical::{InputZ, Ohms, OutputZ};
 use crate::signal::{VoltageBuffer, Volts};
 
@@ -30,7 +30,7 @@ impl TestSource {
     }
 }
 
-impl Device for TestSource {
+impl Node for TestSource {
     fn inputs(&self) -> &[InputZ] {
         &[]
     }

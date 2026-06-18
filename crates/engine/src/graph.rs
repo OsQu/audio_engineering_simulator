@@ -1,7 +1,7 @@
-//! The patch graph: devices (nodes) wired by connections (edges).
+//! The patch graph: nodes (processing elements) wired by connections (edges).
 //!
-//! A construct-in-code description of a studio — devices and the cables between them — built
-//! up with [`Graph::add`] / [`Graph::connect`], then handed to `compile` (Task 1.3.5), which
+//! A construct-in-code description of a studio — nodes and the cables between them — built up
+//! with [`Graph::add`] / [`Graph::connect`], then handed to `compile` (Task 1.3.5), which
 //! consumes it and validates it into a runnable schedule. The graph is the *what*; the
 //! schedule is the *how and in what order*.
 //!
@@ -11,17 +11,17 @@
 //! a DAG — a cycle is a wiring mistake the compiler rejects rather than a feedback path to
 //! solve.
 
-use crate::device::Device;
 use crate::electrical::Cable;
+use crate::node::Node;
 
-/// A handle to a device node in a [`Graph`], returned by [`Graph::add`].
+/// A handle to a node in a [`Graph`], returned by [`Graph::add`].
 ///
 /// Opaque on purpose: it indexes the graph that produced it and means nothing to another
 /// graph. `Copy`, so it's cheap to pass around while wiring.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct NodeId(pub(crate) usize);
 
-/// A connection from one device's output port to another's input port, optionally through a
+/// A connection from one node's output port to another's input port, optionally through a
 /// [`Cable`] (series R + shunt C). No cable means an ideal wire (no series resistance, no
 /// rolloff) — useful for isolating loading from cable effects in tests.
 ///
@@ -38,10 +38,10 @@ pub(crate) struct Edge {
     pub(crate) cable: Option<Cable>,
 }
 
-/// A patch: a set of devices and the connections between them, plus the designated output.
+/// A patch: a set of nodes and the connections between them, plus the designated output.
 #[derive(Default)]
 pub struct Graph {
-    pub(crate) nodes: Vec<Box<dyn Device>>,
+    pub(crate) nodes: Vec<Box<dyn Node>>,
     pub(crate) edges: Vec<Edge>,
     pub(crate) output: Option<(NodeId, usize)>,
 }
@@ -53,11 +53,11 @@ impl Graph {
         Self::default()
     }
 
-    /// Add a device, returning its [`NodeId`]. The device moves into the graph (and later
-    /// into the schedule), carrying its internal state.
-    pub fn add<D: Device + 'static>(&mut self, device: D) -> NodeId {
+    /// Add a node, returning its [`NodeId`]. The node moves into the graph (and later into
+    /// the schedule), carrying its internal state.
+    pub fn add<N: Node + 'static>(&mut self, node: N) -> NodeId {
         let id = NodeId(self.nodes.len());
-        self.nodes.push(Box::new(device));
+        self.nodes.push(Box::new(node));
         id
     }
 
@@ -87,9 +87,9 @@ impl Graph {
         self.output = Some((node, out_port));
     }
 
-    /// Number of devices in the graph.
+    /// Number of nodes in the graph.
     #[must_use]
-    pub fn device_count(&self) -> usize {
+    pub fn node_count(&self) -> usize {
         self.nodes.len()
     }
 
@@ -129,7 +129,7 @@ mod tests {
     use crate::electrical::{InputZ, Ohms, OutputZ};
     use crate::signal::VoltageBuffer;
 
-    /// A no-op device with configurable port counts, for wiring tests.
+    /// A no-op node with configurable port counts, for wiring tests.
     struct Stub {
         inputs: Vec<InputZ>,
         outputs: Vec<OutputZ>,
@@ -144,7 +144,7 @@ mod tests {
         }
     }
 
-    impl Device for Stub {
+    impl Node for Stub {
         fn inputs(&self) -> &[InputZ] {
             &self.inputs
         }
@@ -161,7 +161,7 @@ mod tests {
         let b = g.add(Stub::new(1, 1));
         assert_eq!(a, NodeId(0));
         assert_eq!(b, NodeId(1));
-        assert_eq!(g.device_count(), 2);
+        assert_eq!(g.node_count(), 2);
     }
 
     #[test]
@@ -177,11 +177,11 @@ mod tests {
     }
 
     #[test]
-    fn holds_heterogeneous_devices_behind_one_trait_object_type() {
-        // Two different concrete types stored in the same Vec<Box<dyn Device>>.
+    fn holds_heterogeneous_nodes_behind_one_trait_object_type() {
+        // Two different concrete types stored in the same Vec<Box<dyn Node>>.
         let mut g = Graph::new();
         g.add(Stub::new(0, 1));
         g.add(Stub::new(2, 1));
-        assert_eq!(g.device_count(), 2);
+        assert_eq!(g.node_count(), 2);
     }
 }
