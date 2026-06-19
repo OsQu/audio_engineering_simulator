@@ -8,6 +8,9 @@ publish.workspace = true
 
 [dependencies]
 engine.workspace = true
+# Terminal Braille line plots — harness-only (this is a native binary, so the dep never
+# reaches the engine or its wasm32 build). Used to *see* the voltage waveforms.
+textplots = "0.8"
 
 [lints]
 workspace = true
