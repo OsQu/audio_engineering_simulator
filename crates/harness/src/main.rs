@@ -7,7 +7,9 @@
 
 mod sine;
 
-use engine::{AnalogRate, GainStage, Graph, InputZ, Ohms, VoltageBuffer, Volts, compile};
+use engine::{
+    AnalogRate, Cable, Farads, GainStage, Graph, InputZ, Ohms, VoltageBuffer, Volts, compile,
+};
 use sine::SineSource;
 use textplots::{Chart, Plot, Shape};
 
@@ -15,8 +17,9 @@ use textplots::{Chart, Plot, Shape};
 const FREQ_HZ: f64 = 1_000.0;
 /// Samples per `process` block.
 const BLOCK_LEN: usize = 384;
-/// How many blocks to render — looping `process` proves the tone is continuous across block
-/// boundaries (the `SineSource` carries its phase over), and gives ~3 cycles to plot.
+/// How many blocks the waveform scenarios render — looping `process` proves the tone is
+/// continuous across block boundaries (the `SineSource` carries its phase over), and gives
+/// ~3 cycles to plot.
 const BLOCKS: usize = 3;
 
 /// A high analog rate: 384 kHz ⇒ 384 samples per cycle of a 1 kHz tone.
@@ -27,6 +30,7 @@ fn rate() -> AnalogRate {
 fn main() {
     scenario_clean_gain();
     scenario_clipping();
+    scenario_cable_rolloff();
 }
 
 /// Scenario 1 — clean gain. `SineSource(1 V) → GainStage(×2)`, well under the 10 V rail.
@@ -35,8 +39,8 @@ fn main() {
 /// `10000 / (100 + 10000) = 0.990099`, so the output peak is `1.0 · 0.990099 · 2 = 1.980 V`.
 fn scenario_clean_gain() {
     println!("\n=== Scenario 1: clean gain (×2, well under the 10 V rail) ===");
-    let input = render(source_only(Volts::new(1.0)));
-    let output = render(chain(Volts::new(1.0)));
+    let input = render(source_only(Volts::new(1.0), FREQ_HZ), BLOCKS);
+    let output = render(chain(Volts::new(1.0)), BLOCKS);
     println!(
         "input peak  {:.3} V (open-circuit source)\noutput peak {:.3} V (expected 1.980 = 1.0 · 0.990099 · 2)",
         peak(&input),
@@ -57,8 +61,8 @@ fn scenario_clean_gain() {
 /// share a fixed ±11 V scale so the squared-off top sits visibly below the input's round crest.
 fn scenario_clipping() {
     println!("\n=== Scenario 2: clipping at the ±10 V rail ===");
-    let input = render(source_only(Volts::new(8.0)));
-    let output = render(chain(Volts::new(8.0)));
+    let input = render(source_only(Volts::new(8.0), FREQ_HZ), BLOCKS);
+    let output = render(chain(Volts::new(8.0)), BLOCKS);
     println!(
         "input peak  {:.3} V (8 V sine)\noutput peak {:.3} V (clamped to the 10 V rail; wanted ≈15.84 V)",
         peak(&input),
@@ -73,16 +77,98 @@ fn scenario_clipping() {
     );
 }
 
+// --- Scenario 3: cable treble rolloff -------------------------------------------------------
+//
+// A moderately high source impedance into a high-Z load, so the resistive divider is ≈unity
+// (a ~0 dB passband) and the cable's shunt capacitance — not loading loss — is what curves the
+// response. The R·C is picked so the −3 dB corner lands mid-sweep, clearly in-band.
+
+/// Source output impedance for the sweep.
+const SWEEP_SRC_ZOUT: f32 = 2_200.0;
+/// Load input impedance for the sweep (high-Z ⇒ negligible resistive divider loss).
+const SWEEP_LOAD_ZIN: f32 = 1_000_000.0;
+/// Sweep range and resolution.
+const SWEEP_FMIN: f64 = 100.0;
+const SWEEP_FMAX: f64 = 30_000.0;
+const SWEEP_POINTS: usize = 56;
+/// Periods rendered per frequency; the first half is discarded as the filter-settling
+/// transient and the steady second half is RMS-measured (mirrors `engine`'s `measure_gain`).
+const SWEEP_PERIODS: usize = 128;
+
+/// The demo cable: series R + shunt C, sized for a treble corner around a few kHz.
+fn sweep_cable() -> Cable {
+    Cable::new(Ohms::new(100.0), Farads::new(22e-9))
+}
+
+/// Scenario 3 — cable treble rolloff. `SineSource → cable → high-Z load`, swept in frequency.
+///
+/// Measures `RMS(out)/RMS(in)` per frequency and plots it in dB against `log10(freq)`. The
+/// shunt capacitance forms a one-pole low-pass with the Thévenin resistance it sees,
+/// `R_thev = (Zout + R_cable) ∥ Zin`, cornering at `f_c = 1/(2π·R_thev·C)`: flat (~0 dB) below,
+/// rolling off ~−6 dB/octave above, −3 dB at `f_c`.
+fn scenario_cable_rolloff() {
+    println!("\n=== Scenario 3: cable treble rolloff (frequency sweep) ===");
+
+    // Sweep: log-spaced frequencies, the observed gain (dB) at each. Everything here comes out
+    // of the compiled schedule — we drive a sine in and measure what comes out; no analytic
+    // expectation is computed. (The engine's unit tests already prove the RC corner; this is
+    // for the eyes.)
+    let mut curve = Vec::with_capacity(SWEEP_POINTS);
+    for i in 0..SWEEP_POINTS {
+        let frac = i as f64 / (SWEEP_POINTS - 1) as f64;
+        let freq = SWEEP_FMIN * (SWEEP_FMAX / SWEEP_FMIN).powf(frac);
+
+        // Enough whole blocks to cover SWEEP_PERIODS cycles of this frequency.
+        let total = (rate().as_hz() / freq * SWEEP_PERIODS as f64).ceil() as usize;
+        let blocks = total.div_ceil(BLOCK_LEN);
+        let out = render(chain_cabled(Volts::new(1.0), freq), blocks);
+        let inp = render(source_only(Volts::new(1.0), freq), blocks);
+        let half = out.len() / 2; // discard the settling transient
+        let gain = rms(&out[half..]) / rms(&inp[half..]);
+        let db = 20.0 * f64::from(gain).log10();
+        curve.push((freq, db));
+    }
+
+    // Passband and corner are read off the *measured* curve, not computed. The passband is the
+    // gain at the lowest swept frequency (far below the corner); the −3 dB corner is 3.01 dB
+    // below that, and we find where the curve crosses it.
+    let passband_db = curve[0].1;
+    let corner_db = passband_db - 3.0103;
+    let measured_corner = measured_crossover(&curve, corner_db);
+    println!(
+        "passband {passband_db:.3} dB (observed at {:.0} Hz)",
+        curve[0].0
+    );
+    match measured_corner {
+        Some(f) => println!("measured −3 dB corner ≈ {f:.0} Hz"),
+        None => println!("(−3 dB crossover not found within the swept range)"),
+    }
+
+    let points: Vec<(f32, f32)> = curve
+        .iter()
+        .map(|&(f, db)| (f.log10() as f32, db as f32))
+        .collect();
+    plot_response(
+        "Gain (dB, y) vs log10(frequency) (x: 2=100 Hz · 3=1 kHz · 4=10 kHz) — flat line is −3 dB",
+        &points,
+        corner_db as f32,
+        SWEEP_FMIN.log10() as f32,
+        SWEEP_FMAX.log10() as f32,
+    );
+}
+
+// --- graph builders -------------------------------------------------------------------------
+
 /// A graph of just the source, tapped — the open-circuit input signal, run through the same
 /// engine path as the output for an honest comparison.
-fn source_only(amp: Volts) -> Graph {
+fn source_only(amp: Volts, freq: f64) -> Graph {
     let mut g = Graph::new();
-    let src = g.add(SineSource::new(amp, FREQ_HZ, Ohms::new(100.0)));
+    let src = g.add(SineSource::new(amp, freq, Ohms::new(100.0)));
     g.set_output(src, 0);
     g
 }
 
-/// The full `SineSource → GainStage` chain, tapped at the gain output.
+/// The full `SineSource → GainStage` chain, tapped at the gain output (scenarios 1 & 2).
 fn chain(amp: Volts) -> Graph {
     let mut g = Graph::new();
     let src = g.add(SineSource::new(amp, FREQ_HZ, Ohms::new(100.0)));
@@ -97,13 +183,32 @@ fn chain(amp: Volts) -> Graph {
     g
 }
 
-/// Compile a graph and render `BLOCKS` blocks into one contiguous waveform. Off the hot path,
+/// `SineSource → cable → unity buffered load`, tapped at the load (scenario 3). The load is a
+/// ×1 `GainStage` with a high rail (never clips) presenting a high-Z input; tapping it gives
+/// the divided-and-filtered voltage the cable delivers.
+fn chain_cabled(amp: Volts, freq: f64) -> Graph {
+    let mut g = Graph::new();
+    let src = g.add(SineSource::new(amp, freq, Ohms::new(SWEEP_SRC_ZOUT)));
+    let load = g.add(GainStage::new(
+        1.0,
+        Volts::new(1_000.0),
+        InputZ::new(Ohms::new(SWEEP_LOAD_ZIN)),
+        Ohms::new(150.0),
+    ));
+    g.connect_cabled(src, 0, load, 0, sweep_cable());
+    g.set_output(load, 0);
+    g
+}
+
+// --- rendering & measurement ----------------------------------------------------------------
+
+/// Compile a graph and render `blocks` blocks into one contiguous waveform. Off the hot path,
 /// so allocating the result `Vec` and `expect`-ing the compile are fine here.
-fn render(graph: Graph) -> Vec<f32> {
+fn render(graph: Graph, blocks: usize) -> Vec<f32> {
     let mut schedule = compile(graph, BLOCK_LEN, rate()).expect("a valid chain should compile");
     let mut out = VoltageBuffer::zeros(BLOCK_LEN, rate());
-    let mut samples = Vec::with_capacity(BLOCK_LEN * BLOCKS);
-    for _ in 0..BLOCKS {
+    let mut samples = Vec::with_capacity(BLOCK_LEN * blocks);
+    for _ in 0..blocks {
         schedule.process(&mut out);
         samples.extend_from_slice(out.as_slice());
     }
@@ -114,6 +219,34 @@ fn render(graph: Graph) -> Vec<f32> {
 fn peak(samples: &[f32]) -> f32 {
     samples.iter().fold(0.0_f32, |m, &v| m.max(v.abs()))
 }
+
+/// Root-mean-square of a slice (f64 accumulation; empty ⇒ 0). The harness's own copy — the
+/// engine's `rms` is test-only and not part of its public API.
+fn rms(samples: &[f32]) -> f32 {
+    if samples.is_empty() {
+        return 0.0;
+    }
+    let sum_sq: f64 = samples.iter().map(|&x| f64::from(x) * f64::from(x)).sum();
+    (sum_sq / samples.len() as f64).sqrt() as f32
+}
+
+/// Frequency (Hz) where a falling dB response first crosses `target_db`, by linear
+/// interpolation in log-frequency between the two straddling points. `None` if it never does.
+fn measured_crossover(curve: &[(f64, f64)], target_db: f64) -> Option<f64> {
+    for pair in curve.windows(2) {
+        let (f0, db0) = pair[0];
+        let (f1, db1) = pair[1];
+        if db0 >= target_db && db1 < target_db {
+            // Interpolate the crossing in (log10 f, dB) space, then map back to Hz.
+            let (l0, l1) = (f0.log10(), f1.log10());
+            let t = (db0 - target_db) / (db0 - db1);
+            return Some(10f64.powf(l0 + t * (l1 - l0)));
+        }
+    }
+    None
+}
+
+// --- plotting -------------------------------------------------------------------------------
 
 /// Plot a waveform: x = sample index, y = volts. `y_range` fixes the vertical scale (for
 /// comparing two charts on one scale); `None` auto-scales to the data.
@@ -132,4 +265,17 @@ fn plot(title: &str, samples: &[f32], y_range: Option<(f32, f32)>) {
         None => Chart::new(120, 60, 0.0, xmax),
     };
     chart.lineplot(&shape).nice();
+}
+
+/// Plot a frequency response (`curve` already in (log10 Hz, dB)) with a horizontal reference
+/// line at `corner_db`, on a fixed −24…+3 dB scale.
+fn plot_response(title: &str, curve: &[(f32, f32)], corner_db: f32, x_min: f32, x_max: f32) {
+    println!("\n{title}");
+    let reference = [(x_min, corner_db), (x_max, corner_db)];
+    let curve_shape = Shape::Lines(curve);
+    let ref_shape = Shape::Lines(&reference);
+    Chart::new_with_y_range(120, 60, x_min, x_max, -24.0, 3.0)
+        .lineplot(&curve_shape)
+        .lineplot(&ref_shape)
+        .nice();
 }
