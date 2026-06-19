@@ -229,24 +229,60 @@ engine tests green.
 *Watch out:* these are "tests are the oracle" cases (§3.5) — you can't hear them. Each test asserts a
 number you computed by hand, with the hand calc in a comment.
 
-- **Task 1.4.1** — Device noise floors (µV) + cable pickup; SNR degrades down a chain as predicted.
+*Design notes (settled):*
+- **Noise is specified as a spectral density** (V/√Hz), not a wideband RMS. White noise at the
+  analog rate has a flat one-sided PSD over `[0, fs/2]`, so `D = σ/√(fs/2)` ⇒ the per-sample draw is
+  `σ = D·√(fs/2)` and the wideband RMS on the wire is `σ`. *(Sanity: `D = 10 nV/√Hz` at `fs = 384 kHz`
+  → `σ ≈ 4.4 µV` — the "µV" floor the plan calls for.)* Chosen over RMS-on-the-wire because it's
+  **rate-independent in-band**: when the AD band-limits to audio `B` in Story 1.6, in-band noise becomes
+  `D·√B` and the oversampling SNR gain falls out of the physics with **no remodel** (PROJECT_PLAN §2,
+  "no throwaway parameter-only model to migrate later").
+- **RNG threading — seed is a *run* parameter.** `compile` gains a `seed`: it builds a root [`Rng`],
+  and `split()`s an independent child into each noise-bearing node via a new **optional**
+  `Node::seed(rng)` hook (default no-op, so existing nodes are untouched). Same seed ⇒ identical run;
+  re-compile/swap with the same seed reproduces. (Honors the settled "splittable per-device" RNG model.)
+- **Noise is input-referred** on the gain stage: `out = clamp((in + n)·gain, ±rail)` — the "the preamp
+  sets your SNR" lesson, composing correctly with the existing rail clip.
+- **SNR-down-a-chain is shown with unity-gain buffer stages**, so each stage's *uncorrelated* noise
+  accumulates in quadrature (`σ_total = √(σ₁² + σ₂²)`) with no gain bookkeeping muddying the hand calc —
+  uncorrelated-noise-adds-in-power *is* the lesson.
+- **Cable pickup is deferred to Story 1.5.** Pickup is interference coupled *onto the wire* from the
+  environment; its broadband-random half is redundant with the device noise floor added here (both are
+  just additive Gaussian noise, differing only in injection point), and its signature payoff — 50/60 Hz
+  hum and the **common-mode rejection** that cancels it on balanced lines — only makes sense alongside
+  balanced ports. So all *coupled-onto-the-wire* phenomena (random pickup, hum, CMRR) land together in
+  1.5, and 1.4.1 stays focused on internally-generated device noise. *(Moved from the original 1.4.1.)*
+- **AC test signals are `#[cfg(test)]` helpers** (a free-running sine source, a DC-offset source) in
+  `test_util` — enough to drive AC through a real compiled patch for 1.4.2/1.4.3 without pulling the
+  real *event-driven* oscillator forward from Story 1.7, where it belongs.
+- **`DcBlocker` is a standalone public node** — a one-pole **high-pass** (the AC-coupling series-cap RC
+  that real inputs/outputs have), the dual of the existing `OnePole` low-pass. DC-blocking is a
+  first-class analog phenomenon, so it's a composable node rather than a property folded into others.
+
+- **Task 1.4.1** — Device noise floors as a spectral density (µV-scale on the wire); SNR degrades down a
+  chain as predicted (uncorrelated noise adds in quadrature). *(Cable pickup moved to Story 1.5.)*
 - **Task 1.4.2** — DC offset rides the AC; a DC-blocking HPF removes it.
 - **Task 1.4.3** — Headroom & clipping at the rail voltage (physical, in volts).
 
 *Validate:* SNR-down-the-chain, DC removal, and clip-onset voltages all match hand calcs on a running patch.
 
-### Story 1.5 — Balanced lines & common-mode physics
-*Goal:* two-conductor balanced lines and everything that rides common-mode. Isolated as its own story
-because common-mode modeling is a distinct risk worth proving on its own.
-*Watch out:* the receiver takes V+ − V−; interference coupling equally to both must cancel. Phantom and
-hum are common-mode DC/AC riding the same conductors — not flags.
+### Story 1.5 — Balanced lines, cable pickup & common-mode physics
+*Goal:* two-conductor balanced lines, the interference that couples onto cables, and everything that
+rides common-mode. Isolated as its own story because common-mode modeling is a distinct risk worth
+proving on its own.
+*Watch out:* the receiver takes V+ − V−; interference coupling equally to both must cancel. Pickup,
+phantom, and hum are voltages riding the conductors (common-mode DC/AC) — not flags.
 
 - **Task 1.5.1** — Two-conductor (V+, V−) balanced ports + receiver difference; extend the solve.
-- **Task 1.5.2** — Phantom +48 V as common-mode DC; condenser source draws it.
-- **Task 1.5.3** — Balanced CMRR vs. unbalanced (no rejection).
-- **Task 1.5.4** — Ground-loop hum (50/60 Hz common-mode): rejected on balanced, audible on unbalanced.
+- **Task 1.5.2** — Cable pickup: broadband EMI as a noise voltage coupled *onto* the conductor(s) — the
+  RNG-on-edges seam (an optional pickup density on the cable, edge gets its own split stream). Additive
+  on unbalanced; sets up the rejection contrast. *(Moved here from Story 1.4.)*
+- **Task 1.5.3** — Phantom +48 V as common-mode DC; condenser source draws it.
+- **Task 1.5.4** — Balanced CMRR vs. unbalanced: pickup/hum coupling equally to both conductors cancels
+  at the receiver difference on balanced, passes on unbalanced (no rejection).
+- **Task 1.5.5** — Ground-loop hum (50/60 Hz common-mode): rejected on balanced, audible on unbalanced.
 
-*Validate:* CMRR figure on balanced vs. unbalanced and hum rejection match hand calcs; phantom voltage present common-mode, absent differentially.
+*Validate:* CMRR figure on balanced vs. unbalanced and pickup/hum rejection match hand calcs; phantom voltage present common-mode, absent differentially.
 
 ### Story 1.6 — AD/DA converters (the boundary)
 *Goal:* the pedagogically rich modeled converters crossing volts ↔ dBFS, on top of a proven analog base.
