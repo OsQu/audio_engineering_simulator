@@ -21,5 +21,5 @@ pub use graph::{Graph, NodeId};
 pub use level::{dbu_to_volts, dbv_to_volts, volts_to_dbu, volts_to_dbv};
 pub use node::{GainStage, Node, PassiveSum, TestSource};
 pub use rng::Rng;
-pub use schedule::{CompileError, Schedule, compile};
+pub use schedule::{CompileError, Schedule, ScheduleSlot, compile};
 pub use signal::{AnalogRate, VoltageBuffer, Volts};

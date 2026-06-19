@@ -21,7 +21,10 @@
 //! **not** a contract: a reactive source later makes an edge a 2nd-order transfer function
 //! depending on both endpoints, which generalizes the representation without touching callers.
 
+mod swap;
 mod topo;
+
+pub use swap::ScheduleSlot;
 
 use crate::electrical::{InputZ, Ohms, OnePole, fan_out_gains};
 use crate::graph::Graph;
