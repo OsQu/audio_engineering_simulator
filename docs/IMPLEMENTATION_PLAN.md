@@ -167,7 +167,7 @@ panic-free / denormal-flushed hot path). A `#[cfg(test)]` `test_util` (`sine` / 
 reused from Story 1.4 on. Doc-link + bare-URL lints (`cargo docs`) added to the pre-push gate and CI.
 62 engine tests green.
 
-### Story 1.3 — Minimal runnable engine *(first end-to-end milestone)*
+### Story 1.3 — Minimal runnable engine *(first end-to-end milestone)* — ✅ **Done**
 *Goal:* device + graph + schedule + block loop — the smallest thing that actually **runs** a patch.
 This is the big de-risking moment: after this story we run real chains and validate everything on them.
 *Watch out:* devices are black boxes (model observable I/O, not circuitry). This is where the zero-alloc
@@ -204,15 +204,25 @@ seam now even though single-threaded.
   `compile` + `schedule`, with per-port buffers already in place — so deferring doesn't corner us. Don't bake
   "one schedule step per node" in as a permanent assumption.
 
-- **Task 1.3.1** — `Node` trait (declare ports, `process(block)` over voltage), internal-state pattern. *(Renamed from `Device`; "device" reserved for the chassis grouping above.)*
-- **Task 1.3.2** — `Graph`: nodes + typed connections, validation (no dangling/duplicate), construct-in-code API.
-- **Task 1.3.3** — Minimal device set: test source with real `Zout`, a gain/preamp stage (with a rail voltage), a passive summing node.
-- **Task 1.3.4** — Topological sort of the DAG.
-- **Task 1.3.5** — `compile(graph) -> Schedule`: topo order + buffer/scratch allocation from a pool.
-- **Task 1.3.6** — `schedule.process(out_block)` loop at the oversampled rate; zero-alloc verified (test/bench asserts no allocation in hot path).
-- **Task 1.3.7** — Atomic schedule-swap seam (rebuild off-path, swap pointer), exercised single-threaded — proves scene-reload won't stall later.
+- ✅ **Task 1.3.1** — `Node` trait (declare ports, `process(block)` over voltage), internal-state pattern. *(Renamed from `Device`; "device" reserved for the chassis grouping above.)*
+- ✅ **Task 1.3.2** — `Graph`: nodes + typed connections, validation (no dangling/duplicate), construct-in-code API.
+- ✅ **Task 1.3.3** — Minimal device set: test source with real `Zout`, a gain/preamp stage (with a rail voltage), a passive summing node.
+- ✅ **Task 1.3.4** — Topological sort of the DAG.
+- ✅ **Task 1.3.5** — `compile(graph) -> Schedule`: topo order + buffer/scratch allocation from a pool.
+- ✅ **Task 1.3.6** — `schedule.process(out_block)` loop at the oversampled rate; zero-alloc verified (counting-allocator integration test asserts no allocation in hot path).
+- ✅ **Task 1.3.7** — Schedule-swap seam: rebuild off-path, swap the owned `Box` (ownership handoff, not atomics), exercised single-threaded — proves scene-reload won't stall. *(The lock-free cross-thread channel is deferred to Epic 3, where a real second thread exists to test it.)*
 
-*Validate:* a `source → gain → sum` chain runs end-to-end; steady-state output voltages match hand calc; hot path provably allocation-free. **The engine is now runnable.**
+*Validate (✅ met):* a `source → gain → sum` chain runs end-to-end; steady-state output voltages match hand calc (1.9509 V = 1.0 · 2 · 0.990099 · 0.985222); hot path provably allocation-free. **The engine is now runnable.**
+
+*Delivered:* the `Node` trait + minimal set (`TestSource`, `GainStage` with rail clip, `PassiveSum`);
+`Graph` (arena of `Box<dyn Node>` + typed edges, construct-in-code) and `NodeId`; Kahn topological
+sort (cycle-rejecting); fan-out edge solve (`fan_out_gains`, parallel branch loading); `compile(graph)
+-> Schedule` (wiring validation via `CompileError`, two-pool buffer allocation, baked `EdgeTransform`
+= divider gain × optional cable one-pole, flat step list); zero-alloc, panic-free, `unsafe`-free
+`Schedule::process` (two-pool design + `self`-destructure for disjoint borrows; proven by a
+counting-allocator integration test); `ScheduleSlot` ownership-handoff swap seam. `Device → Node`
+rename, and the multi-stage / dynamic-routing / param-vs-recompile design (notes above) settled. 97
+engine tests green.
 
 ### Story 1.4 — Analog-chain physics
 *Goal:* prove the single-conductor headline phenomena emerge from the voltage math, on real chains.
