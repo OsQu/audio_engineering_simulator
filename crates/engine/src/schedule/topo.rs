@@ -10,10 +10,6 @@
 /// Parallel edges between the same pair of nodes are fine: each is counted as its own
 /// dependency and cancelled once, so the in-degree bookkeeping stays consistent. A self-loop
 /// (`from == to`) is a cycle. Compile-time only — allocates, never on the hot path.
-// `allow`, not `expect`: the tests below already call `topo_sort`, so `dead_code` doesn't fire
-// in the test build — an `expect` would be "unfulfilled" there. Remove once `compile`
-// (Task 1.3.5) calls it from non-test code.
-#[allow(dead_code, reason = "first non-test caller is compile (Task 1.3.5)")]
 pub(super) fn topo_sort(node_count: usize, deps: &[(usize, usize)]) -> Option<Vec<usize>> {
     // Kahn's algorithm: repeatedly emit a node with no remaining unmet dependencies.
     let mut in_degree = vec![0usize; node_count];

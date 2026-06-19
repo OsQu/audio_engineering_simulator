@@ -57,7 +57,6 @@ pub fn divider_gain(z_out: Ohms, z_cable: Ohms, load: InputZ) -> f32 {
 /// # Panics
 /// Panics if any branch's `R_cable + Zin == 0`, or if `Zout + Z_load == 0` — only possible
 /// with all-zero impedances, a construction bug rather than a silent `NaN` on the path.
-#[allow(dead_code, reason = "first consumer is compile (Task 1.3.5)")]
 #[must_use]
 pub(crate) fn fan_out_gains(z_out: Ohms, branches: &[(Ohms, InputZ)]) -> Vec<f32> {
     if branches.is_empty() {

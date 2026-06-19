@@ -86,9 +86,16 @@ impl OnePole {
 
     /// Process a block of voltage in place. Zero-alloc, panic-free, denormals flushed.
     pub fn process(&mut self, buf: &mut VoltageBuffer) {
+        self.process_slice(buf.as_mut_slice());
+    }
+
+    /// Process a raw sample slice in place — the same hot-path filter as [`process`](Self::process),
+    /// for callers that already hold a slice (e.g. an edge transform). Zero-alloc, panic-free,
+    /// denormals flushed.
+    pub(crate) fn process_slice(&mut self, samples: &mut [f32]) {
         let a = self.a;
         let mut y = self.y;
-        for s in buf.as_mut_slice() {
+        for s in samples {
             y += a * (f64::from(*s) - y); // y[n] = y[n-1] + a·(x[n] − y[n-1])
             y = flush_denormal(y);
             *s = y as f32;

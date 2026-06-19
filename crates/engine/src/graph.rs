@@ -25,11 +25,7 @@ pub struct NodeId(pub(crate) usize);
 /// [`Cable`] (series R + shunt C). No cable means an ideal wire (no series resistance, no
 /// rolloff) — useful for isolating loading from cable effects in tests.
 ///
-/// Fields are read by `compile` (Task 1.3.5), which turns each edge into a baked local solve.
-#[expect(
-    dead_code,
-    reason = "fields consumed by compile (Task 1.3.5); expect() self-removes once they're read"
-)]
+/// Fields are read by `compile`, which turns each edge into a baked local solve.
 pub(crate) struct Edge {
     pub(crate) from_node: NodeId,
     pub(crate) from_port: usize,

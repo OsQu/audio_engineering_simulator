@@ -23,6 +23,7 @@ mod thevenin;
 
 pub use cable::{Cable, OnePole};
 pub use divider::divider_gain;
+pub(crate) use divider::fan_out_gains;
 pub use farads::Farads;
 pub use input_z::InputZ;
 pub use ohms::Ohms;
