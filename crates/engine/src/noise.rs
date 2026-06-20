@@ -22,7 +22,8 @@ use crate::signal::AnalogRate;
 ///
 /// A measurement-domain spec (like a datasheet figure), turned into a per-sample standard
 /// deviation by [`per_sample_sigma`](Self::per_sample_sigma) once the analog rate is known.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[repr(transparent)]
+#[derive(Debug, Clone, Copy, PartialEq, PartialOrd, Default)]
 pub struct NoiseDensity(f32);
 
 impl NoiseDensity {
