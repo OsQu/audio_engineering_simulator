@@ -93,14 +93,21 @@ impl OnePole {
     /// for callers that already hold a slice (e.g. an edge transform). Zero-alloc, panic-free,
     /// denormals flushed.
     pub(crate) fn process_slice(&mut self, samples: &mut [f32]) {
-        let a = self.a;
-        let mut y = self.y;
         for s in samples {
-            y += a * (f64::from(*s) - y); // y[n] = y[n-1] + a·(x[n] − y[n-1])
-            y = flush_denormal(y);
-            *s = y as f32;
+            *s = self.step(f64::from(*s)) as f32;
         }
-        self.y = y;
+    }
+
+    /// Advance the filter by one sample: feed input `x`, return the new low-passed output
+    /// `y[n] = y[n-1] + a·(x[n] − y[n-1])`. The single place the recurrence lives — both the
+    /// in-place low-pass ([`process_slice`](Self::process_slice)) and the high-pass
+    /// [`DcBlocker`](crate::DcBlocker) (which outputs `x − y`) run through it, so the two
+    /// filters share one pole without inheritance. Hot path: `#[inline]`, denormal-flushed.
+    #[inline]
+    pub(crate) fn step(&mut self, x: f64) -> f64 {
+        self.y += self.a * (x - self.y);
+        self.y = flush_denormal(self.y);
+        self.y
     }
 }
 

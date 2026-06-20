@@ -20,17 +20,19 @@
 //! applied by the schedule, so a node's output is always its **open-circuit** `v_src` (what
 //! it would produce into an infinite load).
 
+mod dc_blocker;
 mod gain;
 mod source;
 mod sum;
 
+pub use dc_blocker::DcBlocker;
 pub use gain::GainStage;
 pub use source::TestSource;
 pub use sum::PassiveSum;
 
 use crate::electrical::{InputZ, OutputZ};
 use crate::rng::Rng;
-use crate::signal::VoltageBuffer;
+use crate::signal::{AnalogRate, VoltageBuffer};
 
 /// A black-box processing element: fixed electrical faces plus a per-block voltage transform.
 ///
@@ -66,6 +68,19 @@ pub trait Node {
     /// time. Most nodes are deterministic and use the default no-op; a node with a noise floor
     /// (or any randomness) keeps the `rng` and draws from it on the hot path. Off the hot path.
     fn seed(&mut self, _rng: Rng) {}
+
+    /// Prepare rate-dependent state for the analog `rate` the schedule will run at.
+    ///
+    /// Called once by [`compile`](crate::compile) before any [`process`](Self::process). This
+    /// is where a node bakes any coefficient that depends on the sample period — a filter pole,
+    /// an oscillator increment, an anti-alias kernel — so the expensive setup (an `exp`, a
+    /// kernel design) is paid here, not on the hot path. Rate-free nodes use the default no-op.
+    ///
+    /// The companion to [`seed`](Self::seed): `seed` hands a node its randomness, `prepare`
+    /// hands it the clock. It exists because nodes own their state across compiles, so — unlike
+    /// the connection's cable filter, which `compile` builds directly — a stateful filter *node*
+    /// needs the rate delivered to it. Off the hot path.
+    fn prepare(&mut self, _rate: AnalogRate) {}
 }
 
 #[cfg(test)]

@@ -266,7 +266,7 @@ number you computed by hand, with the hand calc in a comment.
 
 - ✅ **Task 1.4.1** — Device noise floors as a spectral density (µV-scale on the wire); SNR degrades down a
   chain as predicted (uncorrelated noise adds in quadrature). *(Cable pickup moved to Story 1.5.)*
-- **Task 1.4.2** — DC offset rides the AC; a DC-blocking HPF removes it.
+- ✅ **Task 1.4.2** — DC offset rides the AC; a DC-blocking HPF removes it.
 - **Task 1.4.3** — Headroom & clipping at the rail voltage (physical, in volts).
 
 *Delivered (1.4.1):* `NoiseDensity` newtype (V/√Hz, `repr(transparent)` like its peers) with
@@ -276,6 +276,18 @@ runs); `GainStage::with_noise` adding an input-referred floor (`out = clamp((in 
 still-zero-alloc/panic-free hot path (the `no_alloc` test now covers the Gaussian draw). Tests on compiled
 chains: floor matches `σ` (4.38 µV @ 10 nV/√Hz, 384 kHz) and noise adds in quadrature down the chain
 (`√2·σ`, −3.01 dB SNR per equal stage). 103 engine tests green.
+
+*Delivered (1.4.2):* `DcBlocker`, a standalone one-pole **high-pass** node = the dual of the cable's
+`OnePole`, computed as `out = x − lowpass(x)` (the inner low-pass tracks the DC/low content; subtracting
+it leaves the AC — a zero at DC, the same matched pole). It **reuses** `OnePole` via a new per-sample
+`OnePole::step` seam rather than duplicating the recurrence (one pole, two filters, no inheritance). Filter
+coefficients are rate-dependent, so `compile` gained a `Node::prepare(rate)` hook (default no-op, the
+companion to `seed`) that bakes the pole off the hot path — `process` only steps it (still zero-alloc /
+panic-free; the `no_alloc` chain now includes a blocker). A `#[cfg(test)]` `SineSource` (AC on a DC
+pedestal, free-running phase) was added to `test_util` to drive moving signals through a compiled patch.
+Tests: −3 dB at the corner, ~unity a decade above, rolloff below, DC driven to zero; and end-to-end on a
+compiled chain a 2 V-DC-offset 1 kHz tone comes out mean ≈ 0 with the AC RMS (0.7071 V) intact. 113 engine
+tests green.
 
 *Validate:* SNR-down-the-chain, DC removal, and clip-onset voltages all match hand calcs on a running patch.
 

@@ -4,6 +4,8 @@
 //! signals rather than scalar asserts (filter magnitude response now; SNR in Story 1.4).
 //! Gated behind `#[cfg(test)]`, so it's compiled only for tests and never ships.
 
+use crate::electrical::{InputZ, Ohms, OutputZ};
+use crate::node::Node;
 use crate::signal::{AnalogRate, VoltageBuffer, Volts};
 
 /// A steady sine of `len` samples: `amp · sin(2π·freq·t)`, sampled at `rate`.
@@ -50,6 +52,64 @@ where
     process(&mut output);
     let half = len / 2;
     rms(&output.as_slice()[half..]) / rms(&input.as_slice()[half..])
+}
+
+/// A test-only source node emitting a free-running sine on a DC pedestal: `offset + amp·sin`.
+///
+/// The engine's [`TestSource`](crate::TestSource) emits pure DC; this drives **AC** (optionally
+/// with a DC offset) through a real compiled patch — enough to test the analog chain on signals
+/// that move, without pulling the real event-driven oscillator forward from Story 1.7. With
+/// `offset = 0` it's a plain tone; with `amp = 0` a DC source; together, "DC riding on the AC"
+/// for the DC-blocker tests.
+///
+/// Phase is held in `f64` and **persists across blocks**, so the tone is continuous from one
+/// `process` call to the next. The sample period is read off the output buffer (the rate
+/// `compile` sized it with), so the source stores no rate of its own. No inputs; one output.
+pub struct SineSource {
+    amp: f64,
+    offset: f64,
+    freq_hz: f64,
+    phase: f64,
+    outputs: [OutputZ; 1],
+}
+
+impl SineSource {
+    /// A sine of peak amplitude `amp` at `freq_hz` on a DC pedestal `offset`, driving from
+    /// output impedance `z_out`.
+    pub fn new(freq_hz: f64, amp: Volts, offset: Volts, z_out: Ohms) -> Self {
+        Self {
+            amp: f64::from(amp.get()),
+            offset: f64::from(offset.get()),
+            freq_hz,
+            phase: 0.0,
+            outputs: [OutputZ::new(z_out)],
+        }
+    }
+}
+
+impl Node for SineSource {
+    fn inputs(&self) -> &[InputZ] {
+        &[]
+    }
+
+    fn outputs(&self) -> &[OutputZ] {
+        &self.outputs
+    }
+
+    fn process(&mut self, _inputs: &[VoltageBuffer], outputs: &mut [VoltageBuffer]) {
+        let dt = outputs[0].rate().seconds_per_sample();
+        let dphase = std::f64::consts::TAU * self.freq_hz * dt;
+        let (amp, offset) = (self.amp, self.offset);
+        let mut phase = self.phase;
+        for s in outputs[0].as_mut_slice() {
+            *s = (offset + amp * phase.sin()) as f32;
+            phase += dphase;
+            if phase >= std::f64::consts::TAU {
+                phase -= std::f64::consts::TAU;
+            }
+        }
+        self.phase = phase; // carry phase into the next block
+    }
 }
 
 #[cfg(test)]
