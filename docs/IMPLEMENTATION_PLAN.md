@@ -295,7 +295,7 @@ a number; a dependency-free single-bin DFT `tone_amplitude` (in `test_util`, no 
 harmonics as the distortion oracle. Tests on compiled patches: clip-onset at `amp = rail/(divider·gain)`
 (clean below, flat-topped exactly at the rail above); a sub-rail sine stays distortion-free (3rd harmonic
 < 1 % of fundamental) at the predicted headroom; and a hard-overdriven sine becomes a square wave with the
-textbook odd-harmonic spectrum (3rd = ⅓, 5th = ⅕ of the fundamental, no even harmonics). 117 engine tests
+textbook odd-harmonic spectrum (3rd = ⅓, 5th = ⅕ of the fundamental, no even harmonics). 118 engine tests
 green.
 
 *Validate:* ✅ SNR-down-the-chain (1.4.1), DC removal (1.4.2), and clip-onset voltages (1.4.3) all match
