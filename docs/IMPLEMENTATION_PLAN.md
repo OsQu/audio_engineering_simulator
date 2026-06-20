@@ -237,10 +237,15 @@ number you computed by hand, with the hand calc in a comment.
   **rate-independent in-band**: when the AD band-limits to audio `B` in Story 1.6, in-band noise becomes
   `D·√B` and the oversampling SNR gain falls out of the physics with **no remodel** (PROJECT_PLAN §2,
   "no throwaway parameter-only model to migrate later").
-- **RNG threading — seed is a *run* parameter.** `compile` gains a `seed`: it builds a root [`Rng`],
-  and `split()`s an independent child into each noise-bearing node via a new **optional**
-  `Node::seed(rng)` hook (default no-op, so existing nodes are untouched). Same seed ⇒ identical run;
-  re-compile/swap with the same seed reproduces. (Honors the settled "splittable per-device" RNG model.)
+- **RNG threading — seed is a *run* parameter.** `compile` gains a **positional** `seed: u64` (decided
+  positional for now, not a `CompileOptions` struct): it builds a root [`Rng`] and `split()`s an
+  independent child into **every node, in node-index order**, via a new **optional** `Node::seed(rng)`
+  hook (default no-op, so existing nodes are untouched). Splitting in index order — and handing even
+  deterministic nodes their (unused) split — keeps each node's stream **stable regardless of topology or
+  which neighbours are noisy**, which is what makes the SNR test's same-seed comparison exact. A node
+  installs its stream only if it actually has a floor (`GainStage::seed` keeps the `Rng` only when its
+  `NoiseDensity != ZERO`). Same seed ⇒ identical run; re-compile/swap with the same seed reproduces.
+  (Honors the settled "splittable per-device" RNG model.)
 - **Noise is input-referred** on the gain stage: `out = clamp((in + n)·gain, ±rail)` — the "the preamp
   sets your SNR" lesson, composing correctly with the existing rail clip.
 - **SNR-down-a-chain is shown with unity-gain buffer stages**, so each stage's *uncorrelated* noise
@@ -259,10 +264,18 @@ number you computed by hand, with the hand calc in a comment.
   that real inputs/outputs have), the dual of the existing `OnePole` low-pass. DC-blocking is a
   first-class analog phenomenon, so it's a composable node rather than a property folded into others.
 
-- **Task 1.4.1** — Device noise floors as a spectral density (µV-scale on the wire); SNR degrades down a
+- ✅ **Task 1.4.1** — Device noise floors as a spectral density (µV-scale on the wire); SNR degrades down a
   chain as predicted (uncorrelated noise adds in quadrature). *(Cable pickup moved to Story 1.5.)*
 - **Task 1.4.2** — DC offset rides the AC; a DC-blocking HPF removes it.
 - **Task 1.4.3** — Headroom & clipping at the rail voltage (physical, in volts).
+
+*Delivered (1.4.1):* `NoiseDensity` newtype (V/√Hz, `repr(transparent)` like its peers) with
+`per_sample_sigma` = `D·√(fs/2)`; an optional `Node::seed(rng)` hook (default no-op) and a `seed`
+parameter on `compile` that splits an independent per-node `Rng` stream in node-index order (reproducible
+runs); `GainStage::with_noise` adding an input-referred floor (`out = clamp((in + n)·gain, ±rail)`) on a
+still-zero-alloc/panic-free hot path (the `no_alloc` test now covers the Gaussian draw). Tests on compiled
+chains: floor matches `σ` (4.38 µV @ 10 nV/√Hz, 384 kHz) and noise adds in quadrature down the chain
+(`√2·σ`, −3.01 dB SNR per equal stage). 103 engine tests green.
 
 *Validate:* SNR-down-the-chain, DC removal, and clip-onset voltages all match hand calcs on a running patch.
 
