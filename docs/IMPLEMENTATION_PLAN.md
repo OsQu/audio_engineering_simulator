@@ -224,7 +224,7 @@ counting-allocator integration test); `ScheduleSlot` ownership-handoff swap seam
 rename, and the multi-stage / dynamic-routing / param-vs-recompile design (notes above) settled. 97
 engine tests green.
 
-### Story 1.4 — Analog-chain physics
+### Story 1.4 — Analog-chain physics — ✅ **Done**
 *Goal:* prove the single-conductor headline phenomena emerge from the voltage math, on real chains.
 *Watch out:* these are "tests are the oracle" cases (§3.5) — you can't hear them. Each test asserts a
 number you computed by hand, with the hand calc in a comment.
@@ -267,7 +267,7 @@ number you computed by hand, with the hand calc in a comment.
 - ✅ **Task 1.4.1** — Device noise floors as a spectral density (µV-scale on the wire); SNR degrades down a
   chain as predicted (uncorrelated noise adds in quadrature). *(Cable pickup moved to Story 1.5.)*
 - ✅ **Task 1.4.2** — DC offset rides the AC; a DC-blocking HPF removes it.
-- **Task 1.4.3** — Headroom & clipping at the rail voltage (physical, in volts).
+- ✅ **Task 1.4.3** — Headroom & clipping at the rail voltage (physical, in volts).
 
 *Delivered (1.4.1):* `NoiseDensity` newtype (V/√Hz, `repr(transparent)` like its peers) with
 `per_sample_sigma` = `D·√(fs/2)`; an optional `Node::seed(rng)` hook (default no-op) and a `seed`
@@ -289,7 +289,17 @@ Tests: −3 dB at the corner, ~unity a decade above, rolloff below, DC driven to
 compiled chain a 2 V-DC-offset 1 kHz tone comes out mean ≈ 0 with the AC RMS (0.7071 V) intact. 113 engine
 tests green.
 
-*Validate:* SNR-down-the-chain, DC removal, and clip-onset voltages all match hand calcs on a running patch.
+*Delivered (1.4.3):* the rail clip was already in `GainStage` (Task 1.4.1), so this task proved its
+*consequences* numerically. A `headroom_db(peak, rail)` level helper (`20·log10(rail/peak)`) makes headroom
+a number; a dependency-free single-bin DFT `tone_amplitude` (in `test_util`, no FFT crate) reads named
+harmonics as the distortion oracle. Tests on compiled patches: clip-onset at `amp = rail/(divider·gain)`
+(clean below, flat-topped exactly at the rail above); a sub-rail sine stays distortion-free (3rd harmonic
+< 1 % of fundamental) at the predicted headroom; and a hard-overdriven sine becomes a square wave with the
+textbook odd-harmonic spectrum (3rd = ⅓, 5th = ⅕ of the fundamental, no even harmonics). 117 engine tests
+green.
+
+*Validate:* ✅ SNR-down-the-chain (1.4.1), DC removal (1.4.2), and clip-onset voltages (1.4.3) all match
+hand calcs on running patches.
 
 ### Story 1.5 — Balanced lines, cable pickup & common-mode physics
 *Goal:* two-conductor balanced lines, the interference that couples onto cables, and everything that

@@ -54,6 +54,31 @@ where
     rms(&output.as_slice()[half..]) / rms(&input.as_slice()[half..])
 }
 
+/// Peak amplitude of the `freq_hz` sinusoidal component of `samples`, by a single-bin DFT
+/// (correlate the signal against `cos` and `sin` at that frequency). Empty slice → 0.
+///
+/// For a buffer spanning whole cycles of `freq_hz` this returns the component's true peak
+/// amplitude — and harmonics, being whole-cycle too, stay orthogonal and don't leak. It's the
+/// oracle for harmonic content: clipping distortion can't be heard in a unit test, so the
+/// amplitudes at `f`, `3f`, `5f`… are measured and asserted against the hand calc. Dependency-
+/// free (no FFT crate) and `f64`-accumulated; one bin is all the named-harmonic checks need.
+pub fn tone_amplitude(samples: &[f32], freq_hz: f64, rate: AnalogRate) -> f32 {
+    if samples.is_empty() {
+        return 0.0;
+    }
+    let dt = rate.seconds_per_sample();
+    let omega = std::f64::consts::TAU * freq_hz;
+    let (mut re, mut im) = (0.0_f64, 0.0_f64);
+    for (n, &x) in samples.iter().enumerate() {
+        let phase = omega * (n as f64 * dt);
+        re += f64::from(x) * phase.cos();
+        im += f64::from(x) * phase.sin();
+    }
+    let n = samples.len() as f64;
+    // For A·sin(ωt) over whole cycles: Σx·sin = A·N/2, Σx·cos ≈ 0 ⇒ amplitude = (2/N)·√(re²+im²).
+    (2.0 / n * (re * re + im * im).sqrt()) as f32
+}
+
 /// A test-only source node emitting a free-running sine on a DC pedestal: `offset + amp·sin`.
 ///
 /// The engine's [`TestSource`](crate::TestSource) emits pure DC; this drives **AC** (optionally
@@ -142,6 +167,19 @@ mod tests {
         assert_eq!(s.rate(), rate());
         assert_relative_eq!(s.get(0).get(), 0.0, epsilon = 1e-6);
         assert!(s.as_slice().iter().all(|&v| v.abs() <= 0.5 + 1e-6));
+    }
+
+    #[test]
+    fn tone_amplitude_reads_the_fundamental_and_sees_no_harmonics() {
+        // A clean 0.8 V sine at 1 kHz over whole cycles: the 1 kHz bin reads the amplitude
+        // (0.8), and the 3 kHz bin reads ≈ 0 — a pure tone has no harmonics.
+        let s = sine(1_000.0, Volts::new(0.8), 3_840, rate()); // 10 whole cycles at 384 kHz
+        assert_relative_eq!(
+            tone_amplitude(s.as_slice(), 1_000.0, rate()),
+            0.8,
+            epsilon = 1e-3
+        );
+        assert!(tone_amplitude(s.as_slice(), 3_000.0, rate()) < 1e-3);
     }
 
     #[test]

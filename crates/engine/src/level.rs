@@ -43,6 +43,18 @@ pub fn volts_to_dbv(v: Volts) -> f32 {
     volts_to_db(v, V_REF_DBV)
 }
 
+/// Headroom in dB: how far a signal `peak` sits below the clip point `rail`,
+/// `20·log10(rail / peak)`.
+///
+/// This is the dB "room" left before the rail clamps the waveform — large for a quiet signal,
+/// 0 dB right at the onset of clipping, negative once the signal is driven past the rail. A
+/// `peak` of 0 V (silence) has infinite headroom (+∞). It's a *ratio* of two levels, so the
+/// reference cancels and the answer is independent of dBu/dBV.
+#[must_use]
+pub fn headroom_db(peak: Volts, rail: Volts) -> f32 {
+    (20.0 * (f64::from(rail.get()) / f64::from(peak.get())).log10()) as f32
+}
+
 // Shared math, in f64 for precision. `db = 20·log10(V / V_ref)`, inverted as
 // `V = V_ref · 10^(db / 20)`.
 
@@ -94,6 +106,29 @@ mod tests {
         for &dbv in &[-20.0_f32, -10.0, 0.0, 12.0] {
             assert_relative_eq!(volts_to_dbv(dbv_to_volts(dbv)), dbv, epsilon = 1e-3);
         }
+    }
+
+    #[test]
+    fn headroom_is_the_db_below_the_rail() {
+        // A 1 V peak under a 10 V rail: 20·log10(10/1) = 20 dB of headroom.
+        assert_relative_eq!(
+            headroom_db(Volts::new(1.0), Volts::new(10.0)),
+            20.0,
+            epsilon = 1e-4
+        );
+        // Right at the rail there is no headroom left: 20·log10(1) = 0 dB.
+        assert_relative_eq!(
+            headroom_db(Volts::new(10.0), Volts::new(10.0)),
+            0.0,
+            epsilon = 1e-6
+        );
+        // Driven past the rail, headroom goes negative (the overdrive in dB): 20·log10(10/20)
+        // = −6.02 dB.
+        assert_relative_eq!(
+            headroom_db(Volts::new(20.0), Volts::new(10.0)),
+            -6.0206,
+            epsilon = 1e-3
+        );
     }
 
     #[test]
