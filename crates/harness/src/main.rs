@@ -2,13 +2,14 @@
 //!
 //! This is the visualization *demo* (a detour after Story 1.3): it drives a sine through a
 //! real compiled schedule and plots the resulting voltage in the terminal, so amplitude,
-//! rail clipping, and cable rolloff can be *seen*, not just asserted in unit tests. The WAV
-//! render driver and offline scenarios proper arrive in Epic 2.
+//! rail clipping, cable rolloff, and the device noise floor can be *seen*, not just asserted
+//! in unit tests. The WAV render driver and offline scenarios proper arrive in Epic 2.
 
 mod sine;
 
 use engine::{
-    AnalogRate, Cable, Farads, GainStage, Graph, InputZ, Ohms, VoltageBuffer, Volts, compile,
+    AnalogRate, Cable, Farads, GainStage, Graph, InputZ, NoiseDensity, Ohms, TestSource,
+    VoltageBuffer, Volts, compile, volts_to_dbu,
 };
 use sine::SineSource;
 use textplots::{Chart, Plot, Shape};
@@ -31,6 +32,7 @@ fn main() {
     scenario_clean_gain();
     scenario_clipping();
     scenario_cable_rolloff();
+    scenario_noise_floor();
 }
 
 /// Scenario 1 — clean gain. `SineSource(1 V) → GainStage(×2)`, well under the 10 V rail.
@@ -157,6 +159,72 @@ fn scenario_cable_rolloff() {
     );
 }
 
+// --- Scenario 4: noise floor revealed by gain ----------------------------------------------
+//
+// Feed *silence* into a preamp that has an input-referred noise floor, then crank the gain.
+// With 0 V in, the output is just the amplified floor: out = (0 + n)·gain = n·gain. So the
+// hiss that's invisible at unity gain rises 1:1 with the gain you dial in — the lesson that
+// your noise floor (and SNR) is set at the first gain stage, the preamp. The noise stream is
+// seeded, so every gain replays the *same* hiss, only louder.
+
+/// Input-referred noise density of the demo preamp: 10 nV/√Hz (a modest device floor; matches
+/// the engine's noise tests). At 384 kHz this is σ = D·√(fs/2) ≈ 4.38 µV RMS at the input.
+const NOISE_DENSITY: f32 = 10e-9;
+/// Gains to dial through, in dB — each 20 dB (×10) hotter than the last, so the floor should
+/// climb a clean 20 dB per step.
+const NOISE_GAINS_DB: [f32; 3] = [20.0, 40.0, 60.0];
+/// Samples rendered for the floor — more than the waveform scenarios so the RMS estimate of a
+/// random signal settles. 8 × 384 = 3072 samples.
+const NOISE_BLOCKS: usize = 8;
+
+/// Scenario 4 — the device noise floor, made visible by gain. Silence into a noisy preamp,
+/// rendered at a few gains.
+///
+/// The output is the preamp's own input-referred floor times the gain, so the measured output
+/// RMS should track `gain · σ` (and rise 1:1 in dB with the gain). All three gains are plotted
+/// on one shared scale set by the loudest, so the hiss visibly lifts off the zero line.
+fn scenario_noise_floor() {
+    println!("\n=== Scenario 4: noise floor revealed by gain (silence in, crank the preamp) ===");
+
+    // The input-referred floor in volts: σ = D·√(fs/2). With silence in, the output RMS noise
+    // is just gain·σ — there's no signal for it to ride on.
+    let sigma_in = NoiseDensity::new(NOISE_DENSITY).per_sample_sigma(rate());
+    println!(
+        "input-referred floor σ = {:.3} µV RMS ({:.1} dBu) at {:.0} nV/√Hz, {:.0} kHz",
+        sigma_in * 1e6,
+        volts_to_dbu(Volts::new(sigma_in)),
+        NOISE_DENSITY * 1e9,
+        rate().as_hz() / 1000.0,
+    );
+
+    let mut waveforms = Vec::with_capacity(NOISE_GAINS_DB.len());
+    for &db in &NOISE_GAINS_DB {
+        let gain = 10f32.powf(db / 20.0);
+        let out = render(noisy_preamp(gain), NOISE_BLOCKS);
+        let measured = rms(&out);
+        let expected = gain * sigma_in;
+        println!(
+            "  +{db:>2.0} dB (×{gain:<5.0}): floor {:>8.1} µV RMS measured ({:>6.1} dBu) — expected {:>8.1} µV",
+            measured * 1e6,
+            volts_to_dbu(Volts::new(measured)),
+            expected * 1e6,
+        );
+        waveforms.push((db, out));
+    }
+
+    // One shared vertical scale, set by the loudest render (+10 % headroom), so the lower gains
+    // read as near-flat lines and the top gain fills the band — the floor lifting as you crank.
+    let top_peak = waveforms.last().map_or(1.0, |(_, w)| peak(w));
+    let scale = Some((-top_peak * 1.1, top_peak * 1.1));
+    for (db, w) in &waveforms {
+        plot(
+            &format!("Output floor at +{db:.0} dB gain (volts; shared scale set by the loudest)"),
+            w,
+            scale,
+        );
+    }
+}
+
 // --- graph builders -------------------------------------------------------------------------
 
 /// A graph of just the source, tapped — the open-circuit input signal, run through the same
@@ -197,6 +265,27 @@ fn chain_cabled(amp: Volts, freq: f64) -> Graph {
     ));
     g.connect_cabled(src, 0, load, 0, sweep_cable());
     g.set_output(load, 0);
+    g
+}
+
+/// A silent source into a noisy preamp at linear voltage gain `gain`, tapped at the preamp
+/// output (scenario 4). [`TestSource`] emits 0 V (DC silence) from a real 100 Ω face, so the
+/// only thing on the wire is the preamp's own input-referred floor, amplified. The rail is far
+/// above any gain here, so the floor never clips.
+fn noisy_preamp(gain: f32) -> Graph {
+    let mut g = Graph::new();
+    let src = g.add(TestSource::new(Volts::new(0.0), Ohms::new(100.0)));
+    let pre = g.add(
+        GainStage::new(
+            gain,
+            Volts::new(10.0),
+            InputZ::new(Ohms::new(10_000.0)),
+            Ohms::new(150.0),
+        )
+        .with_noise(NoiseDensity::new(NOISE_DENSITY)),
+    );
+    g.connect(src, 0, pre, 0);
+    g.set_output(pre, 0);
     g
 }
 
