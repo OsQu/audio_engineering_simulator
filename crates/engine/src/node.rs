@@ -29,6 +29,7 @@ pub use source::TestSource;
 pub use sum::PassiveSum;
 
 use crate::electrical::{InputZ, OutputZ};
+use crate::rng::Rng;
 use crate::signal::VoltageBuffer;
 
 /// A black-box processing element: fixed electrical faces plus a per-block voltage transform.
@@ -57,6 +58,14 @@ pub trait Node {
     /// into `outputs`. Hot path — no allocation, no panic. `inputs.len()` equals
     /// [`inputs`](Self::inputs)`.len()` and likewise for `outputs`.
     fn process(&mut self, inputs: &[VoltageBuffer], outputs: &mut [VoltageBuffer]);
+
+    /// Seed this node's stochastic state from `rng`, an independent per-node stream.
+    ///
+    /// Called once by [`compile`](crate::compile) before any [`process`](Self::process), so a
+    /// run is reproducible: the same compile `seed` gives every node the same stream every
+    /// time. Most nodes are deterministic and use the default no-op; a node with a noise floor
+    /// (or any randomness) keeps the `rng` and draws from it on the hot path. Off the hot path.
+    fn seed(&mut self, _rng: Rng) {}
 }
 
 #[cfg(test)]

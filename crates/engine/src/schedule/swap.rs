@@ -65,7 +65,7 @@ mod tests {
         let mut g = Graph::new();
         let src = g.add(TestSource::new(Volts::new(level), Ohms::new(150.0)));
         g.set_output(src, 0);
-        compile(g, 4, rate()).expect("valid graph")
+        compile(g, 4, rate(), 0).expect("valid graph")
     }
 
     #[test]

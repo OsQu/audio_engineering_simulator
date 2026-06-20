@@ -29,6 +29,7 @@ pub use swap::ScheduleSlot;
 use crate::electrical::{InputZ, Ohms, OnePole, fan_out_gains};
 use crate::graph::Graph;
 use crate::node::Node;
+use crate::rng::Rng;
 use crate::signal::{AnalogRate, VoltageBuffer};
 use core::fmt;
 
@@ -185,12 +186,21 @@ impl Schedule {
 /// allocates the buffer pools, and bakes each connection's local solve. Everything that could
 /// fail happens here, so [`Schedule::process`] can be total.
 ///
+/// `seed` makes the run reproducible: it builds a root [`Rng`] and splits an independent child
+/// stream into each node (via [`Node::seed`]). The same seed reproduces the same run —
+/// recompiling or hot-swapping with the same seed gives identical output.
+///
 /// # Errors
 /// Returns [`CompileError`] if no output is set, a port/node reference is out of range, an
 /// input port is connected twice, or the graph has a cycle.
-pub fn compile(graph: Graph, block_len: usize, rate: AnalogRate) -> Result<Schedule, CompileError> {
+pub fn compile(
+    graph: Graph,
+    block_len: usize,
+    rate: AnalogRate,
+    seed: u64,
+) -> Result<Schedule, CompileError> {
     let Graph {
-        nodes,
+        mut nodes,
         edges,
         output,
     } = graph;
@@ -304,6 +314,14 @@ pub fn compile(graph: Graph, block_len: usize, rate: AnalogRate) -> Result<Sched
         }
     }
 
+    // --- 7. Seed each node's stochastic state from an independent child stream. Split in node
+    //        index order so a node's stream is stable regardless of topo order or which other
+    //        nodes are noisy; deterministic nodes use the default no-op and ignore it. ---
+    let mut root = Rng::from_seed(seed);
+    for node in &mut nodes {
+        node.seed(root.split());
+    }
+
     let out_buf = out_offset[out_node.0] + out_port;
     Ok(Schedule {
         nodes,
@@ -383,7 +401,7 @@ mod tests {
         g.connect(amp, 0, sum, 0);
         g.set_output(sum, 0);
 
-        let mut sched = compile(g, 8, rate()).expect("valid chain");
+        let mut sched = compile(g, 8, rate(), 0).expect("valid chain");
         let mut out = VoltageBuffer::zeros(8, rate());
         sched.process(&mut out);
         for &v in out.as_slice() {
@@ -415,7 +433,7 @@ mod tests {
         g.connect(b, 0, sum, 1);
         g.set_output(sum, 0);
 
-        let mut sched = compile(g, 4, rate()).expect("valid fan-out chain");
+        let mut sched = compile(g, 4, rate(), 0).expect("valid fan-out chain");
         let mut out = VoltageBuffer::zeros(4, rate());
         sched.process(&mut out);
         for &v in out.as_slice() {
@@ -427,7 +445,7 @@ mod tests {
     fn rejects_missing_output() {
         let mut g = Graph::new();
         g.add(TestSource::new(Volts::new(1.0), Ohms::new(100.0)));
-        assert_eq!(compile(g, 8, rate()).err(), Some(CompileError::NoOutput));
+        assert_eq!(compile(g, 8, rate(), 0).err(), Some(CompileError::NoOutput));
     }
 
     #[test]
@@ -439,7 +457,7 @@ mod tests {
         g.connect(a, 0, b, 0);
         g.connect(b, 0, a, 0);
         g.set_output(b, 0);
-        assert_eq!(compile(g, 8, rate()).err(), Some(CompileError::Cycle));
+        assert_eq!(compile(g, 8, rate(), 0).err(), Some(CompileError::Cycle));
     }
 
     #[test]
@@ -455,7 +473,7 @@ mod tests {
         g.connect(s2, 0, sum, 0); // same input port 0
         g.set_output(sum, 0);
         assert_eq!(
-            compile(g, 8, rate()).err(),
+            compile(g, 8, rate(), 0).err(),
             Some(CompileError::InputAlreadyConnected { node: 2, port: 0 })
         );
     }
@@ -466,7 +484,7 @@ mod tests {
         let src = g.add(TestSource::new(Volts::new(1.0), Ohms::new(100.0)));
         g.set_output(src, 5); // a source has only output port 0
         assert_eq!(
-            compile(g, 8, rate()).err(),
+            compile(g, 8, rate(), 0).err(),
             Some(CompileError::OutputPortOutOfRange { node: 0, port: 5 })
         );
     }
@@ -477,8 +495,99 @@ mod tests {
         g.add(TestSource::new(Volts::new(1.0), Ohms::new(100.0)));
         g.set_output(NodeId(9), 0); // no such node
         assert_eq!(
-            compile(g, 8, rate()).err(),
+            compile(g, 8, rate(), 0).err(),
             Some(CompileError::NodeOutOfRange { node: 9 })
         );
+    }
+}
+
+/// Story 1.4.1 — device noise floors emerging from the voltage math, on real compiled chains.
+///
+/// "Tests are the oracle" (§3.5): you can't hear a µV noise floor, so each assert is a number
+/// computed by hand, with the calc in a comment. RMS converges to the true `σ` only in the
+/// limit, so the tolerances are the finite-sample sampling error (`~1/√(2N)`), not slop.
+#[cfg(test)]
+mod noise_phenomena {
+    use super::*;
+    use crate::electrical::Ohms;
+    use crate::node::{GainStage, TestSource};
+    use crate::noise::NoiseDensity;
+    use crate::signal::Volts;
+    use crate::test_util::rms;
+    use approx::assert_relative_eq;
+
+    fn rate() -> AnalogRate {
+        AnalogRate::new(384_000.0)
+    }
+
+    /// A near-ideal unity buffer: huge `Zin`, tiny `Zout`, so every edge divider is ~1 and the
+    /// only thing the stage does to the signal is add its own input-referred noise floor.
+    /// That keeps the hand calc clean — no gain or loss bookkeeping muddying the noise power.
+    fn noisy_buffer(density: NoiseDensity) -> GainStage {
+        GainStage::new(
+            1.0,
+            Volts::new(10.0),
+            InputZ::new(Ohms::new(1e9)),
+            Ohms::new(1.0),
+        )
+        .with_noise(density)
+    }
+
+    /// Run a silent source through a chain of unity noisy buffers; return the tapped output.
+    fn run_silence(densities: &[NoiseDensity], len: usize, seed: u64) -> Vec<f32> {
+        let mut g = Graph::new();
+        let mut tail = g.add(TestSource::new(Volts::new(0.0), Ohms::new(1.0)));
+        for &d in densities {
+            let b = g.add(noisy_buffer(d));
+            g.connect(tail, 0, b, 0);
+            tail = b;
+        }
+        g.set_output(tail, 0);
+        let mut sched = compile(g, len, rate(), seed).expect("valid noise chain");
+        let mut out = VoltageBuffer::zeros(len, rate());
+        sched.process(&mut out);
+        out.as_slice().to_vec()
+    }
+
+    #[test]
+    fn device_noise_floor_matches_density() {
+        // One unity buffer, silent input. With the noise referred to the input and unity gain,
+        // the output RMS is exactly the per-sample σ on the wire:
+        //   σ = D·√(fs/2) = 10e-9 · √(384000/2) = 10e-9 · 438.178 = 4.3818 µV.
+        let d = NoiseDensity::new(10e-9);
+        let sigma = d.per_sample_sigma(rate());
+        let out = run_silence(&[d], 200_000, 0x0A11_CE00);
+        // 200k Gaussian samples ⇒ RMS converges to σ to ~0.16% (1/√(2N)); 2% is comfortable.
+        assert_relative_eq!(rms(&out), sigma, max_relative = 0.02);
+    }
+
+    #[test]
+    fn noise_adds_in_quadrature_down_the_chain() {
+        // Two identical unity noise stages, same compile seed ⇒ stage 1's noise stream is the
+        // *same realization* in both graphs (split is by node index), so the second stage only
+        // adds uncorrelated power:  σ_total = √(σ1² + σ2²). Two equal stages ⇒ √2·σ, i.e. the
+        // floor rises +3.01 dB and a fixed signal's SNR drops the same 3.01 dB. (The classic
+        // "the first preamp sets your SNR; every later stage can only add noise" lesson.)
+        let d = NoiseDensity::new(10e-9);
+        let sigma = d.per_sample_sigma(rate());
+
+        let one = run_silence(&[d], 200_000, 7);
+        let two = run_silence(&[d, d], 200_000, 7);
+        let n1 = rms(&one);
+        let n2 = rms(&two);
+
+        // Stage 1 alone is the device floor; the chain is strictly noisier (monotonic).
+        assert_relative_eq!(n1, sigma, max_relative = 0.02);
+        assert!(
+            n2 > n1,
+            "the chain must be noisier than one stage: {n2} vs {n1}"
+        );
+
+        // Quadrature sum of two equal stages: √(σ² + σ²) = √2·σ.
+        assert_relative_eq!(n2, core::f32::consts::SQRT_2 * sigma, max_relative = 0.02);
+
+        // SNR cost of the second stage, signal held fixed: 20·log10(n2/n1) = 3.01 dB.
+        let snr_loss_db = 20.0 * (n2 / n1).log10();
+        assert_relative_eq!(snr_loss_db, 3.0103, epsilon = 0.1);
     }
 }

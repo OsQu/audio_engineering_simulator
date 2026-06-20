@@ -2,28 +2,40 @@
 
 use super::Node;
 use crate::electrical::{InputZ, Ohms, OutputZ};
+use crate::noise::NoiseDensity;
+use crate::rng::Rng;
 use crate::signal::{VoltageBuffer, Volts};
 
-/// A gain stage with a finite supply rail: `out = clamp(in · gain, ±rail)`.
+/// A gain stage with a finite supply rail and an optional input-referred noise floor:
+/// `out = clamp((in + n) · gain, ±rail)`.
 ///
 /// Models a buffered active stage — a real `InputZ` it presents to its source and a real
 /// output impedance it drives downstream, with a voltage gain in between. The **rail** is the
 /// supply voltage the output can't swing past; beyond it the signal clips, hard, in volts.
 /// That the rail and clamp live here (not as a flag) is the point: headroom and clipping
-/// *emerge* from the physics. The clipping **phenomenon** is validated in Story 1.4; here the
-/// stage simply enforces the rail, and end-to-end tests stay below it so the transform is linear.
+/// *emerge* from the physics.
+///
+/// The optional **noise** `n` is white Gaussian noise referred to the *input* — added before
+/// the gain, so amplifying the signal amplifies its own noise too: the stage that sets your
+/// SNR is the first gain stage (the preamp), which is the lesson. Its level is a spectral
+/// density ([`NoiseDensity`], V/√Hz); the per-sample `σ` follows from the analog rate. A stage
+/// built with [`new`](Self::new) is noiseless; [`with_noise`](Self::with_noise) adds a floor.
 ///
 /// One input; one output.
 pub struct GainStage {
     gain: f32,
     rail: f32,
+    /// Input-referred white-noise floor. [`NoiseDensity::ZERO`] ⇒ noiseless.
+    noise_density: NoiseDensity,
+    /// The per-node noise stream, installed by [`Node::seed`] at compile when a floor is set.
+    noise: Option<Rng>,
     inputs: [InputZ; 1],
     outputs: [OutputZ; 1],
 }
 
 impl GainStage {
-    /// A stage with voltage gain `gain`, clipping at `±rail`, presenting `z_in` and driving
-    /// from `z_out`.
+    /// A noiseless stage with voltage gain `gain`, clipping at `±rail`, presenting `z_in` and
+    /// driving from `z_out`.
     ///
     /// # Panics
     /// Panics unless `rail` is finite and `> 0` — a non-positive or non-finite rail is a setup
@@ -39,9 +51,21 @@ impl GainStage {
         Self {
             gain,
             rail,
+            noise_density: NoiseDensity::ZERO,
+            noise: None,
             inputs: [z_in],
             outputs: [OutputZ::new(z_out)],
         }
+    }
+
+    /// Add an input-referred white-noise floor of spectral density `density`.
+    ///
+    /// The stream is installed at compile via [`Node::seed`], so the noise is reproducible for
+    /// a given compile seed. Builder style: `GainStage::new(..).with_noise(density)`.
+    #[must_use]
+    pub fn with_noise(mut self, density: NoiseDensity) -> Self {
+        self.noise_density = density;
+        self
     }
 }
 
@@ -54,11 +78,32 @@ impl Node for GainStage {
         &self.outputs
     }
 
+    fn seed(&mut self, rng: Rng) {
+        // Only keep a stream if there's a floor to draw for; a noiseless stage stays a plain
+        // pass-through (and still consumes its split, so streams are stable across the graph).
+        if self.noise_density != NoiseDensity::ZERO {
+            self.noise = Some(rng);
+        }
+    }
+
     fn process(&mut self, inputs: &[VoltageBuffer], outputs: &mut [VoltageBuffer]) {
         let (gain, rail) = (self.gain, self.rail);
         let src = inputs[0].as_slice();
-        for (out, &v) in outputs[0].as_mut_slice().iter_mut().zip(src) {
-            *out = (v * gain).clamp(-rail, rail);
+        let out = outputs[0].as_mut_slice();
+        match &mut self.noise {
+            Some(rng) => {
+                // σ = D·√(fs/2) from the block's rate; one √ per block, off the per-sample loop.
+                let sigma = self.noise_density.per_sample_sigma(inputs[0].rate());
+                for (o, &v) in out.iter_mut().zip(src) {
+                    let n = rng.next_gaussian() * sigma;
+                    *o = ((v + n) * gain).clamp(-rail, rail);
+                }
+            }
+            None => {
+                for (o, &v) in out.iter_mut().zip(src) {
+                    *o = (v * gain).clamp(-rail, rail);
+                }
+            }
         }
     }
 }

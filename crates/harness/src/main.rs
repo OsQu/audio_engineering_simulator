@@ -205,7 +205,7 @@ fn chain_cabled(amp: Volts, freq: f64) -> Graph {
 /// Compile a graph and render `blocks` blocks into one contiguous waveform. Off the hot path,
 /// so allocating the result `Vec` and `expect`-ing the compile are fine here.
 fn render(graph: Graph, blocks: usize) -> Vec<f32> {
-    let mut schedule = compile(graph, BLOCK_LEN, rate()).expect("a valid chain should compile");
+    let mut schedule = compile(graph, BLOCK_LEN, rate(), 0).expect("a valid chain should compile");
     let mut out = VoltageBuffer::zeros(BLOCK_LEN, rate());
     let mut samples = Vec::with_capacity(BLOCK_LEN * blocks);
     for _ in 0..blocks {

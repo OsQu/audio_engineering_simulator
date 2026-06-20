@@ -14,8 +14,8 @@
 )]
 
 use engine::{
-    AnalogRate, Cable, Farads, GainStage, Graph, InputZ, Ohms, PassiveSum, TestSource,
-    VoltageBuffer, Volts, compile,
+    AnalogRate, Cable, Farads, GainStage, Graph, InputZ, NoiseDensity, Ohms, PassiveSum,
+    TestSource, VoltageBuffer, Volts, compile,
 };
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -50,15 +50,19 @@ fn rate() -> AnalogRate {
 #[test]
 fn process_is_allocation_free() {
     // source → (cable) → gain → sum. The cabled edge also exercises the one-pole filter path,
-    // so the filter's per-sample loop is covered by the no-alloc check too.
+    // and the gain stage carries a noise floor, so both the filter's per-sample loop and the
+    // per-sample Gaussian draw are covered by the no-alloc check.
     let mut g = Graph::new();
     let src = g.add(TestSource::new(Volts::new(1.0), Ohms::new(100.0)));
-    let amp = g.add(GainStage::new(
-        2.0,
-        Volts::new(10.0),
-        InputZ::new(Ohms::new(10_000.0)),
-        Ohms::new(150.0),
-    ));
+    let amp = g.add(
+        GainStage::new(
+            2.0,
+            Volts::new(10.0),
+            InputZ::new(Ohms::new(10_000.0)),
+            Ohms::new(150.0),
+        )
+        .with_noise(NoiseDensity::new(10e-9)),
+    );
     let sum = g.add(PassiveSum::new(
         vec![InputZ::new(Ohms::new(10_000.0))],
         Ohms::new(150.0),
@@ -73,7 +77,7 @@ fn process_is_allocation_free() {
     g.connect(amp, 0, sum, 0);
     g.set_output(sum, 0);
 
-    let mut sched = compile(g, 64, rate()).expect("valid chain");
+    let mut sched = compile(g, 64, rate(), 0).expect("valid chain");
     let mut out = VoltageBuffer::zeros(64, rate());
 
     // Everything is allocated by `compile`; `process` must touch the allocator zero times —
