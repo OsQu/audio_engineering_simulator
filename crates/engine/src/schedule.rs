@@ -97,9 +97,32 @@ impl fmt::Display for CompileError {
 
 impl std::error::Error for CompileError {}
 
+/// A deterministic 50/60 Hz ground-loop hum generator coupled onto an edge: `amp·sin(phase)` per
+/// sample. `Copy` so every conductor of one edge holds an identical generator (same seeded phase,
+/// same increment) — the hum is common-mode and cancels at a balanced receiver.
+#[derive(Clone, Copy)]
+struct HumGen {
+    phase: f64,
+    dphase: f64,
+    amp: f32,
+}
+
+impl HumGen {
+    /// Next hum sample, advancing the phase. Hot path: no allocation, no panic.
+    #[inline]
+    fn step(&mut self) -> f32 {
+        let v = self.amp * self.phase.sin() as f32;
+        self.phase += self.dphase;
+        if self.phase >= core::f64::consts::TAU {
+            self.phase -= core::f64::consts::TAU;
+        }
+        v
+    }
+}
+
 /// A connection's baked local solve: scale by a constant gain, then (if cabled) the one-pole
-/// treble rolloff, then (if the cable picks up) add interference. See the module docs on why this
-/// is a struct, not a fixed contract.
+/// treble rolloff, then (if the cable couples it) add interference — broadband pickup and/or
+/// ground-loop hum. See the module docs on why this is a struct, not a fixed contract.
 struct EdgeTransform {
     gain: f32,
     lowpass: Option<OnePole>,
@@ -107,6 +130,8 @@ struct EdgeTransform {
     /// **identically-seeded** clone, so they draw the *same* sequence: the pickup is common-mode
     /// (equal on V+ and V−) and cancels at a balanced receiver, while passing on an unbalanced one.
     pickup: Option<(Rng, f32)>,
+    /// Ground-loop hum, identical on every conductor of the edge — common-mode, like pickup.
+    hum: Option<HumGen>,
 }
 
 impl EdgeTransform {
@@ -123,6 +148,11 @@ impl EdgeTransform {
             // Coupled onto the wire after the divider; broadband, so one Gaussian draw per sample.
             for d in dst.iter_mut() {
                 *d += rng.next_gaussian() * *sigma;
+            }
+        }
+        if let Some(hum) = &mut self.hum {
+            for d in dst.iter_mut() {
+                *d += hum.step();
             }
         }
     }
@@ -369,7 +399,8 @@ pub fn compile(
                 transforms.push(EdgeTransform {
                     gain: gains[k],
                     lowpass: e.cable.map(|c| c.lowpass(z_out, load, rate)),
-                    pickup: None, // installed below, after the gains are baked
+                    pickup: None, // pickup and hum are installed below, after the gains are baked
+                    hum: None,
                 });
             }
             edge_transform[ei] = Some(transforms);
@@ -377,21 +408,42 @@ pub fn compile(
         i = j;
     }
 
-    // --- 7b. Seed each edge's interference pickup. Split a stream per edge in **edge-index
-    //         order** from a root salted off the compile seed (kept separate from node seeding so
-    //         a node's stream is unchanged whether or not edges pick up). Every conductor of an
-    //         edge gets an identical clone, so the pickup is common-mode. Edges without pickup
-    //         still consume their split, so each edge's stream is stable regardless of neighbours.
+    // --- 7b. Seed each edge's coupled interference — broadband pickup and/or ground-loop hum.
+    //         Split a stream per edge in **edge-index order** from a root salted off the compile
+    //         seed (kept separate from node seeding so a node's stream is unchanged whether or not
+    //         edges couple anything). Every conductor of an edge gets the *identical* pickup clone
+    //         and hum generator, so both are common-mode. Edges with nothing still consume their
+    //         split, so each edge's stream is stable regardless of its neighbours.
     let mut edge_root = Rng::from_seed(seed ^ EDGE_SEED_SALT);
     for (ei, e) in edges.iter().enumerate() {
-        let stream = edge_root.split();
-        let density = e.cable.map_or(NoiseDensity::ZERO, |c| c.pickup());
-        if density != NoiseDensity::ZERO {
-            let sigma = density.per_sample_sigma(rate);
-            if let Some(transforms) = &mut edge_transform[ei] {
-                for t in transforms {
+        let mut stream = edge_root.split();
+        let Some(cable) = e.cable else { continue };
+
+        // Hum: a deterministic 50/60 Hz tone whose initial phase is seeded from the edge stream.
+        let hum = cable.hum().map(|(freq, amp)| {
+            let phase = f64::from(stream.next_f32_unit()) * core::f64::consts::TAU;
+            let dphase = core::f64::consts::TAU * freq * rate.seconds_per_sample();
+            HumGen {
+                phase,
+                dphase,
+                amp: amp.get(),
+            }
+        });
+        // Pickup: broadband Gaussian; the same (post-phase) stream clone on every conductor.
+        let pickup_sigma = {
+            let d = cable.pickup();
+            (d != NoiseDensity::ZERO).then(|| d.per_sample_sigma(rate))
+        };
+
+        if hum.is_none() && pickup_sigma.is_none() {
+            continue;
+        }
+        if let Some(transforms) = &mut edge_transform[ei] {
+            for t in transforms {
+                if let Some(sigma) = pickup_sigma {
                     t.pickup = Some((stream.clone(), sigma));
                 }
+                t.hum = hum;
             }
         }
     }
@@ -1273,5 +1325,125 @@ mod cmrr_phenomena {
         for &v in out.as_slice() {
             assert_relative_eq!(v, 2.0, epsilon = 1e-4);
         }
+    }
+}
+
+/// Story 1.5.5 — ground-loop hum: a 50/60 Hz common-mode tone coupled onto the cable. Audible on
+/// an unbalanced line, rejected (bit-exact) on a balanced one — the "lift the ground" lesson. It
+/// rides the same edge-injection seam as pickup, just a deterministic generator instead of noise.
+#[cfg(test)]
+mod hum_phenomena {
+    use super::*;
+    use crate::electrical::{Cable, Farads};
+    use crate::node::{BalancedDriver, BalancedReceiver, GainStage, TestSource};
+    use crate::signal::Volts;
+    use crate::test_util::tone_amplitude;
+    use approx::assert_relative_eq;
+
+    fn rate() -> AnalogRate {
+        AnalogRate::new(384_000.0)
+    }
+
+    const HUM_HZ: f64 = 60.0; // US mains; 50 Hz in the EU — just the parameter
+    const HUM_V: f32 = 0.1;
+    const LEN: usize = 64_000; // 10 whole cycles of 60 Hz at 384 kHz (6400 samples/cycle)
+
+    fn hum_cable() -> Cable {
+        Cable::new(Ohms::ZERO, Farads::ZERO).with_hum(HUM_HZ, Volts::new(HUM_V))
+    }
+
+    #[test]
+    fn unbalanced_carries_hum() {
+        // Silent source → humming cable → unity buffer → tap: the 60 Hz tone reaches the output at
+        // its full amplitude (≈0.1 V) — an unbalanced line has nothing to subtract it against.
+        let mut g = Graph::new();
+        let src = g.add(TestSource::new(Volts::new(0.0), Ohms::new(1.0)));
+        let buf = g.add(GainStage::new(
+            1.0,
+            Volts::new(10.0),
+            InputZ::new(Ohms::new(1e9)),
+            Ohms::new(1.0),
+        ));
+        g.connect_cabled(src, 0, buf, 0, hum_cable());
+        g.set_output(buf, 0);
+        let mut sched = compile(g, LEN, rate(), 9).expect("unbalanced hum chain");
+        let mut out = VoltageBuffer::zeros(LEN, rate());
+        sched.process(&mut out);
+        assert_relative_eq!(
+            tone_amplitude(out.as_slice(), HUM_HZ, rate()),
+            HUM_V,
+            max_relative = 1e-2
+        );
+    }
+
+    #[test]
+    fn balanced_rejects_hum() {
+        // The same humming cable between a balanced driver and receiver: the identical 60 Hz
+        // common-mode tone on both legs cancels at V+ − V− to bit-exact zero.
+        let mut g = Graph::new();
+        let src = g.add(TestSource::new(Volts::new(0.0), Ohms::new(1.0)));
+        let drv = g.add(BalancedDriver::new(
+            InputZ::new(Ohms::new(1e9)),
+            Ohms::new(1.0),
+        ));
+        let rcv = g.add(BalancedReceiver::new(Ohms::new(1e9), Ohms::new(150.0)));
+        g.connect(src, 0, drv, 0);
+        g.connect_cabled(drv, 0, rcv, 0, hum_cable());
+        g.set_output(rcv, 0);
+        let mut sched = compile(g, LEN, rate(), 9).expect("balanced hum chain");
+        let mut out = VoltageBuffer::zeros(LEN, rate());
+        sched.process(&mut out);
+        assert!(
+            out.as_slice().iter().all(|&v| v == 0.0),
+            "balanced should reject common-mode hum to bit-exact zero"
+        );
+    }
+}
+
+/// Story 1.5.3 — phantom power: +48 V common-mode DC powering a condenser mic. The mic puts it on
+/// the line common-mode (asserted at the node in `node::condenser`); here, end-to-end, a balanced
+/// receiver recovers just the audio and rejects the 48 V, and an unpowered mic is silent. Phantom
+/// rides the *same* common-mode rejection as pickup and hum — not a special case.
+#[cfg(test)]
+mod phantom_phenomena {
+    use super::*;
+    use crate::node::{BalancedReceiver, CondenserMic};
+    use crate::signal::Volts;
+    use approx::assert_relative_eq;
+
+    fn rate() -> AnalogRate {
+        AnalogRate::new(384_000.0)
+    }
+
+    #[test]
+    fn receiver_recovers_audio_and_rejects_phantom() {
+        // Powered mic: V+ = 48 + 1, V− = 48 − 1 (a 2 V differential signal on the +48 V common-mode
+        // pedestal). The balanced receiver returns V+ − V− ≈ 2 V — the audio — and the 48 V, being
+        // common-mode, cancels. Phantom and signal share one wire pair, separated by the difference.
+        let mut g = Graph::new();
+        let mic = g.add(CondenserMic::new(Volts::new(2.0), Ohms::new(150.0)));
+        let rcv = g.add(BalancedReceiver::new(Ohms::new(1e9), Ohms::new(150.0)));
+        g.connect(mic, 0, rcv, 0);
+        g.set_output(rcv, 0);
+        let mut sched = compile(g, 8, rate(), 0).expect("phantom mic chain");
+        let mut out = VoltageBuffer::zeros(8, rate());
+        sched.process(&mut out);
+        for &v in out.as_slice() {
+            assert_relative_eq!(v, 2.0, epsilon = 1e-3);
+        }
+    }
+
+    #[test]
+    fn unpowered_mic_yields_silence() {
+        // No phantom ⇒ the mic produces nothing on either conductor ⇒ the receiver difference is 0.
+        let mut g = Graph::new();
+        let mic = g.add(CondenserMic::new(Volts::new(2.0), Ohms::new(150.0)).unpowered());
+        let rcv = g.add(BalancedReceiver::new(Ohms::new(1e9), Ohms::new(150.0)));
+        g.connect(mic, 0, rcv, 0);
+        g.set_output(rcv, 0);
+        let mut sched = compile(g, 8, rate(), 0).expect("unpowered mic chain");
+        let mut out = VoltageBuffer::zeros(8, rate());
+        sched.process(&mut out);
+        assert!(out.as_slice().iter().all(|&v| v == 0.0));
     }
 }

@@ -2,7 +2,7 @@
 
 use super::{Farads, InputZ, Ohms};
 use crate::noise::NoiseDensity;
-use crate::signal::{AnalogRate, VoltageBuffer};
+use crate::signal::{AnalogRate, VoltageBuffer, Volts};
 
 /// An electrical cable: series resistance `r` + shunt capacitance `c`, optionally picking up
 /// interference.
@@ -18,6 +18,9 @@ use crate::signal::{AnalogRate, VoltageBuffer};
 ///   conductor — so on a balanced pair it cancels at the receiver difference (Story 1.5.2). The
 ///   schedule gives the edge its own seeded stream and adds the *same* per-sample draw to each
 ///   conductor.
+/// - the optional **hum** ([`with_hum`](Self::with_hum)) is a 50/60 Hz ground-loop tone, also
+///   **common-mode** — the same sine on every conductor — so balanced rejects it and unbalanced
+///   carries it (Story 1.5.5). Its phase is seeded from the edge stream for determinism.
 ///
 /// `r` and `c` describe the cable's **differential** path; on a balanced edge the schedule
 /// applies the same divider gain and an independent one-pole to each conductor (Story 1.5).
@@ -26,16 +29,19 @@ pub struct Cable {
     r: Ohms,
     c: Farads,
     pickup: NoiseDensity,
+    /// Ground-loop hum as `(frequency Hz, amplitude)`, or `None`.
+    hum: Option<(f64, Volts)>,
 }
 
 impl Cable {
-    /// A cable with series resistance `r` and shunt capacitance `c`, and no pickup.
+    /// A cable with series resistance `r` and shunt capacitance `c`, and no pickup or hum.
     #[must_use]
     pub fn new(r: Ohms, c: Farads) -> Self {
         Self {
             r,
             c,
             pickup: NoiseDensity::ZERO,
+            hum: None,
         }
     }
 
@@ -44,6 +50,21 @@ impl Cable {
     #[must_use]
     pub fn with_pickup(mut self, density: NoiseDensity) -> Self {
         self.pickup = density;
+        self
+    }
+
+    /// Set a ground-loop hum of `amplitude` at `freq_hz` (50 Hz in the EU, 60 Hz in the US),
+    /// coupled common-mode. Builder style: `Cable::new(r, c).with_hum(60.0, Volts::new(0.1))`.
+    ///
+    /// This is a **manual** injection: you are asserting a ground loop exists on this cable. Whether
+    /// a loop *actually* exists is a property of the patch's grounding topology (two mains-earthed
+    /// devices bonded by a shield), and is intended to become **emergent** from a compile-time
+    /// ground-cycle-detection pass — a ground lift or a floating device would then remove the hum on
+    /// its own. The amplitude stays phenomenological either way. See `IMPLEMENTATION_PLAN.md`, the
+    /// Epic 5 ground-topology decision.
+    #[must_use]
+    pub fn with_hum(mut self, freq_hz: f64, amplitude: Volts) -> Self {
+        self.hum = Some((freq_hz, amplitude));
         self
     }
 
@@ -60,6 +81,11 @@ impl Cable {
     /// The cable's interference pickup density ([`NoiseDensity::ZERO`] if none).
     pub fn pickup(self) -> NoiseDensity {
         self.pickup
+    }
+
+    /// The cable's ground-loop hum as `(frequency Hz, amplitude)`, or `None`.
+    pub fn hum(self) -> Option<(f64, Volts)> {
+        self.hum
     }
 
     /// Build this cable's one-pole low-pass for a given source and load.

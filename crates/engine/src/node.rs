@@ -21,6 +21,7 @@
 //! it would produce into an infinite load).
 
 mod balanced;
+mod condenser;
 mod dc_blocker;
 mod gain;
 mod lifted;
@@ -28,6 +29,7 @@ mod source;
 mod sum;
 
 pub use balanced::{BalancedDriver, BalancedReceiver};
+pub use condenser::CondenserMic;
 pub use dc_blocker::DcBlocker;
 pub use gain::GainStage;
 pub(crate) use lifted::Lifted;
