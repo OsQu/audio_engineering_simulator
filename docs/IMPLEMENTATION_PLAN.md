@@ -308,16 +308,76 @@ proving on its own.
 *Watch out:* the receiver takes V+ − V−; interference coupling equally to both must cancel. Pickup,
 phantom, and hum are voltages riding the conductors (common-mode DC/AC) — not flags.
 
+*Design notes (settled):*
+- **Representation: "buffer = conductor."** A port declares a **conductor count** (1 = unbalanced,
+  2 = balanced); the schedule pool allocates one flat `f32` `VoltageBuffer` **per conductor**, so
+  `in_len`/`out_len` simply start counting conductors and the existing contiguous-range slicing and
+  SIMD-friendly flat lanes are untouched. New logic stays confined to the electrical faces (they gain
+  a conductor count), the edge solve (per-conductor map + common-mode injection), and the balanced
+  driver/receiver nodes. *Rejected:* a polymorphic-width `VoltageBuffer` (breaks the flat-`f32`/SIMD
+  story protected since 1.1), and a pre-diagonalized `(differential, common-mode)` basis (mathematically
+  equivalent but "knows the answer" — CMRR should emerge from a literal `V+ − V−`, not from storing the
+  differential lane directly). **Unbalanced is the degenerate 1-conductor case** (cold leg grounded), so
+  balanced→unbalanced mismatches — a real hum source — emerge rather than being special-cased.
+- **Balanced is not a separate system — per-conductor processors compose via a framework lift.** A
+  balanced pair is just two wires; everything *between* the conductor-changing elements (the driver's
+  split, the receiver's difference) is ordinary per-conductor physics — AC-coupling DC blockers, gain,
+  cable rolloff, noise — and must compose on the pair, never be reimplemented as "balanced" variants
+  (that would make "balanced" a label, the very thing §5.4 forbids). So a node author writes a
+  single-conductor transform **once**; the compiler **infers** each per-conductor node's conductor
+  multiplicity from the wiring (anchored by the driver/receiver/source faces) and **replicates** the node
+  per leg — one independent state copy each, identical coefficients — by wrapping it in an internal
+  `Lifted` lane-node. The only genuinely balanced-specific elements are the conductor-changing ones.
+  CMRR rejection then emerges from **leg symmetry** (identical per-leg processing), and the deferred
+  **finite CMRR is exactly leg asymmetry** — so the deferral stays forward-compatible. Opt-in via
+  `Node::per_conductor()`; `Node::replicate()` mints a fresh per-leg instance. *Rejected:* a per-node
+  "balanced constructor" (keeps "balanced" out of every node's API), and compiler magic without an opt-in
+  (a node must declare itself per-conductor and how to replicate).
+- **CMRR is ideal-only; finite CMRR is deferred (possibly never).** Symmetric legs ⇒ the common-mode
+  voltage is identical on both conductors ⇒ it cancels exactly at the receiver difference — infinite
+  rejection, limited only by float precision. The headline lesson (balanced rejects, unbalanced passes
+  at 0 dB) needs nothing more. **Finite, realistic CMRR** would require modeling **leg-impedance
+  imbalance** so a common-mode voltage partly *converts* to differential and a sliver survives the
+  subtraction — deeper fidelity per §5.3 that does not earn its complexity at this simulation's accuracy.
+  Decided **deferred to later / possibly never**: revisit only if a concrete scenario needs a finite CMRR
+  figure. (Mirrors the resonance deferral in Story 1.2 — a documented decision, not a gap.)
+- **Pickup/hum couple onto the *edge* as common-mode** — the RNG-on-edges seam. `compile` splits an
+  independent, index-stable child `Rng` into each edge (parallel to the per-node seeding in step 7); the
+  edge step draws/generates the interference per sample and adds the **same value to every conductor** of
+  that edge, alloc-free like `GainStage`'s noise floor. Pickup is Gaussian (1.5.2); hum is a deterministic
+  50/60 Hz generator with seeded phase (1.5.5) — same injection point, different generator.
+- **Phantom is modeled at the source node, with the supply direction abstracted.** Physically +48 V flows
+  *upstream* (preamp → mic) against the pull-based DAG, so a phantom-powered condenser source simply
+  *emits* +48 V common-mode DC on both conductors when powered (its AC signal differentially), and is
+  silent when unpowered ("draws it" = the node gates on power). The upstream supply path and any
+  current-draw/voltage-sag are an informed approximation flagged per §5.3 and deferred.
+
+*Implementation phasing (dependency order; task numbers unchanged):* 1.5.1 (substrate) → **per-conductor
+lift detour (below)** → 1.5.2 (pickup + edge-injection seam) → **1.5.4 (CMRR — the validation capstone of
+pickup + balanced, pulled ahead)** → 1.5.5 (hum, reuses the seam) → **1.5.3 (phantom — orthogonal, depends
+only on the substrate, moved last)**.
+
+*Detour — per-conductor lift (substrate generalization, after 1.5.1):* built as its own short track
+before the remaining phases because it changes `compile` and the `Node` trait. **(D1)** `per_conductor()`
+/ `replicate()` trait hooks + the internal `Lifted` lane-wrapper (holds M independent single-conductor
+instances, fans `prepare`/`seed`/`process` across them). **(D2)** conductor-multiplicity inference in
+`compile` (a fixpoint over edges anchored by fixed faces; conflicts are `ConductorMismatch`) + wrapping
+each liftable node with M>1 in `Lifted`, before pool allocation so everything downstream is unchanged.
+**(D3)** `DcBlocker` opts in, proving an ordinary processor composes on a balanced pair — per-leg DC
+blocking, differential audio survives — which also de-risks phantom (1.5.3).
+
 - **Task 1.5.1** — Two-conductor (V+, V−) balanced ports + receiver difference; extend the solve.
 - **Task 1.5.2** — Cable pickup: broadband EMI as a noise voltage coupled *onto* the conductor(s) — the
   RNG-on-edges seam (an optional pickup density on the cable, edge gets its own split stream). Additive
   on unbalanced; sets up the rejection contrast. *(Moved here from Story 1.4.)*
 - **Task 1.5.3** — Phantom +48 V as common-mode DC; condenser source draws it.
-- **Task 1.5.4** — Balanced CMRR vs. unbalanced: pickup/hum coupling equally to both conductors cancels
-  at the receiver difference on balanced, passes on unbalanced (no rejection).
+- **Task 1.5.4** — Balanced CMRR vs. unbalanced (**ideal rejection only** — see the deferral above):
+  pickup/hum coupling equally to both conductors cancels at the receiver difference on balanced, passes
+  on unbalanced (no rejection).
 - **Task 1.5.5** — Ground-loop hum (50/60 Hz common-mode): rejected on balanced, audible on unbalanced.
 
-*Validate:* CMRR figure on balanced vs. unbalanced and pickup/hum rejection match hand calcs; phantom voltage present common-mode, absent differentially.
+*Validate:* ideal common-mode rejection on balanced vs. full pass-through on unbalanced (pickup and hum)
+match hand calcs; phantom voltage present common-mode, absent differentially.
 
 ### Story 1.6 — AD/DA converters (the boundary)
 *Goal:* the pedagogically rich modeled converters crossing volts ↔ dBFS, on top of a proven analog base.

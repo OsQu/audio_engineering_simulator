@@ -6,12 +6,13 @@
 //! writes those pre-allocated buffers, never allocating, panicking, or blocking.
 //!
 //! ## Buffers: two pools, no aliasing, no `unsafe`
-//! Voltage lives in two pools — one buffer per node **output** port, one per node **input**
-//! port. A node writes its open-circuit output into the output pool; an [`EdgeTransform`]
-//! reads an output buffer, applies the connection's gain and cable rolloff, and writes the
-//! result into an input buffer; the consuming node reads the input pool. Because a node's
-//! ports occupy a *contiguous range* of their pool, a step borrows `&input_pool[..]` and
-//! `&mut output_pool[..]` — two different `Vec`s — so the disjointness the borrow checker
+//! Voltage lives in two pools — one buffer per node **output conductor**, one per node **input
+//! conductor** (an unbalanced port owns one, a balanced port two: V+ then V−). A node writes its
+//! open-circuit output into the output pool; an [`EdgeTransform`] reads an output buffer, applies
+//! the connection's gain and cable rolloff, and writes the result into an input buffer; the
+//! consuming node reads the input pool. A balanced edge runs one transform per conductor. Because
+//! a node's conductors occupy a *contiguous range* of their pool, a step borrows `&input_pool[..]`
+//! and `&mut output_pool[..]` — two different `Vec`s — so the disjointness the borrow checker
 //! needs is structural, and the whole loop is safe and allocation-free.
 //!
 //! ## The connection seam
@@ -27,8 +28,8 @@ mod topo;
 pub use swap::ScheduleSlot;
 
 use crate::electrical::{InputZ, Ohms, OnePole, fan_out_gains};
-use crate::graph::Graph;
-use crate::node::Node;
+use crate::graph::{Edge, Graph};
+use crate::node::{Lifted, Node};
 use crate::rng::Rng;
 use crate::signal::{AnalogRate, VoltageBuffer};
 use core::fmt;
@@ -47,6 +48,15 @@ pub enum CompileError {
     /// Two connections target the same input port — fan-in is modeled by a node with several
     /// input ports, not by two edges into one.
     InputAlreadyConnected { node: usize, port: usize },
+    /// An output port and the input port it feeds declare different conductor counts (e.g. a
+    /// balanced output into an unbalanced input). Cross-type connections aren't modeled yet —
+    /// match conductor counts, or insert an adapter device when those arrive (Epic 5).
+    ConductorMismatch {
+        from_node: usize,
+        from_port: usize,
+        to_node: usize,
+        to_port: usize,
+    },
     /// The graph has a cycle; the local-solve engine has no feedback paths to resolve.
     Cycle,
 }
@@ -65,6 +75,16 @@ impl fmt::Display for CompileError {
             Self::InputAlreadyConnected { node, port } => {
                 write!(f, "node {node} input port {port} is already connected")
             }
+            Self::ConductorMismatch {
+                from_node,
+                from_port,
+                to_node,
+                to_port,
+            } => write!(
+                f,
+                "node {from_node} output port {from_port} and node {to_node} input port \
+                 {to_port} have different conductor counts (balanced vs. unbalanced)"
+            ),
             Self::Cycle => write!(f, "the graph has a cycle"),
         }
     }
@@ -200,7 +220,7 @@ pub fn compile(
     seed: u64,
 ) -> Result<Schedule, CompileError> {
     let Graph {
-        mut nodes,
+        nodes,
         edges,
         output,
     } = graph;
@@ -211,31 +231,76 @@ pub fn compile(
     check_node(&nodes, out_node.0)?;
     check_output_port(&nodes, out_node.0, out_port)?;
 
-    // --- 2. Buffer pools: one buffer per output port and per input port, contiguous by node
-    //        so each node's ports form a single sliceable range. ---
-    let mut out_offset = vec![0usize; node_count];
-    let mut in_offset = vec![0usize; node_count];
-    let mut output_pool = Vec::new();
-    let mut input_pool = Vec::new();
-    for n in 0..node_count {
-        out_offset[n] = output_pool.len();
-        for _ in 0..nodes[n].outputs().len() {
-            output_pool.push(VoltageBuffer::zeros(block_len, rate));
-        }
-        in_offset[n] = input_pool.len();
-        for _ in 0..nodes[n].inputs().len() {
-            input_pool.push(VoltageBuffer::zeros(block_len, rate));
-        }
-    }
-
-    // --- 3. Validate every edge's ports, and reject a second edge into any input. ---
-    let mut input_taken = vec![false; input_pool.len()];
+    // --- 2. Validate every edge's node and port indices up front: both the conductor inference
+    //        below and the buffer pool index nodes by them. (Lifting preserves port counts, so a
+    //        check here stays valid afterward.) ---
     for e in &edges {
         check_node(&nodes, e.from_node.0)?;
         check_node(&nodes, e.to_node.0)?;
         check_output_port(&nodes, e.from_node.0, e.from_port)?;
         check_input_port(&nodes, e.to_node.0, e.to_port)?;
-        let dst = in_offset[e.to_node.0] + e.to_port;
+    }
+
+    // --- 3. Infer each per-conductor node's conductor multiplicity from the wiring, then lift the
+    //        ones with >1 conductor — wrap in `Lifted`, one independent lane per leg. After this
+    //        every node's faces report its true conductor count and the rest of compile is
+    //        conductor-agnostic. A genuine balanced↔unbalanced clash surfaces here as a mismatch. ---
+    let per_c: Vec<bool> = nodes.iter().map(|n| n.per_conductor()).collect();
+    let multiplicity = infer_conductors(&nodes, &edges, &per_c)?;
+    let mut nodes: Vec<Box<dyn Node>> = nodes
+        .into_iter()
+        .enumerate()
+        .map(|(i, n)| {
+            if per_c[i] && multiplicity[i] > 1 {
+                Box::new(Lifted::new(n, multiplicity[i])) as Box<dyn Node>
+            } else {
+                n
+            }
+        })
+        .collect();
+
+    // --- 4. Buffer pools: one buffer per **conductor** (an unbalanced port owns one, a balanced
+    //        port two), contiguous by node so each node's conductors form a single sliceable
+    //        range. `*_port_base[n][p]` is the pool index of port p's first conductor; `*_count`
+    //        is the node's total conductor (buffer) count for the Step::Node slice. ---
+    let mut out_offset = vec![0usize; node_count];
+    let mut in_offset = vec![0usize; node_count];
+    let mut out_count = vec![0usize; node_count];
+    let mut in_count = vec![0usize; node_count];
+    let mut out_port_base: Vec<Vec<usize>> = Vec::with_capacity(node_count);
+    let mut in_port_base: Vec<Vec<usize>> = Vec::with_capacity(node_count);
+    let mut output_pool = Vec::new();
+    let mut input_pool = Vec::new();
+    for n in 0..node_count {
+        out_offset[n] = output_pool.len();
+        let mut obases = Vec::with_capacity(nodes[n].outputs().len());
+        for face in nodes[n].outputs() {
+            obases.push(output_pool.len());
+            for _ in 0..face.conductors() {
+                output_pool.push(VoltageBuffer::zeros(block_len, rate));
+            }
+        }
+        out_count[n] = output_pool.len() - out_offset[n];
+        out_port_base.push(obases);
+
+        in_offset[n] = input_pool.len();
+        let mut ibases = Vec::with_capacity(nodes[n].inputs().len());
+        for face in nodes[n].inputs() {
+            ibases.push(input_pool.len());
+            for _ in 0..face.conductors() {
+                input_pool.push(VoltageBuffer::zeros(block_len, rate));
+            }
+        }
+        in_count[n] = input_pool.len() - in_offset[n];
+        in_port_base.push(ibases);
+    }
+
+    // --- 5. Reject a second edge into any input port (fan-in is a multi-input node, not two edges
+    //        into one), marking the port's first conductor. Port ranges were checked in step 2 and
+    //        conductor counts reconciled in step 3. ---
+    let mut input_taken = vec![false; input_pool.len()];
+    for e in &edges {
+        let dst = in_port_base[e.to_node.0][e.to_port];
         if input_taken[dst] {
             return Err(CompileError::InputAlreadyConnected {
                 node: e.to_node.0,
@@ -245,13 +310,16 @@ pub fn compile(
         input_taken[dst] = true;
     }
 
-    // --- 4. Topological order (rejects cycles). ---
+    // --- 6. Topological order (rejects cycles). ---
     let deps: Vec<(usize, usize)> = edges.iter().map(|e| (e.from_node.0, e.to_node.0)).collect();
     let order = topo::topo_sort(node_count, &deps).ok_or(CompileError::Cycle)?;
 
-    // --- 5. Bake each edge's local solve. Edges sharing an output port are one fan-out node:
-    //        solve them together so the parallel loading is right. ---
-    let mut edge_transform: Vec<Option<EdgeTransform>> = (0..edges.len()).map(|_| None).collect();
+    // --- 7. Bake each edge's local solve. Edges sharing an output port are one fan-out node:
+    //        solve them together so the parallel loading is right. A balanced edge bakes **one
+    //        transform per conductor** — the same differential divider gain on each, but an
+    //        independent cable one-pole (each wire has its own filter state). ---
+    let mut edge_transform: Vec<Option<Vec<EdgeTransform>>> =
+        (0..edges.len()).map(|_| None).collect();
     let mut by_port: Vec<usize> = (0..edges.len()).collect();
     by_port.sort_by_key(|&ei| (edges[ei].from_node.0, edges[ei].from_port));
     let mut i = 0;
@@ -278,15 +346,21 @@ pub fn compile(
         for (k, &ei) in group.iter().enumerate() {
             let e = &edges[ei];
             let load = nodes[e.to_node.0].inputs()[e.to_port];
-            edge_transform[ei] = Some(EdgeTransform {
-                gain: gains[k],
-                lowpass: e.cable.map(|c| c.lowpass(z_out, load, rate)),
-            });
+            // One transform per conductor: same (differential) gain, an independent one-pole.
+            let conductors = load.conductors();
+            let mut transforms = Vec::with_capacity(conductors);
+            for _ in 0..conductors {
+                transforms.push(EdgeTransform {
+                    gain: gains[k],
+                    lowpass: e.cable.map(|c| c.lowpass(z_out, load, rate)),
+                });
+            }
+            edge_transform[ei] = Some(transforms);
         }
         i = j;
     }
 
-    // --- 6. Steps in topo order: each node, then its outgoing edges (so a downstream node's
+    // --- 8. Steps in topo order: each node, then its outgoing edges (so a downstream node's
     //        inputs are filled before it runs). ---
     let mut edges_from: Vec<Vec<usize>> = vec![Vec::new(); node_count];
     for (ei, e) in edges.iter().enumerate() {
@@ -297,24 +371,29 @@ pub fn compile(
         steps.push(Step::Node {
             node,
             in_start: in_offset[node],
-            in_len: nodes[node].inputs().len(),
+            in_len: in_count[node],
             out_start: out_offset[node],
-            out_len: nodes[node].outputs().len(),
+            out_len: out_count[node],
         });
         for &ei in &edges_from[node] {
             let e = &edges[ei];
-            let transform = edge_transform[ei]
+            let transforms = edge_transform[ei]
                 .take()
                 .expect("each edge is baked once and emitted once");
-            steps.push(Step::Edge {
-                src: out_offset[e.from_node.0] + e.from_port,
-                dst: in_offset[e.to_node.0] + e.to_port,
-                transform,
-            });
+            // Map conductor k of the source port to conductor k of the destination port.
+            let src_base = out_port_base[e.from_node.0][e.from_port];
+            let dst_base = in_port_base[e.to_node.0][e.to_port];
+            for (k, transform) in transforms.into_iter().enumerate() {
+                steps.push(Step::Edge {
+                    src: src_base + k,
+                    dst: dst_base + k,
+                    transform,
+                });
+            }
         }
     }
 
-    // --- 7. Prepare each node off the hot path: hand it the analog `rate` (so filter nodes bake
+    // --- 9. Prepare each node off the hot path: hand it the analog `rate` (so filter nodes bake
     //        their coefficients), then seed its stochastic state from an independent child
     //        stream. Split in node index order so a node's stream is stable regardless of topo
     //        order or which other nodes are noisy; rate-free / deterministic nodes use the
@@ -325,7 +404,8 @@ pub fn compile(
         node.seed(root.split());
     }
 
-    let out_buf = out_offset[out_node.0] + out_port;
+    // The tap is the output port's first conductor (its hot leg for a balanced port).
+    let out_buf = out_port_base[out_node.0][out_port];
     Ok(Schedule {
         nodes,
         input_pool,
@@ -334,6 +414,73 @@ pub fn compile(
         out_buf,
         block_len,
     })
+}
+
+/// Infer each per-conductor node's conductor multiplicity from the wiring.
+///
+/// A balanced line is two wires, and an inline per-conductor processor inherits its conductor
+/// count from what it's wired to — anchored by the fixed faces of sources, the balanced driver,
+/// and the receiver. This propagates those counts along edges to a fixpoint: a `Some` count on
+/// one end of an edge fixes a still-unknown per-conductor node on the other. Two *known* counts
+/// that disagree (e.g. a balanced output into an unbalanced input) are a [`ConductorMismatch`].
+/// Per-conductor nodes left unconstrained (isolated, or in an all-unbalanced subgraph) default to
+/// one conductor — i.e. they stay plain unbalanced nodes and are never lifted.
+///
+/// Returns one multiplicity per node (meaningful for per-conductor nodes; 1 otherwise).
+///
+/// [`ConductorMismatch`]: CompileError::ConductorMismatch
+fn infer_conductors(
+    nodes: &[Box<dyn Node>],
+    edges: &[Edge],
+    per_c: &[bool],
+) -> Result<Vec<usize>, CompileError> {
+    // `m[i]` is a per-conductor node's resolved count (`None` until inferred); fixed nodes read
+    // their count straight off the face, so their `m` entry is unused.
+    let mut m: Vec<Option<usize>> = vec![None; nodes.len()];
+
+    // A port's conductor count if currently known: the face for a fixed node, `m` for a
+    // per-conductor one (all its ports share the single multiplicity).
+    let port_cond = |node: usize, is_output: bool, port: usize, m: &[Option<usize>]| {
+        if per_c[node] {
+            m[node]
+        } else if is_output {
+            Some(nodes[node].outputs()[port].conductors())
+        } else {
+            Some(nodes[node].inputs()[port].conductors())
+        }
+    };
+
+    loop {
+        let mut changed = false;
+        for e in edges {
+            let from = port_cond(e.from_node.0, true, e.from_port, &m);
+            let to = port_cond(e.to_node.0, false, e.to_port, &m);
+            match (from, to) {
+                (Some(a), Some(b)) if a != b => {
+                    return Err(CompileError::ConductorMismatch {
+                        from_node: e.from_node.0,
+                        from_port: e.from_port,
+                        to_node: e.to_node.0,
+                        to_port: e.to_port,
+                    });
+                }
+                (Some(a), None) => {
+                    m[e.to_node.0] = Some(a);
+                    changed = true;
+                }
+                (None, Some(b)) => {
+                    m[e.from_node.0] = Some(b);
+                    changed = true;
+                }
+                _ => {}
+            }
+        }
+        if !changed {
+            break;
+        }
+    }
+
+    Ok(m.into_iter().map(|x| x.unwrap_or(1)).collect())
 }
 
 fn check_node(nodes: &[Box<dyn Node>], node: usize) -> Result<(), CompileError> {
@@ -764,5 +911,155 @@ mod clipping_phenomena {
             second / fund < 0.02,
             "symmetric clipping has no even harmonics"
         );
+    }
+}
+
+/// Story 1.5.1 — two-conductor balanced lines: a differential signal survives the trip, and a
+/// common-mode offset cancels at the receiver difference (`V+ − V−`). The rejection *emerges*
+/// from the subtraction; it is not a flag. "Tests are the oracle" (§3.5) — numbers hand-computed.
+#[cfg(test)]
+mod balanced_phenomena {
+    use super::*;
+    use crate::electrical::{Farads, Ohms};
+    use crate::node::{BalancedDriver, BalancedReceiver, DcBlocker, GainStage, TestSource};
+    use crate::signal::Volts;
+    use crate::test_util::{BalancedTestSource, SineSource, rms};
+    use approx::assert_relative_eq;
+
+    fn rate() -> AnalogRate {
+        AnalogRate::new(384_000.0)
+    }
+
+    #[test]
+    fn balanced_chain_preserves_the_differential_signal() {
+        // source(2 V, 1 Ω) → balanced driver → balanced receiver → tap. Every face is near-ideal
+        // (1 Ω out into 1 GΩ in), so each divider ≈ 1:
+        //   driver in ≈ 2 V → V+ = +1 V, V− = −1 V
+        //   balanced edge ≈ unity per conductor → V+ ≈ +1, V− ≈ −1
+        //   receiver out = V+ − V− ≈ 2 V  ← the differential survives unity end-to-end.
+        let mut g = Graph::new();
+        let src = g.add(TestSource::new(Volts::new(2.0), Ohms::new(1.0)));
+        let drv = g.add(BalancedDriver::new(
+            InputZ::new(Ohms::new(1e9)),
+            Ohms::new(1.0),
+        ));
+        let rcv = g.add(BalancedReceiver::new(Ohms::new(1e9), Ohms::new(150.0)));
+        g.connect(src, 0, drv, 0);
+        g.connect(drv, 0, rcv, 0);
+        g.set_output(rcv, 0);
+
+        let mut sched = compile(g, 8, rate(), 0).expect("valid balanced chain");
+        let mut out = VoltageBuffer::zeros(8, rate());
+        sched.process(&mut out);
+        for &v in out.as_slice() {
+            assert_relative_eq!(v, 2.0, epsilon = 1e-4);
+        }
+    }
+
+    #[test]
+    fn balanced_receiver_rejects_common_mode() {
+        // A balanced source emits a 2 V differential signal on a common-mode pedestal `cm`:
+        //   V+ = cm + 1, V− = cm − 1. The edge scales both conductors by the same ≈unity gain,
+        //   so the receiver difference is (cm+1) − (cm−1) = 2 V, *independent of cm*. That equal
+        //   scaling is why common-mode cancels — the headline of a balanced line.
+        fn run(cm: f32) -> f32 {
+            let mut g = Graph::new();
+            let src = g.add(BalancedTestSource::new(
+                Volts::new(2.0),
+                Volts::new(cm),
+                Ohms::new(1.0),
+            ));
+            let rcv = g.add(BalancedReceiver::new(Ohms::new(1e9), Ohms::new(150.0)));
+            g.connect(src, 0, rcv, 0);
+            g.set_output(rcv, 0);
+            let mut sched = compile(g, 8, rate(), 0).expect("valid balanced chain");
+            let mut out = VoltageBuffer::zeros(8, rate());
+            sched.process(&mut out);
+            out.get(0).get()
+        }
+
+        // No common-mode and a large +100 V common-mode pedestal give the same 2 V differential.
+        assert_relative_eq!(run(0.0), 2.0, epsilon = 1e-4);
+        assert_relative_eq!(run(100.0), 2.0, epsilon = 1e-4);
+        // Ideal rejection: the 100 V pedestal leaves no residue beyond float epsilon.
+        assert_relative_eq!(run(100.0), run(0.0), epsilon = 1e-4);
+    }
+
+    #[test]
+    fn rejects_conductor_count_mismatch() {
+        // A balanced output (2 conductors) into an unbalanced input (1) is a conductor mismatch:
+        // cross-type connections aren't modeled yet, so compile rejects it rather than guessing.
+        let mut g = Graph::new();
+        let drv = g.add(BalancedDriver::new(
+            InputZ::new(Ohms::new(1e9)),
+            Ohms::new(1.0),
+        ));
+        let amp = g.add(GainStage::new(
+            2.0,
+            Volts::new(10.0),
+            InputZ::new(Ohms::new(10_000.0)),
+            Ohms::new(150.0),
+        ));
+        g.connect(drv, 0, amp, 0); // balanced out → unbalanced in
+        g.set_output(amp, 0);
+        assert_eq!(
+            compile(g, 8, rate(), 0).err(),
+            Some(CompileError::ConductorMismatch {
+                from_node: 0,
+                from_port: 0,
+                to_node: 1,
+                to_port: 0,
+            })
+        );
+    }
+
+    #[test]
+    fn dc_blocker_composes_on_the_balanced_pair() {
+        // The DC blocker is a per-conductor node, so the compiler lifts it across the pair: the
+        // driver's 2-conductor output infers it to 2 and replicates it per leg. Before the lift
+        // this very wiring would be a ConductorMismatch — now an ordinary processor just composes,
+        // "balanced" never a label. (This is the mechanism phantom rides on in 1.5.3.)
+        //
+        //   source:  2 V DC + 1 V·sin(2π·10k)                    (single-ended)
+        //   driver:  V+ = 1 + 0.5·sin, V− = −(1 + 0.5·sin)       (≈unity edge)
+        //   per-leg DC block (1 kHz corner): strips the ±1 V DC on each leg → leaves ±0.5·sin
+        //   receiver: V+ − V− = sin  → amp 1 V, RMS 0.7071, mean 0
+        let mut g = Graph::new();
+        let src = g.add(SineSource::new(
+            10_000.0,
+            Volts::new(1.0),
+            Volts::new(2.0),
+            Ohms::new(1.0),
+        ));
+        let drv = g.add(BalancedDriver::new(
+            InputZ::new(Ohms::new(1e9)),
+            Ohms::new(1.0),
+        ));
+        let blk = g.add(DcBlocker::new(
+            Farads::new(15.915e-9), // with r = 10 kΩ → f_c = 1 kHz, a decade below the 10 kHz tone
+            Ohms::new(10_000.0),
+            Ohms::new(150.0),
+        ));
+        let rcv = g.add(BalancedReceiver::new(Ohms::new(1e9), Ohms::new(150.0)));
+        g.connect(src, 0, drv, 0);
+        g.connect(drv, 0, blk, 0);
+        g.connect(blk, 0, rcv, 0);
+        g.set_output(rcv, 0);
+
+        let len = 40_000; // ≫ settling (τ = RC ≈ 61 samples)
+        let mut sched =
+            compile(g, len, rate(), 0).expect("balanced chain with a lifted DC blocker");
+        let mut out = VoltageBuffer::zeros(len, rate());
+        sched.process(&mut out);
+        let tail = &out.as_slice()[len / 2..];
+
+        // DC stripped on each leg → the recovered differential averages to ≈ 0.
+        let mean: f64 = tail.iter().map(|&v| f64::from(v)).sum::<f64>() / tail.len() as f64;
+        assert!(
+            mean.abs() < 1e-2,
+            "per-leg DC block should remove the offset, mean = {mean}"
+        );
+        // Differential audio survives the passband: RMS ≈ amp/√2.
+        assert_relative_eq!(rms(tail), 0.707_106_77, max_relative = 2e-2);
     }
 }

@@ -77,6 +77,19 @@ impl Node for DcBlocker {
         self.tracker = Some(OnePole::new(self.r, self.c, rate));
     }
 
+    fn per_conductor(&self) -> bool {
+        // AC coupling is a per-leg series cap: on a balanced pair it's one blocker on each
+        // conductor. So the compiler may lift this node across a balanced connection — each leg
+        // gets its own identical high-pass (Story 1.5 detour).
+        true
+    }
+
+    fn replicate(&self) -> Box<dyn Node> {
+        // A fresh, unprepared blocker with the same R/C/Zout; `compile` prepares each lane, which
+        // bakes its own tracker (zeroed state).
+        Box::new(DcBlocker::new(self.c, self.r, self.outputs[0].z_out()))
+    }
+
     fn process(&mut self, inputs: &[VoltageBuffer], outputs: &mut [VoltageBuffer]) {
         let src = inputs[0].as_slice();
         let out = outputs[0].as_mut_slice();

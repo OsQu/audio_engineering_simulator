@@ -20,13 +20,17 @@
 //! applied by the schedule, so a node's output is always its **open-circuit** `v_src` (what
 //! it would produce into an infinite load).
 
+mod balanced;
 mod dc_blocker;
 mod gain;
+mod lifted;
 mod source;
 mod sum;
 
+pub use balanced::{BalancedDriver, BalancedReceiver};
 pub use dc_blocker::DcBlocker;
 pub use gain::GainStage;
+pub(crate) use lifted::Lifted;
 pub use source::TestSource;
 pub use sum::PassiveSum;
 
@@ -42,11 +46,16 @@ use crate::signal::{AnalogRate, VoltageBuffer};
 /// and compile. The schedule owns every buffer and hands `process` the node's own input and
 /// output blocks as already-sized slices — the node only reads inputs and writes outputs.
 ///
-/// # Buffers
-/// `inputs` and `outputs` are the node's ports in declaration order: `inputs[i]` carries the
-/// (already loaded-and-filtered) voltage arriving at input port `i`; the node writes the
-/// open-circuit voltage of output port `j` into `outputs[j]`. Every block is the same length,
-/// fixed at compile. An input port with nothing connected reads silence.
+/// # Buffers and conductors
+/// `inputs` and `outputs` are the node's ports' **conductors**, in port-then-conductor order: an
+/// unbalanced port owns one buffer, a **balanced** port two (V+ then V−). For an all-unbalanced
+/// node — every node before Story 1.5 — conductor index equals port index and `inputs[i]` is just
+/// port `i`'s arriving voltage. A node with a balanced port maps ports to conductor buffers itself
+/// from its declared faces' [`conductors`](crate::InputZ::conductors) (e.g. a balanced input's two
+/// buffers are `inputs[0]` = V+, `inputs[1]` = V−). Each input carries the already
+/// loaded-and-filtered voltage; the node writes each output conductor's **open-circuit** voltage.
+/// Every block is the same length, fixed at compile. A conductor with nothing connected reads
+/// silence.
 pub trait Node {
     /// The input impedance of each input port, in declaration order. Its length is the node's
     /// input-port count and must stay constant for the node's lifetime.
@@ -81,6 +90,30 @@ pub trait Node {
     /// the connection's cable filter, which `compile` builds directly — a stateful filter *node*
     /// needs the rate delivered to it. Off the hot path.
     fn prepare(&mut self, _rate: AnalogRate) {}
+
+    /// Whether this is a **per-conductor** processor the compiler may replicate across the
+    /// conductors of a balanced connection — one independent instance per leg, identical
+    /// coefficients (see `IMPLEMENTATION_PLAN.md`, Story 1.5 detour).
+    ///
+    /// A balanced line is two ordinary wires; an inline processor (a DC blocker, a gain) acts on
+    /// each leg independently, and that per-leg *symmetry* is what makes common-mode cancel at the
+    /// receiver. So such a node is written **once** for a single conductor and declares itself
+    /// per-conductor here; `compile` infers its conductor count from the wiring and lifts it. The
+    /// default is `false`: sources, the balanced driver/receiver, and conductor-mixing nodes own
+    /// their layout and are never lifted. A per-conductor node must have one input and one output
+    /// port (or none and one) and must implement [`replicate`](Self::replicate).
+    fn per_conductor(&self) -> bool {
+        false
+    }
+
+    /// Mint a fresh, independent instance of this node for one extra conductor lane — same
+    /// construction parameters, **zeroed** state. Called by `compile` only when
+    /// [`per_conductor`](Self::per_conductor) is `true` and the node is lifted onto a balanced
+    /// connection; each lane is later [`prepare`](Self::prepare)d and [`seed`](Self::seed)ed on
+    /// its own. The default is unreachable — overriding it is part of opting into the lift.
+    fn replicate(&self) -> Box<dyn Node> {
+        unreachable!("replicate() is only called on per-conductor nodes, which must override it")
+    }
 }
 
 #[cfg(test)]

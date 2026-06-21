@@ -12,7 +12,8 @@ use crate::signal::{AnalogRate, VoltageBuffer};
 /// - the **shunt C**, with the resistance it sees, forms a one-pole low-pass — the treble
 ///   rolloff ([`Cable::lowpass`]).
 ///
-/// Single-conductor for now; balanced lines arrive in Story 1.5.
+/// `r` and `c` describe the cable's **differential** path; on a balanced edge the schedule
+/// applies the same divider gain and an independent one-pole to each conductor (Story 1.5).
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Cable {
     r: Ohms,

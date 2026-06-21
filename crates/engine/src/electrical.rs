@@ -11,7 +11,10 @@
 //! See the Story 1.2 design notes for why higher-order/reactive behavior is deferred and
 //! how the connection seam is kept open for it.
 //!
-//! Single-conductor throughout; balanced (V+/V−) lines arrive in Story 1.5.
+//! A face is **unbalanced** (one conductor) or **balanced** (two conductors, V+/V−); see
+//! [`InputZ::balanced`] / [`OutputZ::balanced`]. For a balanced face the stored impedance is the
+//! **differential** impedance, and the schedule applies the resulting divider gain to each
+//! conductor of the edge (Story 1.5). The impedances themselves are still scalar [`Ohms`].
 
 mod cable;
 mod divider;
