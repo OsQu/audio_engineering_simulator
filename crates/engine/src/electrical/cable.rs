@@ -1,16 +1,23 @@
 //! The electrical cable: series resistance + shunt capacitance, and its one-pole low-pass.
 
 use super::{Farads, InputZ, Ohms};
+use crate::noise::NoiseDensity;
 use crate::signal::{AnalogRate, VoltageBuffer};
 
-/// An electrical cable: series resistance `r` + shunt capacitance `c`.
+/// An electrical cable: series resistance `r` + shunt capacitance `c`, optionally picking up
+/// interference.
 ///
 /// One lumped R-C section, which is exact enough because audio cables are *electrically
 /// short* (a 20 kHz wavelength in cable is ~10 km, so metres of cable behave as a lump, not
-/// a transmission line). The two parts play distinct roles and stay separable:
+/// a transmission line). The parts play distinct roles and stay separable:
 /// - the **series R** adds to the resistive divider (`Zcable` in [`divider_gain`](super::divider_gain));
 /// - the **shunt C**, with the resistance it sees, forms a one-pole low-pass — the treble
-///   rolloff ([`Cable::lowpass`]).
+///   rolloff ([`Cable::lowpass`]);
+/// - the optional **pickup** ([`with_pickup`](Self::with_pickup)) is broadband interference (EMI)
+///   coupling *onto* the wire as a noise voltage. It couples **common-mode** — equally onto every
+///   conductor — so on a balanced pair it cancels at the receiver difference (Story 1.5.2). The
+///   schedule gives the edge its own seeded stream and adds the *same* per-sample draw to each
+///   conductor.
 ///
 /// `r` and `c` describe the cable's **differential** path; on a balanced edge the schedule
 /// applies the same divider gain and an independent one-pole to each conductor (Story 1.5).
@@ -18,13 +25,26 @@ use crate::signal::{AnalogRate, VoltageBuffer};
 pub struct Cable {
     r: Ohms,
     c: Farads,
+    pickup: NoiseDensity,
 }
 
 impl Cable {
-    /// A cable with series resistance `r` and shunt capacitance `c`.
+    /// A cable with series resistance `r` and shunt capacitance `c`, and no pickup.
     #[must_use]
     pub fn new(r: Ohms, c: Farads) -> Self {
-        Self { r, c }
+        Self {
+            r,
+            c,
+            pickup: NoiseDensity::ZERO,
+        }
+    }
+
+    /// Set the cable's interference pickup as a spectral density (the same V/√Hz units as a
+    /// device noise floor). Builder style: `Cable::new(r, c).with_pickup(density)`.
+    #[must_use]
+    pub fn with_pickup(mut self, density: NoiseDensity) -> Self {
+        self.pickup = density;
+        self
     }
 
     /// The cable's series resistance (the `Zcable` term of the divider).
@@ -35,6 +55,11 @@ impl Cable {
     /// The cable's shunt capacitance.
     pub fn c(self) -> Farads {
         self.c
+    }
+
+    /// The cable's interference pickup density ([`NoiseDensity::ZERO`] if none).
+    pub fn pickup(self) -> NoiseDensity {
+        self.pickup
     }
 
     /// Build this cable's one-pole low-pass for a given source and load.

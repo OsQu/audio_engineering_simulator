@@ -91,7 +91,8 @@ fn process_is_allocation_free() {
         0,
         amp,
         0,
-        Cable::new(Ohms::new(100.0), Farads::new(1e-9)),
+        // Pickup on the cable exercises the edge's per-sample interference draw in the alloc check.
+        Cable::new(Ohms::new(100.0), Farads::new(1e-9)).with_pickup(NoiseDensity::new(10e-9)),
     );
     g.connect(amp, 0, dc, 0);
     g.connect(dc, 0, sum, 0);

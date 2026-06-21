@@ -30,9 +30,14 @@ pub use swap::ScheduleSlot;
 use crate::electrical::{InputZ, Ohms, OnePole, fan_out_gains};
 use crate::graph::{Edge, Graph};
 use crate::node::{Lifted, Node};
+use crate::noise::NoiseDensity;
 use crate::rng::Rng;
 use crate::signal::{AnalogRate, VoltageBuffer};
 use core::fmt;
+
+/// Salt mixed into the compile seed to derive the **edge** pickup root, keeping it independent of
+/// the per-node noise streams so adding cable pickup never perturbs a node's noise realization.
+const EDGE_SEED_SALT: u64 = 0xED9E_5EED_ED9E_5EED;
 
 /// Why a [`Graph`] could not be compiled. All structural — caught here, never on the hot path.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -93,10 +98,15 @@ impl fmt::Display for CompileError {
 impl std::error::Error for CompileError {}
 
 /// A connection's baked local solve: scale by a constant gain, then (if cabled) the one-pole
-/// treble rolloff. See the module docs on why this is a struct, not a fixed contract.
+/// treble rolloff, then (if the cable picks up) add interference. See the module docs on why this
+/// is a struct, not a fixed contract.
 struct EdgeTransform {
     gain: f32,
     lowpass: Option<OnePole>,
+    /// Per-conductor interference stream + per-sample σ. Every conductor of one edge holds an
+    /// **identically-seeded** clone, so they draw the *same* sequence: the pickup is common-mode
+    /// (equal on V+ and V−) and cancels at a balanced receiver, while passing on an unbalanced one.
+    pickup: Option<(Rng, f32)>,
 }
 
 impl EdgeTransform {
@@ -108,6 +118,12 @@ impl EdgeTransform {
         }
         if let Some(lp) = &mut self.lowpass {
             lp.process_slice(dst);
+        }
+        if let Some((rng, sigma)) = &mut self.pickup {
+            // Coupled onto the wire after the divider; broadband, so one Gaussian draw per sample.
+            for d in dst.iter_mut() {
+                *d += rng.next_gaussian() * *sigma;
+            }
         }
     }
 }
@@ -353,11 +369,31 @@ pub fn compile(
                 transforms.push(EdgeTransform {
                     gain: gains[k],
                     lowpass: e.cable.map(|c| c.lowpass(z_out, load, rate)),
+                    pickup: None, // installed below, after the gains are baked
                 });
             }
             edge_transform[ei] = Some(transforms);
         }
         i = j;
+    }
+
+    // --- 7b. Seed each edge's interference pickup. Split a stream per edge in **edge-index
+    //         order** from a root salted off the compile seed (kept separate from node seeding so
+    //         a node's stream is unchanged whether or not edges pick up). Every conductor of an
+    //         edge gets an identical clone, so the pickup is common-mode. Edges without pickup
+    //         still consume their split, so each edge's stream is stable regardless of neighbours.
+    let mut edge_root = Rng::from_seed(seed ^ EDGE_SEED_SALT);
+    for (ei, e) in edges.iter().enumerate() {
+        let stream = edge_root.split();
+        let density = e.cable.map_or(NoiseDensity::ZERO, |c| c.pickup());
+        if density != NoiseDensity::ZERO {
+            let sigma = density.per_sample_sigma(rate);
+            if let Some(transforms) = &mut edge_transform[ei] {
+                for t in transforms {
+                    t.pickup = Some((stream.clone(), sigma));
+                }
+            }
+        }
     }
 
     // --- 8. Steps in topo order: each node, then its outgoing edges (so a downstream node's
@@ -1061,5 +1097,181 @@ mod balanced_phenomena {
         );
         // Differential audio survives the passband: RMS ≈ amp/√2.
         assert_relative_eq!(rms(tail), 0.707_106_77, max_relative = 2e-2);
+    }
+}
+
+/// Story 1.5.2 — cable pickup: broadband interference (EMI) coupling onto the wire as a noise
+/// voltage. On an unbalanced edge it lands on the signal at the µV scale the plan calls for (the
+/// balanced *rejection* of it is the CMRR story, Story 1.5.4). "Tests are the oracle" (§3.5):
+/// the floor is a hand-computed number, with the calc inline.
+#[cfg(test)]
+mod pickup_phenomena {
+    use super::*;
+    use crate::electrical::{Cable, Farads};
+    use crate::node::{GainStage, TestSource};
+    use crate::signal::Volts;
+    use crate::test_util::rms;
+    use approx::assert_relative_eq;
+
+    fn rate() -> AnalogRate {
+        AnalogRate::new(384_000.0)
+    }
+
+    /// A near-ideal unity buffer: huge `Zin`, tiny `Zout`, gain 1, no internal noise — so its
+    /// output is exactly what arrived at its input (here, the pickup coupled onto the cable).
+    fn unity_buffer() -> GainStage {
+        GainStage::new(
+            1.0,
+            Volts::new(10.0),
+            InputZ::new(Ohms::new(1e9)),
+            Ohms::new(1.0),
+        )
+    }
+
+    /// Silent source → a cable that picks up `density` → unity buffer → tap; return the output.
+    fn run_pickup(density: NoiseDensity, len: usize, seed: u64) -> Vec<f32> {
+        let mut g = Graph::new();
+        let src = g.add(TestSource::new(Volts::new(0.0), Ohms::new(1.0)));
+        let buf = g.add(unity_buffer());
+        g.connect_cabled(
+            src,
+            0,
+            buf,
+            0,
+            Cable::new(Ohms::ZERO, Farads::ZERO).with_pickup(density),
+        );
+        g.set_output(buf, 0);
+        let mut sched = compile(g, len, rate(), seed).expect("valid pickup chain");
+        let mut out = VoltageBuffer::zeros(len, rate());
+        sched.process(&mut out);
+        out.as_slice().to_vec()
+    }
+
+    #[test]
+    fn cable_pickup_floor_matches_density() {
+        // Pickup couples onto the wire after the (≈unity) divider, so an unbalanced receiver sees
+        // the full floor:  σ = D·√(fs/2) = 10e-9·√192000 = 4.3818 µV. (200k samples ⇒ RMS
+        // converges to σ within ~0.16%; 2% is comfortable.)
+        let d = NoiseDensity::new(10e-9);
+        let sigma = d.per_sample_sigma(rate());
+        let out = run_pickup(d, 200_000, 0xCAB1_E000);
+        assert_relative_eq!(rms(&out), sigma, max_relative = 0.02);
+    }
+
+    #[test]
+    fn no_pickup_is_silence() {
+        // A cable with zero pickup density adds nothing — a silent source stays silent.
+        let out = run_pickup(NoiseDensity::ZERO, 1_000, 1);
+        assert!(out.iter().all(|&v| v == 0.0));
+    }
+
+    #[test]
+    fn pickup_is_reproducible() {
+        // Same compile seed ⇒ identical pickup realization (determinism for tests/replays).
+        let d = NoiseDensity::new(50e-9);
+        assert_eq!(run_pickup(d, 1_000, 42), run_pickup(d, 1_000, 42));
+    }
+}
+
+/// Story 1.5.4 — common-mode rejection: the same cable pickup that contaminates an unbalanced
+/// line cancels at a balanced receiver's difference. **Ideal rejection only** — both conductors
+/// carry the *identical* common-mode draw, so `V+ − V−` cancels it to **bit-exact zero** (infinite
+/// CMRR). Finite CMRR is leg *asymmetry*, deferred (Story 1.5 design notes). "Tests are the oracle".
+#[cfg(test)]
+mod cmrr_phenomena {
+    use super::*;
+    use crate::electrical::{Cable, Farads};
+    use crate::node::{BalancedDriver, BalancedReceiver, GainStage, TestSource};
+    use crate::signal::Volts;
+    use crate::test_util::rms;
+    use approx::assert_relative_eq;
+
+    fn rate() -> AnalogRate {
+        AnalogRate::new(384_000.0)
+    }
+
+    /// Pickup density used across the contrast: 50 nV/√Hz ⇒ σ = 50e-9·√192000 = 21.9 µV.
+    fn pickup_cable() -> Cable {
+        Cable::new(Ohms::ZERO, Farads::ZERO).with_pickup(NoiseDensity::new(50e-9))
+    }
+
+    /// Unbalanced: silent source → pickup cable → unity buffer → tap (the pickup passes straight
+    /// through — no second conductor to subtract it against).
+    fn run_unbalanced(len: usize, seed: u64) -> Vec<f32> {
+        let mut g = Graph::new();
+        let src = g.add(TestSource::new(Volts::new(0.0), Ohms::new(1.0)));
+        let buf = g.add(GainStage::new(
+            1.0,
+            Volts::new(10.0),
+            InputZ::new(Ohms::new(1e9)),
+            Ohms::new(1.0),
+        ));
+        g.connect_cabled(src, 0, buf, 0, pickup_cable());
+        g.set_output(buf, 0);
+        let mut sched = compile(g, len, rate(), seed).expect("unbalanced pickup chain");
+        let mut out = VoltageBuffer::zeros(len, rate());
+        sched.process(&mut out);
+        out.as_slice().to_vec()
+    }
+
+    /// Balanced: silent source → driver → pickup cable → receiver → tap. The pickup couples
+    /// common-mode (identical on both legs) and is rejected by the receiver difference.
+    fn run_balanced(len: usize, seed: u64) -> Vec<f32> {
+        let mut g = Graph::new();
+        let src = g.add(TestSource::new(Volts::new(0.0), Ohms::new(1.0)));
+        let drv = g.add(BalancedDriver::new(
+            InputZ::new(Ohms::new(1e9)),
+            Ohms::new(1.0),
+        ));
+        let rcv = g.add(BalancedReceiver::new(Ohms::new(1e9), Ohms::new(150.0)));
+        g.connect(src, 0, drv, 0);
+        g.connect_cabled(drv, 0, rcv, 0, pickup_cable());
+        g.set_output(rcv, 0);
+        let mut sched = compile(g, len, rate(), seed).expect("balanced pickup chain");
+        let mut out = VoltageBuffer::zeros(len, rate());
+        sched.process(&mut out);
+        out.as_slice().to_vec()
+    }
+
+    #[test]
+    fn unbalanced_passes_interference_while_balanced_rejects_it() {
+        let sigma = NoiseDensity::new(50e-9).per_sample_sigma(rate());
+        let unbal = run_unbalanced(200_000, 0xCAB1_E001);
+        let bal = run_balanced(200_000, 0xCAB1_E001);
+
+        // Unbalanced: the full µV pickup floor reaches the receiver (σ = 21.9 µV).
+        assert_relative_eq!(rms(&unbal), sigma, max_relative = 0.02);
+        // Balanced: the identical common-mode draw on V+ and V− cancels at the difference — exactly,
+        // not just statistically. Ideal (infinite) CMRR, the headline of a balanced line.
+        assert!(
+            bal.iter().all(|&v| v == 0.0),
+            "balanced should reject common-mode pickup to bit-exact zero, got rms {}",
+            rms(&bal)
+        );
+    }
+
+    #[test]
+    fn balanced_recovers_the_signal_through_pickup() {
+        // Not just zeroing everything: a 2 V DC differential signal driven through the same
+        // picking-up cable comes back clean (≈2 V), with the common-mode pickup gone and no noise
+        // left on top.
+        //   driver: V+ = +1, V− = −1; edge adds identical pickup p to each → V+ = g+p, V− = −g+p
+        //   receiver: (g+p) − (−g+p) = 2g ≈ 2 V — the pickup cancels, the signal survives.
+        let mut g = Graph::new();
+        let src = g.add(TestSource::new(Volts::new(2.0), Ohms::new(1.0)));
+        let drv = g.add(BalancedDriver::new(
+            InputZ::new(Ohms::new(1e9)),
+            Ohms::new(1.0),
+        ));
+        let rcv = g.add(BalancedReceiver::new(Ohms::new(1e9), Ohms::new(150.0)));
+        g.connect(src, 0, drv, 0);
+        g.connect_cabled(drv, 0, rcv, 0, pickup_cable());
+        g.set_output(rcv, 0);
+        let mut sched = compile(g, 16, rate(), 5).expect("balanced signal+pickup chain");
+        let mut out = VoltageBuffer::zeros(16, rate());
+        sched.process(&mut out);
+        for &v in out.as_slice() {
+            assert_relative_eq!(v, 2.0, epsilon = 1e-4);
+        }
     }
 }
