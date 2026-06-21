@@ -47,6 +47,11 @@ These were settled in design discussion and constrain every Epic:
 
 ## Epic 1 — Headless Voltage Engine
 
+**Progress:** Stories 1.1–1.5 ✅ done (scaffold/types, electrical primitives, runnable engine,
+analog-chain physics, balanced lines & common-mode). **Next: Story 1.6 — AD/DA converters**, where the
+digital domain (`SampleBuffer`, per-converter sample rate/bit depth, dBFS calibration) first appears.
+Then Story 1.7 closes the Epic. 142 engine tests green.
+
 **Goal:** the novel, risky core, built and validated headless. A graph of devices and cables
 propagating oversampled voltage in the analog domain, crossing the AD/DA boundary into and back
 out of digital, with all physical behavior *emerging* from the voltage math and asserted by tests.
