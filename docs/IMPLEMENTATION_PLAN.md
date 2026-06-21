@@ -301,7 +301,7 @@ green.
 *Validate:* ✅ SNR-down-the-chain (1.4.1), DC removal (1.4.2), and clip-onset voltages (1.4.3) all match
 hand calcs on running patches.
 
-### Story 1.5 — Balanced lines, cable pickup & common-mode physics
+### Story 1.5 — Balanced lines, cable pickup & common-mode physics — ✅ **Done**
 *Goal:* two-conductor balanced lines, the interference that couples onto cables, and everything that
 rides common-mode. Isolated as its own story because common-mode modeling is a distinct risk worth
 proving on its own.
@@ -366,18 +366,34 @@ each liftable node with M>1 in `Lifted`, before pool allocation so everything do
 **(D3)** `DcBlocker` opts in, proving an ordinary processor composes on a balanced pair — per-leg DC
 blocking, differential audio survives — which also de-risks phantom (1.5.3).
 
-- **Task 1.5.1** — Two-conductor (V+, V−) balanced ports + receiver difference; extend the solve.
-- **Task 1.5.2** — Cable pickup: broadband EMI as a noise voltage coupled *onto* the conductor(s) — the
+- ✅ **Task 1.5.1** — Two-conductor (V+, V−) balanced ports + receiver difference; extend the solve.
+- ✅ **Task 1.5.2** — Cable pickup: broadband EMI as a noise voltage coupled *onto* the conductor(s) — the
   RNG-on-edges seam (an optional pickup density on the cable, edge gets its own split stream). Additive
   on unbalanced; sets up the rejection contrast. *(Moved here from Story 1.4.)*
-- **Task 1.5.3** — Phantom +48 V as common-mode DC; condenser source draws it.
-- **Task 1.5.4** — Balanced CMRR vs. unbalanced (**ideal rejection only** — see the deferral above):
+- ✅ **Task 1.5.3** — Phantom +48 V as common-mode DC; condenser source draws it.
+- ✅ **Task 1.5.4** — Balanced CMRR vs. unbalanced (**ideal rejection only** — see the deferral above):
   pickup/hum coupling equally to both conductors cancels at the receiver difference on balanced, passes
   on unbalanced (no rejection).
-- **Task 1.5.5** — Ground-loop hum (50/60 Hz common-mode): rejected on balanced, audible on unbalanced.
+- ✅ **Task 1.5.5** — Ground-loop hum (50/60 Hz common-mode): rejected on balanced, audible on unbalanced.
+  *`Cable::with_hum` is a **manual** injection for now — a stand-in for hum whose **appearance** will later
+  emerge from a ground-topology cycle-detection pass (see the Epic 5 decision); amplitude stays
+  phenomenological.*
 
-*Validate:* ideal common-mode rejection on balanced vs. full pass-through on unbalanced (pickup and hum)
-match hand calcs; phantom voltage present common-mode, absent differentially.
+*Validate (✅ met):* ideal common-mode rejection on balanced (bit-exact zero) vs. full pass-through on
+unbalanced (pickup and hum) match hand calcs; phantom present common-mode (48 V), absent differentially.
+
+*Delivered:* balanced lines as **two conductors** (`InputZ`/`OutputZ::balanced`, "buffer = conductor" in
+the schedule pool; a balanced edge bakes one transform per conductor) with `BalancedDriver` (split) /
+`BalancedReceiver` (`V+ − V−`). The **per-conductor lift** (detour) — `Node::per_conductor()` /
+`replicate()` + the internal `Lifted` lane-wrapper + conductor-multiplicity inference in `compile` — lets
+ordinary single-conductor processors (e.g. `DcBlocker`) compose on the pair, so "balanced" is never a flag;
+common-mode rejection emerges from identical per-leg processing (finite CMRR = leg asymmetry, deferred).
+Interference couples on the **edge** as common-mode via a per-edge seeded stream (salted off the compile
+seed, split in edge-index order, identical clone per conductor): `Cable::with_pickup` (Gaussian) and
+`Cable::with_hum` (deterministic 50/60 Hz, seeded phase). `CondenserMic` emits +48 V phantom common-mode
+when powered. Tests prove ideal CMRR is bit-exact (identical common-mode on both legs cancels at `V+ − V−`)
+while unbalanced passes the µV pickup / hum tone / 48 V; hot path stays zero-alloc (no-alloc test covers the
+balanced edge, the lifted blocker, pickup, and hum). 142 engine tests green.
 
 ### Story 1.6 — AD/DA converters (the boundary)
 *Goal:* the pedagogically rich modeled converters crossing volts ↔ dBFS, on top of a proven analog base.
@@ -481,5 +497,28 @@ Keep device transforms understandable — spend the realism budget on the volts-
 - **Story 5.1** — More devices: deeper mixer, more processors, patchbay, more converters.
 - **Story 5.2** — Routing & live-sound scenarios at scale (multi-core partition of the schedule if needed).
 - **Story 5.3** — Deeper DSP and deeper AD/DA modeling as needed. Includes **clock-crossing / sample-rate-conversion** scenarios: mismatched converters (e.g. a 44.1k device into a 48k device) resample at the boundary, with the real artifacts emerging — the payoff of the "crossing any clock = resample" rate model settled in Story 1.1. *(Assess scope when we arrive — likely depends on the fractional resampler that AD/DA in Story 1.6 may or may not have already needed.)*
-- **Story 5.4** — Challenge / diagnostic-scenario framework on the sandbox.
+- **Story 5.4** — Challenge / diagnostic-scenario framework on the sandbox. Includes the
+  **ground-topology-derived hum** decision below ("fix the hum" is a named challenge scenario).
 - **Story 5.5** — Optional schematic / node-graph view over the same model.
+
+*Decision — ground-loop hum should become emergent from grounding topology (deferred to this Epic).*
+Today (Story 1.5) `Cable::with_hum` is a **manual** injection — the user asserts "a ground loop exists
+on this cable." That's a phenomenological stand-in, not the final design. A ground loop is a **loop in
+the ground network**: two mains-earthed devices *also* tied together by a cable shield form two ground
+paths between them ⇒ circulating 50/60 Hz current ⇒ hum. Break any leg (a floating/battery device, a
+**ground lift**, transformer/DI isolation) and the loop — and the hum — is gone, *regardless* of
+balanced vs. unbalanced (balanced merely rejects the hum when a loop does exist; it doesn't prevent the
+loop). So whether hum *appears* is a property of the patch's grounding, and should **emerge**, not be a
+flag:
+- Model a small **ground-connectivity** side-graph — devices declare mains-earthing; cables declare
+  whether the shield bonds the two grounds and whether it's lifted at an end.
+- At **compile**, **detect cycles** in that graph; a cable on a cycle between earthed devices is in a
+  ground loop ⇒ inject hum there. A lift / floating device / isolator removes an edge ⇒ no cycle ⇒ no hum.
+- This is compile-time **connectivity analysis, not a per-sample electrical loop solve**, so it honors
+  the "local solve only / no global nodal solve / signal graph is a DAG" decision (§5.3) — same kind of
+  cheap graph pass we already run for signal-DAG cycle detection, just on a separate graph.
+- The hum **amplitude stays phenomenological** (the induced voltage from loop area / earth-potential is
+  the "EM source" we hold out of scope). Only the *appearance and location* become emergent.
+*Prerequisites (none exist yet):* a ground/earth concept on devices, shield modeling on cables, and
+ground-lift controls — naturally introduced alongside Story 5.1 (patchbay/wiring) and consumed by the
+"fix the hum" diagnostic here. ROI is high then (the heart of the troubleshooting lesson), low now.
