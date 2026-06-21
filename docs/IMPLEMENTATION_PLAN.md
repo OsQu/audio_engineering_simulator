@@ -30,8 +30,18 @@ fast-forward) to `main` and delete on merge once the Story's *Validate* gate is 
 These were settled in design discussion and constrain every Epic:
 
 - **Engine in Rust**, native for dev/test, `wasm32` + SIMD for the browser. **UI in TypeScript.**
-- **Two distinct signal types**, never conflated: `VoltageBuffer` (oversampled, volts, analog)
-  vs `SampleBuffer` (base-rate, dBFS, digital). The AD/DA converters are the *only* bridge.
+- **An open set of signal carriers**, never conflated — analog voltage (`VoltageBuffer`), digital
+  audio (`SampleBuffer`, **linear** normalized samples + sample rate / bit depth / clock domain; dBFS
+  is a measurement, not storage), MIDI/control events, and later networked audio. Nodes present
+  **domain-tagged ports**; the only cross-domain elements are converters/bridges (AD/DA, protocol
+  receivers); a physical multi-I/O device is a **group of nodes**, not one. Carriers ride one `Lane`
+  enum so adding a carrier is additive, and domain-compatibility is validated at `compile`.
+- **Clocks are real rates against the analog continuum, not labels.** The analog oversample rate is
+  the universal time reference; each digital clock is a frequency (phase accumulator) against it.
+  Clock distribution is resolved as a compile-time side-graph (recovered-in-data vs dedicated word
+  clock vs PTP; clock source is per-device config); the failure of an unlocked link **emerges** as a
+  FIFO slip at runtime, not a flag, and SRC is the honest fix. Physical-layer decode (line coding,
+  PLL) is out of scope.
 - **Block-based, pull-based core**: `compile(graph) -> Schedule`, then
   `schedule.process(out, &control_queue, &event_queue)` — one code path for offline *and* real-time.
 - **Zero-alloc, lock-free, panic-free hot path.** Flush denormals. A panic in a WASM
@@ -48,9 +58,10 @@ These were settled in design discussion and constrain every Epic:
 ## Epic 1 — Headless Voltage Engine
 
 **Progress:** Stories 1.1–1.5 ✅ done (scaffold/types, electrical primitives, runnable engine,
-analog-chain physics, balanced lines & common-mode). **Next: Story 1.6 — AD/DA converters**, where the
-digital domain (`SampleBuffer`, per-converter sample rate/bit depth, dBFS calibration) first appears.
-Then Story 1.7 closes the Epic. 142 engine tests green.
+analog-chain physics, balanced lines & common-mode). **Next: Story 1.6 — AD/DA converters & the
+signal-carrier seam**, where the second carrier (digital audio: `SampleBuffer`, per-converter sample
+rate/bit depth, dBFS calibration, clock domain) first appears and the engine generalizes from one
+buffer type to an open set of carriers. Then Story 1.7 closes the Epic. 142 engine tests green.
 
 **Goal:** the novel, risky core, built and validated headless. A graph of devices and cables
 propagating oversampled voltage in the analog domain, crossing the AD/DA boundary into and back
@@ -400,21 +411,107 @@ when powered. Tests prove ideal CMRR is bit-exact (identical common-mode on both
 while unbalanced passes the µV pickup / hum tone / 48 V; hot path stays zero-alloc (no-alloc test covers the
 balanced edge, the lifted blocker, pickup, and hum). 142 engine tests green.
 
-### Story 1.6 — AD/DA converters (the boundary)
-*Goal:* the pedagogically rich modeled converters crossing volts ↔ dBFS, on top of a proven analog base.
+### Story 1.6 — AD/DA converters & the signal-carrier seam *(the second carrier)*
+*Goal:* the pedagogically rich modeled converters crossing volts ↔ digital samples, on top of a
+proven analog base — **and** the architectural generalization they force: from one buffer type to an
+**open set of signal carriers**. This is the second pivotal story (after 1.3): where the "two distinct
+signal types, never conflated" discipline finally gets its second producer, and where the seam for
+MIDI (1.7) and networked audio (Epic 5) is laid.
 *Watch out:* use **polyphase** decimation/interpolation (compute only at the rate you need) — naive
 filtering at the oversampled rate is ~8× wasteful. Reference voltage → dBFS mapping must be explicit.
+Keep buffers **linear**; dBFS is a measurement helper, never storage. Don't bake a *closed* two-type
+model — the carrier set is open.
 
-- **Task 1.6.1** — AD: polyphase anti-alias decimation, quantization (variable bit depth), reference-voltage → dBFS. Output is `SampleBuffer`.
-- **Task 1.6.2** — DA: polyphase interpolation + reconstruction filter → `VoltageBuffer`.
-- **Task 1.6.3** — Calibration & artifact tests: "+4 dBu = −18 dBFS" holds; weak AA filter ⇒ measurable aliasing fold-back; low bit depth ⇒ measurable quantization noise.
+*Design notes (settled — pressure-tested against a real multi-I/O interface device):*
+- **Carriers, not buffer types — an open `Lane` enum.** A node's ports flow one of several carriers;
+  the schedule pool holds a `Lane { Voltage(VoltageBuffer), Sample(SampleBuffer), … }` and
+  `Node::process(&[Lane], &mut [Lane])` keeps a **single signature**. *Rejected:* **typed lanes**
+  (per-domain `VoltageNode`/`SampleNode` traits + typed pools) — its premise that a node is
+  single-domain fails for the central product device (an interface with analog + ADAT + SPDIF + MIDI
+  ports is inherently heterogeneous), and it scales combinatorially with carriers and bridges.
+  *Rejected:* a **closed 2-variant** enum — MIDI is not a dense sample buffer at all (it's sparse
+  events), so the lane representation must admit non-buffer carriers from the start. The enum's cost
+  is one `match` per step (per block, not per sample) plus a one-line `as_voltage()` accessor per node
+  port; domain-compatibility joins the other checks at the single `compile` validation gate
+  (consistent with `ConductorMismatch`, cycle detection) — `process` stays total.
+- **Ports carry a domain; edges carry a domain-appropriate transform.** Introduce `Port` (the name
+  reserved since Story 1.2) wrapping a `Domain` + the face that domain needs (electrical `InputZ` /
+  `OutputZ` for analog; format + clock role for digital; none for MIDI). `Step::Edge` generalizes to
+  `EdgeKind { Analog(EdgeTransform), DigitalRoute, … }` — the analog electrical solve is one arm,
+  unchanged. `compile` allocates each port's lanes into a per-domain pool, sized per domain (analog at
+  `block_len`, digital at `block_len/M`), and rejects a cross-domain edge that isn't a converter.
+- **The multi-I/O device is a *group of nodes*, not one node.** The interface decomposes into preamps
+  (V→V), internal AD (V→Sample), digital router (Sample→Sample), internal DA (Sample→V), MIDI routing
+  (events→events) — separate nodes sharing a logical-device identity (the UI/save-load grouping,
+  Epic 4). Only the converters/bridges straddle domains; everything else stays single-domain. (Honors
+  the "one chassis → many nodes" model from Story 1.3.)
+- **`SampleBuffer` stores linear normalized samples** (±1.0 = full scale), parallel to
+  `VoltageBuffer`, and carries a **distinct `SampleRate` newtype** (not the analog `AnalogRate` — the
+  type system must stop you conflating the two), a `BitDepth`, and a **`ClockDomainId`** (see clocks
+  below). dBFS is a conversion helper (volts/samples ↔ dBFS), never the storage format.
+- **dBFS calibration is per-converter and peak-referenced.** 0 dBFS = a sample of ±1.0 (peak). The AD
+  holds a **reference (full-scale) voltage** — its own property, not a global constant (mirrors
+  per-converter rate). The headline "+4 dBu = −18 dBFS" must pin the peak/RMS convention in the test's
+  hand calc: +4 dBu = 1.228 V RMS = 1.737 V peak; −18 dBFS peak ⇒ full-scale ≈ 13.8 V peak.
+- **Anti-alias / reconstruction filtering is a steep linear-phase FIR** (windowed-sinc), the
+  **designed digital decimation/interpolation filter** of a modern oversampling converter — the steep
+  filter really is digital in today's hardware; the gentle analog pre-filter sits up near the analog
+  Nyquist and we don't need it (nothing generates content above it). This is **new infrastructure**
+  (the engine has only the IIR `OnePole` so far): taps designed at `compile`, zero-alloc ring-buffer
+  convolution in `process`, `f64` accumulator, denormal flush. The demonstrable "weak AA filter" knob
+  is **tap count / transition-band width**. **Polyphase** from the start: an L-tap FIR splits into M
+  phases of L/M taps; the AD runs one phase per output sample, the DA one phase per input sample.
+- **Integer-divide rate constraint (for now).** A converter's sample rate must integer-divide the
+  analog rate (`M` integer), so polyphase is clean and the digital block is `block_len/M`; the analog
+  rate is chosen accordingly (e.g. 8×48 k = 384 k). Mixing rationally-unrelated families (44.1 k with
+  48 k) needs a **fractional** resampler — deferred to Story 5.3, where async clock boundaries first
+  exist. `compile` rejects a non-integer ratio rather than guessing.
+- **Quantization uses seeded TPDF dither.** Triangular-PDF dither before rounding, drawn from the
+  node's existing seeded `Rng` (via the `seed` hook, so it's deterministic) — decorrelates the error
+  into a flat noise floor (the "low bit depth ⇒ measurable quantization noise" payoff), as real
+  converters do. *Rejected for the first cut:* naive rounding (correlated harmonic distortion — a
+  different, less faithful artifact).
+- **Clocks: one domain now, the emergent model later.** A `SampleBuffer` carries a `ClockDomainId`
+  that is the **identity of the oscillator that produced it** (+ its real rate), *not* a label to
+  compare. In 1.6 the AD and DA share the single internal device clock, so there is exactly one domain
+  and no async boundary — none of the emergent machinery is built. But the representation is chosen to
+  **grow into** it without a rewrite: a clock is a real frequency against the analog continuum (a
+  phase accumulator), clock distribution is a compile-time side-graph, and the failure of an unlocked
+  link **emerges** as a finite-FIFO over/underflow (clicks/slips) — all built in **Epic 5** (5.3)
+  alongside SRC, where multiple devices/domains first coexist. Physical-layer decode (line coding,
+  PLL) is **out of scope** (internal circuitry, §2 Non-Goals).
 
-*Validate:* calibration mapping exact; aliasing and quantization artifacts measurable and matching prediction — because the analog chain underneath is already proven, a failure here is the converter's.
+- **Task 1.6.1** — The carrier seam: `Lane` enum (Voltage, Sample), `SampleBuffer` (linear, +
+  `SampleRate` / `BitDepth` / `ClockDomainId`), domain-tagged `Port` / faces, `EdgeKind { Analog,
+  DigitalRoute }`, per-domain pool sizing and cross-domain validation in `compile`, and the
+  `Node::process(&[Lane], &mut [Lane])` migration (existing nodes read Voltage lanes). No converter
+  yet — just the plumbing, with the existing analog tests green through the generalized types.
+- **Task 1.6.2** — FIR primitive: windowed-sinc tap design at `compile`, zero-alloc polyphase
+  convolution in `process`, `f64` accumulator, denormal flush. Tested against hand-computed filter
+  responses; the "weak filter" parameter exercised.
+- **Task 1.6.3** — AD: polyphase anti-alias decimation (integer `M`), seeded-TPDF-dither quantization
+  at variable bit depth, reference-voltage → dBFS calibration. Output is a `Sample` lane; opens the
+  (single) clock domain.
+- **Task 1.6.4** — DA: polyphase interpolation + reconstruction FIR → `Voltage` lane.
+- **Task 1.6.5** — Calibration & artifact tests: "+4 dBu = −18 dBFS" holds (peak-referenced hand
+  calc); weak AA filter ⇒ measurable aliasing fold-back; low bit depth ⇒ measurable quantization
+  **noise floor** (TPDF, not harmonic distortion).
+
+*Validate:* calibration mapping exact; aliasing and quantization artifacts measurable and matching
+prediction; the full chain `analog → AD → digital → DA → analog` runs through the generalized carrier
+seam with the analog physics from Stories 1.2–1.5 intact — because the analog chain underneath is
+already proven, a failure here is the converter's or the seam's.
 
 ### Story 1.7 — Input lanes & a playable voice (headless)
 *Goal:* the two-lane input system and a simple synth voice, exercised without audio output.
 *Watch out:* keep control (smoothed) and events (sample-accurate) genuinely separate. The oscillator
 lives in the oversampled analog domain — aliasing is handled by the AD filter, so no band-limiting tricks needed yet.
+
+*Design note (settled):* MIDI/control **events are the third signal carrier** — a `Lane::Events`
+variant (sparse timestamped messages, not a dense buffer) added to the seam from Story 1.6, with an
+event-route `EdgeKind`. The synth voice is the first **cross-domain node** (events-in → voltage-out),
+proving the heterogeneous-domain node and the sparse-lane representation. The schedule's external
+event queue and an inter-device MIDI edge feed the *same* event lane — a wiring detail, one carrier.
 
 - **Task 1.7.1** — Lock-free control-param queue (latest-wins) + per-block de-zippering.
 - **Task 1.7.2** — Timestamped event queue (note-on/off/gate) applied at sample offsets within a block.
@@ -500,8 +597,19 @@ Keep device transforms understandable — spend the realism budget on the volts-
 *Tasks to be elaborated when we reach this Epic.*
 
 - **Story 5.1** — More devices: deeper mixer, more processors, patchbay, more converters.
-- **Story 5.2** — Routing & live-sound scenarios at scale (multi-core partition of the schedule if needed).
-- **Story 5.3** — Deeper DSP and deeper AD/DA modeling as needed. Includes **clock-crossing / sample-rate-conversion** scenarios: mismatched converters (e.g. a 44.1k device into a 48k device) resample at the boundary, with the real artifacts emerging — the payoff of the "crossing any clock = resample" rate model settled in Story 1.1. *(Assess scope when we arrive — likely depends on the fractional resampler that AD/DA in Story 1.6 may or may not have already needed.)*
+- **Story 5.2** — Routing & live-sound scenarios at scale (multi-core partition of the schedule if
+  needed). Includes **networked audio** (Dante/AES67) as a carrier: digital-audio sample streams over
+  an IP transport with its own routing, subscriptions, latency, and a network clock (PTP) — modeled
+  "TCP/IP layer upwards" (network behavior + encoding), reusing the `Sample` lane and the clock-domain
+  machinery, with the transport/subscription model as the net-new piece.
+- **Story 5.3** — Deeper DSP and deeper AD/DA modeling as needed. Includes **clock domains, sync, and
+  sample-rate conversion** — the payoff of the "crossing any clock = resample" rate model (Story 1.1)
+  and the carrier/clock seam (Story 1.6). This is where the **emergent clock model** (the clock-domains
+  decision below) is built: per-domain oscillators as real rates against the analog continuum, elastic
+  FIFOs at async boundaries that genuinely slip, word-clock master/slave, recovered-vs-dedicated
+  clocking, and a **fractional sample-rate converter** as the honest fix (also what lets a 44.1 k
+  device meet a 48 k one). "Fix the clocking" (set a master, slave the rest) becomes a diagnostic
+  challenge alongside "fix the hum".
 - **Story 5.4** — Challenge / diagnostic-scenario framework on the sandbox. Includes the
   **ground-topology-derived hum** decision below ("fix the hum" is a named challenge scenario).
 - **Story 5.5** — Optional schematic / node-graph view over the same model.
@@ -527,3 +635,27 @@ flag:
 *Prerequisites (none exist yet):* a ground/earth concept on devices, shield modeling on cables, and
 ground-lift controls — naturally introduced alongside Story 5.1 (patchbay/wiring) and consumed by the
 "fix the hum" diagnostic here. ROI is high then (the heart of the troubleshooting lesson), low now.
+
+*Decision — clock domains and their failures emerge from a clock-distribution side-graph + real
+per-domain rates (deferred to this Epic).* Through Story 1.6 there is a single internal clock domain
+and no async boundary, so a `SampleBuffer` merely carries its producing oscillator's identity and
+rate. The full model lands here, mirroring the ground-loop-hum approach (a cheap compile-time
+connectivity pass over a side-graph, plus an emergent runtime consequence — never a flag):
+- Devices declare a **clock source** — `Internal(rate)`, `RecoverFrom(digital input)`, or
+  `WordClock(input)` — and word-clock links form a **clock-distribution side-graph**, independent of
+  the audio DAG (a dedicated master is a star over BNC, decoupling clock topology from audio routing:
+  re-patch audio without breaking sync, one place to change rate, no clock loops).
+- At **compile**, resolve the side-graph: assign each device to a **clock domain** (follow sources to
+  a root master), detect no-clock / clock-loops / rate conflicts, and mark the **async boundaries**
+  where two domains meet.
+- At **runtime**, the consequence is **emergent**: each domain advances a phase accumulator at its
+  real rate (with crystal-ppm differences) against the analog continuum, and a finite **elastic FIFO**
+  at each async boundary genuinely over/underflows → the clicks/slips of an unlocked link. Sharing a
+  master collapses the domains (no boundary, no slip); a **sample-rate converter** at the boundary
+  re-grids one domain onto the other (the honest fix).
+- **Out of scope:** the physical layer — line coding (biphase-mark), PLL clock recovery, bit
+  de-framing (inside-the-box circuitry, §2). We model whether a link *locks* and *slips*, not its
+  bitstream. True jitter *spectra* are a further optional depth we do not expect to need.
+*Prerequisites:* the carrier/clock seam and `ClockDomainId` stamp (Story 1.6); multiple digital
+devices and the fractional resampler (this Epic). ROI is high here (multi-device digital sync is the
+heart of the lesson), nil before.

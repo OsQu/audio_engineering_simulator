@@ -71,23 +71,33 @@ and DSP.
 
 These are conceptual; technical implementation is derived separately.
 
-- **Signal** — the thing that flows, and it differs by domain:
+- **Signal** — the thing that flows. It is not one type but an **open set of carriers**, each
+  modeled to the depth that matters in the audio world:
   - *Analog:* a real, oversampled **voltage waveform** `v(t)` in volts. For balanced lines this
     is two conductors (V+, V−). DC components (offset, phantom) ride on the same waveform.
-  - *Digital:* a sample stream in dBFS at a given sample rate and bit depth, produced only by a
-    modeled AD converter.
+  - *Digital audio:* a stream of **linear normalized samples** at a given sample rate and bit
+    depth, produced only by a modeled AD converter, and belonging to a **clock domain**. dBFS is a
+    *measurement* of those samples (a conversion helper), never the storage format — buffers stay
+    linear, exactly as analog buffers store linear volts, not dB.
+  - *MIDI / control events:* sparse **timestamped messages** (note on/off, CC, clock), not a
+    sample stream — the engine's event lane (Story 1.7), routable between devices like any signal.
+  - *Networked audio* (Dante/AES67, later): digital audio carried over an IP transport with its
+    own routing, encoding, and network clock (PTP).
   - A light classification tag (mic / line / instrument / speaker / digital format such as
     AES/ADAT/USB) may ride along for UX and validation, but the *behavior* comes from the
-    physics, not the tag.
+    physics and the carrier, not the tag.
 - **Device** — a black box that presents **real electrical terminals**: each output is a
   Thévenin equivalent (ideal voltage source + series **output impedance**), each input has an
   **input impedance**. It has **controls** (knobs/switches/faders), internal **state**, and a
   **transform** mapping input signal(s) → output signal(s). Modeled from real gear: realistic
   layout, the important controls, realistic I/O.
-- **Port** — a typed connection point (mic in, line out, insert, digital I/O, etc.) carrying
-  its impedance and (for analog) its voltage. Type and impedance expectations are not validated
-  by rules but realized by the voltage physics — mismatches simply produce the real measurable
-  consequence.
+- **Port** — a typed connection point (mic in, line out, insert, digital I/O, MIDI, etc.) that
+  declares its **carrier domain** and the face that domain needs: an analog port carries its
+  impedance and voltage; a digital-audio port its format (rate, bit depth, channels) and clock
+  role; a MIDI port neither. Analog impedance/level expectations are not validated by rules but
+  realized by the voltage physics — mismatches simply produce the real measurable consequence; a
+  connection between *incompatible carriers* is the one thing rejected at compile, since no physics
+  bridges them without an explicit converter.
 - **Connection (cable)** — links an output port to an input port and is itself an electrical
   element: series resistance + capacitance (HF rolloff on long runs), noise pickup, and
   balanced/unbalanced behavior. The voltage a receiver sees is the voltage-divider result of
@@ -206,6 +216,52 @@ DSP transforms (filters, dynamics, etc.) start simple and deepen in later stages
 budget is spent specifically on the volts-and-converters layer; device transforms above the
 wire stay understandable.
 
+### 5.6 Signal carriers, domains & clocks
+
+The engine carries an **open set of signal carriers**, not a single buffer type: analog voltage,
+digital audio, MIDI/control events, and (later) networked audio. A real device mixes them — a typical
+audio interface has mic/line analog inputs, ADAT/SPDIF digital I/O, MIDI, and internal AD/DA all at
+once. We model each carrier to the depth that matters in the audio world (volts for analog; the
+sample stream + clock for digital audio; the protocol/event stream for MIDI; audio over an IP
+transport for networked audio), and never conflate them.
+
+**Nodes present domain-tagged ports; connections carry domain-appropriate transforms.** A node
+declares each port's carrier domain; a connection between two ports of the same domain applies that
+domain's transform (the electrical solve for analog, a sample route for digital, an event route for
+MIDI); a connection between *different* domains is rejected at compile unless one side is a
+**converter**. The only genuinely cross-domain elements are converters and protocol bridges — the
+AD/DA, an SPDIF/ADAT receiver, a network endpoint. A physical multi-I/O device is therefore **not one
+node** but a **group of nodes** wired internally (preamps → internal AD → digital router → internal
+DA → MIDI routing), sharing a logical-device identity for the UI — the "one chassis, many nodes"
+model. This keeps every node single- or few-domain while the heterogeneity lives in the graph.
+
+**Clocks are real rates against the analog continuum, not labels.** The oversampled analog rate is
+our proxy for continuous time and doubles as the engine's universal time reference. Every digital
+clock is a real frequency sampling that continuum (a phase accumulator), so independently-clocked
+devices with even a few-ppm crystal difference genuinely **drift** against each other. Whether two
+connected digital devices share a clock is a **topology** question, not a property of the data: clock
+travels either *embedded in the data* (S/PDIF, ADAT, AES are self-clocking — the receiver recovers
+it) or over a *dedicated side-channel* (word clock on BNC; PTP on a network), and a device's clock
+**source** (internal / recovered-from-an-input / external word clock) is a configuration independent
+of where its audio comes from. A dedicated master is the operable choice at scale: it **decouples the
+clock topology from the audio routing** (a clean star instead of brittle recovery chains), so you can
+re-patch audio without breaking sync, there is one place to change rate, and there is no risk of clock
+loops.
+
+So clocking is resolved as a **clock-distribution side-graph at compile** (the same kind of cheap
+connectivity pass as cycle detection and the planned ground-loop analysis): it assigns each device to
+a clock domain and identifies the **async boundaries** where domains meet. The *consequences* are then
+**emergent at runtime**, not flagged — two domains whose oscillators differ drive a finite elastic
+FIFO at their boundary that genuinely over/underflows, producing the real **clicks/slips** of an
+unlocked digital link; sharing a master collapses the domains and the slips vanish; a sample-rate
+converter at the boundary is the honest fix (it re-grids one domain onto the other). This is the
+digital twin of "voltage is a real value, not a flag": **clock is a real rate, not a label.**
+
+*Out of scope (a documented boundary, per §2):* the **physical layer** of digital links — line coding
+(biphase-mark), PLL clock recovery, de-framing bits into samples. That is inside-the-box circuitry; we
+model the observable consequence (does it lock? does it slip?), not the bitstream. True jitter
+*spectra* are a further optional depth we do not expect to need.
+
 ## 6. Devices & Instruments
 
 - **Device modeling source of truth:** real device manuals. We distill the most important
@@ -305,6 +361,10 @@ Grow coverage and add the game layer.
   fidelity (frequency-dependent impedances, reactive loads, transformer behavior) earns its
   complexity. The realism budget is for the volts-and-converters layer; keep device transforms
   and the speaker/air/ear stage simple.
+- **How deep does the clock model go?** Settled (see §5.6): clocks are modeled as **real rates**
+  (emergent drift/slip at async boundaries), resolved via a compile-time clock-distribution
+  side-graph; the **physical layer** (line coding, PLL recovery) is out of scope, and jitter spectra
+  are an optional depth we do not expect to need. Built in Epic 5, where multiple clock domains exist.
 - **Device behavior fidelity from manuals** — manuals describe controls, not always exact
   transfer behavior; some transforms will be informed approximations. Flag these.
 - **DSP depth vs breadth** — how much real DSP to build vs. how many devices to cover. Lean on
