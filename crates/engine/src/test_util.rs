@@ -137,6 +137,49 @@ impl Node for SineSource {
     }
 }
 
+/// A test-only **balanced** source: a differential `signal` riding a common-mode `cm` offset.
+///
+/// Emits `V+ = cm + signal/2`, `V− = cm − signal/2` on a two-conductor (balanced) output, so a
+/// test can inject a known common-mode voltage by hand and prove a [`BalancedReceiver`] rejects
+/// it (Story 1.5.1) — before the edge-injection seam that supplies pickup/hum exists (1.5.2). No
+/// inputs; one balanced output.
+///
+/// [`BalancedReceiver`]: crate::BalancedReceiver
+pub struct BalancedTestSource {
+    signal: f32,
+    cm: f32,
+    outputs: [OutputZ; 1],
+}
+
+impl BalancedTestSource {
+    /// A balanced source emitting differential `signal` with common-mode offset `cm`, driving
+    /// from differential output impedance `z_out`.
+    pub fn new(signal: Volts, cm: Volts, z_out: Ohms) -> Self {
+        Self {
+            signal: signal.get(),
+            cm: cm.get(),
+            outputs: [OutputZ::balanced(z_out)],
+        }
+    }
+}
+
+impl Node for BalancedTestSource {
+    fn inputs(&self) -> &[InputZ] {
+        &[]
+    }
+
+    fn outputs(&self) -> &[OutputZ] {
+        &self.outputs
+    }
+
+    fn process(&mut self, _inputs: &[VoltageBuffer], outputs: &mut [VoltageBuffer]) {
+        let half = self.signal * 0.5;
+        let (hot, cold) = outputs.split_at_mut(1);
+        hot[0].fill(Volts::new(self.cm + half));
+        cold[0].fill(Volts::new(self.cm - half));
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

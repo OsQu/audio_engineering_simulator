@@ -12,7 +12,9 @@ use crate::signal::Volts;
 /// `v_src` here is a setup/test convenience; in the running engine the source voltage is a
 /// per-sample signal while `z_out` stays the fixed electrical property.
 ///
-/// Single-conductor for now; balanced (V+/V−) outputs arrive in Story 1.5.
+/// One conductor's worth of source. A balanced (V+/V−) output is two such legs driven
+/// differentially; its conductor count lives on the [`OutputZ`](super::OutputZ) face, and the
+/// schedule carries each conductor as its own buffer (Story 1.5).
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Thevenin {
     /// Open-circuit (unloaded) source voltage.

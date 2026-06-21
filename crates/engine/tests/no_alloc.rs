@@ -14,8 +14,8 @@
 )]
 
 use engine::{
-    AnalogRate, Cable, DcBlocker, Farads, GainStage, Graph, InputZ, NoiseDensity, Ohms, PassiveSum,
-    TestSource, VoltageBuffer, Volts, compile,
+    AnalogRate, BalancedDriver, BalancedReceiver, Cable, DcBlocker, Farads, GainStage, Graph,
+    InputZ, NoiseDensity, Ohms, PassiveSum, TestSource, VoltageBuffer, Volts, compile,
 };
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -49,10 +49,11 @@ fn rate() -> AnalogRate {
 
 #[test]
 fn process_is_allocation_free() {
-    // source → (cable) → gain → dc-blocker → sum. The cabled edge exercises the one-pole
-    // low-pass, the gain stage carries a noise floor, and the DC blocker is the one-pole
-    // high-pass — so the cable filter loop, the per-sample Gaussian draw, and the high-pass
-    // step are all covered by the no-alloc check.
+    // source → (cable) → gain → dc-blocker → sum → balanced driver → balanced receiver. The
+    // cabled edge exercises the one-pole low-pass, the gain stage carries a noise floor, the DC
+    // blocker is the one-pole high-pass, and the driver→receiver hop is a two-conductor balanced
+    // edge — so the cable filter loop, the per-sample Gaussian draw, the high-pass step, and the
+    // per-conductor balanced edge transforms are all covered by the no-alloc check.
     let mut g = Graph::new();
     let src = g.add(TestSource::new(Volts::new(1.0), Ohms::new(100.0)));
     let amp = g.add(
@@ -73,6 +74,18 @@ fn process_is_allocation_free() {
         vec![InputZ::new(Ohms::new(10_000.0))],
         Ohms::new(150.0),
     ));
+    let drv = g.add(BalancedDriver::new(
+        InputZ::new(Ohms::new(1e9)),
+        Ohms::new(1.0),
+    ));
+    // A per-conductor DC blocker lifted onto the balanced pair: its two replicated lanes run on
+    // the hot path, so the lift's per-leg processing is covered by the no-alloc check too.
+    let bal_dc = g.add(DcBlocker::new(
+        Farads::new(15.915e-9),
+        Ohms::new(10_000.0),
+        Ohms::new(150.0),
+    ));
+    let rcv = g.add(BalancedReceiver::new(Ohms::new(1e9), Ohms::new(150.0)));
     g.connect_cabled(
         src,
         0,
@@ -82,7 +95,10 @@ fn process_is_allocation_free() {
     );
     g.connect(amp, 0, dc, 0);
     g.connect(dc, 0, sum, 0);
-    g.set_output(sum, 0);
+    g.connect(sum, 0, drv, 0);
+    g.connect(drv, 0, bal_dc, 0);
+    g.connect(bal_dc, 0, rcv, 0);
+    g.set_output(rcv, 0);
 
     let mut sched = compile(g, 64, rate(), 0).expect("valid chain");
     let mut out = VoltageBuffer::zeros(64, rate());
