@@ -243,11 +243,53 @@ the engine or its wasm32 build.
 milestone (the Epic-2 analogue of Story 1.3's "first runnable"). The render driver loops `process_io`
 into a WAV writer; the graph gains a thin `Speaker` terminus; the harness performs the implicit capture
 (transparent decimation, fixed monitor reference) to host samples. Validate by **ear** plus numeric
-oracles (reuse the Epic-1 DFT/RMS helpers — render the played-note patch, assert onset + fundamental).
+oracles (render the played-note patch, assert onset + fundamental).
 *Watch out:* don't build a second engine (loop the existing `process_io`); keep the speaker trivial and
-in volts (it produces voltage, not SPL); the implicit capture is harness-side and off-sim-clock. A WAV
-encoder (`hound`, or a ~40-line hand-rolled PCM/float writer) is a harness-only dep. *Absorbs old
-2.1.1 + 2.3.1.*
+in volts (it produces voltage, not SPL); the implicit capture is harness-side and off-sim-clock.
+
+*Design notes (settled at planning):*
+- **The implicit capture is a harness-held `Decimator`.** `Decimator::lowpass(num_taps, M, beta)` already
+  gives a transparent polyphase anti-alias decimator with unity passband; the capture is one instance at
+  `M = analog_rate / host_rate`, fed the speaker-voltage block each call, **held stateful for the whole
+  render** (its ring buffer carries across blocks — re-creating it per block would inject transients). No
+  new DSP. It is *not* a graph node, carries no `ClockDomainId`, and is on no modeled-converter clock.
+- **Volts → full scale via a fixed monitor reference**, then clamp to ±1.0. No per-render
+  auto-normalization (it would break determinism and cross-render level comparison). Scaling is linear, so
+  apply it after decimation.
+- **Canonical render format is float32 WAV.** A PCM16 writer would add its *own* quantization noise — which
+  would contaminate Story 2.3's measurement of quantization noise from the *modeled* AD. PCM16 stays an
+  optional listening convenience only. WAV I/O via **`hound`** (harness-only dep; native, never reaches the
+  engine/wasm build; also gives 2.3 its golden read-back).
+- **The output tap is the Speaker's voltage output** — `process_io`'s `out` buffer *is* the speaker block,
+  fed straight to the capture. No Sample-lane tap. The Speaker's output port is a benign terminus fiction
+  (ideal `OutputZ`, nothing loads it) standing in for "what we hear."
+- **The Speaker is flat (sensitivity gain only) this story** — a recognizable terminus device, voltage→
+  voltage, no rail. A frequency-response curve is cosmetic and deferred (trivially added later via `OnePole`
+  or the 2.2 biquad).
+- **No PowerAmp node** (device breadth is Epic 5); the Speaker's sensitivity covers level, and `GainStage`
+  stands in if a patch wants an explicit gain stage.
+- **`block_len` must be a multiple of the capture's `M`** (mirrors the modeled-AD constraint), e.g.
+  384-sample analog blocks with `M = 8` → 48 host samples per block at 48 k.
+- **Latency is real:** the capture FIR — plus the modeled AD/DA in the patch — add fixed group delay, so
+  the onset oracle offsets by the known compile-time latency (the Epic-1 capstone already does this for the
+  converters; the capture stacks on top).
+- **Numeric oracles live harness-local.** Engine's DFT/RMS helpers are `#[cfg(test)]` and unreachable
+  cross-crate; reimplement a tiny single-bin DFT + RMS in the harness (same shape as Epic-1's
+  `tone_amplitude`) rather than widening the engine's public API.
+- **Artifacts:** rendered WAVs go to a **gitignored `renders/`**; the CLI stays scenario-function style (no
+  arg-parser crate). Committed golden refs get their own dir in Story 2.3.
+
+- **Task 2.1.1** — `Speaker` terminus node (engine): voltage→voltage sensitivity gain, 1 analog in / 1 analog out, ideal `OutputZ`, no rail. Unit test: passband gain = sensitivity.
+- **Task 2.1.2** — Implicit capture (harness): a `Decimator::lowpass` at `M = analog/host` (transparent spec) + fixed monitor-reference volts→full-scale + clamp, held stateful across blocks. Test: a known sine in volts → expected normalized amplitude at the host rate.
+- **Task 2.1.3** — WAV writer (harness, `hound`): mono, canonical float32. Header/round-trip test.
+- **Task 2.1.4** — Render driver + first-sound scenario: compile a fixed patch (synth note → modeled AD → modeled DA → `Speaker`), loop `process_io` for N seconds into the capture → WAV; deterministic (seed/block_len/rate pinned); output to `renders/`.
+- **Task 2.1.5** — Numeric-oracle validation test (harness integration): render the played-note patch, assert correct fundamental (DFT bin), onset after the known total latency, and non-silence/level.
+
+*Validate:* a fixed patch renders to a float32 WAV that **plays and sounds right by ear**, and a harness
+test asserts the rendered fundamental, latency-offset onset, and level against hand calcs — deterministic
+across runs. **First sound achieved.**
+
+*Absorbs old 2.1.1 + 2.3.1.*
 
 ### Story 2.2 — First DSP devices: EQ + compressor (digital domain)
 *Goal:* the first real DSP, validated by ear and numeric oracles. A **biquad primitive** (net-new infra —
