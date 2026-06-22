@@ -559,22 +559,83 @@ runs through the generalized carrier seam with the analog physics from Stories 1
 because the analog chain underneath is already proven, a failure here is the converter's or the seam's.
 
 ### Story 1.7 — Input lanes & a playable voice (headless)
-*Goal:* the two-lane input system and a simple synth voice, exercised without audio output.
-*Watch out:* keep control (smoothed) and events (sample-accurate) genuinely separate. The oscillator
-lives in the oversampled analog domain — aliasing is handled by the AD filter, so no band-limiting tricks needed yet.
+*Goal:* the two-lane input system and a simple monophonic synth voice, exercised without audio output —
+closing Epic 1 and adding the **third carrier** (sparse MIDI/control events).
+*Watch out:* keep the two input lanes **genuinely separate** — they are different mechanisms, not two
+flavors of one. **Events are a routed carrier** (a `Lane`, with edges, addressable between devices);
+**control params are a host→node side-channel** (knob settings, not routed, latest-wins, smoothed). The
+oscillator lives in the oversampled analog domain — alias products from an analog-rate oscillator fold
+around the *analog* Nyquist (e.g. ~192 kHz at an 8×48 k rate), land out of the audio band, and the AD
+decimation filter (Story 1.6) removes them. So **no band-limiting tricks are needed** here — it's the
+same converter payoff, not a special case.
 
-*Design note (settled):* MIDI/control **events are the third signal carrier** — a `Lane::Events`
-variant (sparse timestamped messages, not a dense buffer) added to the seam from Story 1.6, with an
-event-route `EdgeKind`. The synth voice is the first **cross-domain node** (events-in → voltage-out),
-proving the heterogeneous-domain node and the sparse-lane representation. The schedule's external
-event queue and an inter-device MIDI edge feed the *same* event lane — a wiring detail, one carrier.
+*Design notes (settled — decisions taken before fleshing the story out):*
+- **Events are the third signal carrier — `Lane::Events`** (sparse timestamped messages, not a dense
+  buffer), added to the seam from Story 1.6 alongside a `Domain::Events`, an `EdgeKind::EventRoute`, and
+  domain-tagged event ports. This is the carrier seam, kept **separate from the queue that fills it**
+  (its own task), mirroring how 1.6.1 separated the seam from the converters that used it.
+- **Events ride the existing input lanes; only control params change the `process` signature.** Because
+  events are a carrier, a node consumes them through its ordinary `inputs: &[Lane]` (an `Events` input
+  port), exactly like voltage or samples. So the synth voice is `events-in → voltage-out` with no special
+  argument. Control params are *not* a carrier, so they enter by a new argument:
+  **`Node::process(&mut self, params: &Params, inputs: &[Lane], outputs: &mut [Lane])`**. This is the
+  `schedule.process(out, &control_queue, &event_queue)` shape from the Epic intro — `control_queue` feeds
+  the param store, `event_queue` feeds source nodes' event input lanes. *(Migration: ~120 existing
+  `process` call sites gain a `&Params`; a `Params::EMPTY` default keeps non-param tests terse.)*
+- **Control params: framework smooths and delivers (decided).** A node *declares* its params like it
+  declares ports — `Node::params() -> &[ParamDecl]` where `ParamDecl { id, default, range, smooth }`. The
+  **schedule owns** the latest-wins queue and a smoothed-value store; it drains the queue at block start
+  and hands already-smoothed values to `process` via the `Params` accessor (`params.get(GAIN_ID)`). De-zipper
+  is written **once, in the framework**, never re-implemented per node (avoids the "balanced as a label"
+  anti-pattern, §5.4). *Open sub-decision for 1.7.3:* per-block step vs within-block linear ramp — default
+  to a **within-block linear ramp** (start→target across the block, recomputed per block) so there are no
+  instantaneous jumps, which is the honest reading of "per-block de-zippering."
+- **Param addressing is `(NodeId, ParamId)`; event addressing is `(NodeId, event-input-port)`.** A control
+  param targets one node's one declared param. An external event targets one node's event-input port (the
+  same lane an inter-device event edge would write to — "feed the same event lane, one carrier"); `compile`
+  resolves both to pool/store indices, the same way the output tap is resolved today.
+- **The queues are single-threaded seams now (decided), lock-free-shaped, validated cross-thread in Epic 3.**
+  Headless there is no consumer thread, so — exactly as the schedule-swap seam (1.3.7) was built as a
+  single-threaded ownership handoff and its lock-free cross-thread form deferred — the param and event
+  queues are SPSC-shaped but exercised single-threaded. True lock-free validation lands in Epic 3 with a
+  real AudioWorklet thread. *(This resolves the apparent "lock-free now" wording against the 1.3 deferral.)*
+- **Events lane is fixed-capacity with a defined overflow policy.** Unlike Voltage/Sample lanes (sized
+  `block_len` / `block_len/M`), an `Events` lane is a sparse `(sample_offset, message)` list. `compile`
+  pre-allocates a **bounded** capacity (a converter/graph parameter); on overflow within a block the hot
+  path **drops** excess events (never allocates, never panics) — and `log`s nothing on the audio path. The
+  bound is the new thing to size honestly; default generous (e.g. 256 events/block).
+- **The voice is monophonic (decided), last-note priority.** One oscillator + one ADSR envelope. Pitch
+  comes from note-on; gate/note-off drives the release. Polyphony / voice allocation (note→voice
+  assignment, stealing) is a categorically larger concern, **deferred** past Epic 1 — a documented decision,
+  not a gap. The voice exercises **both** input lanes: pitch & gate from events, envelope times / level from
+  control params.
+- **Event messages for now: note-on {note, velocity}, note-off, gate.** MIDI **CC** (a continuous
+  controller that would drive a *param* — events→param) blurs the two-lane separation and is **deferred**;
+  the lanes stay genuinely separate (note events only) this story.
 
-- **Task 1.7.1** — Lock-free control-param queue (latest-wins) + per-block de-zippering.
-- **Task 1.7.2** — Timestamped event queue (note-on/off/gate) applied at sample offsets within a block.
-- **Task 1.7.3** — Simple synth voice (oscillator + envelope) as a source device with real `Zout`, driven by events.
-- **Task 1.7.4** — End-to-end headless test: "play a note" through `analog → AD → digital → DA → analog`, asserting expected output.
+- **Task 1.7.1** — *Events carrier seam (the third carrier).* `Lane::Events` (sparse, bounded-capacity)
+  + `Domain::Events` + `EventMessage` (note-on/off, gate) + event-tagged `InputPort`/`OutputPort` +
+  `EdgeKind::EventRoute`; `compile` validates event↔event edges (a cross-domain event edge is
+  `DomainMismatch`), sizes/pre-allocates the bounded event lanes, and defines the drop-on-overflow policy.
+  No queue, no voice — just plumbing, with all existing analog/digital tests green through the extended types.
+- **Task 1.7.2** — *Timestamped event queue + delivery.* The schedule's external event queue
+  (single-threaded SPSC seam), block-bucketed by sample offset and merged with any inter-device event-edge
+  output into the target node's event input lane; `process` begins taking `&event_queue`. Note-on/off/gate
+  land at sample offsets within the block (sub-block-accurate dispatch is the consuming node's job, reading
+  the ordered events from its lane).
+- **Task 1.7.3** — *Control-param system.* `ParamDecl` + `Node::params()`, the latest-wins param queue
+  (single-threaded seam), the framework-owned smoothed store with within-block de-zipper ramp, and the
+  `params: &Params` argument threaded into `Node::process` (with `Params::EMPTY`). Retrofit one existing
+  node (`GainStage` gain) to read a declared param — the de-zipper demo target.
+- **Task 1.7.4** — *Monophonic synth voice.* Oscillator + ADSR envelope as a cross-domain source node
+  (`events-in → voltage-out`, real `Zout`), last-note priority. Pitch & gate from the event lane; envelope
+  times / output level as declared control params. First node consuming `Lane::Events`.
+- **Task 1.7.5** — *End-to-end headless test:* "play a note" through `analog → AD → digital → DA → analog`,
+  asserting sample-accurate onset (silence until the trigger sample, signal after), correct fundamental
+  (DFT bin), and a swept gain param that de-zippers without a discontinuity.
 
-*Validate:* a note triggers sample-accurately and produces the expected output through the full chain; a swept control param de-zippers without discontinuities. **Epic exit met.**
+*Validate:* a note triggers sample-accurately and produces the expected output (onset + fundamental)
+through the full chain; a swept control param de-zippers without discontinuities. **Epic exit met.**
 
 ---
 
