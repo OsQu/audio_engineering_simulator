@@ -431,20 +431,49 @@ model — the carrier set is open.
   ports is inherently heterogeneous), and it scales combinatorially with carriers and bridges.
   *Rejected:* a **closed 2-variant** enum — MIDI is not a dense sample buffer at all (it's sparse
   events), so the lane representation must admit non-buffer carriers from the start. The enum's cost
-  is one `match` per step (per block, not per sample) plus a one-line `as_voltage()` accessor per node
+  is one `match` per step (per block, not per sample) plus a one-line `voltage()` accessor per node
   port; domain-compatibility joins the other checks at the single `compile` validation gate
   (consistent with `ConductorMismatch`, cycle detection) — `process` stays total.
-- **Ports carry a domain; edges carry a domain-appropriate transform.** Introduce `Port` (the name
-  reserved since Story 1.2) wrapping a `Domain` + the face that domain needs (electrical `InputZ` /
-  `OutputZ` for analog; format + clock role for digital; none for MIDI). `Step::Edge` generalizes to
-  `EdgeKind { Analog(EdgeTransform), DigitalRoute, … }` — the analog electrical solve is one arm,
-  unchanged. `compile` allocates each port's lanes into a per-domain pool, sized per domain (analog at
-  `block_len`, digital at `block_len/M`), and rejects a cross-domain edge that isn't a converter.
+- **Ports carry a domain; edges carry a domain-appropriate transform.** A port is a **per-direction
+  enum wrapping the existing face** (the `Port` name reserved since Story 1.2): `InputPort {
+  Analog(InputZ), Digital(DigitalFace) }` and `OutputPort { Analog(OutputZ), Digital(DigitalFace) }`,
+  with `DigitalFace { format: AudioFormat, /* clock role 1.7+ */ }`. **`InputZ`/`OutputZ` are
+  unchanged** — zero churn to the analog impedance API and source-vs-load stays type-distinct; the
+  per-direction asymmetry (analog z differs by direction, digital format doesn't) is honest.
+  *Rejected:* a single `Port { domain, face }` over a bare `Ohms` — it would touch every analog
+  constructor. Each port exposes `domain()` and **`lane_count()`** (conductors for analog, channels
+  for digital), which **unifies pool allocation** while leaving the balanced **lift** semantics an
+  analog-face property (digital nodes are `per_conductor() == false`, so conductors and channels are
+  never conflated). The pool is `Vec<Lane>`; `Node::process(&[Lane], &mut [Lane])` keeps one signature
+  and reads each lane through a hot-path `lane.voltage()` / `.sample()` accessor whose wrong arm is
+  `unreachable!` — dead code, since `compile` validated every edge's domain (panic-freedom rests on
+  the compile guarantee, as elsewhere).
+- **Converters bridge domains *inside* a node, never on an edge.** The AD has analog input ports and
+  digital output ports and crosses the boundary in its own `process`; the edges feeding it are analog,
+  those leaving it digital. So the edge invariant is simply **every edge connects same-domain ports** —
+  any cross-domain edge is a `CompileError::DomainMismatch`. `Step::Edge` generalizes to `EdgeKind {
+  Analog(EdgeTransform), DigitalRoute, … }`: the analog electrical solve (`fan_out_gains` +
+  `EdgeTransform`) is one arm, unchanged; a digital edge is a copy (a clock-domain check / SRC arrives
+  in Epic 5). `compile` allocates each port's lanes into the `Lane` pool sized per domain (analog at
+  `block_len`, digital at `block_len/M`, validating the integer ratio and `block_len % M == 0` there).
 - **The multi-I/O device is a *group of nodes*, not one node.** The interface decomposes into preamps
   (V→V), internal AD (V→Sample), digital router (Sample→Sample), internal DA (Sample→V), MIDI routing
   (events→events) — separate nodes sharing a logical-device identity (the UI/save-load grouping,
   Epic 4). Only the converters/bridges straddle domains; everything else stays single-domain. (Honors
   the "one chassis → many nodes" model from Story 1.3.)
+- **The 1.6 converters are mono, and the AD *core* is single-ended.** The AD samples one voltage —
+  its analog input is single-ended (`InputPort::Analog`, 1 conductor) and it emits one digital
+  channel; the DA the reverse. This is honest about real hardware: a balanced line/mic input is
+  balanced at the **input stage** (an instrumentation-amp / mic preamp that takes `V+ − V−` *and*
+  applies gain — even differential ADC chips difference before sampling), *then* the single-ended
+  result reaches the converter core. So the realistic **balanced input is modeled as a separate node**
+  in front of the AD — the proven `BalancedReceiver` (Story 1.5), plus preamp gain — reusing 1.5 with
+  no duplicated differencing; at the device level the interface still presents balanced jacks, owned
+  by that input-stage node (chassis-is-many-nodes). Accordingly the 1.6 **end-to-end capstone chain is
+  balanced-fronted** (`balanced source → BalancedReceiver → AD → DA → …`) for realism, while the
+  converter **unit tests stay single-ended** to isolate the converter (a clean known voltage at the
+  AD, no receiver divider in the +4 dBu = −18 dBFS hand calc). Multichannel digital ports (ADAT's 8
+  lanes, etc.) are deferred to Epic 5; `lane_count()` on every 1.6 digital port is 1.
 - **`SampleBuffer` stores linear normalized samples** (±1.0 = full scale), parallel to
   `VoltageBuffer`, and carries a **distinct `SampleRate` newtype** (not the analog `AnalogRate` — the
   type system must stop you conflating the two), a `BitDepth`, and a **`ClockDomainId`** (see clocks
@@ -457,20 +486,32 @@ model — the carrier set is open.
   **designed digital decimation/interpolation filter** of a modern oversampling converter — the steep
   filter really is digital in today's hardware; the gentle analog pre-filter sits up near the analog
   Nyquist and we don't need it (nothing generates content above it). This is **new infrastructure**
-  (the engine has only the IIR `OnePole` so far): taps designed at `compile`, zero-alloc ring-buffer
-  convolution in `process`, `f64` accumulator, denormal flush. The demonstrable "weak AA filter" knob
-  is **tap count / transition-band width**. **Polyphase** from the start: an L-tap FIR splits into M
-  phases of L/M taps; the AD runs one phase per output sample, the DA one phase per input sample.
+  (the engine has only the IIR `OnePole` so far): a **Kaiser-windowed sinc**, linear-phase (symmetric
+  taps → constant group delay), taps designed at `compile`, zero-alloc ring-buffer convolution in
+  `process`, `f64` accumulator, denormal flush. *Nominal spec:* passband to ~0.45·Fs_dig, stopband
+  from the digital Nyquist (0.5·Fs_dig), ≥~96 dB stopband / ~0.01 dB passband ripple; the Kaiser order
+  formula then sets the tap count (a narrow ~20→24 kHz transition over a 384 kHz stream ⇒ ~1000 taps
+  at 96 dB — paid once at compile; a wider transition or lower stopband trades fidelity for fewer
+  taps). The demonstrable
+  **"weak AA filter" knob is the tap count** (a converter parameter): a short kernel widens the
+  transition and lifts the stopband floor, so content above Nyquist leaks and folds back audibly.
+  **Polyphase** from the start: an L-tap FIR splits into M phases of L/M taps; the AD runs one phase
+  per output sample, the DA one phase per input sample. The DA reconstruction filter reuses the design.
 - **Integer-divide rate constraint (for now).** A converter's sample rate must integer-divide the
   analog rate (`M` integer), so polyphase is clean and the digital block is `block_len/M`; the analog
   rate is chosen accordingly (e.g. 8×48 k = 384 k). Mixing rationally-unrelated families (44.1 k with
   48 k) needs a **fractional** resampler — deferred to Story 5.3, where async clock boundaries first
   exist. `compile` rejects a non-integer ratio rather than guessing.
-- **Quantization uses seeded TPDF dither.** Triangular-PDF dither before rounding, drawn from the
-  node's existing seeded `Rng` (via the `seed` hook, so it's deterministic) — decorrelates the error
-  into a flat noise floor (the "low bit depth ⇒ measurable quantization noise" payoff), as real
-  converters do. *Rejected for the first cut:* naive rounding (correlated harmonic distortion — a
-  different, less faithful artifact).
+- **Quantization: mid-tread, full-scale clamp, seeded non-subtractive TPDF dither.** Round-to-nearest
+  with a level at zero (**mid-tread** — silence stays silent), step `Δ = FS / 2^(N−1)`, **hard-clamped
+  at full scale** (a digital "over" clips — the real ADC behavior). **TPDF dither** of ±1 LSB (the sum
+  of two independent ±½-LSB uniform draws) is added before rounding, from the node's seeded `Rng` (via
+  the `seed` hook, so it's deterministic) — non-subtractive, as real converters do; it decorrelates the
+  error into a **flat noise floor** (the "low bit depth ⇒ measurable quantization noise" payoff)
+  instead of correlated harmonics. *Test oracle (1.6.5):* dithered noise variance = `Δ²/12 + Δ²/6 =
+  Δ²/4` ⇒ RMS `Δ/2`, so a full-scale sine has SNR ≈ `6.02·N − 3.0` dB — flat, not harmonic. Exercise
+  N = 16 (measurably noisy) and N = 24 (≈transparent). *Rejected for the first cut:* naive rounding
+  (correlated harmonic distortion — a different, less faithful artifact).
 - **Clocks: one domain now, the emergent model later.** A `SampleBuffer` carries a `ClockDomainId`
   that is the **identity of the oscillator that produced it** (+ its real rate), *not* a label to
   compare. In 1.6 the AD and DA share the single internal device clock, so there is exactly one domain
@@ -498,9 +539,9 @@ model — the carrier set is open.
   **noise floor** (TPDF, not harmonic distortion).
 
 *Validate:* calibration mapping exact; aliasing and quantization artifacts measurable and matching
-prediction; the full chain `analog → AD → digital → DA → analog` runs through the generalized carrier
-seam with the analog physics from Stories 1.2–1.5 intact — because the analog chain underneath is
-already proven, a failure here is the converter's or the seam's.
+prediction; the full chain `analog → AD → digital → DA → analog` (capstone balanced-fronted) runs
+through the generalized carrier seam with the analog physics from Stories 1.2–1.5 intact — because the
+analog chain underneath is already proven, a failure here is the converter's or the seam's.
 
 ### Story 1.7 — Input lanes & a playable voice (headless)
 *Goal:* the two-lane input system and a simple synth voice, exercised without audio output.
