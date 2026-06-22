@@ -3,6 +3,7 @@
 use super::Node;
 use crate::electrical::{InputZ, Ohms};
 use crate::fir::{Decimator, kaiser_beta};
+use crate::param::Params;
 use crate::port::{AudioFormat, DigitalFace, InputPort, OutputPort};
 use crate::rng::Rng;
 use crate::signal::{AnalogRate, BitDepth, Lane, SampleRate, Volts};
@@ -113,7 +114,7 @@ impl Node for AdConverter {
         self.dither = Some(rng);
     }
 
-    fn process(&mut self, inputs: &[Lane], outputs: &mut [Lane]) {
+    fn process(&mut self, _params: &Params, inputs: &[Lane], outputs: &mut [Lane]) {
         let src = inputs[0].voltage().as_slice();
         let out = outputs[0].sample_mut().as_mut_slice();
 
@@ -177,7 +178,7 @@ mod tests {
             bits,
             ClockDomainId(0),
         ))];
-        ad.process(&inp, &mut out);
+        ad.process(&Params::EMPTY, &inp, &mut out);
         out[0].sample().as_slice().to_vec()
     }
 

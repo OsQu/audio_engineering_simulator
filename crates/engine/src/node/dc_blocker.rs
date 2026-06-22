@@ -2,6 +2,7 @@
 
 use super::Node;
 use crate::electrical::{Farads, InputZ, Ohms, OnePole, OutputZ};
+use crate::param::Params;
 use crate::port::{InputPort, OutputPort};
 use crate::signal::{AnalogRate, Lane};
 
@@ -95,7 +96,7 @@ impl Node for DcBlocker {
         Box::new(DcBlocker::new(self.c, self.r, z_out))
     }
 
-    fn process(&mut self, inputs: &[Lane], outputs: &mut [Lane]) {
+    fn process(&mut self, _params: &Params, inputs: &[Lane], outputs: &mut [Lane]) {
         let src = inputs[0].voltage().as_slice();
         let out = outputs[0].voltage_mut().as_mut_slice();
         match &mut self.tracker {

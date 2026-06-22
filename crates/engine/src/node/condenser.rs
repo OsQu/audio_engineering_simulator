@@ -2,6 +2,7 @@
 
 use super::Node;
 use crate::electrical::{Ohms, OutputZ};
+use crate::param::Params;
 use crate::port::{InputPort, OutputPort};
 use crate::signal::{Lane, Volts};
 
@@ -62,7 +63,7 @@ impl Node for CondenserMic {
         &self.outputs
     }
 
-    fn process(&mut self, _inputs: &[Lane], outputs: &mut [Lane]) {
+    fn process(&mut self, _params: &Params, _inputs: &[Lane], outputs: &mut [Lane]) {
         // Powered: +48 V common-mode pedestal with the audio differentially on top. Unpowered: dead.
         let (cm, half) = if self.powered {
             (PHANTOM_VOLTS, self.signal * 0.5)

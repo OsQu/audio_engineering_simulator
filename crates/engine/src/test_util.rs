@@ -6,6 +6,7 @@
 
 use crate::electrical::{Ohms, OutputZ};
 use crate::node::Node;
+use crate::param::Params;
 use crate::port::{InputPort, OutputPort};
 use crate::signal::{AnalogRate, Lane, VoltageBuffer, Volts};
 
@@ -44,7 +45,8 @@ pub fn process_voltage(
 ) {
     let in_lanes: Vec<Lane> = inputs.iter().cloned().map(Lane::Voltage).collect();
     let mut out_lanes: Vec<Lane> = outputs.iter().cloned().map(Lane::Voltage).collect();
-    node.process(&in_lanes, &mut out_lanes);
+    // Driven outside a schedule, so no smoothed params — nodes fall back to their own fields.
+    node.process(&Params::EMPTY, &in_lanes, &mut out_lanes);
     for (slot, lane) in outputs.iter_mut().zip(out_lanes) {
         *slot = match lane {
             Lane::Voltage(b) => b,
@@ -144,7 +146,7 @@ impl Node for SineSource {
         &self.outputs
     }
 
-    fn process(&mut self, _inputs: &[Lane], outputs: &mut [Lane]) {
+    fn process(&mut self, _params: &Params, _inputs: &[Lane], outputs: &mut [Lane]) {
         let dt = outputs[0].voltage().rate().seconds_per_sample();
         let dphase = std::f64::consts::TAU * self.freq_hz * dt;
         let (amp, offset) = (self.amp, self.offset);
@@ -195,7 +197,7 @@ impl Node for BalancedTestSource {
         &self.outputs
     }
 
-    fn process(&mut self, _inputs: &[Lane], outputs: &mut [Lane]) {
+    fn process(&mut self, _params: &Params, _inputs: &[Lane], outputs: &mut [Lane]) {
         let half = self.signal * 0.5;
         let (hot, cold) = outputs.split_at_mut(1);
         hot[0].voltage_mut().fill(Volts::new(self.cm + half));

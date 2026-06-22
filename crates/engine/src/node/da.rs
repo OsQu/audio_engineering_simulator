@@ -3,6 +3,7 @@
 use super::Node;
 use crate::electrical::{Ohms, OutputZ};
 use crate::fir::{Interpolator, kaiser_beta};
+use crate::param::Params;
 use crate::port::{AudioFormat, DigitalFace, InputPort, OutputPort};
 use crate::signal::{AnalogRate, BitDepth, Lane, SampleRate, Volts};
 
@@ -98,7 +99,7 @@ impl Node for DaConverter {
         ));
     }
 
-    fn process(&mut self, inputs: &[Lane], outputs: &mut [Lane]) {
+    fn process(&mut self, _params: &Params, inputs: &[Lane], outputs: &mut [Lane]) {
         let src = inputs[0].sample().as_slice();
         let out = outputs[0].voltage_mut().as_mut_slice();
 
@@ -143,7 +144,7 @@ mod tests {
             ClockDomainId(0),
         ))];
         let mut out = [Lane::Voltage(VoltageBuffer::zeros(samples.len() * 8, hi()))];
-        da.process(&inp, &mut out);
+        da.process(&Params::EMPTY, &inp, &mut out);
         out[0].voltage().as_slice().to_vec()
     }
 

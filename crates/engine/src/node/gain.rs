@@ -3,6 +3,7 @@
 use super::Node;
 use crate::electrical::{InputZ, Ohms, OutputZ};
 use crate::noise::NoiseDensity;
+use crate::param::{ParamDecl, ParamId, Params};
 use crate::port::{InputPort, OutputPort};
 use crate::rng::Rng;
 use crate::signal::{Lane, Volts};
@@ -30,11 +31,21 @@ pub struct GainStage {
     noise_density: NoiseDensity,
     /// The per-node noise stream, installed by [`Node::seed`] at compile when a floor is set.
     noise: Option<Rng>,
+    /// The one declared control param: [`GAIN`](Self::GAIN), initialized to the construction gain.
+    param_decls: [ParamDecl; 1],
     inputs: [InputPort; 1],
     outputs: [OutputPort; 1],
 }
 
 impl GainStage {
+    /// The smoothed voltage-gain control param. The host drives it with `(node, GainStage::GAIN)`;
+    /// uncontrolled, it holds the construction `gain`.
+    pub const GAIN: ParamId = ParamId(0);
+
+    /// Largest controllable gain (≈ +60 dB) and the de-zipper glide time for a gain change.
+    const MAX_GAIN: f32 = 1000.0;
+    const GAIN_SMOOTH_MS: f32 = 5.0;
+
     /// A noiseless stage with voltage gain `gain`, clipping at `±rail`, presenting `z_in` and
     /// driving from `z_out`.
     ///
@@ -54,6 +65,13 @@ impl GainStage {
             rail,
             noise_density: NoiseDensity::ZERO,
             noise: None,
+            param_decls: [ParamDecl {
+                id: Self::GAIN,
+                default: gain,
+                min: 0.0,
+                max: Self::MAX_GAIN,
+                smooth_ms: Self::GAIN_SMOOTH_MS,
+            }],
             inputs: [z_in.into()],
             outputs: [OutputZ::new(z_out).into()],
         }
@@ -79,6 +97,10 @@ impl Node for GainStage {
         &self.outputs
     }
 
+    fn params(&self) -> &[ParamDecl] {
+        &self.param_decls
+    }
+
     fn seed(&mut self, rng: Rng) {
         // Only keep a stream if there's a floor to draw for; a noiseless stage stays a plain
         // pass-through (and still consumes its split, so streams are stable across the graph).
@@ -87,8 +109,10 @@ impl Node for GainStage {
         }
     }
 
-    fn process(&mut self, inputs: &[Lane], outputs: &mut [Lane]) {
-        let (gain, rail) = (self.gain, self.rail);
+    fn process(&mut self, params: &Params, inputs: &[Lane], outputs: &mut [Lane]) {
+        // The gain is read per sample so a control change de-zippers smoothly across the block;
+        // `fallback` (the construction gain) is used only when run without a schedule (unit tests).
+        let (fallback, rail) = (self.gain, self.rail);
         let in_buf = inputs[0].voltage();
         let src = in_buf.as_slice();
         let out = outputs[0].voltage_mut().as_mut_slice();
@@ -96,13 +120,15 @@ impl Node for GainStage {
             Some(rng) => {
                 // σ = D·√(fs/2) from the block's rate; one √ per block, off the per-sample loop.
                 let sigma = self.noise_density.per_sample_sigma(in_buf.rate());
-                for (o, &v) in out.iter_mut().zip(src) {
+                for (i, (o, &v)) in out.iter_mut().zip(src).enumerate() {
+                    let gain = params.value_at_or(Self::GAIN, i, fallback);
                     let n = rng.next_gaussian() * sigma;
                     *o = ((v + n) * gain).clamp(-rail, rail);
                 }
             }
             None => {
-                for (o, &v) in out.iter_mut().zip(src) {
+                for (i, (o, &v)) in out.iter_mut().zip(src).enumerate() {
+                    let gain = params.value_at_or(Self::GAIN, i, fallback);
                     *o = (v * gain).clamp(-rail, rail);
                 }
             }

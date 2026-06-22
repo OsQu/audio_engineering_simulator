@@ -5,7 +5,7 @@
 //! (the engine's [`TestSource`](engine::TestSource) emits DC, which can't show treble rolloff
 //! or a curved wave). Expect it to be superseded when Story 1.7 lands.
 
-use engine::{InputPort, Lane, Node, Ohms, OutputPort, OutputZ, Volts};
+use engine::{InputPort, Lane, Node, Ohms, OutputPort, OutputZ, Params, Volts};
 use std::f64::consts::TAU;
 
 /// A continuous sine oscillator with a real Thévenin output impedance.
@@ -50,7 +50,7 @@ impl Node for SineSource {
         &self.outputs
     }
 
-    fn process(&mut self, _inputs: &[Lane], outputs: &mut [Lane]) {
+    fn process(&mut self, _params: &Params, _inputs: &[Lane], outputs: &mut [Lane]) {
         // The output buffer carries the analog rate `compile` sized it with, so the sample
         // period comes straight off it — the source never stores a rate of its own.
         let dt = outputs[0].voltage().rate().seconds_per_sample();
@@ -89,7 +89,7 @@ mod tests {
         let amp = Volts::new(2.0);
         let mut src = SineSource::new(amp, 1_000.0, Ohms::new(100.0));
         let mut out = [lane(768)];
-        src.process(&[], &mut out);
+        src.process(&Params::EMPTY, &[], &mut out);
         let samples = out[0].voltage().as_slice();
 
         // Peak ≈ amp: with 384 samples/cycle a sample lands within a whisker of the crest,
@@ -125,12 +125,12 @@ mod tests {
         let mut split = make();
         let mut b1 = [lane(100)];
         let mut b2 = [lane(100)];
-        split.process(&[], &mut b1);
-        split.process(&[], &mut b2);
+        split.process(&Params::EMPTY, &[], &mut b1);
+        split.process(&Params::EMPTY, &[], &mut b2);
 
         let mut whole = make();
         let mut both = [lane(200)];
-        whole.process(&[], &mut both);
+        whole.process(&Params::EMPTY, &[], &mut both);
 
         for (i, &v) in both[0].voltage().as_slice().iter().enumerate() {
             let got = if i < 100 {

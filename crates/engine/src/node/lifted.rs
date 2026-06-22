@@ -2,6 +2,7 @@
 
 use super::Node;
 use crate::electrical::{InputZ, OutputZ};
+use crate::param::Params;
 use crate::port::{InputPort, OutputPort};
 use crate::rng::Rng;
 use crate::signal::{AnalogRate, Lane};
@@ -82,16 +83,19 @@ impl Node for Lifted {
         &self.outputs
     }
 
-    fn process(&mut self, inputs: &[Lane], outputs: &mut [Lane]) {
+    fn process(&mut self, params: &Params, inputs: &[Lane], outputs: &mut [Lane]) {
         // Conductor k ↔ lane k. Each lane is a single-conductor node, so it gets a one-element
         // input/output slice — the same disjoint-pool borrows the schedule already relies on.
+        // `params` is forwarded as-is: today no per-conductor node declares params (the lift's own
+        // param list is empty), so this is `Params::EMPTY` to each leg; per-leg smoothing would be
+        // wired here when one does.
         let has_input = self.has_input;
         for (k, lane) in self.lanes.iter_mut().enumerate() {
             let out = &mut outputs[k..=k];
             if has_input {
-                lane.process(&inputs[k..=k], out);
+                lane.process(params, &inputs[k..=k], out);
             } else {
-                lane.process(&[], out);
+                lane.process(params, &[], out);
             }
         }
     }
@@ -147,7 +151,7 @@ mod tests {
         fn outputs(&self) -> &[OutputPort] {
             &self.outputs
         }
-        fn process(&mut self, inputs: &[Lane], outputs: &mut [Lane]) {
+        fn process(&mut self, _params: &Params, inputs: &[Lane], outputs: &mut [Lane]) {
             for (o, &v) in outputs[0]
                 .voltage_mut()
                 .as_mut_slice()

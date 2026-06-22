@@ -33,6 +33,7 @@ use crate::electrical::{InputZ, Ohms, OnePole, fan_out_gains};
 use crate::graph::{Edge, Graph, NodeId};
 use crate::node::{Lifted, Node};
 use crate::noise::NoiseDensity;
+use crate::param::{ParamHandle, ParamId, ParamQueue, Params, Smoother, smooth_samples};
 use crate::port::{DigitalFace, EventFace};
 use crate::rng::Rng;
 use crate::signal::{
@@ -285,6 +286,13 @@ pub struct Schedule {
     /// Absolute sample position of the next block's first sample — the clock external events are
     /// timestamped against. Starts at 0 and advances by `block_len` each processed block.
     sample_pos: u64,
+    /// One de-zipper [`Smoother`] per declared control param, flat and contiguous by node;
+    /// node `n`'s params are `param_store[param_base[n] .. param_base[n] + param_count[n]]`.
+    param_store: Vec<Smoother>,
+    /// Start index of each node's param run in `param_store`.
+    param_base: Vec<usize>,
+    /// Number of params each node declared (its run length in `param_store`).
+    param_count: Vec<usize>,
 }
 
 impl Schedule {
@@ -306,30 +314,67 @@ impl Schedule {
             .map(|s| EventInputId(s.lane))
     }
 
-    /// Process one block with no external events — the convenience for offline renders and chains
-    /// driven entirely from within the graph. See [`process_with_events`](Self::process_with_events).
+    /// Resolve a node's declared control parameter to a handle the host can drive (see
+    /// [`ParamQueue`]). Returns `None` if the node or param id is out of range. Off the hot path.
+    #[must_use]
+    pub fn param(&self, node: NodeId, id: ParamId) -> Option<ParamHandle> {
+        let base = *self.param_base.get(node.0)?;
+        if (id.0 as usize) < self.param_count[node.0] {
+            Some(ParamHandle(base + id.0 as usize))
+        } else {
+            None
+        }
+    }
+
+    /// Process one block with no external input — the convenience for offline renders and chains
+    /// driven entirely from within the graph. See [`process_io`](Self::process_io).
     ///
     /// Writes `min(out.len(), block_len)` samples; size `out` to [`block_len`](Self::block_len).
     pub fn process(&mut self, out: &mut VoltageBuffer) {
-        // A zero-capacity queue allocates nothing and drains to nothing — the hot path is identical
-        // to the event path with an empty block.
+        // Zero-capacity queues allocate nothing and drain to nothing — the hot path is identical to
+        // the full path with no pending input.
+        let mut no_params = ParamQueue::with_capacity(0);
         let mut no_events = EventQueue::with_capacity(0);
-        self.process_with_events(out, &mut no_events);
+        self.process_io(out, &mut no_params, &mut no_events);
     }
 
-    /// Process one block, delivering the `events` due this block, then copy the designated output
-    /// tap into `out`. Hot path — zero allocation, no panic, no locks.
+    /// Process one block delivering only `events` (no param changes). See [`process_io`](Self::process_io).
+    pub fn process_with_events(&mut self, out: &mut VoltageBuffer, events: &mut EventQueue) {
+        let mut no_params = ParamQueue::with_capacity(0);
+        self.process_io(out, &mut no_params, events);
+    }
+
+    /// Process one block applying only `params` (no events). See [`process_io`](Self::process_io).
+    pub fn process_with_params(&mut self, out: &mut VoltageBuffer, params: &mut ParamQueue) {
+        let mut no_events = EventQueue::with_capacity(0);
+        self.process_io(out, params, &mut no_events);
+    }
+
+    /// Process one block: apply pending control-param targets and deliver due events, run every
+    /// step, advance the param de-zippers, and copy the designated output tap into `out`. Hot path
+    /// — zero allocation, no panic, no locks.
     ///
-    /// Events with absolute time in `[sample_pos, sample_pos + block_len)` are written into their
-    /// target input lanes at the matching block-relative offset (a time before `sample_pos` — a
-    /// late event — clamps to offset 0); later events stay queued. The schedule's `sample_pos`
-    /// then advances one block.
+    /// `params` are applied latest-wins as new glide targets; each node then reads its
+    /// **within-block-ramped** values during `process`. `events` due in
+    /// `[sample_pos, sample_pos + block_len)` land at their block-relative offsets (a late event
+    /// clamps to offset 0); later events stay queued. `sample_pos` then advances one block.
     ///
     /// Writes `min(out.len(), block_len)` samples; size `out` to [`block_len`](Self::block_len).
-    pub fn process_with_events(&mut self, out: &mut VoltageBuffer, events: &mut EventQueue) {
-        let block_len = self.block_len as u64;
+    pub fn process_io(
+        &mut self,
+        out: &mut VoltageBuffer,
+        params: &mut ParamQueue,
+        events: &mut EventQueue,
+    ) {
+        let blk = self.block_len;
+        let block_len = blk as u64;
         let pos = self.sample_pos;
         let end = pos + block_len;
+
+        // Apply pending param targets (latest-wins) — each re-aims its smoother's glide.
+        for (handle, target) in params.drain() {
+            self.param_store[handle.0].set_target(target);
+        }
 
         // Refill the open event inputs for this block: clear last block's events (no edge writes
         // them), then deliver the due ones at their block-relative offsets. Disjoint field borrows.
@@ -351,6 +396,9 @@ impl Schedule {
             output_pool,
             steps,
             out_buf,
+            param_store,
+            param_base,
+            param_count,
             ..
         } = self;
 
@@ -365,7 +413,10 @@ impl Schedule {
                 } => {
                     let ins = &input_pool[*in_start..*in_start + *in_len];
                     let outs = &mut output_pool[*out_start..*out_start + *out_len];
-                    nodes[*node].process(ins, outs);
+                    // Hand the node a view of its own smoothers' current (ramped) values.
+                    let base = param_base[*node];
+                    let params = Params::new(&param_store[base..base + param_count[*node]]);
+                    nodes[*node].process(&params, ins, outs);
                 }
                 Step::Edge { src, dst, kind } => {
                     // Different pools ⇒ disjoint borrows, no aliasing.
@@ -390,6 +441,12 @@ impl Schedule {
                     }
                 }
             }
+        }
+
+        // Advance every de-zipper one block: this block's nodes read the block-start values, so
+        // the glide steps forward only now, off the per-sample path.
+        for smoother in param_store.iter_mut() {
+            smoother.advance(blk);
         }
 
         let tapped = output_pool[*out_buf].voltage().as_slice();
@@ -736,6 +793,26 @@ pub fn compile(
         node.seed(root.split());
     }
 
+    // --- 10. Build the control-param smoother store: one de-zipper smoother per declared param,
+    //         contiguous by node, each starting at its declared default and gliding over its
+    //         `smooth_ms` (converted to samples at the analog rate). A node's id `p` resolves to
+    //         `param_base[node] + p` (params declared in id order). ---
+    let mut param_store = Vec::new();
+    let mut param_base = vec![0usize; node_count];
+    let mut param_count = vec![0usize; node_count];
+    for (n, node) in nodes.iter().enumerate() {
+        param_base[n] = param_store.len();
+        for decl in node.params() {
+            param_store.push(Smoother::new(
+                decl.default,
+                decl.min,
+                decl.max,
+                smooth_samples(decl.smooth_ms, rate.as_hz()),
+            ));
+        }
+        param_count[n] = param_store.len() - param_base[n];
+    }
+
     // The tap is the output port's first conductor (its hot leg for a balanced port).
     let out_buf = out_port_base[out_node.0][out_port];
     Ok(Schedule {
@@ -747,6 +824,9 @@ pub fn compile(
         block_len,
         event_inputs,
         sample_pos: 0,
+        param_store,
+        param_base,
+        param_count,
     })
 }
 
@@ -1782,7 +1862,7 @@ mod digital_seam {
         fn outputs(&self) -> &[OutputPort] {
             &self.outputs
         }
-        fn process(&mut self, _inputs: &[Lane], outputs: &mut [Lane]) {
+        fn process(&mut self, _params: &Params, _inputs: &[Lane], outputs: &mut [Lane]) {
             outputs[0].sample_mut().fill(self.level);
         }
     }
@@ -1805,7 +1885,7 @@ mod digital_seam {
         fn outputs(&self) -> &[OutputPort] {
             &[]
         }
-        fn process(&mut self, _inputs: &[Lane], _outputs: &mut [Lane]) {}
+        fn process(&mut self, _params: &Params, _inputs: &[Lane], _outputs: &mut [Lane]) {}
     }
 
     #[test]
@@ -2161,7 +2241,7 @@ mod event_seam {
         fn outputs(&self) -> &[OutputPort] {
             &self.outputs
         }
-        fn process(&mut self, _inputs: &[Lane], outputs: &mut [Lane]) {
+        fn process(&mut self, _params: &Params, _inputs: &[Lane], outputs: &mut [Lane]) {
             let ev = outputs[0].events_mut();
             ev.clear(); // a producer owns its lane each block — clear stale events, then emit.
             ev.push(note_on());
@@ -2186,7 +2266,7 @@ mod event_seam {
         fn outputs(&self) -> &[OutputPort] {
             &[]
         }
-        fn process(&mut self, _inputs: &[Lane], _outputs: &mut [Lane]) {}
+        fn process(&mut self, _params: &Params, _inputs: &[Lane], _outputs: &mut [Lane]) {}
     }
 
     /// A silent analog source supplies the (voltage) output tap so `process` can run, since the
@@ -2480,5 +2560,84 @@ mod event_seam {
             sched.event_input(NodeId(3), 0).is_none(),
             "the tap's port 0 is an analog output, not an event input"
         );
+    }
+}
+
+/// Story 1.7.3 — control params & de-zippering: a swept knob reaches the engine as a **smoothed**
+/// value (a within-block linear ramp), so it never clicks. The headline lesson is the contrast
+/// with a raw jump; here we sweep [`GainStage::GAIN`] and assert the output glides continuously to
+/// the new gain rather than snapping. White-box where convenient, as elsewhere in this file.
+#[cfg(test)]
+mod param_phenomena {
+    use super::*;
+    use crate::electrical::Ohms;
+    use crate::node::{GainStage, TestSource};
+    use crate::param::ParamQueue;
+    use crate::signal::Volts;
+    use approx::assert_relative_eq;
+
+    fn rate() -> AnalogRate {
+        AnalogRate::new(384_000.0)
+    }
+
+    #[test]
+    fn a_swept_gain_param_de_zippers_without_discontinuity() {
+        // 1 V DC → GainStage(gain 1.0) → tap. Near-ideal faces (1 Ω out into 1 GΩ in, bridging
+        // tap) make the output ≈ gain·1 V. Sweep the gain param 1 → 5: a de-zippered value ramps
+        // there smoothly; a raw write would jump +4 V in a single sample. We assert no
+        // sample-to-sample step exceeds a tiny bound, the ramp is monotonic, and it lands at 5 V.
+        let mut g = Graph::new();
+        let src = g.add(TestSource::new(Volts::new(1.0), Ohms::new(1.0)));
+        let amp = g.add(GainStage::new(
+            1.0,
+            Volts::new(100.0),
+            InputZ::new(Ohms::new(1e9)),
+            Ohms::new(1.0),
+        ));
+        g.connect(src, 0, amp, 0);
+        g.set_output(amp, 0);
+
+        let block = 64;
+        let mut sched = compile(g, block, rate(), 0).expect("valid param chain");
+        let gain = sched.param(amp, GainStage::GAIN).expect("gain param");
+
+        // Settled at the default gain 1.0 → output ≈ 1 V.
+        let mut out = VoltageBuffer::zeros(block, rate());
+        sched.process(&mut out);
+        assert_relative_eq!(out.get(0).get(), 1.0, max_relative = 1e-3);
+
+        // Aim at 5.0 and collect the whole glide. Smooth time 5 ms @ 384 kHz = 1920 samples = 30
+        // blocks of 64; 40 blocks over-covers, so it reaches and holds 5 V.
+        let mut q = ParamQueue::with_capacity(1);
+        q.set(gain, 5.0);
+        let mut swept = Vec::new();
+        for b in 0..40 {
+            if b == 0 {
+                sched.process_with_params(&mut out, &mut q);
+            } else {
+                sched.process(&mut out);
+            }
+            swept.extend_from_slice(out.as_slice());
+        }
+
+        // No discontinuity: a de-zippered sweep moves at the ramp step (≈ (5−1)/1920 ≈ 0.0021
+        // V/sample); a raw jump would show a ~4 V step. 0.005 cleanly separates the two.
+        let max_step = swept
+            .windows(2)
+            .map(|w| (w[1] - w[0]).abs())
+            .fold(0.0_f32, f32::max);
+        assert!(
+            max_step < 0.005,
+            "the sweep must not jump (max sample step {max_step} V)"
+        );
+
+        // Monotonic upward (no overshoot/ringing) and settled at the new gain.
+        assert!(
+            swept.windows(2).all(|w| w[1] - w[0] >= -1e-6),
+            "a 1→5 glide should be non-decreasing"
+        );
+        assert_relative_eq!(*swept.last().unwrap(), 5.0, max_relative = 1e-3);
+        // And it genuinely moved off the start (not stuck at 1 V).
+        assert!(swept.iter().any(|&v| v > 2.0));
     }
 }

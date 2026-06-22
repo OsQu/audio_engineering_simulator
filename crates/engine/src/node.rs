@@ -42,6 +42,7 @@ pub(crate) use lifted::Lifted;
 pub use source::TestSource;
 pub use sum::PassiveSum;
 
+use crate::param::{ParamDecl, Params};
 use crate::port::{InputPort, OutputPort};
 use crate::rng::Rng;
 use crate::signal::{AnalogRate, Lane};
@@ -75,10 +76,21 @@ pub trait Node {
     /// count and must stay constant for the node's lifetime.
     fn outputs(&self) -> &[OutputPort];
 
-    /// Transform a block: read the `inputs` lanes, write each output lane's **open-circuit**
-    /// value into `outputs`. Hot path — no allocation, no panic. The slice lengths are the
-    /// nodes' total lane counts (sum of each port's [`lane_count`](crate::InputPort::lane_count)).
-    fn process(&mut self, inputs: &[Lane], outputs: &mut [Lane]);
+    /// The node's smoothed control parameters, in id order — the knobs/faders the host can drive.
+    /// Each [`ParamDecl`] names an id, its initial value, range, and de-zipper time; `compile`
+    /// builds one smoother per declaration and hands their current values to
+    /// [`process`](Self::process) via [`Params`]. Default: no params. A node names its params with
+    /// `const`s whose [`ParamId`](crate::ParamId) equals the declaration's position here.
+    fn params(&self) -> &[ParamDecl] {
+        &[]
+    }
+
+    /// Transform a block: read the `inputs` lanes and current `params`, write each output lane's
+    /// **open-circuit** value into `outputs`. Hot path — no allocation, no panic. The slice
+    /// lengths are the nodes' total lane counts (sum of each port's
+    /// [`lane_count`](crate::InputPort::lane_count)); a node reads a control param at sample `i`
+    /// with [`params.value_at_or`](Params::value_at_or), passing its own field as the fallback.
+    fn process(&mut self, params: &Params, inputs: &[Lane], outputs: &mut [Lane]);
 
     /// Seed this node's stochastic state from `rng`, an independent per-node stream.
     ///
@@ -153,7 +165,7 @@ mod tests {
             &self.outputs
         }
 
-        fn process(&mut self, inputs: &[Lane], outputs: &mut [Lane]) {
+        fn process(&mut self, _params: &Params, inputs: &[Lane], outputs: &mut [Lane]) {
             for (out, &v) in outputs[0]
                 .voltage_mut()
                 .as_mut_slice()

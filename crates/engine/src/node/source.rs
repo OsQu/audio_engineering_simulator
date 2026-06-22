@@ -2,6 +2,7 @@
 
 use super::Node;
 use crate::electrical::{Ohms, OutputZ};
+use crate::param::Params;
 use crate::port::{InputPort, OutputPort};
 use crate::signal::{Lane, Volts};
 
@@ -40,7 +41,7 @@ impl Node for TestSource {
         &self.outputs
     }
 
-    fn process(&mut self, _inputs: &[Lane], outputs: &mut [Lane]) {
+    fn process(&mut self, _params: &Params, _inputs: &[Lane], outputs: &mut [Lane]) {
         outputs[0].voltage_mut().fill(self.level);
     }
 }

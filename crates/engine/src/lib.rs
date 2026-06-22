@@ -12,6 +12,7 @@ mod graph;
 mod level;
 mod node;
 mod noise;
+mod param;
 mod port;
 mod rng;
 mod schedule;
@@ -30,6 +31,7 @@ pub use node::{
     Node, PassiveSum, TestSource,
 };
 pub use noise::NoiseDensity;
+pub use param::{ParamDecl, ParamHandle, ParamId, ParamQueue, Params};
 pub use port::{AudioFormat, DigitalFace, EventFace, InputPort, OutputPort};
 pub use rng::Rng;
 pub use schedule::{CompileError, EventInputId, EventQueue, Schedule, ScheduleSlot, compile};

@@ -10,6 +10,7 @@
 
 use super::Node;
 use crate::electrical::{InputZ, Ohms, OutputZ};
+use crate::param::Params;
 use crate::port::{InputPort, OutputPort};
 use crate::signal::Lane;
 
@@ -44,7 +45,7 @@ impl Node for BalancedDriver {
         &self.outputs
     }
 
-    fn process(&mut self, inputs: &[Lane], outputs: &mut [Lane]) {
+    fn process(&mut self, _params: &Params, inputs: &[Lane], outputs: &mut [Lane]) {
         // One balanced output port = two conductor lanes: [0] = V+, [1] = V−.
         let (hot, cold) = outputs.split_at_mut(1);
         let vp = hot[0].voltage_mut().as_mut_slice();
@@ -93,7 +94,7 @@ impl Node for BalancedReceiver {
         &self.outputs
     }
 
-    fn process(&mut self, inputs: &[Lane], outputs: &mut [Lane]) {
+    fn process(&mut self, _params: &Params, inputs: &[Lane], outputs: &mut [Lane]) {
         // One balanced input port = two conductor lanes: [0] = V+, [1] = V−.
         let out = outputs[0].voltage_mut().as_mut_slice();
         let vp = inputs[0].voltage().as_slice();

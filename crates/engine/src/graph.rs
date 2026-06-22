@@ -123,6 +123,7 @@ impl Graph {
 mod tests {
     use super::*;
     use crate::electrical::{InputZ, Ohms, OutputZ};
+    use crate::param::Params;
     use crate::port::{InputPort, OutputPort};
     use crate::signal::Lane;
 
@@ -152,7 +153,7 @@ mod tests {
         fn outputs(&self) -> &[OutputPort] {
             &self.outputs
         }
-        fn process(&mut self, _inputs: &[Lane], _outputs: &mut [Lane]) {}
+        fn process(&mut self, _params: &Params, _inputs: &[Lane], _outputs: &mut [Lane]) {}
     }
 
     #[test]
