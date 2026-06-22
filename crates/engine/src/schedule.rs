@@ -1806,3 +1806,191 @@ mod digital_seam {
         );
     }
 }
+
+/// Story 1.6.5 — the converter **artifacts**, on real compiled chains through the carrier seam:
+/// calibration (+4 dBu = −18 dBFS), aliasing fold-back from a weak anti-alias filter, the TPDF
+/// quantization noise floor (RMS `Δ/2`, SNR ≈ `6.02·N − 3`), and the end-to-end capstone
+/// `analog → AD → digital → DA → analog`. "Tests are the oracle" (§3.5): every number is a hand
+/// calc, inline. Digital-domain assertions read the AD's output sample lane (white-box, as in
+/// [`digital_seam`]); the capstone taps the DA's analog output through `process`.
+#[cfg(test)]
+mod converter_phenomena {
+    use super::*;
+    use crate::electrical::{InputZ, Ohms};
+    use crate::level::{dbu_to_volts, sample_to_dbfs};
+    use crate::node::{AdConverter, BalancedDriver, BalancedReceiver, DaConverter, TestSource};
+    use crate::signal::{BitDepth, SampleRate, Volts};
+    use crate::test_util::{SineSource, rms, tone_amplitude};
+    use approx::assert_relative_eq;
+
+    fn analog_rate() -> AnalogRate {
+        AnalogRate::new(384_000.0)
+    }
+    fn digital_rate() -> SampleRate {
+        SampleRate::new(48_000.0)
+    }
+    /// 48 kHz expressed as an `AnalogRate`, so [`tone_amplitude`]'s DFT runs at the digital rate
+    /// when it reads the AD's 48 kHz output samples (it only needs the sample period).
+    fn digital_as_analog() -> AnalogRate {
+        AnalogRate::new(48_000.0)
+    }
+
+    /// Drive a configured `ad` from `src` over one block and return its digital output samples.
+    /// The AD's output is digital, so it can't be the schedule's voltage tap; a standalone silent
+    /// analog source supplies that tap, and the AD samples are read white-box from the pool (the
+    /// only `Lane::Sample` there, since the chain has a single converter).
+    fn ad_samples(src: SineSource, ad: AdConverter, block_len: usize, seed: u64) -> Vec<f32> {
+        let mut g = Graph::new();
+        let s = g.add(src);
+        let a = g.add(ad);
+        g.connect(s, 0, a, 0);
+        let tap = g.add(TestSource::new(Volts::new(0.0), Ohms::new(150.0)));
+        g.set_output(tap, 0);
+
+        let mut sched = compile(g, block_len, analog_rate(), seed).expect("valid converter chain");
+        let mut sink = VoltageBuffer::zeros(block_len, analog_rate());
+        sched.process(&mut sink);
+        sched
+            .output_pool
+            .iter()
+            .find(|l| matches!(l, Lane::Sample(_)))
+            .expect("an AD output sample lane")
+            .sample()
+            .as_slice()
+            .to_vec()
+    }
+
+    #[test]
+    fn plus_4_dbu_calibrates_to_minus_18_dbfs_through_the_seam() {
+        // +4 dBu = 1.2283 V RMS = 1.7372 V peak. Source 1 Ω into the AD's 1 MΩ input ⇒ divider
+        // 1e6/(1+1e6) ≈ 0.999999, so the AD sees the full peak. Against a 13.80 V-peak reference:
+        //   1.7372 / 13.80 = 0.12589 normalized peak ⇒ 20·log10(0.12589) = −18.0 dBFS.
+        let peak = dbu_to_volts(4.0).get() * core::f32::consts::SQRT_2;
+        let src = SineSource::new(1_000.0, Volts::new(peak), Volts::new(0.0), Ohms::new(1.0));
+        let ad = AdConverter::new(
+            digital_rate(),
+            BitDepth::new(24),
+            Volts::new(13.80),
+            Ohms::new(1e6),
+        );
+        // 7680 analog ⇒ 960 digital = 20 whole cycles of 1 kHz at 48 kHz (48 samples/cycle).
+        let out = ad_samples(src, ad, 7_680, 1);
+        let amp = tone_amplitude(&out[480..], 1_000.0, digital_as_analog());
+        assert_relative_eq!(sample_to_dbfs(amp), -18.0, epsilon = 0.1);
+    }
+
+    #[test]
+    fn a_weak_anti_alias_filter_folds_back_more_than_a_strong_one() {
+        // A 40 kHz tone is above the 24 kHz decimated Nyquist; unrejected it folds to 48 − 40 =
+        // 8 kHz. A steep filter (the default 161 taps) attenuates it deep into the stopband; a
+        // short one (15 taps) can't, so far more leaks back. Measure the 8 kHz alias bin.
+        let tone = || SineSource::new(40_000.0, Volts::new(0.5), Volts::new(0.0), Ohms::new(1.0));
+        let strong = AdConverter::new(
+            digital_rate(),
+            BitDepth::new(24),
+            Volts::new(1.0),
+            Ohms::new(1e6),
+        );
+        let weak = AdConverter::new(
+            digital_rate(),
+            BitDepth::new(24),
+            Volts::new(1.0),
+            Ohms::new(1e6),
+        )
+        .with_aa_taps(15);
+        // 12288 analog ⇒ 1536 digital = 256 whole cycles of 8 kHz at 48 kHz (6 samples/cycle).
+        let s = ad_samples(tone(), strong, 12_288, 1);
+        let w = ad_samples(tone(), weak, 12_288, 1);
+        let alias_strong = tone_amplitude(&s[200..], 8_000.0, digital_as_analog());
+        let alias_weak = tone_amplitude(&w[200..], 8_000.0, digital_as_analog());
+        assert!(
+            alias_weak > alias_strong * 5.0,
+            "a weak (short) AA filter must fold back far more: weak {alias_weak} vs strong \
+             {alias_strong}"
+        );
+    }
+
+    #[test]
+    fn the_quantization_noise_floor_is_delta_over_two() {
+        // TPDF-dithered quantization of silence: the output is pure dither noise of variance
+        //   Δ²/12 (quantization) + Δ²/6 (TPDF, two ±½-LSB draws) = Δ²/4  ⇒  RMS = Δ/2,
+        // independent of the signal. For a ±1.0 full scale Δ = 1/2^(N−1), so the floor is 2^−N:
+        //   16-bit ⇒ 2^−16 = 1.526e-5;  24-bit ⇒ 2^−24 = 5.96e-8 (256× quieter).
+        fn floor(bits: u32, seed: u64) -> f32 {
+            let silence =
+                SineSource::new(1_000.0, Volts::new(0.0), Volts::new(0.0), Ohms::new(1.0));
+            let ad = AdConverter::new(
+                digital_rate(),
+                BitDepth::new(bits),
+                Volts::new(1.0),
+                Ohms::new(1e6),
+            );
+            // 80000 analog ⇒ 10000 digital samples: RMS converges to ~1% (≈ 1/√(2N)).
+            rms(&ad_samples(silence, ad, 80_000, seed))
+        }
+        let floor_16 = floor(16, 1);
+        let floor_24 = floor(24, 2);
+
+        // Each floor matches Δ/2 = 2^−N, and more bits buy a much lower floor.
+        assert_relative_eq!(floor_16, 2.0_f32.powi(-16), max_relative = 0.05);
+        assert_relative_eq!(floor_24, 2.0_f32.powi(-24), max_relative = 0.05);
+        assert!(
+            floor_16 > floor_24 * 100.0,
+            "more bits ⇒ a far lower noise floor: 16-bit {floor_16} vs 24-bit {floor_24}"
+        );
+
+        // SNR of a full-scale sine (RMS 1/√2) against the measured 16-bit floor:
+        //   20·log10((1/√2) / floor) ≈ 6.02·16 − 3.01 = 93.3 dB — the flat-noise SNR law.
+        let snr = 20.0 * ((1.0 / core::f32::consts::SQRT_2) / floor_16).log10();
+        assert_relative_eq!(snr, 6.0206 * 16.0 - 3.01, epsilon = 0.5);
+    }
+
+    #[test]
+    fn capstone_balanced_analog_through_ad_da_back_to_analog() {
+        // The whole Story 1.6 chain, balanced-fronted, through the generalized carrier seam:
+        //   sine(2 V) → balanced driver → balanced receiver → AD → DA → analog tap.
+        // Every analog face is near-ideal (1 Ω out into ≥ 1 MΩ in) so dividers ≈ unity: the
+        // receiver returns the 2 V differential single-ended; the AD digitizes it (2 V / 10 V
+        // reference = 0.2 full scale); the DA reconstructs it (0.2 × 10 V = 2 V). A 1 kHz tone,
+        // deep in the passband, should survive end-to-end at ≈ 2 V — the analog physics of
+        // Stories 1.2–1.5 intact across the digital round trip.
+        let mut g = Graph::new();
+        let src = g.add(SineSource::new(
+            1_000.0,
+            Volts::new(2.0),
+            Volts::new(0.0),
+            Ohms::new(1.0),
+        ));
+        let drv = g.add(BalancedDriver::new(
+            InputZ::new(Ohms::new(1e9)),
+            Ohms::new(1.0),
+        ));
+        let rcv = g.add(BalancedReceiver::new(Ohms::new(1e9), Ohms::new(1.0)));
+        let ad = g.add(AdConverter::new(
+            digital_rate(),
+            BitDepth::new(24),
+            Volts::new(10.0),
+            Ohms::new(1e6),
+        ));
+        let da = g.add(DaConverter::new(
+            digital_rate(),
+            BitDepth::new(24),
+            Volts::new(10.0),
+            Ohms::new(150.0),
+        ));
+        g.connect(src, 0, drv, 0);
+        g.connect(drv, 0, rcv, 0);
+        g.connect(rcv, 0, ad, 0);
+        g.connect(ad, 0, da, 0);
+        g.set_output(da, 0);
+
+        // 15360 analog ⇒ 1920 digital = 40 whole cycles of 1 kHz; drop the first half as the
+        // combined AA + reconstruction filter transient (their group delays add).
+        let block = 15_360;
+        let mut sched = compile(g, block, analog_rate(), 0).expect("valid capstone chain");
+        let mut out = VoltageBuffer::zeros(block, analog_rate());
+        sched.process(&mut out);
+        let amp = tone_amplitude(&out.as_slice()[block / 2..], 1_000.0, analog_rate());
+        assert_relative_eq!(amp, 2.0, max_relative = 0.02);
+    }
+}
