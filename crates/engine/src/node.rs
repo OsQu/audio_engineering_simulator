@@ -25,6 +25,7 @@
 mod ad;
 mod balanced;
 mod condenser;
+mod da;
 mod dc_blocker;
 mod gain;
 mod lifted;
@@ -34,6 +35,7 @@ mod sum;
 pub use ad::AdConverter;
 pub use balanced::{BalancedDriver, BalancedReceiver};
 pub use condenser::CondenserMic;
+pub use da::DaConverter;
 pub use dc_blocker::DcBlocker;
 pub use gain::GainStage;
 pub(crate) use lifted::Lifted;

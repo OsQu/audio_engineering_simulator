@@ -171,6 +171,113 @@ impl Decimator {
     }
 }
 
+/// An **interpolating** linear-phase FIR low-pass: produces `factor` output samples per input
+/// sample, the mirror of [`Decimator`]. It upsamples by inserting `factor − 1` zeros between
+/// inputs (which replicates the spectrum into `factor` images) and low-passes at the original
+/// Nyquist to keep only the baseband — the reconstruction filter of an oversampling DA.
+///
+/// It computes the polyphase form directly: for each input it emits the `factor` output phases,
+/// where phase `p` convolves the input history with the sub-filter `taps[p], taps[p+factor], …`.
+/// Because the inserted zeros contribute nothing, only the nonzero inputs are ever multiplied —
+/// the same saving as the decimator, from the other side. To undo the `1/factor` energy loss of
+/// zero-stuffing, the taps are scaled by `factor` so the passband gain is unity. The input
+/// history is a ring buffer carried across blocks; [`process`](Self::process) is zero-allocation
+/// and panic-free.
+pub struct Interpolator {
+    /// Windowed-sinc taps, scaled by `factor` for unity passband gain after zero-stuffing.
+    taps: Vec<f32>,
+    /// Ring buffer of the last `ceil(taps.len() / factor)` input samples.
+    history: Vec<f32>,
+    /// Next write position in `history`.
+    pos: usize,
+    /// Interpolation factor `M`: outputs produced per input consumed.
+    factor: usize,
+}
+
+impl Interpolator {
+    /// Build an interpolator from explicit `taps` (already scaled for unity gain) and `factor`.
+    ///
+    /// # Panics
+    /// Panics if `taps` is empty or `factor == 0`.
+    #[must_use]
+    pub fn new(taps: Vec<f32>, factor: usize) -> Self {
+        assert!(!taps.is_empty(), "an interpolator needs at least one tap");
+        assert!(factor >= 1, "interpolation factor must be >= 1");
+        // History need only span the taps one phase reaches: ceil(L / factor) input samples.
+        let span = taps.len().div_ceil(factor);
+        Self {
+            taps,
+            history: vec![0.0; span],
+            pos: 0,
+            factor,
+        }
+    }
+
+    /// A reconstruction interpolator: a `num_taps` Kaiser-windowed sinc whose cutoff sits at the
+    /// **pre-upsampling Nyquist** (`0.5 / factor` of the output rate), window `beta` (see
+    /// [`kaiser_beta`]), scaled by `factor` so the passband gain is unity.
+    #[must_use]
+    pub fn lowpass(num_taps: usize, factor: usize, beta: f64) -> Self {
+        let mut taps = design_lowpass(num_taps, 0.5 / factor as f64, beta);
+        // Zero-stuffing drops average energy by `factor`; scale the taps to restore unity gain.
+        let gain = factor as f32;
+        for tap in &mut taps {
+            *tap *= gain;
+        }
+        Self::new(taps, factor)
+    }
+
+    /// The interpolation factor `M`.
+    pub fn factor(&self) -> usize {
+        self.factor
+    }
+
+    /// Clear the input history (zeroed state), as at the start of a fresh run.
+    pub fn reset(&mut self) {
+        self.history.iter_mut().for_each(|h| *h = 0.0);
+        self.pos = 0;
+    }
+
+    /// Interpolate `input` into `output`, where `output.len() == input.len() * factor`. Hot path:
+    /// no allocation, no panic; each output phase accumulates in `f64` and flushes a denormal
+    /// result to zero.
+    pub fn process(&mut self, input: &[f32], output: &mut [f32]) {
+        let len = self.taps.len();
+        let factor = self.factor;
+        let span = self.history.len();
+        let mut oi = 0;
+        for &x in input {
+            self.history[self.pos] = x;
+            self.pos += 1;
+            if self.pos == span {
+                self.pos = 0;
+            }
+            let newest = if self.pos == 0 {
+                span - 1
+            } else {
+                self.pos - 1
+            };
+            // Emit the `factor` output phases for this input; phase `p` uses taps p, p+M, p+2M, …
+            for p in 0..factor {
+                if oi >= output.len() {
+                    return;
+                }
+                let mut acc = 0.0_f64;
+                let mut idx = newest;
+                let mut t = p;
+                while t < len {
+                    acc += f64::from(self.taps[t]) * f64::from(self.history[idx]);
+                    idx = if idx == 0 { span - 1 } else { idx - 1 };
+                    t += factor;
+                }
+                let y = acc as f32;
+                output[oi] = if y != 0.0 && !y.is_normal() { 0.0 } else { y };
+                oi += 1;
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -191,6 +298,13 @@ mod tests {
     fn decimate(dec: &mut Decimator, input: &[f32]) -> Vec<f32> {
         let mut out = vec![0.0; input.len() / dec.factor()];
         dec.process(input, &mut out);
+        out
+    }
+
+    /// Interpolate a low-rate slice into a fresh high-rate `Vec`.
+    fn interpolate(interp: &mut Interpolator, input: &[f32]) -> Vec<f32> {
+        let mut out = vec![0.0; input.len() * interp.factor()];
+        interp.process(input, &mut out);
         out
     }
 
@@ -268,5 +382,53 @@ mod tests {
         assert_relative_eq!(kaiser_beta(60.0), 0.1102 * 51.3, epsilon = 1e-9);
         // Below 21 dB a rectangular window suffices ⇒ beta = 0.
         assert_eq!(kaiser_beta(10.0), 0.0);
+    }
+
+    #[test]
+    fn interpolator_dc_passes_at_unity() {
+        // A constant 1.0 upsampled ×M is a pulse train averaging 1/M; the taps are scaled by M
+        // so the reconstruction restores a constant ≈ 1.0 (images rejected by the stopband).
+        let mut interp = Interpolator::lowpass(161, M, kaiser_beta(96.0));
+        let out = interpolate(&mut interp, &[1.0_f32; 1_000]);
+        // Past settling (group delay ~161/2 hi-rate samples = ~80 ≈ 10 inputs), the tail is ≈ 1.0.
+        assert!(
+            out[800..].iter().all(|&v| (v - 1.0).abs() < 1e-3),
+            "interpolated DC gain should be unity"
+        );
+    }
+
+    #[test]
+    fn interpolator_preserves_a_passband_tone() {
+        // A 4 kHz tone at 48 kHz (deep in the passband) upsampled ×8 to 384 kHz keeps unity
+        // amplitude — the reconstruction filter passes the baseband and rejects the images.
+        let mut interp = Interpolator::lowpass(161, M, kaiser_beta(96.0));
+        let input = sine(4_000.0, Volts::new(1.0), 1_000, lo());
+        let out = interpolate(&mut interp, input.as_slice());
+        let amp = tone_amplitude(&out[800..], 4_000.0, hi());
+        assert!(amp > 0.97, "passband tone should survive ~unity, got {amp}");
+    }
+
+    #[test]
+    fn interpolator_rejects_the_first_image() {
+        // Upsampling a 4 kHz tone by 8 puts spectral images at 48k ± 4k, 96k ± 4k, … The nearest
+        // image (44 kHz) sits in the stopband, so it should be attenuated to near nothing.
+        let mut interp = Interpolator::lowpass(161, M, kaiser_beta(96.0));
+        let input = sine(4_000.0, Volts::new(1.0), 1_000, lo());
+        let out = interpolate(&mut interp, input.as_slice());
+        let image = tone_amplitude(&out[800..], 44_000.0, hi());
+        assert!(image < 0.01, "first image should be rejected, got {image}");
+    }
+
+    #[test]
+    fn interpolate_then_decimate_round_trips_a_passband_tone() {
+        // Up ×8 then back down ×8 through matched filters is identity in the passband (the two
+        // group delays add, so compare past the combined settling). 3 kHz is well in band.
+        let input = sine(3_000.0, Volts::new(0.8), 1_000, lo());
+        let mut interp = Interpolator::lowpass(161, M, kaiser_beta(96.0));
+        let mut dec = Decimator::lowpass(161, M, kaiser_beta(96.0));
+        let up = interpolate(&mut interp, input.as_slice());
+        let down = decimate(&mut dec, &up);
+        let amp = tone_amplitude(&down[400..], 3_000.0, lo());
+        assert_relative_eq!(amp, 0.8, epsilon = 0.02);
     }
 }
