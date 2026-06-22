@@ -22,10 +22,12 @@ mod test_util;
 pub use electrical::{Cable, Farads, InputZ, Ohms, OnePole, OutputZ, Thevenin, divider_gain};
 pub use fir::{Decimator, kaiser_beta};
 pub use graph::{Graph, NodeId};
-pub use level::{dbu_to_volts, dbv_to_volts, headroom_db, volts_to_dbu, volts_to_dbv};
+pub use level::{
+    dbu_to_volts, dbv_to_volts, headroom_db, sample_to_dbfs, volts_to_dbu, volts_to_dbv,
+};
 pub use node::{
-    BalancedDriver, BalancedReceiver, CondenserMic, DcBlocker, GainStage, Node, PassiveSum,
-    TestSource,
+    AdConverter, BalancedDriver, BalancedReceiver, CondenserMic, DcBlocker, GainStage, Node,
+    PassiveSum, TestSource,
 };
 pub use noise::NoiseDensity;
 pub use port::{AudioFormat, DigitalFace, InputPort, OutputPort};

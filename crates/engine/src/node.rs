@@ -22,6 +22,7 @@
 //! applied by the schedule, so a node's output is always its **open-circuit** `v_src` (what
 //! it would produce into an infinite load).
 
+mod ad;
 mod balanced;
 mod condenser;
 mod dc_blocker;
@@ -30,6 +31,7 @@ mod lifted;
 mod source;
 mod sum;
 
+pub use ad::AdConverter;
 pub use balanced::{BalancedDriver, BalancedReceiver};
 pub use condenser::CondenserMic;
 pub use dc_blocker::DcBlocker;

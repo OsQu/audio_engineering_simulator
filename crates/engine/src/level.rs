@@ -1,12 +1,15 @@
 //! Level conversions between linear volts and decibel measurement scales.
 //!
 //! Decibels are *measurements*, not storage — these helpers are the only place a voltage
-//! becomes dB (and back). Two analog reference scales live here; **dBFS is deliberately
-//! absent** because it's a digital concept owned by the AD converter (Story 1.6).
+//! (or a normalized digital sample) becomes dB (and back).
 //!
 //! - **dBu** — reference 0 dBu = √0.6 V ≈ 0.7746 V (the RMS voltage that delivers 1 mW
 //!   into 600 Ω). Commonly quoted, rounded, as 0.775 V.
 //! - **dBV** — reference 0 dBV = 1 V.
+//! - **dBFS** — full-scale digital level: [`sample_to_dbfs`] reads a normalized
+//!   [`SampleBuffer`](crate::SampleBuffer) value (±1.0 = full scale) as `20·log10(|sample|)`. The
+//!   volts↔dBFS *calibration* (how a real voltage maps to full scale) is owned by the AD converter
+//!   via its reference voltage (Story 1.6); this is the pure sample-domain reading.
 //!
 //! Inputs are *levels* (a magnitude/RMS voltage, expected ≥ 0). A level of 0 V converts
 //! to −∞ dB, as the math dictates. Computation is done in `f64` so round-trips stay tight.
@@ -53,6 +56,15 @@ pub fn volts_to_dbv(v: Volts) -> f32 {
 #[must_use]
 pub fn headroom_db(peak: Volts, rail: Volts) -> f32 {
     (20.0 * (f64::from(rail.get()) / f64::from(peak.get())).log10()) as f32
+}
+
+/// dBFS of a normalized digital sample, where ±1.0 is full scale: `20·log10(|sample|)`.
+///
+/// A *measurement* of a [`SampleBuffer`](crate::SampleBuffer) value (linear, normalized). A sample
+/// of 0 maps to −∞ dBFS. The volts↔dBFS calibration lives on the AD (its reference voltage).
+#[must_use]
+pub fn sample_to_dbfs(sample: f32) -> f32 {
+    (20.0 * f64::from(sample.abs()).log10()) as f32
 }
 
 // Shared math, in f64 for precision. `db = 20·log10(V / V_ref)`, inverted as
@@ -129,6 +141,16 @@ mod tests {
             -6.0206,
             epsilon = 1e-3
         );
+    }
+
+    #[test]
+    fn sample_to_dbfs_reads_full_scale_and_halves() {
+        // ±1.0 is 0 dBFS; half-scale (0.5) is 20·log10(0.5) = −6.02 dBFS.
+        assert_relative_eq!(sample_to_dbfs(1.0), 0.0, epsilon = 1e-6);
+        assert_relative_eq!(sample_to_dbfs(-1.0), 0.0, epsilon = 1e-6);
+        assert_relative_eq!(sample_to_dbfs(0.5), -6.0206, epsilon = 1e-3);
+        // +4 dBu (1.737 V peak) into a 13.80 V-peak full-scale converter reads −18 dBFS.
+        assert_relative_eq!(sample_to_dbfs(1.7372 / 13.80), -18.0, epsilon = 0.05);
     }
 
     #[test]
