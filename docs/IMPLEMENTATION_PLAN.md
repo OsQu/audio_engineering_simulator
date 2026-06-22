@@ -308,14 +308,69 @@ harness-only deps (never reach the engine/wasm build). 243 tests green (engine's
 
 *Absorbs old 2.1.1 + 2.3.1.*
 
-### Story 2.2 — First DSP devices: EQ + compressor (digital domain)
-*Goal:* the first real DSP, validated by ear and numeric oracles. A **biquad primitive** (net-new infra —
-coeffs designed at `prepare(rate)`, `f64` state, zero-alloc/denormal-flushed `process`, mirroring the
-`OnePole` pattern) → a **biquad EQ** device; and a **simple compressor** (peak detector → gain computer
-with threshold/ratio/knee → attack/release time constants baked at `prepare` → makeup gain). Both operate
-on `SampleBuffer` between the modeled AD and DA. *Watch out:* keep transforms understandable per §5.5 —
-feed-forward compressor, the realism budget stays on the volts-and-converters layer. The compressor is the
-meatiest single device in the epic. *Absorbs old 2.2.1 + 2.2.2.*
+### Story 2.2 — First DSP devices: 3-band EQ + compressor (digital domain)
+*Goal:* the first real DSP, validated by ear and numeric oracles — a **3-band EQ** and a **feed-forward
+compressor**, both pure-digital nodes operating on `SampleBuffer` **between the modeled AD and DA** (the
+"plugins/DAW" position). This exercises the digital lane and avoids the ~8× oversample cost of
+voltage-domain DSP. *Watch out:* keep transforms understandable per §5.5 — feed-forward compressor, no
+lookahead; the realism budget stays on the volts-and-converters layer. The compressor is the meatiest
+single device in the epic. *Absorbs old 2.2.1 + 2.2.2.*
+
+*Design notes (settled at planning):*
+- **No new scheduling/compile work.** A pure-digital node declares `DigitalFace` in/out ports at its
+  `SampleRate`; `compile` already sizes its lanes at `block_len / M`, validates the integer-divide +
+  block-length constraints, and routes the `DigitalRoute` edges (same-clock-domain sample copies). It reads
+  `inputs[0].sample()` and writes `outputs[0].sample_mut()` — the `DaConverter` read pattern. The story is
+  **two nodes + one DSP primitive**, nothing in the graph/schedule.
+- **New `dsp` module** (`dsp.rs` + `dsp/biquad.rs`), peer to `electrical` / `fir`, for digital DSP
+  primitives. The module-private `flush_denormal` in `electrical/cable.rs` is **promoted** to a shared spot
+  reachable by both analog and digital filters (it's currently re-implemented in `fir.rs` too).
+- **`Biquad` primitive** — Transposed Direct Form II, `f64` coeffs + state, `step` / `process` zero-alloc
+  and denormal-flushed (the [`OnePole`] *shape*, in the digital domain). RBJ-cookbook coefficient
+  **designers** (peaking, low-shelf, high-shelf) take `(SampleRate, freq, Q/slope, gain_db)`. Note: unlike
+  `OnePole` (an *edge* filter `compile` builds directly), the biquad is **node-owned** and bakes its coeffs
+  in `prepare`.
+- **Design coeffs from the node's own `SampleRate`, not `prepare`'s argument.** `Node::prepare(rate)` is
+  handed the `AnalogRate` (the ~384 kHz oversample clock), which is **irrelevant to a pure-digital filter**.
+  Both nodes store their `SampleRate` at construction (like AD/DA) and design against it; the `prepare`
+  argument is unused (documented). The plan's earlier "coeffs designed at `prepare(rate)`" meant *the
+  digital rate*, not this argument.
+- **3-band EQ** — LF **low-shelf** + parametric **mid peak** + HF **high-shelf**, three biquads in series,
+  single digital channel in/out. **Static** config: each band's freq/Q/gain set at construction, coeffs
+  designed once at `prepare`. **No smoothed control params this epic** — safely smoothing biquad
+  coefficients is a real problem and live knob-turning belongs to Epic 3 (real-time). Golden tests pin the
+  config anyway.
+- **Compressor** — feed-forward, **no lookahead** (lookahead = a delay buffer + added latency, deferred).
+  Pipeline: **peak detector** (rectify → one-pole envelope with *switched* attack/release coefficients,
+  baked at `prepare` — the `OnePole` recurrence with two coefficients) → **dB-domain gain computer**
+  (threshold, ratio, soft-knee width; hard knee when width = 0) → **manual makeup gain**. The dB domain is
+  the one spot that pays a `log10`/`pow` per envelope step — accepted, kept off the per-sample-where-possible
+  path. Static config.
+- **Mono only** (epic constraint) — single channel, no stereo-linked detection.
+- **Validation:** engine `#[cfg(test)]` unit tests assert hand calcs (reusing `tone_amplitude` / `rms` from
+  `test_util`); harness render scenarios are the ear (harness reuses its own DFT/RMS, per Story 2.1).
+
+- **Task 2.2.1** — `dsp` module + `Biquad` primitive (TDF-II, `f64`, denormal-flushed, zero-alloc
+  `process`) + RBJ designers (peaking / low-shelf / high-shelf); promote `flush_denormal` to a shared spot.
+  Tests: a **0 dB** band is unity at every frequency; a **+6 dB peaking** band reads ≈ 2.0 (linear) at its
+  center freq and ≈ unity a decade away; shelf asymptotes hit the design gain at DC / Nyquist. (Magnitude
+  via `measure_gain`-style single-bin probe at the digital rate.)
+- **Task 2.2.2** — `ThreeBandEq` node: three biquads in series, digital in/out, designed at `prepare` from
+  `self.rate`. Tests: an all-0-dB EQ is transparent (unity, all bands); a +6 dB LF shelf boosts a low tone
+  while leaving a high tone ≈ unchanged; the mid peak bumps a tone at its center.
+- **Task 2.2.3** — `Compressor` node: peak envelope follower (attack/release coeffs `a = 1 − e^(−1/(τ·fs))`)
+  → dB gain computer (threshold / ratio / soft knee) → manual makeup. Tests: **static curve** — below
+  threshold is unity × makeup; above, a hand-calc'd point holds (e.g. ratio 4:1, threshold −10 dBFS, −2 dBFS
+  in ⇒ −8 dBFS out, i.e. −6 dB gain reduction); **attack timing** — a step input drives the envelope to
+  ≈ 63% (1 − 1/e) in ≈ τ samples; release symmetric on signal removal.
+- **Task 2.2.4** — Harness render scenarios: insert the EQ and the compressor between the modeled AD and DA
+  on the played-note patch; render to `renders/*.wav`. Validate by **ear** plus a numeric check (compressor
+  reduces peak/RMS by the expected amount; EQ shifts spectral balance the expected way).
+
+*Validate:* `cargo fmt --check && cargo lint && cargo test && cargo wasm && cargo docs` all green; the EQ
+and the compressor each carry hand-calc unit oracles; a rendered WAV demonstrates each by ear; the run stays
+deterministic (seed / block_len / rate pinned). Hot path stays zero-alloc (the `no_alloc` test covers the
+new nodes once they're in a patch).
 
 ### Story 2.3 — Golden-file harness + converter-payoff demos
 *Goal:* lock down the epic's renders and demonstrate the converter payoff by ear. Build the **golden-file
