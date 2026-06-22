@@ -28,7 +28,7 @@ pub use level::{
 };
 pub use node::{
     AdConverter, BalancedDriver, BalancedReceiver, CondenserMic, DaConverter, DcBlocker, GainStage,
-    Node, PassiveSum, TestSource,
+    Node, PassiveSum, SynthVoice, TestSource,
 };
 pub use noise::NoiseDensity;
 pub use param::{ParamDecl, ParamHandle, ParamId, ParamQueue, Params};

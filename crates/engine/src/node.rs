@@ -31,6 +31,7 @@ mod gain;
 mod lifted;
 mod source;
 mod sum;
+mod synth;
 
 pub use ad::AdConverter;
 pub use balanced::{BalancedDriver, BalancedReceiver};
@@ -41,6 +42,7 @@ pub use gain::GainStage;
 pub(crate) use lifted::Lifted;
 pub use source::TestSource;
 pub use sum::PassiveSum;
+pub use synth::SynthVoice;
 
 use crate::param::{ParamDecl, Params};
 use crate::port::{InputPort, OutputPort};

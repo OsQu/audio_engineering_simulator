@@ -14,8 +14,9 @@
 )]
 
 use engine::{
-    AnalogRate, BalancedDriver, BalancedReceiver, Cable, DcBlocker, Farads, GainStage, Graph,
-    InputZ, NoiseDensity, Ohms, PassiveSum, TestSource, VoltageBuffer, Volts, compile,
+    AnalogRate, BalancedDriver, BalancedReceiver, Cable, DcBlocker, EventMessage, EventQueue,
+    Farads, GainStage, Graph, InputZ, NoiseDensity, Ohms, ParamQueue, PassiveSum, SynthVoice,
+    TestSource, VoltageBuffer, Volts, compile,
 };
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -47,8 +48,16 @@ fn rate() -> AnalogRate {
     AnalogRate::new(384_000.0)
 }
 
+// NB: these checks share one process-global `ALLOCS` counter, so they must run **serially** — the
+// single `#[test]` below calls them in sequence. Splitting them into separate `#[test]`s would let
+// the harness run them in parallel, and one test's setup allocations would corrupt the other's count.
 #[test]
-fn process_is_allocation_free() {
+fn process_paths_are_allocation_free() {
+    analog_chain_is_allocation_free();
+    voice_with_events_and_params_is_allocation_free();
+}
+
+fn analog_chain_is_allocation_free() {
     // source → (cable) → gain → dc-blocker → sum → balanced driver → balanced receiver. The
     // cabled edge exercises the one-pole low-pass, the gain stage carries a noise floor, the DC
     // blocker is the one-pole high-pass, and the driver→receiver hop is a two-conductor balanced
@@ -119,6 +128,59 @@ fn process_is_allocation_free() {
         before,
         after,
         "process() allocated {} time(s) over 128 blocks",
+        after - before
+    );
+}
+
+fn voice_with_events_and_params_is_allocation_free() {
+    // The full input path: a synth voice driven by the event lane (note on/off) and a smoothed
+    // control param (level), through `process_io`. Covers what `process()` alone can't — event
+    // delivery into a lane, the voice consuming the Events lane, and the param de-zipper advance —
+    // all of which must stay off the allocator on the hot path.
+    let block = 64;
+    let mut g = Graph::new();
+    let voice = g.add(SynthVoice::new(Volts::new(1.0), Ohms::new(150.0)));
+    g.set_output(voice, 0);
+    let mut sched = compile(g, block, rate(), 0).expect("valid voice chain");
+    let ev = sched.event_input(voice, 0).expect("open event input");
+    let level = sched.param(voice, SynthVoice::LEVEL).expect("level param");
+
+    // Queue events spread across several blocks and a couple of param moves — all pre-allocated,
+    // so the pushes themselves don't allocate, and delivery/application happen inside the measured
+    // loop below.
+    let mut events = EventQueue::with_capacity(16);
+    events.push(
+        0,
+        ev,
+        EventMessage::NoteOn {
+            note: 69,
+            velocity: 100,
+        },
+    );
+    events.push((block as u64) * 4, ev, EventMessage::NoteOff { note: 69 });
+    events.push(
+        (block as u64) * 8,
+        ev,
+        EventMessage::NoteOn {
+            note: 72,
+            velocity: 80,
+        },
+    );
+    let mut params = ParamQueue::with_capacity(4);
+    params.set(level, 2.0);
+
+    let mut out = VoltageBuffer::zeros(block, rate());
+
+    let before = ALLOCS.load(Ordering::Relaxed);
+    for _ in 0..128 {
+        sched.process_io(&mut out, &mut params, &mut events);
+    }
+    let after = ALLOCS.load(Ordering::Relaxed);
+
+    assert_eq!(
+        before,
+        after,
+        "process_io() allocated {} time(s) over 128 blocks",
         after - before
     );
 }
