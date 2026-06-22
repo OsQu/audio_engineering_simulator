@@ -22,6 +22,10 @@ we're modeling and why*. Use it to skip re-explaining things already covered.
 9. [Filter implementation](#9-filter-implementation)
 10. [Distortion](#10-distortion)
 11. [Rail clipping & headroom](#11-rail-clipping--headroom)
+12. [Sampling, decimation & aliasing](#12-sampling-decimation--aliasing)
+13. [Windowed-sinc FIR & the Kaiser window](#13-windowed-sinc-fir--the-kaiser-window)
+14. [Quantization & dBFS calibration](#14-quantization--dbfs-calibration)
+15. [Dither](#15-dither)
 
 ---
 
@@ -509,3 +513,120 @@ never flag "clipped."
 **Digital clipping** hits *full scale* (0 dBFS, the largest code, post-AD). Different ceilings
 on opposite sides of the converter; the AD's reference-voltage→dBFS calibration (Story 1.6)
 relates them ("how many dB below the rail is 0 dBFS").
+
+## 12. Sampling, decimation & aliasing
+
+The AD crosses analog → digital. The analog domain is a **heavily oversampled** voltage stream
+(the continuous proxy, e.g. 384 kHz); the AD drops it to the converter's own **digital rate**
+(e.g. 48 kHz) by **decimation** — keeping one sample of every `M = analog_rate / digital_rate`.
+
+You can't *just* drop samples. **Nyquist–Shannon:** a stream at rate `fs` can only represent
+frequencies up to `fs/2` (its Nyquist). Anything above folds back — **aliasing**: a tone at
+`f > fs/2` reappears as a phantom at `|k·fs − f|`, indistinguishable from a real tone there and
+**unremovable** afterward.
+
+```
+   384 kHz analog, decimate ×8 → 48 kHz (Nyquist 24 kHz)
+   a 40 kHz tone, naively decimated → folds to |48 − 40| = 8 kHz  ← a phantom in-band
+```
+
+So decimation is **filter-then-drop**: a low-pass removes everything above the new Nyquist
+*first* (the **anti-alias filter**, §13), then you keep every `M`-th sample. This is the
+modern-converter architecture — the steep filter is digital, run on the oversampled stream; a
+real converter's gentle *analog* pre-filter sits up near the analog Nyquist and we don't model
+it (nothing in our world generates above it). The DA is the mirror: **interpolate** (upsample
+×M + reconstruction low-pass) back to the analog rate.
+
+**Polyphase efficiency.** Decimation computes only the outputs it keeps — one length-`L` FIR dot
+product per *retained* sample, never the `M−1` discarded ones. Same result as filter-all-then-drop,
+`M`× cheaper. (`M` must be an integer for now; arbitrary ratios — a 44.1k device into a 48k one —
+are a fractional resample, deferred to Epic 5.) See `fir::Decimator`; `compile` enforces the
+integer ratio and `block_len % M == 0`.
+
+## 13. Windowed-sinc FIR & the Kaiser window
+
+A **FIR** (finite impulse response) filter is **feed-forward**: `y[n] = Σ b[k]·x[n−k]` — a
+weighted sum of the last `L` inputs (the **taps**), no feedback. Contrast the cable's recursive
+[one-pole](#6-one-pole-low-pass-rolloff) (IIR). The FIR's payoff is that it can be made
+**arbitrarily steep** and **linear-phase** (symmetric taps ⇒ every frequency delayed equally,
+constant group delay = `(L−1)/2` samples) — exactly what an anti-alias brick wall needs.
+
+The ideal brick-wall low-pass has impulse response **`sinc`** (`sin(πx)/(πx)`): flat to the
+cutoff, zero above. But `sinc` is *infinitely* long; truncating it rings (Gibbs ripple). So you
+**window** it — taper the ends to a soft stop:
+
+```
+   tap[n] = 2·fc · sinc(2·fc·(n − center)) · w[n]      (then normalize Σtap = 1 ⇒ unity DC gain)
+```
+
+The **Kaiser window** `w[n]` is the near-optimal adjustable taper, controlled by one parameter
+**β**: larger β ⇒ deeper **stopband attenuation** but a **wider transition band** (the two always
+trade). Kaiser's empirical formulas give β from a target stopband (dB) and the **tap count `L`**
+from (stopband, transition width):
+
+```
+   β ≈ 0.1102·(A − 8.7)   (A = stopband dB, A > 50)
+   L ≈ (A − 8) / (2.285 · Δω)     (Δω = transition width, rad/sample)
+```
+
+So a narrow transition costs taps: a ~20→24 kHz transition at ~96 dB over a 384 kHz stream ≈
+**~1000 taps**. **Tap count is the demonstrable "weak filter" knob** — a short kernel widens the
+transition and lifts the stopband floor, so out-of-band content leaks past Nyquist and aliases
+(harness Scenario 5: 161 taps rejects a 40 kHz tone by ~89 dB; 13 taps by only ~6 dB → audible
+fold-back). Taps are designed once at construction (a Bessel `I₀` for the window); `process` only
+multiplies and accumulates. See `fir::design_lowpass`, `kaiser_beta`, `bessel_i0`.
+
+## 14. Quantization & dBFS calibration
+
+After band-limiting and decimating, the AD does the irreversibly-digital step: **quantize** each
+sample onto a finite grid of `2^bits` levels. The step is
+
+```
+   Δ = FS / 2^(bits−1)          (signed PCM word; FS = full-scale magnitude)
+```
+
+We use a **mid-tread** quantizer (round-to-nearest, with a level *at zero* — so silence stays
+silent: `q = round(x/Δ)·Δ`), and **hard-clamp at full scale** (a digital "over" clips at the
+largest code — distinct from analog rail clipping, §11, which is a *voltage* limit pre-AD).
+
+**dBFS calibration.** Samples are stored **normalized**, `±1.0 = full scale`. The bridge from
+volts is the converter's **reference voltage** = the peak volts that map to 0 dBFS:
+
+```
+   sample = volts / reference          dBFS = 20·log10(|sample|)
+```
+
+This is the only place the analog and digital level worlds meet. Pick the reference to set the
+alignment: a **13.80 V-peak** reference puts **+4 dBu** (1.737 V peak) at **−18 dBFS** — the
+standard pro headroom calibration ("+4 = −18"). It's *owned by the AD*, not a global constant
+(each converter has its own). See `BitDepth::step`, `AdConverter`, `sample_to_dbfs`.
+
+**Quantization noise.** Rounding error is bounded by `±Δ/2`; modeled as uniform over that range
+it has variance `Δ²/12`, giving the ideal full-scale-sine SNR `≈ 6.02·N + 1.76 dB` — the famous
+**~6 dB per bit**. (16-bit ≈ 98 dB; 24-bit ≈ 146 dB.) But plain rounding's error is *correlated*
+with the signal → §15.
+
+## 15. Dither
+
+Plain quantization rounds deterministically, so the error is **correlated** with the signal: it
+shows up as **harmonic distortion**, and low-level signals quantize into ugly "chunky" steps (a
+fade-out granulates instead of smoothly vanishing). **Dither** fixes this by adding a small random
+signal *before* quantizing, which **decorrelates** the error into a flat, signal-independent
+**noise floor** — trading distortion for benign hiss. The ear tolerates steady hiss far better
+than correlated distortion, and dither lets you hear signals *below* one LSB (their information
+survives in the noise's statistics). It's what every real converter does.
+
+**TPDF dither** (triangular probability density), **±1 LSB peak**, is the standard: form it as the
+**sum of two independent uniform** draws each over `±½ LSB`. That triangular shape is the minimum
+that makes the first *two* moments of the error (mean and variance) signal-independent — full
+decorrelation. It's **non-subtractive** (added before quantizing, never removed), as in real
+hardware.
+
+```
+   q = round( (x + tpdf) / Δ ) · Δ          tpdf = (u₁ − ½ + u₂ − ½)·Δ,  u ∼ Uniform[0,1)
+```
+
+**The cost:** total noise variance = quantizer `Δ²/12` + dither `Δ²/6` = `Δ²/4` ⇒ RMS `Δ/2`, so
+the dithered full-scale-sine SNR is `≈ 6.02·N − 3.0 dB` — about 3 dB worse than undithered, a
+trade gladly made for clean low-level behavior. The dither is drawn from the **seeded** per-node
+RNG, so a render is reproducible. See `AdConverter::process`.
