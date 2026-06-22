@@ -6,6 +6,7 @@
 //! `IMPLEMENTATION_PLAN.md` for the design; this crate stays portable to `wasm32`
 //! (no `std::thread`, no ambient `std::time`).
 
+mod dsp;
 mod electrical;
 mod fir;
 mod graph;
@@ -20,6 +21,7 @@ mod signal;
 #[cfg(test)]
 mod test_util;
 
+pub use dsp::{Biquad, PeakEnvelope};
 pub use electrical::{Cable, Farads, InputZ, Ohms, OnePole, OutputZ, Thevenin, divider_gain};
 pub use fir::{Decimator, Interpolator, kaiser_beta};
 pub use graph::{Graph, NodeId};
@@ -27,8 +29,8 @@ pub use level::{
     dbu_to_volts, dbv_to_volts, headroom_db, sample_to_dbfs, volts_to_dbu, volts_to_dbv,
 };
 pub use node::{
-    AdConverter, BalancedDriver, BalancedReceiver, CondenserMic, DaConverter, DcBlocker, GainStage,
-    Node, PassiveSum, Speaker, SynthVoice, TestSource,
+    AdConverter, BalancedDriver, BalancedReceiver, Compressor, CondenserMic, DaConverter,
+    DcBlocker, EqBand, GainStage, Node, PassiveSum, Speaker, SynthVoice, TestSource, ThreeBandEq,
 };
 pub use noise::NoiseDensity;
 pub use param::{ParamDecl, ParamHandle, ParamId, ParamQueue, Params};

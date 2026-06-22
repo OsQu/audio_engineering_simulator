@@ -24,9 +24,11 @@
 
 mod ad;
 mod balanced;
+mod compressor;
 mod condenser;
 mod da;
 mod dc_blocker;
+mod eq;
 mod gain;
 mod lifted;
 mod source;
@@ -36,9 +38,11 @@ mod synth;
 
 pub use ad::AdConverter;
 pub use balanced::{BalancedDriver, BalancedReceiver};
+pub use compressor::Compressor;
 pub use condenser::CondenserMic;
 pub use da::DaConverter;
 pub use dc_blocker::DcBlocker;
+pub use eq::{EqBand, ThreeBandEq};
 pub use gain::GainStage;
 pub(crate) use lifted::Lifted;
 pub use source::TestSource;

@@ -1,6 +1,7 @@
 //! The electrical cable: series resistance + shunt capacitance, and its one-pole low-pass.
 
 use super::{Farads, InputZ, Ohms};
+use crate::dsp::flush_denormal;
 use crate::noise::NoiseDensity;
 use crate::signal::{AnalogRate, VoltageBuffer, Volts};
 
@@ -161,13 +162,6 @@ impl OnePole {
         self.y = flush_denormal(self.y);
         self.y
     }
-}
-
-/// Flush subnormal `f64`s to zero. Subnormals (below `MIN_POSITIVE`) can trap the FPU into
-/// slow microcode — fatal in a real-time worklet — and a decaying filter tail drifts into
-/// them. Anything that small is silence, so snapping it to zero is free of audible cost.
-fn flush_denormal(x: f64) -> f64 {
-    if x.abs() < f64::MIN_POSITIVE { 0.0 } else { x }
 }
 
 #[cfg(test)]
