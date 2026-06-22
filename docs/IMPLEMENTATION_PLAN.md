@@ -196,9 +196,11 @@ The vocabulary later epics build on. Names are the actual public API unless mark
 
 ## Epic 2 — Offline Render ("hear it" cheaply)
 
-**Progress:** Story 2.1 ✅ done — **first audible render**: a played note runs through `synth → (AD → DA →)
-speaker`, the speaker voltage is captured off-sim-clock to 48 kHz, and written to a float32 WAV. Stories
-2.2 (first DSP) and 2.3 (golden harness + converter-payoff demos) remain.
+**Progress:** Stories 2.1 ✅ and 2.2 ✅ done. 2.1 — **first audible render**: a played note runs through
+`synth → (AD → DA →) speaker`, the speaker voltage is captured off-sim-clock to 48 kHz, and written to a
+float32 WAV. 2.2 — **first real DSP**: a `Biquad` primitive + RBJ designers, a `ThreeBandEq` and a
+feed-forward `Compressor` (both pure-digital, between the modeled AD and DA), and harness scenarios that
+render the note through each. Story 2.3 (golden harness + converter-payoff demos) remains.
 
 **Goal:** reach the audio oracle without real-time infrastructure — the *same* engine (driven block by
 block via `Schedule::process_io`) rendered flat-out into a WAV. First real DSP and a trivial speaker so
@@ -308,7 +310,7 @@ harness-only deps (never reach the engine/wasm build). 243 tests green (engine's
 
 *Absorbs old 2.1.1 + 2.3.1.*
 
-### Story 2.2 — First DSP devices: 3-band EQ + compressor (digital domain)
+### Story 2.2 — First DSP devices: 3-band EQ + compressor (digital domain) — ✅ **Done**
 *Goal:* the first real DSP, validated by ear and numeric oracles — a **3-band EQ** and a **feed-forward
 compressor**, both pure-digital nodes operating on `SampleBuffer` **between the modeled AD and DA** (the
 "plugins/DAW" position). This exercises the digital lane and avoids the ~8× oversample cost of
@@ -350,27 +352,45 @@ single device in the epic. *Absorbs old 2.2.1 + 2.2.2.*
 - **Validation:** engine `#[cfg(test)]` unit tests assert hand calcs (reusing `tone_amplitude` / `rms` from
   `test_util`); harness render scenarios are the ear (harness reuses its own DFT/RMS, per Story 2.1).
 
-- **Task 2.2.1** — `dsp` module + `Biquad` primitive (TDF-II, `f64`, denormal-flushed, zero-alloc
+- ✅ **Task 2.2.1** — `dsp` module + `Biquad` primitive (TDF-II, `f64`, denormal-flushed, zero-alloc
   `process`) + RBJ designers (peaking / low-shelf / high-shelf); promote `flush_denormal` to a shared spot.
   Tests: a **0 dB** band is unity at every frequency; a **+6 dB peaking** band reads ≈ 2.0 (linear) at its
   center freq and ≈ unity a decade away; shelf asymptotes hit the design gain at DC / Nyquist. (Magnitude
   via `measure_gain`-style single-bin probe at the digital rate.)
-- **Task 2.2.2** — `ThreeBandEq` node: three biquads in series, digital in/out, designed at `prepare` from
+- ✅ **Task 2.2.2** — `ThreeBandEq` node: three biquads in series, digital in/out, designed at `prepare` from
   `self.rate`. Tests: an all-0-dB EQ is transparent (unity, all bands); a +6 dB LF shelf boosts a low tone
   while leaving a high tone ≈ unchanged; the mid peak bumps a tone at its center.
-- **Task 2.2.3** — `Compressor` node: peak envelope follower (attack/release coeffs `a = 1 − e^(−1/(τ·fs))`)
+- ✅ **Task 2.2.3** — `Compressor` node: peak envelope follower (attack/release coeffs `a = 1 − e^(−1/(τ·fs))`)
   → dB gain computer (threshold / ratio / soft knee) → manual makeup. Tests: **static curve** — below
   threshold is unity × makeup; above, a hand-calc'd point holds (e.g. ratio 4:1, threshold −10 dBFS, −2 dBFS
   in ⇒ −8 dBFS out, i.e. −6 dB gain reduction); **attack timing** — a step input drives the envelope to
   ≈ 63% (1 − 1/e) in ≈ τ samples; release symmetric on signal removal.
-- **Task 2.2.4** — Harness render scenarios: insert the EQ and the compressor between the modeled AD and DA
+- ✅ **Task 2.2.4** — Harness render scenarios: insert the EQ and the compressor between the modeled AD and DA
   on the played-note patch; render to `renders/*.wav`. Validate by **ear** plus a numeric check (compressor
   reduces peak/RMS by the expected amount; EQ shifts spectral balance the expected way).
 
-*Validate:* `cargo fmt --check && cargo lint && cargo test && cargo wasm && cargo docs` all green; the EQ
-and the compressor each carry hand-calc unit oracles; a rendered WAV demonstrates each by ear; the run stays
-deterministic (seed / block_len / rate pinned). Hot path stays zero-alloc (the `no_alloc` test covers the
-new nodes once they're in a patch).
+*Validate (✅ met):* the full gate (`cargo fmt --check && cargo lint && cargo test && cargo wasm && cargo
+docs`) is green; the EQ and the compressor each carry hand-calc unit oracles; rendered WAVs demonstrate each
+by ear; the run stays deterministic (seed / block_len / rate pinned — converter dither is seeded too). Hot
+path stays zero-alloc.
+
+*Delivered:* the first real DSP, in a new `dsp` module peer to `electrical` / `fir`. **Primitives:**
+`Biquad` (Transposed Direct Form II, `f64` coeffs + state, zero-alloc denormal-flushed `process`) with RBJ
+designers `peaking` / `low_shelf` / `high_shelf`; `PeakEnvelope`, a rectify-then-switched-coefficient
+attack/release follower (**extracted as its own primitive** rather than buried in the compressor — reusable
+and independently timing-tested; a small deviation from the planned `dsp.rs + dsp/biquad.rs` shape, now
+`dsp.rs + dsp/biquad.rs + dsp/envelope.rs`). `flush_denormal` promoted from `electrical/cable.rs` into
+`dsp` and shared (both exported at the crate root with `Biquad`). **Nodes:** `ThreeBandEq` (LF shelf + mid
+peak + HF shelf, three biquads in series, static config baked at `prepare` from its own `SampleRate`) and
+`Compressor` (feed-forward, no lookahead; `PeakEnvelope` → dB gain computer with threshold / ratio / soft
+knee → manual makeup; builder `with_knee` / `with_makeup`). Both pure-digital, one channel in/out, between
+the modeled AD and DA — **no graph/schedule changes** (the Story 1.6 digital ports/edges carried them).
+**Harness:** two listening scenarios (`synth → AD → EQ → DA → speaker` and `… → compressor → …`) writing
+`renders/first_sound_eq.wav` / `first_sound_compressed.wav` (voice level halved for boost/makeup headroom),
+plus two tolerance-based render-oracle tests (a −12 dB low shelf cuts the 440 Hz fundamental to < 60 %; 8:1
+compression below threshold drops the sustain peak to < 60 %) via a shared `render_through` helper. **254
+engine tests** (+22: 6 biquad, 5 envelope, 4 EQ, 7 compressor) and **5 render integration tests** (+2)
+green.
 
 ### Story 2.3 — Golden-file harness + converter-payoff demos
 *Goal:* lock down the epic's renders and demonstrate the converter payoff by ear. Build the **golden-file
