@@ -68,12 +68,14 @@ These were settled in design discussion and constrain every Epic:
 
 ## Epic 1 — Headless Voltage Engine
 
-**Progress:** Stories 1.1–1.6 ✅ done (scaffold/types, electrical primitives, runnable engine,
-analog-chain physics, balanced lines & common-mode, AD/DA converters & the signal-carrier seam).
-With 1.6 the second carrier (digital audio: `SampleBuffer`, per-converter sample rate/bit depth,
-dBFS calibration, clock domain) landed and the engine generalized from one buffer type to an open
-set of carriers. **Next: Story 1.7 — input lanes & a playable voice**, which closes the Epic and
-adds the third carrier (sparse MIDI/control events). 193 engine tests green.
+**Progress:** Stories 1.1–1.7 ✅ done — **Epic 1 complete.** Scaffold/types, electrical primitives,
+runnable engine, analog-chain physics, balanced lines & common-mode, AD/DA converters & the
+signal-carrier seam (1.1–1.6), and input lanes & a playable voice (1.7). The carrier set grew from one
+buffer type to three: analog voltage (`VoltageBuffer`), digital audio (`SampleBuffer`, per-converter
+rate/bit-depth/clock), and sparse MIDI/control events (`Lane::Events`) — plus the smoothed control-param
+side-channel. The capstone plays a note end-to-end through `analog → AD → digital → DA → analog`. 229
+engine tests green; hot path zero-alloc throughout. **Next: Epic 2 — offline render to WAV (the audio
+oracle).**
 
 **Goal:** the novel, risky core, built and validated headless. A graph of devices and cables
 propagating oversampled voltage in the analog domain, crossing the AD/DA boundary into and back
@@ -558,7 +560,7 @@ matching prediction; the full chain `analog → AD → digital → DA → analog
 runs through the generalized carrier seam with the analog physics from Stories 1.2–1.5 intact —
 because the analog chain underneath is already proven, a failure here is the converter's or the seam's.
 
-### Story 1.7 — Input lanes & a playable voice (headless)
+### Story 1.7 — Input lanes & a playable voice (headless) — ✅ **Done**
 *Goal:* the two-lane input system and a simple monophonic synth voice, exercised without audio output —
 closing Epic 1 and adding the **third carrier** (sparse MIDI/control events).
 *Watch out:* keep the two input lanes **genuinely separate** — they are different mechanisms, not two
@@ -613,29 +615,44 @@ same converter payoff, not a special case.
   controller that would drive a *param* — events→param) blurs the two-lane separation and is **deferred**;
   the lanes stay genuinely separate (note events only) this story.
 
-- **Task 1.7.1** — *Events carrier seam (the third carrier).* `Lane::Events` (sparse, bounded-capacity)
+- ✅ **Task 1.7.1** — *Events carrier seam (the third carrier).* `Lane::Events` (sparse, bounded-capacity)
   + `Domain::Events` + `EventMessage` (note-on/off, gate) + event-tagged `InputPort`/`OutputPort` +
   `EdgeKind::EventRoute`; `compile` validates event↔event edges (a cross-domain event edge is
   `DomainMismatch`), sizes/pre-allocates the bounded event lanes, and defines the drop-on-overflow policy.
   No queue, no voice — just plumbing, with all existing analog/digital tests green through the extended types.
-- **Task 1.7.2** — *Timestamped event queue + delivery.* The schedule's external event queue
+- ✅ **Task 1.7.2** — *Timestamped event queue + delivery.* The schedule's external event queue
   (single-threaded SPSC seam), block-bucketed by sample offset and merged with any inter-device event-edge
   output into the target node's event input lane; `process` begins taking `&event_queue`. Note-on/off/gate
   land at sample offsets within the block (sub-block-accurate dispatch is the consuming node's job, reading
   the ordered events from its lane).
-- **Task 1.7.3** — *Control-param system.* `ParamDecl` + `Node::params()`, the latest-wins param queue
+- ✅ **Task 1.7.3** — *Control-param system.* `ParamDecl` + `Node::params()`, the latest-wins param queue
   (single-threaded seam), the framework-owned smoothed store with within-block de-zipper ramp, and the
   `params: &Params` argument threaded into `Node::process` (with `Params::EMPTY`). Retrofit one existing
   node (`GainStage` gain) to read a declared param — the de-zipper demo target.
-- **Task 1.7.4** — *Monophonic synth voice.* Oscillator + ADSR envelope as a cross-domain source node
+- ✅ **Task 1.7.4** — *Monophonic synth voice.* Oscillator + ADSR envelope as a cross-domain source node
   (`events-in → voltage-out`, real `Zout`), last-note priority. Pitch & gate from the event lane; envelope
   times / output level as declared control params. First node consuming `Lane::Events`.
-- **Task 1.7.5** — *End-to-end headless test:* "play a note" through `analog → AD → digital → DA → analog`,
+- ✅ **Task 1.7.5** — *End-to-end headless test:* "play a note" through `analog → AD → digital → DA → analog`,
   asserting sample-accurate onset (silence until the trigger sample, signal after), correct fundamental
   (DFT bin), and a swept gain param that de-zippers without a discontinuity.
 
-*Validate:* a note triggers sample-accurately and produces the expected output (onset + fundamental)
-through the full chain; a swept control param de-zippers without discontinuities. **Epic exit met.**
+*Validate (✅ met):* a note triggers sample-accurately and produces the expected output (onset + fundamental)
+through the full chain; a swept control param de-zippers without discontinuities. **Epic 1 exit met.**
+
+*Delivered:* the **third carrier** end to end. `Lane::Events` / `Domain::Events` / `EventMessage` +
+`EventFace` event ports + `EdgeKind::EventRoute` (1.7.1); an external `EventQueue` (single-threaded SPSC
+seam) with absolute-sample timestamps, block-bucketed delivery into **open** event inputs resolved via
+`Schedule::event_input`, and `process_with_events` (1.7.2). The **control-param** lane: `ParamDecl` /
+`Node::params()`, a framework-owned `Smoother` store with a within-block linear-ramp de-zipper, a
+latest-wins `ParamQueue`, `Params` handed to a new `Node::process(params, …)` signature (migrated across
+every node + harness, `Params::EMPTY` fallback), and `Schedule::param` / `process_io` / `process_with_params`
+(1.7.3). `SynthVoice` — a monophonic sawtooth + ADSR voice consuming **both** lanes (pitch/gate from events,
+level/ADSR as smoothed params), last-note priority (1.7.4). The capstone plays A4 through
+`analog → AD → digital → DA → analog` with the fundamental matching the hand calc `(2/π)·sustain·level`,
+proves causal silence-before-onset across the converters, and shows the level de-zippering end to end (1.7.5).
+Hot path stays zero-alloc (the `no_alloc` test now drives the voice via `process_io` with both queues).
+229 engine tests green. **Epic 1 is complete: a defined patch runs end-to-end `analog → AD → digital →
+DA → analog`, with all voltage/conversion/event/param behavior asserted against hand calcs.**
 
 ---
 

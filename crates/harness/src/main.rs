@@ -8,8 +8,10 @@
 mod sine;
 
 use engine::{
-    AnalogRate, Cable, Decimator, Farads, GainStage, Graph, InputZ, NoiseDensity, Ohms, TestSource,
-    VoltageBuffer, Volts, compile, kaiser_beta, volts_to_dbu,
+    AdConverter, AnalogRate, BitDepth, Cable, ClockDomainId, DaConverter, Decimator, EventMessage,
+    EventQueue, Farads, GainStage, Graph, InputZ, Lane, Node, NoiseDensity, Ohms, Params,
+    SampleBuffer, SampleRate, SynthVoice, TestSource, VoltageBuffer, Volts, compile, kaiser_beta,
+    volts_to_dbu,
 };
 use sine::SineSource;
 use textplots::{Chart, Plot, Shape};
@@ -34,6 +36,7 @@ fn main() {
     scenario_cable_rolloff();
     scenario_noise_floor();
     scenario_fir_antialias();
+    scenario_saw_across_domains();
 }
 
 /// Scenario 1 — clean gain. `SineSource(1 V) → GainStage(×2)`, well under the 10 V rail.
@@ -349,6 +352,160 @@ fn gain_db(dec: &mut Decimator, input: &[f32], in_rms: f32) -> f32 {
     let tail = &out[out.len() / 2..];
     let g = rms(tail) / in_rms;
     if g <= 1e-6 { -120.0 } else { 20.0 * g.log10() }
+}
+
+// --- Scenario 6: a sawtooth across the AD/DA boundary --------------------------------------
+//
+// The synth voice's sawtooth, shown in three domains: the oversampled **analog source** (sharp —
+// harmonics all the way up), the **digital samples after the AD** (sampled at 48 kHz and
+// band-limited to the 24 kHz Nyquist, so the ultrasonic harmonics that would alias are gone), and
+// the **analog reconstruction after the DA** (smooth volts again). The AD and DA are driven
+// directly as nodes (like `Decimator` in scenario 5, and the only way to *see* the digital domain
+// — a schedule's internal lanes are private); the voice is rendered through a real compiled
+// schedule with a note played into its event lane.
+
+/// MIDI note for the saw demo: A4 = 440 Hz (872 analog / 109 digital samples per cycle).
+const SAW_NOTE: u8 = 69;
+/// Decimation factor: 384 kHz → 48 kHz.
+const SAW_M: usize = 8;
+/// Converter full-scale reference, in volts. At 1 V the digital sample values read on the same
+/// scale as the volts, so the three plots are directly comparable in magnitude.
+const SAW_REF_V: f32 = 1.0;
+/// Analog samples rendered — a multiple of `BLOCK_LEN` (and so of `SAW_M`), long enough to settle
+/// well past the envelope attack/decay (~5760 samples) before the displayed window.
+const SAW_LEN: usize = 32 * BLOCK_LEN; // 12288
+
+fn scenario_saw_across_domains() {
+    println!("\n=== Scenario 6: a sawtooth voice across the AD/DA boundary ===");
+    let digital_rate = SampleRate::new(rate().as_hz() / SAW_M as f64); // 48 kHz
+
+    // analog source → AD → digital → DA → analog reconstruction.
+    let analog_src = render_voice(SAW_NOTE, SAW_LEN);
+    let digital = ad_convert(&analog_src, digital_rate);
+    let analog_recon = da_convert(&digital, digital_rate);
+
+    // ~3 cycles from each signal's steady tail (440 Hz ⇒ 872 analog / 109 digital samples per
+    // cycle), on a shared ±0.9 scale (a touch above the 0.7 V sawtooth so the band-limiting
+    // overshoot stays visible). The AD+DA group delays shift the reconstruction by ~160 analog
+    // samples vs the source — the shape matches, the phase is offset.
+    let a_cyc = (rate().as_hz() / 440.0) as usize;
+    let d_cyc = (digital_rate.as_hz() / 440.0) as usize;
+    let (a_win, d_win) = (a_cyc * 3, d_cyc * 3);
+    let a_start = SAW_LEN - a_win - a_cyc;
+    let d_start = digital.len() - d_win - d_cyc;
+    let src = &analog_src[a_start..a_start + a_win];
+    let dig = &digital[d_start..d_start + d_win];
+    let recon = &analog_recon[a_start..a_start + a_win];
+
+    // Steady-state (sustain) peaks, measured on the shown windows — sawtooth amplitude is the
+    // voice's sustain·level = 0.7 V. The digital/reconstructed peaks run slightly higher: the AD's
+    // band-limiting leaves a little Gibbs overshoot at the sawtooth's reset.
+    println!(
+        "  source peak {:.3} V  →  digital peak {:.3} (normalized, {:.0} V ref)  →  reconstructed peak {:.3} V",
+        peak(src),
+        peak(dig),
+        SAW_REF_V,
+        peak(recon),
+    );
+
+    let scale = Some((-0.9, 0.9));
+    plot(
+        "Analog source — the voice's sawtooth (384 kHz; sharp, all harmonics)",
+        src,
+        scale,
+    );
+    plot(
+        "After AD — digital samples (48 kHz, band-limited to the 24 kHz Nyquist)",
+        dig,
+        scale,
+    );
+    plot(
+        "After DA — reconstructed analog volts (384 kHz, smooth)",
+        recon,
+        scale,
+    );
+}
+
+/// Render `len` analog samples of the synth voice holding `note`, through a real compiled schedule
+/// with the note played into its event lane. `len` is a multiple of `BLOCK_LEN`.
+fn render_voice(note: u8, len: usize) -> Vec<f32> {
+    let mut g = Graph::new();
+    let voice = g.add(SynthVoice::new(Volts::new(1.0), Ohms::new(1.0)));
+    g.set_output(voice, 0);
+    let mut schedule = compile(g, BLOCK_LEN, rate(), 0).expect("voice chain compiles");
+    let ev = schedule
+        .event_input(voice, 0)
+        .expect("the voice's event input");
+
+    let mut events = EventQueue::with_capacity(4);
+    events.push(
+        0,
+        ev,
+        EventMessage::NoteOn {
+            note,
+            velocity: 100,
+        },
+    );
+    let mut out = VoltageBuffer::zeros(BLOCK_LEN, rate());
+    let mut samples = Vec::with_capacity(len);
+    for b in 0..len / BLOCK_LEN {
+        if b == 0 {
+            schedule.process_with_events(&mut out, &mut events);
+        } else {
+            schedule.process(&mut out);
+        }
+        samples.extend_from_slice(out.as_slice());
+    }
+    samples
+}
+
+/// Drive an [`AdConverter`] directly over an analog waveform, returning its digital samples
+/// (normalized, ±1 = full scale). Off the hot path, so building the lanes and the result `Vec` is
+/// fine; `prepare` bakes the anti-alias FIR (no schedule to do it). Undithered for a clean trace.
+fn ad_convert(analog: &[f32], digital_rate: SampleRate) -> Vec<f32> {
+    let mut ad = AdConverter::new(
+        digital_rate,
+        BitDepth::new(16),
+        Volts::new(SAW_REF_V),
+        Ohms::new(1e6),
+    );
+    ad.prepare(rate());
+    let input = [Lane::Voltage(VoltageBuffer::from_volts(
+        analog.to_vec(),
+        rate(),
+    ))];
+    let mut digital = [Lane::Sample(SampleBuffer::zeros(
+        analog.len() / SAW_M,
+        digital_rate,
+        BitDepth::new(16),
+        ClockDomainId(0),
+    ))];
+    ad.process(&Params::EMPTY, &input, &mut digital);
+    digital[0].sample().as_slice().to_vec()
+}
+
+/// Drive a [`DaConverter`] directly over digital samples, returning the reconstructed analog volts
+/// (`SAW_M`× longer). `prepare` bakes the reconstruction FIR.
+fn da_convert(digital: &[f32], digital_rate: SampleRate) -> Vec<f32> {
+    let mut da = DaConverter::new(
+        digital_rate,
+        BitDepth::new(16),
+        Volts::new(SAW_REF_V),
+        Ohms::new(150.0),
+    );
+    da.prepare(rate());
+    let input = [Lane::Sample(SampleBuffer::from_samples(
+        digital.to_vec(),
+        digital_rate,
+        BitDepth::new(16),
+        ClockDomainId(0),
+    ))];
+    let mut analog = [Lane::Voltage(VoltageBuffer::zeros(
+        digital.len() * SAW_M,
+        rate(),
+    ))];
+    da.process(&Params::EMPTY, &input, &mut analog);
+    analog[0].voltage().as_slice().to_vec()
 }
 
 // --- graph builders -------------------------------------------------------------------------
