@@ -136,23 +136,24 @@ flowchart TD
     DA["DA converter<br/>reconstruct → volts"]
     DSP --> DA
 
-    subgraph A2["ANALOG — volts"]
+    subgraph A2["ANALOG — volts (simulation ends here)"]
         AMP["Power amp"]
-        SPK["Speaker<br/>V → SPL (trivial)"]
-        AIR["Air → ear (trivial)"]
-        AMP --> SPK --> AIR
+        SPK["Speaker<br/>sensitivity + response curve (trivial); stays in volts"]
+        AMP --> SPK
     end
     DA --> AMP
 
-    IAD["Internal AD<br/>(ear as microphone)"]
-    AIR --> IAD
-    IAD --> HOST["Host sound card plays sound"]
+    CAP["Implicit capture: analog → digital<br/>harness-side, off-sim-clock, transparent<br/>resample to host rate"]
+    SPK -->|tap speaker out, volts| CAP
+    CAP --> HOST["Host plays sound / WAV render"]
 ```
 
-Two distinct AD/DA layers, both intentional:
+Two distinct converter layers, both intentional:
 - The **modeled** AD/DA (your audio interface) — pedagogically rich; the thing you're learning.
-- The **final internal AD** — pure plumbing; the "ear as a microphone" that captures the
-  simulated acoustic output so the host sound card can play it.
+- The **implicit capture** — pure plumbing, *outside* the simulation: the simulation ends at the
+  speaker's analog output, which the harness taps and samples to host samples so the result can be
+  played in real time or rendered to a WAV. We do **not** model acoustics (no air/ear); the capture
+  carries no clock domain and rides on no modeled-converter rate.
 
 ### 5.2 Oversampled analog domain (the key decision)
 
@@ -207,10 +208,13 @@ These are not special-cased — they fall out of modeling real volts:
 ### 5.5 Where we stay deliberately simple
 
 Guard against scope creep into acoustics — this is not an acoustic project:
-- **Speaker**: V → SPL via one sensitivity figure + a simple frequency-response curve. No cone
+- **Speaker**: a sensitivity figure + a simple frequency-response curve applied to the drive voltage —
+  it stays in the voltage domain (we tap the speaker's analog output; no V→SPL/acoustic stage). No cone
   physics, no cabinet modeling.
-- **Air → ear**: trivial — a fixed attenuation, or nothing. No room acoustics, no propagation.
-- **Internal AD**: plumbing only.
+- **Air → ear**: nothing — the simulation ends at the speaker; we do not model acoustics or propagation.
+- **Internal AD → host (implicit capture)**: pure plumbing, *outside* the simulation — it samples the
+  tapped speaker voltage to host samples (real-time playback or a WAV render), on no modeled clock or
+  sample rate. Built harness-side in Epic 2.
 
 DSP transforms (filters, dynamics, etc.) start simple and deepen in later stages. The realism
 budget is spent specifically on the volts-and-converters layer; device transforms above the
@@ -312,9 +316,10 @@ Build the core engine and voltage-native signal model with no product UI.
 
 ### Stage 2 — Offline render to audio ("hear it" cheaply)
 Reach the audio goal without real-time infrastructure.
-- Render N seconds of a graph's output to a WAV file (through the full chain to the internal AD).
+- Render N seconds of a graph's output to a WAV file: the simulation ends at the speaker's analog
+  output, which the harness taps and captures to host samples (an implicit, off-sim-clock conversion).
 - Introduce the first real DSP transforms (e.g. a filter and a simple dynamics processor) and a
-  trivial speaker/air/ear stage so there's something meaningful to hear.
+  trivial speaker terminus so there's something meaningful to hear.
 - Demonstrate the converter payoff by ear: aliasing with a weak anti-alias filter, quantization
   noise at low bit depth.
 - **Oracle = ears (DSP/dynamics, converter artifacts) + tests (analog domain).**
