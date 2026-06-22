@@ -1,0 +1,132 @@
+//! Integration tests for the offline render driver (Story 2.1.5).
+//!
+//! These render a played note through the real engine + capture + driver and assert the result
+//! numerically — the analog-domain oracle (PROJECT_PLAN §9): you can't ear-check a CI run, so the
+//! rendered audio is checked against hand calcs (fundamental, causal onset, level) and for
+//! determinism. We use the **analog-only** patch (`synth → speaker`, no modeled AD): with no
+//! converter dither the pre-onset output is true silence, so the causal-onset check is exact, and
+//! the render is bit-reproducible.
+
+use engine::{
+    AnalogRate, EventMessage, EventQueue, Graph, InputZ, Ohms, SampleRate, Speaker, SynthVoice,
+    Volts, compile,
+};
+use harness::render::{RenderConfig, render_to_samples};
+
+const ANALOG_HZ: f64 = 384_000.0;
+const HOST_HZ: f64 = 48_000.0;
+const BLOCK_LEN: usize = 384;
+/// A4 = 440 Hz.
+const NOTE_A4: u8 = 69;
+const A4_HZ: f64 = 440.0;
+/// Monitor full scale; the voice peaks ≈ 0.7 V, so it renders a few dB below full scale.
+const FULL_SCALE: f32 = 1.0;
+
+fn analog_rate() -> AnalogRate {
+    AnalogRate::new(ANALOG_HZ)
+}
+
+/// Render `synth → speaker` playing A4 from `note_on` (absolute analog samples) for `seconds` of
+/// host audio. Deterministic (compile seed 0; no RNG on this analog-only path).
+fn render_voice(note_on: u64, seconds: f64) -> Vec<f32> {
+    let mut g = Graph::new();
+    let voice = g.add(SynthVoice::new(Volts::new(1.0), Ohms::new(1.0)));
+    let spk = g.add(Speaker::new(1.0, InputZ::new(Ohms::new(10_000.0))));
+    g.connect(voice, 0, spk, 0);
+    g.set_output(spk, 0);
+
+    let mut schedule = compile(g, BLOCK_LEN, analog_rate(), 0).expect("voice patch compiles");
+    let ev = schedule
+        .event_input(voice, 0)
+        .expect("the voice's event input");
+    let mut events = EventQueue::with_capacity(4);
+    events.push(
+        note_on,
+        ev,
+        EventMessage::NoteOn {
+            note: NOTE_A4,
+            velocity: 100,
+        },
+    );
+
+    let cfg = RenderConfig {
+        host_rate: SampleRate::new(HOST_HZ),
+        full_scale_volts: FULL_SCALE,
+        seconds,
+    };
+    render_to_samples(&mut schedule, analog_rate(), &mut events, &cfg)
+}
+
+/// Single-bin DFT magnitude of `x` at `freq` Hz (host rate), normalized so a unit-amplitude
+/// sinusoid reads ≈ its amplitude. Enough to compare harmonic content without an FFT crate.
+fn bin_magnitude(x: &[f32], freq: f64) -> f64 {
+    let omega = std::f64::consts::TAU * freq / HOST_HZ;
+    let (mut re, mut im) = (0.0_f64, 0.0_f64);
+    for (n, &v) in x.iter().enumerate() {
+        let phase = omega * n as f64;
+        re += f64::from(v) * phase.cos();
+        im += f64::from(v) * phase.sin();
+    }
+    2.0 / x.len() as f64 * re.hypot(im)
+}
+
+fn peak(x: &[f32]) -> f32 {
+    x.iter().fold(0.0_f32, |m, &v| m.max(v.abs()))
+}
+
+/// The rendered tone is A4: the 440 Hz fundamental dominates, matches the sawtooth hand calc, and
+/// the energy sits on the harmonics (not between them).
+#[test]
+fn renders_the_a4_fundamental() {
+    let samples = render_voice(0, 0.5);
+    // A steady sustain window, past the envelope attack and the capture's FIR latency.
+    let win = &samples[(0.20 * HOST_HZ) as usize..(0.45 * HOST_HZ) as usize];
+
+    let fundamental = bin_magnitude(win, A4_HZ);
+    let second = bin_magnitude(win, 2.0 * A4_HZ); // 880 Hz harmonic
+    let between = bin_magnitude(win, 1.5 * A4_HZ); // 660 Hz, between harmonics ⇒ ≈ 0
+
+    // Ideal sawtooth of peak A has fundamental amplitude 2A/π; A = sustain·level ≈ 0.7 V at the
+    // 1 V monitor reference ⇒ ≈ 0.45. Band-limiting leaves the fundamental untouched.
+    assert!(
+        (0.30..0.60).contains(&fundamental),
+        "A4 fundamental amplitude {fundamental:.3} (expected ≈ 0.45 = 2·0.7/π)"
+    );
+    assert!(
+        fundamental > second,
+        "fundamental {fundamental:.3} should exceed the 2nd harmonic {second:.3} (sawtooth 1/n)"
+    );
+    assert!(
+        fundamental > 10.0 * between,
+        "energy should sit on harmonics, not between them ({fundamental:.3} vs {between:.3} at 660 Hz)"
+    );
+}
+
+/// The note's onset is causal: with no modeled converter (hence no dither), the render is pure
+/// silence until the note plays, then signal once the envelope rises.
+#[test]
+fn note_onset_is_causal() {
+    let note_on_s = 0.25;
+    let samples = render_voice((note_on_s * ANALOG_HZ) as u64, 0.6);
+    let onset = (note_on_s * HOST_HZ) as usize;
+
+    // Latency only *delays* the signal, so everything strictly before the note is exact silence.
+    assert!(
+        peak(&samples[..onset]) < 1e-6,
+        "expected silence before the note onset, got peak {}",
+        peak(&samples[..onset])
+    );
+    // Well after onset (envelope risen, latency elapsed) the tone is clearly present.
+    let after = (0.40 * HOST_HZ) as usize;
+    assert!(
+        peak(&samples[after..]) > 0.1,
+        "expected signal after the onset, got peak {}",
+        peak(&samples[after..])
+    );
+}
+
+/// Same seed + same patch ⇒ bit-identical render (the determinism golden-file tests will rest on).
+#[test]
+fn render_is_deterministic() {
+    assert_eq!(render_voice(0, 0.2), render_voice(0, 0.2));
+}
