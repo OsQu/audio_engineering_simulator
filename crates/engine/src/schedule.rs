@@ -22,19 +22,21 @@
 //! **not** a contract: a reactive source later makes an edge a 2nd-order transfer function
 //! depending on both endpoints, which generalizes the representation without touching callers.
 
+mod events;
 mod swap;
 mod topo;
 
+pub use events::{EventInputId, EventQueue};
 pub use swap::ScheduleSlot;
 
 use crate::electrical::{InputZ, Ohms, OnePole, fan_out_gains};
-use crate::graph::{Edge, Graph};
+use crate::graph::{Edge, Graph, NodeId};
 use crate::node::{Lifted, Node};
 use crate::noise::NoiseDensity;
 use crate::port::{DigitalFace, EventFace};
 use crate::rng::Rng;
 use crate::signal::{
-    AnalogRate, ClockDomainId, Domain, EventBuffer, Lane, SampleBuffer, VoltageBuffer,
+    AnalogRate, ClockDomainId, Domain, EventBuffer, Lane, SampleBuffer, TimedEvent, VoltageBuffer,
 };
 use core::fmt;
 
@@ -255,6 +257,15 @@ enum Step {
     },
 }
 
+/// An **open** event input — an event-domain input port with no incoming edge, so the external
+/// [`EventQueue`] may feed it. Records its `(node, port)` identity (for
+/// [`Schedule::event_input`] resolution) and its `lane` in `input_pool` (the delivery target).
+struct EventInputSlot {
+    node: usize,
+    port: usize,
+    lane: usize,
+}
+
 /// A compiled, runnable patch: nodes, the buffer pools, and the ordered step list.
 ///
 /// Produced by [`compile`]; driven by [`process`](Self::process) one block at a time. Owns its
@@ -268,6 +279,12 @@ pub struct Schedule {
     /// Index into `output_pool` of the designated output tap.
     out_buf: usize,
     block_len: usize,
+    /// Event-domain input ports the host can feed (those without an incoming edge), for resolving
+    /// [`event_input`](Self::event_input) and clearing each block.
+    event_inputs: Vec<EventInputSlot>,
+    /// Absolute sample position of the next block's first sample — the clock external events are
+    /// timestamped against. Starts at 0 and advances by `block_len` each processed block.
+    sample_pos: u64,
 }
 
 impl Schedule {
@@ -277,11 +294,57 @@ impl Schedule {
         self.block_len
     }
 
-    /// Process one block: run every step in order, then copy the designated output tap into
-    /// `out`. Hot path — zero allocation, no panic, no locks.
+    /// Resolve an **open** event input port — an event-domain input with no incoming edge — to a
+    /// handle the host can push external events to (see [`EventQueue`]). Returns `None` if the port
+    /// isn't an open event input (it's analog/digital, out of range, or fed by an edge — an
+    /// edge-driven event input is filled by the graph, not the host). Off the hot path.
+    #[must_use]
+    pub fn event_input(&self, node: NodeId, port: usize) -> Option<EventInputId> {
+        self.event_inputs
+            .iter()
+            .find(|s| s.node == node.0 && s.port == port)
+            .map(|s| EventInputId(s.lane))
+    }
+
+    /// Process one block with no external events — the convenience for offline renders and chains
+    /// driven entirely from within the graph. See [`process_with_events`](Self::process_with_events).
     ///
     /// Writes `min(out.len(), block_len)` samples; size `out` to [`block_len`](Self::block_len).
     pub fn process(&mut self, out: &mut VoltageBuffer) {
+        // A zero-capacity queue allocates nothing and drains to nothing — the hot path is identical
+        // to the event path with an empty block.
+        let mut no_events = EventQueue::with_capacity(0);
+        self.process_with_events(out, &mut no_events);
+    }
+
+    /// Process one block, delivering the `events` due this block, then copy the designated output
+    /// tap into `out`. Hot path — zero allocation, no panic, no locks.
+    ///
+    /// Events with absolute time in `[sample_pos, sample_pos + block_len)` are written into their
+    /// target input lanes at the matching block-relative offset (a time before `sample_pos` — a
+    /// late event — clamps to offset 0); later events stay queued. The schedule's `sample_pos`
+    /// then advances one block.
+    ///
+    /// Writes `min(out.len(), block_len)` samples; size `out` to [`block_len`](Self::block_len).
+    pub fn process_with_events(&mut self, out: &mut VoltageBuffer, events: &mut EventQueue) {
+        let block_len = self.block_len as u64;
+        let pos = self.sample_pos;
+        let end = pos + block_len;
+
+        // Refill the open event inputs for this block: clear last block's events (no edge writes
+        // them), then deliver the due ones at their block-relative offsets. Disjoint field borrows.
+        for slot in &self.event_inputs {
+            self.input_pool[slot.lane].events_mut().clear();
+        }
+        for e in events.drain_due(end) {
+            let offset = e.when.saturating_sub(pos).min(block_len.saturating_sub(1)) as u32;
+            self.input_pool[e.target.0].events_mut().push(TimedEvent {
+                offset,
+                message: e.message,
+            });
+        }
+        self.sample_pos = end;
+
         let Self {
             nodes,
             input_pool,
@@ -468,6 +531,26 @@ pub fn compile(
             });
         }
         input_taken[dst] = true;
+    }
+
+    // --- 5b. Collect the **open** event inputs: event-domain input ports with no incoming edge,
+    //         which the external queue may feed. (An edge-driven event input is filled by an
+    //         EventRoute, so it's excluded.) Event ports own one lane, so the port's lane is its
+    //         first conductor. ---
+    let mut event_inputs = Vec::new();
+    for n in 0..node_count {
+        for (p, face) in nodes[n].inputs().iter().enumerate() {
+            if face.domain() == Domain::Events {
+                let lane = in_port_base[n][p];
+                if !input_taken[lane] {
+                    event_inputs.push(EventInputSlot {
+                        node: n,
+                        port: p,
+                        lane,
+                    });
+                }
+            }
+        }
     }
 
     // --- 6. Topological order (rejects cycles). ---
@@ -662,6 +745,8 @@ pub fn compile(
         steps,
         out_buf,
         block_len,
+        event_inputs,
+        sample_pos: 0,
     })
 }
 
@@ -2225,6 +2310,175 @@ mod event_seam {
                 to_node: 1,
                 to_port: 0,
             })
+        );
+    }
+
+    // --- Task 1.7.2: external event queue + timestamped delivery into open event inputs. ---
+
+    fn note_on_msg(note: u8) -> EventMessage {
+        EventMessage::NoteOn {
+            note,
+            velocity: 100,
+        }
+    }
+    fn note_off_msg(note: u8) -> EventMessage {
+        EventMessage::NoteOff { note }
+    }
+
+    /// The single event input lane of these one-sink chains (the only `Events` lane in the input
+    /// pool). White-box, as elsewhere in this file.
+    fn sink_events(sched: &Schedule) -> &EventBuffer {
+        sched
+            .input_pool
+            .iter()
+            .find(|l| matches!(l, Lane::Events(_)))
+            .expect("an event input lane")
+            .events()
+    }
+
+    #[test]
+    fn external_events_land_at_their_offsets() {
+        // Two events due this block land at the matching block-relative offsets, in order.
+        let mut g = Graph::new();
+        let sink = g.add(EventSink::new(8));
+        analog_tap(&mut g);
+        let mut sched = compile(g, 16, analog_rate(), 0).expect("valid event chain");
+        let id = sched.event_input(sink, 0).expect("open event input");
+
+        let mut q = EventQueue::with_capacity(8);
+        q.push(3, id, note_on_msg(69));
+        q.push(10, id, note_off_msg(69));
+
+        let mut out = VoltageBuffer::zeros(16, analog_rate());
+        sched.process_with_events(&mut out, &mut q);
+
+        assert_eq!(
+            sink_events(&sched).as_slice(),
+            &[
+                TimedEvent {
+                    offset: 3,
+                    message: note_on_msg(69)
+                },
+                TimedEvent {
+                    offset: 10,
+                    message: note_off_msg(69)
+                },
+            ]
+        );
+        assert!(q.is_empty(), "both events were due and consumed");
+    }
+
+    #[test]
+    fn events_bucket_across_blocks() {
+        // An event past this block stays queued, then arrives next block at its rebased offset:
+        // absolute 20 with block_len 16 ⇒ block 1, offset 20 − 16 = 4.
+        let mut g = Graph::new();
+        let sink = g.add(EventSink::new(8));
+        analog_tap(&mut g);
+        let mut sched = compile(g, 16, analog_rate(), 0).expect("valid event chain");
+        let id = sched.event_input(sink, 0).expect("open event input");
+
+        let mut q = EventQueue::with_capacity(8);
+        q.push(3, id, note_on_msg(60));
+        q.push(20, id, note_on_msg(62));
+
+        let mut out = VoltageBuffer::zeros(16, analog_rate());
+        sched.process_with_events(&mut out, &mut q);
+        assert_eq!(
+            sink_events(&sched).as_slice(),
+            &[TimedEvent {
+                offset: 3,
+                message: note_on_msg(60)
+            }]
+        );
+        assert_eq!(q.len(), 1, "the second event is not yet due");
+
+        sched.process_with_events(&mut out, &mut q);
+        assert_eq!(
+            sink_events(&sched).as_slice(),
+            &[TimedEvent {
+                offset: 4,
+                message: note_on_msg(62)
+            }]
+        );
+        assert!(q.is_empty());
+    }
+
+    #[test]
+    fn a_late_event_clamps_to_offset_zero() {
+        // After one block the clock is at sample 16; an event stamped before that (a late arrival)
+        // fires immediately, at offset 0, rather than being dropped or panicking.
+        let mut g = Graph::new();
+        let sink = g.add(EventSink::new(8));
+        analog_tap(&mut g);
+        let mut sched = compile(g, 16, analog_rate(), 0).expect("valid event chain");
+        let id = sched.event_input(sink, 0).expect("open event input");
+
+        let mut out = VoltageBuffer::zeros(16, analog_rate());
+        sched.process(&mut out); // advance the clock to sample 16
+
+        let mut q = EventQueue::with_capacity(4);
+        q.push(5, id, note_on_msg(60)); // 5 < 16 — late
+        sched.process_with_events(&mut out, &mut q);
+        assert_eq!(
+            sink_events(&sched).as_slice(),
+            &[TimedEvent {
+                offset: 0,
+                message: note_on_msg(60)
+            }]
+        );
+    }
+
+    #[test]
+    fn open_event_inputs_are_cleared_each_block() {
+        // Events delivered one block don't linger into the next: the open input is cleared, so a
+        // following block with no events sees silence.
+        let mut g = Graph::new();
+        let sink = g.add(EventSink::new(8));
+        analog_tap(&mut g);
+        let mut sched = compile(g, 16, analog_rate(), 0).expect("valid event chain");
+        let id = sched.event_input(sink, 0).expect("open event input");
+
+        let mut q = EventQueue::with_capacity(4);
+        q.push(2, id, note_on_msg(60));
+        let mut out = VoltageBuffer::zeros(16, analog_rate());
+        sched.process_with_events(&mut out, &mut q);
+        assert_eq!(sink_events(&sched).len(), 1);
+
+        sched.process(&mut out); // no events this block
+        assert!(
+            sink_events(&sched).is_empty(),
+            "an open event input is cleared each block"
+        );
+    }
+
+    #[test]
+    fn event_input_resolves_only_open_event_ports() {
+        // Open event input → a handle; edge-fed event input → None (filled by the graph, not the
+        // host); a non-event / nonexistent port → None.
+        let mut g = Graph::new();
+        let src = g.add(EventSource::new(8));
+        let fed = g.add(EventSink::new(8)); // node 1: event input fed by an edge
+        let open = g.add(EventSink::new(8)); // node 2: event input left open
+        g.connect(src, 0, fed, 0);
+        analog_tap(&mut g); // node 3: the voltage tap
+        let sched = compile(g, 16, analog_rate(), 0).expect("valid event chain");
+
+        assert!(
+            sched.event_input(open, 0).is_some(),
+            "an unwired event input is open"
+        );
+        assert!(
+            sched.event_input(fed, 0).is_none(),
+            "an edge-fed event input is not host-feedable"
+        );
+        assert!(
+            sched.event_input(src, 0).is_none(),
+            "the source has no input ports"
+        );
+        assert!(
+            sched.event_input(NodeId(3), 0).is_none(),
+            "the tap's port 0 is an analog output, not an event input"
         );
     }
 }

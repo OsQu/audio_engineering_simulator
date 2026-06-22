@@ -32,7 +32,7 @@ pub use node::{
 pub use noise::NoiseDensity;
 pub use port::{AudioFormat, DigitalFace, EventFace, InputPort, OutputPort};
 pub use rng::Rng;
-pub use schedule::{CompileError, Schedule, ScheduleSlot, compile};
+pub use schedule::{CompileError, EventInputId, EventQueue, Schedule, ScheduleSlot, compile};
 pub use signal::{
     AnalogRate, BitDepth, ClockDomainId, Domain, EventBuffer, EventMessage, Lane, SampleBuffer,
     SampleRate, TimedEvent, VoltageBuffer, Volts,

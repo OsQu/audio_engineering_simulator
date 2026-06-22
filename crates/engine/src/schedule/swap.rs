@@ -1,6 +1,6 @@
 //! The schedule-swap seam: hot-swap a running [`Schedule`] without stalling the audio path.
 
-use super::Schedule;
+use super::{EventQueue, Schedule};
 use crate::signal::VoltageBuffer;
 
 /// Holds the active [`Schedule`] and lets a freshly compiled one replace it in O(1).
@@ -32,6 +32,12 @@ impl ScheduleSlot {
     /// Process one block through the active schedule. Hot path — delegates straight through.
     pub fn process(&mut self, out: &mut VoltageBuffer) {
         self.current.process(out);
+    }
+
+    /// Process one block through the active schedule, delivering `events`. Hot path — delegates
+    /// straight through to [`Schedule::process_with_events`].
+    pub fn process_with_events(&mut self, out: &mut VoltageBuffer, events: &mut EventQueue) {
+        self.current.process_with_events(out, events);
     }
 
     /// Swap in `next` as the active schedule, returning the old one for off-path drop. O(1): a
