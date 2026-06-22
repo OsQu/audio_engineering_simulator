@@ -7,6 +7,7 @@
 //! (no `std::thread`, no ambient `std::time`).
 
 mod electrical;
+mod fir;
 mod graph;
 mod level;
 mod node;
@@ -19,6 +20,7 @@ mod signal;
 mod test_util;
 
 pub use electrical::{Cable, Farads, InputZ, Ohms, OnePole, OutputZ, Thevenin, divider_gain};
+pub use fir::{Decimator, kaiser_beta};
 pub use graph::{Graph, NodeId};
 pub use level::{dbu_to_volts, dbv_to_volts, headroom_db, volts_to_dbu, volts_to_dbv};
 pub use node::{

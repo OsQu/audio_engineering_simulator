@@ -8,8 +8,8 @@
 mod sine;
 
 use engine::{
-    AnalogRate, Cable, Farads, GainStage, Graph, InputZ, NoiseDensity, Ohms, TestSource,
-    VoltageBuffer, Volts, compile, volts_to_dbu,
+    AnalogRate, Cable, Decimator, Farads, GainStage, Graph, InputZ, NoiseDensity, Ohms, TestSource,
+    VoltageBuffer, Volts, compile, kaiser_beta, volts_to_dbu,
 };
 use sine::SineSource;
 use textplots::{Chart, Plot, Shape};
@@ -33,6 +33,7 @@ fn main() {
     scenario_clipping();
     scenario_cable_rolloff();
     scenario_noise_floor();
+    scenario_fir_antialias();
 }
 
 /// Scenario 1 — clean gain. `SineSource(1 V) → GainStage(×2)`, well under the 10 V rail.
@@ -225,6 +226,131 @@ fn scenario_noise_floor() {
     }
 }
 
+// --- Scenario 5: the FIR anti-alias filter (decimation 384 kHz → 48 kHz) -------------------
+//
+// Before dropping to 48 kHz the converter must remove everything above the 24 kHz decimated
+// Nyquist, or it folds back (aliases). This sweeps an input tone from the passband up into the
+// stopband and plots how much survives decimation, for a STRONG (many-tap) filter and a WEAK
+// (few-tap) one: the strong filter cliffs at Nyquist, the weak one leaks — and that leak *is*
+// audible aliasing. Then it shows a single out-of-band tone in the time domain: rejected by the
+// strong filter, folded back to an 8 kHz wave by the weak one. The FIR is a standalone primitive
+// here (the AD that wraps it is Story 1.6.3); we drive `Decimator` directly.
+
+/// Decimation factor for the demo: 384 kHz → 48 kHz.
+const M_FIR: usize = 8;
+/// Tap counts for the strong (steep) and weak (leaky) filters — the "weak filter" knob.
+const FIR_TAPS_STRONG: usize = 161;
+const FIR_TAPS_WEAK: usize = 13;
+/// Frequency-sweep range and resolution.
+const FIR_FMIN: f64 = 1_000.0;
+const FIR_FMAX: f64 = 90_000.0;
+const FIR_POINTS: usize = 56;
+/// High-rate samples rendered per swept frequency (a multiple of `M_FIR`).
+const FIR_SWEEP_LEN: usize = 16_384;
+
+fn scenario_fir_antialias() {
+    println!("\n=== Scenario 5: FIR anti-alias filter, decimating 384 kHz → 48 kHz ===");
+    let beta = kaiser_beta(80.0);
+    let lo_nyquist = rate().as_hz() / (2.0 * M_FIR as f64); // 24 kHz
+
+    // Sweep: log-spaced input frequencies, the level (dB, ref input) surviving decimation through
+    // each filter. Everything is measured off the real decimator output — no analytic curve.
+    let mut strong = Vec::with_capacity(FIR_POINTS);
+    let mut weak = Vec::with_capacity(FIR_POINTS);
+    for i in 0..FIR_POINTS {
+        let frac = i as f64 / (FIR_POINTS - 1) as f64;
+        let freq = FIR_FMIN * (FIR_FMAX / FIR_FMIN).powf(frac);
+        let input = tone(freq, 1.0, FIR_SWEEP_LEN);
+        let in_rms = rms(&input);
+        let x = freq.log10() as f32;
+        strong.push((
+            x,
+            gain_db(&mut aa_filter(FIR_TAPS_STRONG, beta), &input, in_rms),
+        ));
+        weak.push((
+            x,
+            gain_db(&mut aa_filter(FIR_TAPS_WEAK, beta), &input, in_rms),
+        ));
+    }
+
+    println!("  level surviving decimation (dB, ref input):");
+    for &probe in &[4_000.0_f64, 40_000.0] {
+        let input = tone(probe, 1.0, FIR_SWEEP_LEN);
+        let in_rms = rms(&input);
+        let s = gain_db(&mut aa_filter(FIR_TAPS_STRONG, beta), &input, in_rms);
+        let w = gain_db(&mut aa_filter(FIR_TAPS_WEAK, beta), &input, in_rms);
+        let band = if probe < lo_nyquist {
+            "passband"
+        } else {
+            "stopband"
+        };
+        println!("    {probe:>6.0} Hz ({band}):  strong {s:>7.1} dB    weak {w:>7.1} dB");
+    }
+
+    plot_fir(
+        "Surviving level (dB, y) vs log10(freq) — strong (161 taps) vs weak (13 taps); vertical = 24 kHz Nyquist",
+        &strong,
+        &weak,
+        lo_nyquist.log10() as f32,
+        FIR_FMIN.log10() as f32,
+        FIR_FMAX.log10() as f32,
+    );
+
+    // Time domain: one 40 kHz tone (above Nyquist) decimated. Strong → ≈ silence; weak → it folds
+    // back to a 48 − 40 = 8 kHz alias. We plot a short **window** of the settled output — the 8 kHz
+    // alias is only 6 samples/cycle at 48 kHz, so showing the whole tail (~170 cycles) would smear
+    // into a solid band; ~8 cycles resolves the wave. Shared ±1.1 scale.
+    let probe = tone(40_000.0, 1.0, FIR_SWEEP_LEN);
+    let strong_out = decimate(&mut aa_filter(FIR_TAPS_STRONG, beta), &probe);
+    let weak_out = decimate(&mut aa_filter(FIR_TAPS_WEAK, beta), &probe);
+    let start = strong_out.len() / 2; // past the filter-settling transient
+    let win = 48; // ~8 cycles of the 8 kHz alias at 48 kHz (6 samples/cycle)
+    let scale = Some((-1.1, 1.1));
+    println!("\n  a 40 kHz tone (above Nyquist) after decimation — 48-sample (~1 ms) window:");
+    plot(
+        "Strong filter — out-of-band tone rejected (≈ silence)",
+        &strong_out[start..start + win],
+        scale,
+    );
+    plot(
+        "Weak filter — folds back to an 8 kHz alias (≈8 cycles shown)",
+        &weak_out[start..start + win],
+        scale,
+    );
+}
+
+/// An anti-alias decimator with `num_taps` taps at the demo's 8× factor.
+fn aa_filter(num_taps: usize, beta: f64) -> Decimator {
+    Decimator::lowpass(num_taps, M_FIR, beta)
+}
+
+/// A high-rate sine of `len` samples at `freq` Hz, peak `amp`. The FIR works on raw `f32`
+/// (it's domain-agnostic numbers), so this bypasses the graph.
+fn tone(freq: f64, amp: f32, len: usize) -> Vec<f32> {
+    let dt = rate().seconds_per_sample();
+    let omega = std::f64::consts::TAU * freq;
+    (0..len)
+        .map(|n| (f64::from(amp) * (omega * n as f64 * dt).sin()) as f32)
+        .collect()
+}
+
+/// Decimate `input` into a fresh `Vec` (off the hot path; allocation is fine).
+fn decimate(dec: &mut Decimator, input: &[f32]) -> Vec<f32> {
+    let mut out = vec![0.0; input.len() / dec.factor()];
+    dec.process(input, &mut out);
+    out
+}
+
+/// Level (dB) surviving decimation through `dec`, relative to the input RMS, measured on the
+/// steady tail (the first half is dropped as the filter transient). Floored so a fully rejected
+/// tone plots as a finite −120 dB rather than −∞.
+fn gain_db(dec: &mut Decimator, input: &[f32], in_rms: f32) -> f32 {
+    let out = decimate(dec, input);
+    let tail = &out[out.len() / 2..];
+    let g = rms(tail) / in_rms;
+    if g <= 1e-6 { -120.0 } else { 20.0 * g.log10() }
+}
+
 // --- graph builders -------------------------------------------------------------------------
 
 /// A graph of just the source, tapped — the open-circuit input signal, run through the same
@@ -366,5 +492,24 @@ fn plot_response(title: &str, curve: &[(f32, f32)], corner_db: f32, x_min: f32, 
     Chart::new_with_y_range(120, 60, x_min, x_max, -24.0, 3.0)
         .lineplot(&curve_shape)
         .lineplot(&ref_shape)
+        .nice();
+}
+
+/// Plot two FIR responses (each in (log10 Hz, dB)) on a fixed −72…+3 dB scale, with a vertical
+/// marker at the decimated Nyquist: first curve = strong filter, second = weak, third = marker.
+fn plot_fir(
+    title: &str,
+    strong: &[(f32, f32)],
+    weak: &[(f32, f32)],
+    nyquist_log: f32,
+    x_min: f32,
+    x_max: f32,
+) {
+    println!("\n{title}");
+    let marker = [(nyquist_log, -72.0), (nyquist_log, 3.0)];
+    Chart::new_with_y_range(120, 60, x_min, x_max, -72.0, 3.0)
+        .lineplot(&Shape::Lines(strong))
+        .lineplot(&Shape::Lines(weak))
+        .lineplot(&Shape::Lines(&marker))
         .nice();
 }
