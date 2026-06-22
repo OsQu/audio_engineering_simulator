@@ -196,6 +196,10 @@ The vocabulary later epics build on. Names are the actual public API unless mark
 
 ## Epic 2 — Offline Render ("hear it" cheaply)
 
+**Progress:** Story 2.1 ✅ done — **first audible render**: a played note runs through `synth → (AD → DA →)
+speaker`, the speaker voltage is captured off-sim-clock to 48 kHz, and written to a float32 WAV. Stories
+2.2 (first DSP) and 2.3 (golden harness + converter-payoff demos) remain.
+
 **Goal:** reach the audio oracle without real-time infrastructure — the *same* engine (driven block by
 block via `Schedule::process_io`) rendered flat-out into a WAV. First real DSP and a trivial speaker so
 there's something meaningful to hear.
@@ -238,7 +242,7 @@ the engine or its wasm32 build.
 > the Story up to build it — per the detail-gradient convention. The Goals, watch-outs, and settled
 > decisions are recorded now.*
 
-### Story 2.1 — Offline render to WAV + speaker terminus *(first sound)*
+### Story 2.1 — Offline render to WAV + speaker terminus *(first sound)* — ✅ **Done**
 *Goal:* the smallest thing that produces **a WAV you can listen to** — the audio-oracle-unlocked
 milestone (the Epic-2 analogue of Story 1.3's "first runnable"). The render driver loops `process_io`
 into a WAV writer; the graph gains a thin `Speaker` terminus; the harness performs the implicit capture
@@ -279,15 +283,28 @@ in volts (it produces voltage, not SPL); the implicit capture is harness-side an
 - **Artifacts:** rendered WAVs go to a **gitignored `renders/`**; the CLI stays scenario-function style (no
   arg-parser crate). Committed golden refs get their own dir in Story 2.3.
 
-- **Task 2.1.1** — `Speaker` terminus node (engine): voltage→voltage sensitivity gain, 1 analog in / 1 analog out, ideal `OutputZ`, no rail. Unit test: passband gain = sensitivity.
-- **Task 2.1.2** — Implicit capture (harness): a `Decimator::lowpass` at `M = analog/host` (transparent spec) + fixed monitor-reference volts→full-scale + clamp, held stateful across blocks. Test: a known sine in volts → expected normalized amplitude at the host rate.
-- **Task 2.1.3** — WAV writer (harness, `hound`): mono, canonical float32. Header/round-trip test.
-- **Task 2.1.4** — Render driver + first-sound scenario: compile a fixed patch (synth note → modeled AD → modeled DA → `Speaker`), loop `process_io` for N seconds into the capture → WAV; deterministic (seed/block_len/rate pinned); output to `renders/`.
-- **Task 2.1.5** — Numeric-oracle validation test (harness integration): render the played-note patch, assert correct fundamental (DFT bin), onset after the known total latency, and non-silence/level.
+- ✅ **Task 2.1.1** — `Speaker` terminus node (engine): voltage→voltage sensitivity gain, 1 analog in / 1 analog out, ideal `OutputZ`, no rail. Unit test: passband gain = sensitivity.
+- ✅ **Task 2.1.2** — Implicit capture (harness): a `Decimator::lowpass` at `M = analog/host` (transparent spec) + fixed monitor-reference volts→full-scale + clamp, held stateful across blocks. Test: a known sine in volts → expected normalized amplitude at the host rate.
+- ✅ **Task 2.1.3** — WAV writer (harness, `hound`): mono, canonical float32. Header/round-trip test.
+- ✅ **Task 2.1.4** — Render driver + first-sound scenario: compile a fixed patch (synth note → modeled AD → modeled DA → `Speaker`), loop `process_io` for N seconds into the capture → WAV; deterministic (seed/block_len/rate pinned); output to `renders/`.
+- ✅ **Task 2.1.5** — Numeric-oracle validation test (harness integration): render the played-note patch, assert correct fundamental (DFT bin), onset after the known total latency, and non-silence/level.
 
-*Validate:* a fixed patch renders to a float32 WAV that **plays and sounds right by ear**, and a harness
-test asserts the rendered fundamental, latency-offset onset, and level against hand calcs — deterministic
-across runs. **First sound achieved.**
+*Validate (✅ met):* a fixed patch renders to a float32 WAV that **plays and sounds right by ear**, and a
+harness test asserts the rendered fundamental, latency-offset onset, and level against hand calcs —
+deterministic across runs. **First sound achieved.**
+
+*Delivered:* the first audible render. **Engine:** `Speaker` — a flat voltage→voltage terminus node
+(sensitivity gain, bridging `InputZ`, nominal terminus `OutputZ`, no rail). **Harness** restructured as
+**lib + bin** so the integration tests and `main` share code: `capture::Capture` (a stateful harness-held
+`Decimator` at `M = analog/host` + a fixed monitor-reference volts→±1.0 + clamp — transparent,
+off-sim-clock, no `ClockDomainId`); `wav` (mono **float32** WAV via `hound`, file write + in-memory
+round-trip); `render::render_to_samples` (loops `process_with_events`, feeds the tapped speaker voltage
+through the capture, returns exactly `round(host_rate·seconds)` samples). Two `main` scenarios render A4 to
+`renders/*.wav` — the full chain `synth → AD → DA → speaker` and a pure-analog `synth → speaker`
+comparison (no quantization / converter delay). Three integration tests (on the analog-only patch, whose
+pre-onset is true silence) assert the 440 Hz fundamental (≈ 0.45 = 2·0.7/π, dominating its harmonics),
+causal onset (exact silence before the note), and bit-identical determinism. `hound` + `approx` are
+harness-only deps (never reach the engine/wasm build). 243 tests green (engine's 232 unchanged).
 
 *Absorbs old 2.1.1 + 2.3.1.*
 
