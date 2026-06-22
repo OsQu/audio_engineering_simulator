@@ -196,21 +196,75 @@ The vocabulary later epics build on. Names are the actual public API unless mark
 
 ## Epic 2 — Offline Render ("hear it" cheaply)
 
-**Goal:** reach the audio oracle without real-time infrastructure — the *same* engine driven flat-out
-into a WAV. First real DSP and a trivial speaker/air/ear stage so there's something meaningful to hear.
+**Goal:** reach the audio oracle without real-time infrastructure — the *same* engine (driven block by
+block via `Schedule::process_io`) rendered flat-out into a WAV. First real DSP and a trivial speaker so
+there's something meaningful to hear.
 
 **Exit criteria:** build a chain, render it, and the result sounds correct; DSP and converter behavior
 validated by listening **and** golden-file tests.
 
-**Watch-outs:** this is a test harness, not a feature — do not build a second engine. Determinism
-(seeded) is what makes golden-file tests viable. Keep it thin.
+**Epic-wide watch-outs:** this is a **test harness, not a second engine** — the render driver is a loop
+over `process_io` plus a file writer, nothing more. Determinism (seeded) is what makes golden-file tests
+viable; pin *every* run parameter (seed, `block_len`, rate, patch) for a golden render. Keep it thin.
+**Mono only** this epic (converters/lanes are mono; multichannel digital is deferred to Epic 5) — render
+a mono WAV. The harness is native-only, so its deps (`textplots` today, a WAV writer next) never reach
+the engine or its wasm32 build.
 
-- **Task 2.1.1** — WAV render driver: drain `schedule.process` as fast as possible to a file; deterministic with seed.
-- **Task 2.2.1** — First DSP: a filter (biquad) device.
-- **Task 2.2.2** — First dynamics: a simple compressor device.
-- **Task 2.3.1** — Trivial speaker (V → SPL via sensitivity + simple response curve) + air/ear (fixed attenuation) + internal AD plumbing to host format.
-- **Task 2.3.2** — Converter-payoff demo renders: aliasing (weak AA filter) and quantization (low bit depth), audible.
-- **Task 2.3.3** — Golden-file test harness: render fixed patches, assert output matches stored references.
+**Settled this planning pass (decisions that shape the stories):**
+- **The simulation ends in the analog domain at the speaker feed (volts); we do *not* simulate
+  acoustics** (no air→ear, no "ear-as-microphone" node — PROJECT_PLAN §5.5's "*or nothing*"). The graph
+  terminates at a thin **`Speaker`** voltage→voltage device (sensitivity + an optional simple response
+  curve). The engine **output tap stays a voltage tap** — no Sample-lane tap is needed for output.
+- **The host render is an *implicit capture*, outside the simulation.** The harness taps the speaker's
+  analog voltage and resamples it to the host rate to produce WAV/real-time samples. This capture is
+  **pure plumbing**: it carries **no `ClockDomainId`**, is on **no modeled-converter clock or sample
+  rate**, and has no dBFS calibration role. It **reuses the FIR `Decimator`** so it stays transparent and
+  adds no artifacts of its own (aliasing/quantization must come only from the *modeled* AD/DA under test).
+  It maps volts→full-scale through a **fixed monitor reference** (deterministic, level-faithful), and for
+  Epic 2 the **host rate integer-divides the analog rate** (e.g. 48 k from 384 k = ÷8); arbitrary host
+  rates (44.1 k vs a 384 k clock ⇒ fractional resample) are deferred. *(This is the §5.1 "internal AD"
+  role, minus the acoustic stage and minus node status — it lives in the harness.)*
+- **First DSP lives in the digital domain** — biquad EQ and compressor operate on `SampleBuffer`, sitting
+  between the modeled AD and DA (the "plugins/DAW" position). Avoids the ~8× oversample cost and exercises
+  the digital lane. Analog (voltage-domain) outboard DSP is a later option, not Epic 2.
+- **Golden-file comparison is tolerance + spectral-feature based** (per-sample max-abs-error epsilon plus
+  RMS/THD/spectral checks), not bit-exact — robust across platforms (FMA contraction and libm `exp`/`sin`
+  in coeff design are not bit-portable native↔wasm↔arch) and across harmless refactors. Pin the reference
+  target in docs; provide a `--bless` regeneration path. Stories 2.1–2.2 validate with **numeric oracles**
+  (reuse Epic 1's DFT/RMS/THD `test_util`); the golden harness is built in 2.3 once there's a lot to lock
+  down.
+
+> *Tasks for each Story below are fleshed out (to Task level + any remaining design notes) when we pick
+> the Story up to build it — per the detail-gradient convention. The Goals, watch-outs, and settled
+> decisions are recorded now.*
+
+### Story 2.1 — Offline render to WAV + speaker terminus *(first sound)*
+*Goal:* the smallest thing that produces **a WAV you can listen to** — the audio-oracle-unlocked
+milestone (the Epic-2 analogue of Story 1.3's "first runnable"). The render driver loops `process_io`
+into a WAV writer; the graph gains a thin `Speaker` terminus; the harness performs the implicit capture
+(transparent decimation, fixed monitor reference) to host samples. Validate by **ear** plus numeric
+oracles (reuse the Epic-1 DFT/RMS helpers — render the played-note patch, assert onset + fundamental).
+*Watch out:* don't build a second engine (loop the existing `process_io`); keep the speaker trivial and
+in volts (it produces voltage, not SPL); the implicit capture is harness-side and off-sim-clock. A WAV
+encoder (`hound`, or a ~40-line hand-rolled PCM/float writer) is a harness-only dep. *Absorbs old
+2.1.1 + 2.3.1.*
+
+### Story 2.2 — First DSP devices: EQ + compressor (digital domain)
+*Goal:* the first real DSP, validated by ear and numeric oracles. A **biquad primitive** (net-new infra —
+coeffs designed at `prepare(rate)`, `f64` state, zero-alloc/denormal-flushed `process`, mirroring the
+`OnePole` pattern) → a **biquad EQ** device; and a **simple compressor** (peak detector → gain computer
+with threshold/ratio/knee → attack/release time constants baked at `prepare` → makeup gain). Both operate
+on `SampleBuffer` between the modeled AD and DA. *Watch out:* keep transforms understandable per §5.5 —
+feed-forward compressor, the realism budget stays on the volts-and-converters layer. The compressor is the
+meatiest single device in the epic. *Absorbs old 2.2.1 + 2.2.2.*
+
+### Story 2.3 — Golden-file harness + converter-payoff demos
+*Goal:* lock down the epic's renders and demonstrate the converter payoff by ear. Build the **golden-file
+regression harness** (tolerance + spectral comparison, deterministic fixed patches, a `--bless`
+regeneration path) and the **payoff demo renders**: aliasing via a weak AA filter and quantization noise
+via low bit depth — reusing the Story-1.6 tap-count and bit-depth knobs on the *modeled* AD. *Watch out:*
+artifacts must originate in the modeled converters, never the transparent implicit capture; golden refs
+are blobs in-repo (size) blessed on the documented reference target. *Absorbs old 2.3.2 + 2.3.3.*
 
 ---
 
