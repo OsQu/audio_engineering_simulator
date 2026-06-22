@@ -8,10 +8,10 @@
 mod sine;
 
 use engine::{
-    AdConverter, AnalogRate, BitDepth, Cable, ClockDomainId, DaConverter, Decimator, EventMessage,
-    EventQueue, Farads, GainStage, Graph, InputZ, Lane, Node, NodeId, NoiseDensity, Ohms, Params,
-    SampleBuffer, SampleRate, Speaker, SynthVoice, TestSource, VoltageBuffer, Volts, compile,
-    kaiser_beta, volts_to_dbu,
+    AdConverter, AnalogRate, BitDepth, Cable, ClockDomainId, Compressor, DaConverter, Decimator,
+    EqBand, EventMessage, EventQueue, Farads, GainStage, Graph, InputZ, Lane, Node, NodeId,
+    NoiseDensity, Ohms, Params, SampleBuffer, SampleRate, Speaker, SynthVoice, TestSource,
+    ThreeBandEq, VoltageBuffer, Volts, compile, kaiser_beta, volts_to_dbu,
 };
 use harness::render::{RenderConfig, render_to_samples};
 use harness::wav;
@@ -41,6 +41,8 @@ fn main() {
     scenario_saw_across_domains();
     scenario_first_sound();
     scenario_first_sound_analog();
+    scenario_first_sound_eq();
+    scenario_first_sound_compressed();
 }
 
 // --- Scenario 7: first sound — a played note rendered to a WAV -----------------------------
@@ -64,6 +66,10 @@ const FS_NOTE_OFF_S: f64 = 0.75;
 /// chain through the modeled converters, and a pure-analog comparison straight to the speaker.
 const FS_OUT_PATH: &str = "renders/first_sound.wav";
 const FS_ANALOG_OUT_PATH: &str = "renders/first_sound_analog.wav";
+/// The DSP scenarios: the same note through a digital EQ, and through a compressor — each inserted
+/// between the modeled AD and DA (the "plugins in the DAW" position).
+const FS_EQ_OUT_PATH: &str = "renders/first_sound_eq.wav";
+const FS_COMPRESSED_OUT_PATH: &str = "renders/first_sound_compressed.wav";
 
 /// `synth → AD → DA → speaker`, tapped at the speaker. Returns the graph and the voice node (its
 /// event input is where the note is played).
@@ -99,6 +105,83 @@ fn first_sound_analog_graph() -> (Graph, NodeId) {
     let voice = g.add(SynthVoice::new(Volts::new(1.0), Ohms::new(1.0)));
     let spk = g.add(Speaker::new(1.0, InputZ::new(Ohms::new(10_000.0))));
     g.connect(voice, 0, spk, 0);
+    g.set_output(spk, 0);
+    (g, voice)
+}
+
+/// `synth → AD → 3-band EQ → DA → speaker`. The EQ runs in the **digital** domain between the
+/// modeled converters: a +6 dB low shelf (warmth), a −6 dB mid scoop, and a +6 dB high shelf (air),
+/// so the rendered note is audibly recoloured versus the flat [`first_sound_graph`]. Returns the
+/// graph and the voice node.
+fn first_sound_eq_graph() -> (Graph, NodeId) {
+    let host_rate = SampleRate::new(FS_HOST_RATE);
+    let bits = BitDepth::new(16);
+    let mut g = Graph::new();
+    // Half level into the converters so the EQ's +6 dB boosts have headroom and don't clip the
+    // capture (the flat render already sits near full scale).
+    let voice = g.add(SynthVoice::new(Volts::new(0.5), Ohms::new(1.0)));
+    let ad = g.add(AdConverter::new(
+        host_rate,
+        bits,
+        Volts::new(FS_REFERENCE_V),
+        Ohms::new(1e6),
+    ));
+    let eq = g.add(ThreeBandEq::new(
+        host_rate,
+        bits,
+        EqBand::new(150.0, 0.707, 6.0),   // low shelf: +6 dB warmth
+        EqBand::new(800.0, 1.0, -6.0),    // mid peak: −6 dB scoop
+        EqBand::new(6_000.0, 0.707, 6.0), // high shelf: +6 dB air
+    ));
+    let da = g.add(DaConverter::new(
+        host_rate,
+        bits,
+        Volts::new(FS_REFERENCE_V),
+        Ohms::new(150.0),
+    ));
+    let spk = g.add(Speaker::new(1.0, InputZ::new(Ohms::new(10_000.0))));
+    g.connect(voice, 0, ad, 0);
+    g.connect(ad, 0, eq, 0);
+    g.connect(eq, 0, da, 0);
+    g.connect(da, 0, spk, 0);
+    g.set_output(spk, 0);
+    (g, voice)
+}
+
+/// `synth → AD → compressor → DA → speaker`. The compressor runs in the **digital** domain: a low
+/// threshold and a 4:1 ratio squash the note's attack and sustain, then +6 dB of manual makeup
+/// brings the level back up — so the render is denser and more even than the flat one. Returns the
+/// graph and the voice node.
+fn first_sound_compressed_graph() -> (Graph, NodeId) {
+    let host_rate = SampleRate::new(FS_HOST_RATE);
+    let bits = BitDepth::new(16);
+    let mut g = Graph::new();
+    // Half level into the converters so the +6 dB makeup gain has headroom over the note's onset
+    // transient (which the 5 ms attack hasn't yet clamped) and doesn't clip the capture.
+    let voice = g.add(SynthVoice::new(Volts::new(0.5), Ohms::new(1.0)));
+    let ad = g.add(AdConverter::new(
+        host_rate,
+        bits,
+        Volts::new(FS_REFERENCE_V),
+        Ohms::new(1e6),
+    ));
+    let comp = g.add(
+        // threshold −18 dBFS, 4:1, 5 ms attack / 80 ms release, soft knee, +6 dB makeup.
+        Compressor::new(host_rate, bits, -18.0, 4.0, 5.0, 80.0)
+            .with_knee(6.0)
+            .with_makeup(6.0),
+    );
+    let da = g.add(DaConverter::new(
+        host_rate,
+        bits,
+        Volts::new(FS_REFERENCE_V),
+        Ohms::new(150.0),
+    ));
+    let spk = g.add(Speaker::new(1.0, InputZ::new(Ohms::new(10_000.0))));
+    g.connect(voice, 0, ad, 0);
+    g.connect(ad, 0, comp, 0);
+    g.connect(comp, 0, da, 0);
+    g.connect(da, 0, spk, 0);
     g.set_output(spk, 0);
     (g, voice)
 }
@@ -159,6 +242,22 @@ fn scenario_first_sound_analog() {
     );
     let (g, voice) = first_sound_analog_graph();
     render_note_to_wav(g, voice, FS_ANALOG_OUT_PATH);
+}
+
+fn scenario_first_sound_eq() {
+    println!(
+        "\n=== Scenario 9: 3-band EQ — A4 through synth → AD → EQ → DA → speaker, to a WAV ==="
+    );
+    let (g, voice) = first_sound_eq_graph();
+    render_note_to_wav(g, voice, FS_EQ_OUT_PATH);
+}
+
+fn scenario_first_sound_compressed() {
+    println!(
+        "\n=== Scenario 10: compressor — A4 through synth → AD → compressor → DA → speaker, to a WAV ==="
+    );
+    let (g, voice) = first_sound_compressed_graph();
+    render_note_to_wav(g, voice, FS_COMPRESSED_OUT_PATH);
 }
 
 /// Scenario 1 — clean gain. `SineSource(1 V) → GainStage(×2)`, well under the 10 V rail.
