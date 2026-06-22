@@ -1,2 +1,7 @@
 /target
 **/*.rs.bk
+
+# Offline render outputs (Epic 2 harness). Committed golden references live elsewhere.
+/renders
+
+.DS_Store

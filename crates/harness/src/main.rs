@@ -9,10 +9,12 @@ mod sine;
 
 use engine::{
     AdConverter, AnalogRate, BitDepth, Cable, ClockDomainId, DaConverter, Decimator, EventMessage,
-    EventQueue, Farads, GainStage, Graph, InputZ, Lane, Node, NoiseDensity, Ohms, Params,
-    SampleBuffer, SampleRate, SynthVoice, TestSource, VoltageBuffer, Volts, compile, kaiser_beta,
-    volts_to_dbu,
+    EventQueue, Farads, GainStage, Graph, InputZ, Lane, Node, NodeId, NoiseDensity, Ohms, Params,
+    SampleBuffer, SampleRate, Speaker, SynthVoice, TestSource, VoltageBuffer, Volts, compile,
+    kaiser_beta, volts_to_dbu,
 };
+use harness::render::{RenderConfig, render_to_samples};
+use harness::wav;
 use sine::SineSource;
 use textplots::{Chart, Plot, Shape};
 
@@ -37,6 +39,126 @@ fn main() {
     scenario_noise_floor();
     scenario_fir_antialias();
     scenario_saw_across_domains();
+    scenario_first_sound();
+    scenario_first_sound_analog();
+}
+
+// --- Scenario 7: first sound — a played note rendered to a WAV -----------------------------
+//
+// The Epic-2 milestone: the whole journey made audible. A4 is played into the synth voice and
+// rendered end to end through `synth → modeled AD → modeled DA → speaker`, then the speaker's
+// tapped voltage is captured (off-sim-clock) to 48 kHz host samples and written to a float32 WAV
+// you can actually listen to. Unlike the other scenarios this writes a file rather than plotting.
+
+/// MIDI note for the first-sound render: A4 = 440 Hz.
+const FS_NOTE: u8 = 69;
+/// Host (WAV) sample rate — 48 kHz, an integer eighth of the 384 kHz analog rate.
+const FS_HOST_RATE: f64 = 48_000.0;
+/// Converter / monitor full-scale reference, in volts. The voice peaks around 0.7 V, so a 1 V
+/// reference renders it a few dB below full scale — hot but unclipped.
+const FS_REFERENCE_V: f32 = 1.0;
+/// Render length and where the note releases (so the envelope's release is audible in the tail).
+const FS_SECONDS: f64 = 1.0;
+const FS_NOTE_OFF_S: f64 = 0.75;
+/// Output paths (under the gitignored `renders/`, relative to the invocation directory): the full
+/// chain through the modeled converters, and a pure-analog comparison straight to the speaker.
+const FS_OUT_PATH: &str = "renders/first_sound.wav";
+const FS_ANALOG_OUT_PATH: &str = "renders/first_sound_analog.wav";
+
+/// `synth → AD → DA → speaker`, tapped at the speaker. Returns the graph and the voice node (its
+/// event input is where the note is played).
+fn first_sound_graph() -> (Graph, NodeId) {
+    let host_rate = SampleRate::new(FS_HOST_RATE);
+    let mut g = Graph::new();
+    let voice = g.add(SynthVoice::new(Volts::new(1.0), Ohms::new(1.0)));
+    let ad = g.add(AdConverter::new(
+        host_rate,
+        BitDepth::new(16),
+        Volts::new(FS_REFERENCE_V),
+        Ohms::new(1e6),
+    ));
+    let da = g.add(DaConverter::new(
+        host_rate,
+        BitDepth::new(16),
+        Volts::new(FS_REFERENCE_V),
+        Ohms::new(150.0),
+    ));
+    let spk = g.add(Speaker::new(1.0, InputZ::new(Ohms::new(10_000.0))));
+    g.connect(voice, 0, ad, 0);
+    g.connect(ad, 0, da, 0);
+    g.connect(da, 0, spk, 0);
+    g.set_output(spk, 0);
+    (g, voice)
+}
+
+/// `synth → speaker` — the same voice straight to the speaker, **no modeled AD/DA**. The only
+/// band-limiting is the transparent capture (to the 24 kHz host Nyquist), so this is the cleaner
+/// reference: no 16-bit quantization, no converter group delay. Returns the graph and voice node.
+fn first_sound_analog_graph() -> (Graph, NodeId) {
+    let mut g = Graph::new();
+    let voice = g.add(SynthVoice::new(Volts::new(1.0), Ohms::new(1.0)));
+    let spk = g.add(Speaker::new(1.0, InputZ::new(Ohms::new(10_000.0))));
+    g.connect(voice, 0, spk, 0);
+    g.set_output(spk, 0);
+    (g, voice)
+}
+
+/// Compile `graph` (tapped at the speaker), play [`FS_NOTE`] from the start, release it at
+/// [`FS_NOTE_OFF_S`], render [`FS_SECONDS`] of host audio, and write it to `path`. `voice` is the
+/// node whose event input receives the note. Event timestamps are absolute analog samples.
+fn render_note_to_wav(graph: Graph, voice: NodeId, path: &str) {
+    let host_rate = SampleRate::new(FS_HOST_RATE);
+    let mut schedule = compile(graph, BLOCK_LEN, rate(), 0).expect("first-sound chain compiles");
+    let ev = schedule
+        .event_input(voice, 0)
+        .expect("the voice's event input");
+
+    let mut events = EventQueue::with_capacity(4);
+    events.push(
+        0,
+        ev,
+        EventMessage::NoteOn {
+            note: FS_NOTE,
+            velocity: 100,
+        },
+    );
+    events.push(
+        (FS_NOTE_OFF_S * rate().as_hz()) as u64,
+        ev,
+        EventMessage::NoteOff { note: FS_NOTE },
+    );
+
+    let cfg = RenderConfig {
+        host_rate,
+        full_scale_volts: FS_REFERENCE_V,
+        seconds: FS_SECONDS,
+    };
+    let samples = render_to_samples(&mut schedule, rate(), &mut events, &cfg);
+
+    std::fs::create_dir_all("renders").expect("create the renders/ directory");
+    wav::write_mono_f32(path, &samples, host_rate).expect("write the WAV");
+
+    println!(
+        "  rendered {} samples ({:.2} s @ {:.0} kHz, peak {:.3}) → {path}",
+        samples.len(),
+        FS_SECONDS,
+        FS_HOST_RATE / 1000.0,
+        peak(&samples),
+    );
+}
+
+fn scenario_first_sound() {
+    println!("\n=== Scenario 7: first sound — A4 through synth → AD → DA → speaker, to a WAV ===");
+    let (g, voice) = first_sound_graph();
+    render_note_to_wav(g, voice, FS_OUT_PATH);
+}
+
+fn scenario_first_sound_analog() {
+    println!(
+        "\n=== Scenario 8: first sound (analog only) — A4 through synth → speaker, to a WAV ==="
+    );
+    let (g, voice) = first_sound_analog_graph();
+    render_note_to_wav(g, voice, FS_ANALOG_OUT_PATH);
 }
 
 /// Scenario 1 — clean gain. `SineSource(1 V) → GainStage(×2)`, well under the 10 V rail.
