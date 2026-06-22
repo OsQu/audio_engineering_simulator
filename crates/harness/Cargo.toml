@@ -12,5 +12,8 @@ engine.workspace = true
 # reaches the engine or its wasm32 build). Used to *see* the voltage waveforms.
 textplots = "0.8"
 
+[dev-dependencies]
+approx.workspace = true
+
 [lints]
 workspace = true
