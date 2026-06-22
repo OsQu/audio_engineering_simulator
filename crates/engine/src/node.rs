@@ -30,6 +30,7 @@ mod dc_blocker;
 mod gain;
 mod lifted;
 mod source;
+mod speaker;
 mod sum;
 mod synth;
 
@@ -41,6 +42,7 @@ pub use dc_blocker::DcBlocker;
 pub use gain::GainStage;
 pub(crate) use lifted::Lifted;
 pub use source::TestSource;
+pub use speaker::Speaker;
 pub use sum::PassiveSum;
 pub use synth::SynthVoice;
 
