@@ -17,9 +17,20 @@ Three levels, mirroring Epic → Story → Task:
 - **Task** — small, **1–10 commits**, the unit of execution. Tasks land as commits on the
   Story's branch; the Story merges to `main` when its *Validate* gate is green.
 
-**Detail gradient (intentional):** Epic 1 is broken to Task level because we start there.
-Epics 2–3 have Tasks but expect churn. Epics 4–5 stay at Story level — their Tasks get
-written when we reach them. Don't over-plan work whose shape the earlier work will change.
+**How we work this plan — overview first, flesh out on arrival.** The whole arc is mapped up
+front (every Epic and Story is named, so the shape of the project is visible end to end), but a
+Story is only *elaborated to Task level and design notes* when we actually pick it up to build it.
+Working a Story is what fleshes it out: its tasks, hand-calc oracles, "Watch out" traps, and
+settled design decisions are written as we discover them in the doing. **This is why already-worked
+items carry far more detail than future ones** — the density of an entry tracks how close it is to
+(or how far past) the moment we built it, not its importance. A sparse future Story isn't
+under-specified by neglect; it's deliberately left coarse until its turn, because the earlier work
+routinely changes its shape.
+
+**Detail gradient (concretely):** Epic 1 is broken to Task level, and its completed Stories
+(1.1–1.6) carry full design notes because they've been built. Epics 2–3 have Tasks but expect
+churn. Epics 4–5 stay at Story level — their Tasks get written when we reach them. Don't over-plan
+work whose shape the earlier work will change.
 
 **Branch convention:** one branch per **Story**, `e<epic>-s<story>/<short-story-slug>`,
 e.g. `e1-s2/electrical-primitives`. Its Tasks are commits on that branch; PR (or
@@ -57,11 +68,12 @@ These were settled in design discussion and constrain every Epic:
 
 ## Epic 1 — Headless Voltage Engine
 
-**Progress:** Stories 1.1–1.5 ✅ done (scaffold/types, electrical primitives, runnable engine,
-analog-chain physics, balanced lines & common-mode). **Next: Story 1.6 — AD/DA converters & the
-signal-carrier seam**, where the second carrier (digital audio: `SampleBuffer`, per-converter sample
-rate/bit depth, dBFS calibration, clock domain) first appears and the engine generalizes from one
-buffer type to an open set of carriers. Then Story 1.7 closes the Epic. 142 engine tests green.
+**Progress:** Stories 1.1–1.6 ✅ done (scaffold/types, electrical primitives, runnable engine,
+analog-chain physics, balanced lines & common-mode, AD/DA converters & the signal-carrier seam).
+With 1.6 the second carrier (digital audio: `SampleBuffer`, per-converter sample rate/bit depth,
+dBFS calibration, clock domain) landed and the engine generalized from one buffer type to an open
+set of carriers. **Next: Story 1.7 — input lanes & a playable voice**, which closes the Epic and
+adds the third carrier (sparse MIDI/control events). 193 engine tests green.
 
 **Goal:** the novel, risky core, built and validated headless. A graph of devices and cables
 propagating oversampled voltage in the analog domain, crossing the AD/DA boundary into and back
@@ -411,7 +423,7 @@ when powered. Tests prove ideal CMRR is bit-exact (identical common-mode on both
 while unbalanced passes the µV pickup / hum tone / 48 V; hot path stays zero-alloc (no-alloc test covers the
 balanced edge, the lifted blocker, pickup, and hum). 142 engine tests green.
 
-### Story 1.6 — AD/DA converters & the signal-carrier seam *(the second carrier)*
+### Story 1.6 — AD/DA converters & the signal-carrier seam *(the second carrier)* — ✅ **Done**
 *Goal:* the pedagogically rich modeled converters crossing volts ↔ digital samples, on top of a
 proven analog base — **and** the architectural generalization they force: from one buffer type to an
 **open set of signal carriers**. This is the second pivotal story (after 1.3): where the "two distinct
@@ -522,26 +534,29 @@ model — the carrier set is open.
   alongside SRC, where multiple devices/domains first coexist. Physical-layer decode (line coding,
   PLL) is **out of scope** (internal circuitry, §2 Non-Goals).
 
-- **Task 1.6.1** — The carrier seam: `Lane` enum (Voltage, Sample), `SampleBuffer` (linear, +
+- ✅ **Task 1.6.1** — The carrier seam: `Lane` enum (Voltage, Sample), `SampleBuffer` (linear, +
   `SampleRate` / `BitDepth` / `ClockDomainId`), domain-tagged `Port` / faces, `EdgeKind { Analog,
   DigitalRoute }`, per-domain pool sizing and cross-domain validation in `compile`, and the
   `Node::process(&[Lane], &mut [Lane])` migration (existing nodes read Voltage lanes). No converter
   yet — just the plumbing, with the existing analog tests green through the generalized types.
-- **Task 1.6.2** — FIR primitive: windowed-sinc tap design at `compile`, zero-alloc polyphase
+- ✅ **Task 1.6.2** — FIR primitive: windowed-sinc tap design at `compile`, zero-alloc polyphase
   convolution in `process`, `f64` accumulator, denormal flush. Tested against hand-computed filter
-  responses; the "weak filter" parameter exercised.
-- **Task 1.6.3** — AD: polyphase anti-alias decimation (integer `M`), seeded-TPDF-dither quantization
+  responses; the "weak filter" parameter exercised. Built as `Decimator`; `Interpolator` (its
+  upsampling mirror) followed in 1.6.4.
+- ✅ **Task 1.6.3** — AD: polyphase anti-alias decimation (integer `M`), seeded-TPDF-dither quantization
   at variable bit depth, reference-voltage → dBFS calibration. Output is a `Sample` lane; opens the
   (single) clock domain.
-- **Task 1.6.4** — DA: polyphase interpolation + reconstruction FIR → `Voltage` lane.
-- **Task 1.6.5** — Calibration & artifact tests: "+4 dBu = −18 dBFS" holds (peak-referenced hand
-  calc); weak AA filter ⇒ measurable aliasing fold-back; low bit depth ⇒ measurable quantization
-  **noise floor** (TPDF, not harmonic distortion).
+- ✅ **Task 1.6.4** — DA: polyphase interpolation (`Interpolator`: zero-stuff ×`M` + reconstruction
+  FIR, gain-scaled for unity passband) + de-calibration → `Voltage` lane.
+- ✅ **Task 1.6.5** — Calibration & artifact tests, on compiled chains through the seam: "+4 dBu =
+  −18 dBFS" holds (peak-referenced hand calc); weak AA filter ⇒ measurable aliasing fold-back; low
+  bit depth ⇒ measurable quantization **noise floor** (TPDF RMS `Δ/2`, SNR ≈ `6.02·N − 3`, not
+  harmonic distortion); plus the balanced-fronted capstone.
 
-*Validate:* calibration mapping exact; aliasing and quantization artifacts measurable and matching
-prediction; the full chain `analog → AD → digital → DA → analog` (capstone balanced-fronted) runs
-through the generalized carrier seam with the analog physics from Stories 1.2–1.5 intact — because the
-analog chain underneath is already proven, a failure here is the converter's or the seam's.
+*Validate (✅ met):* calibration mapping exact; aliasing and quantization artifacts measurable and
+matching prediction; the full chain `analog → AD → digital → DA → analog` (capstone balanced-fronted)
+runs through the generalized carrier seam with the analog physics from Stories 1.2–1.5 intact —
+because the analog chain underneath is already proven, a failure here is the converter's or the seam's.
 
 ### Story 1.7 — Input lanes & a playable voice (headless)
 *Goal:* the two-lane input system and a simple synth voice, exercised without audio output.
