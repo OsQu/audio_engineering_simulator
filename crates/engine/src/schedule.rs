@@ -31,9 +31,11 @@ use crate::electrical::{InputZ, Ohms, OnePole, fan_out_gains};
 use crate::graph::{Edge, Graph};
 use crate::node::{Lifted, Node};
 use crate::noise::NoiseDensity;
-use crate::port::DigitalFace;
+use crate::port::{DigitalFace, EventFace};
 use crate::rng::Rng;
-use crate::signal::{AnalogRate, ClockDomainId, Domain, Lane, SampleBuffer, VoltageBuffer};
+use crate::signal::{
+    AnalogRate, ClockDomainId, Domain, EventBuffer, Lane, SampleBuffer, VoltageBuffer,
+};
 use core::fmt;
 
 /// Salt mixed into the compile seed to derive the **edge** pickup root, keeping it independent of
@@ -231,6 +233,8 @@ enum EdgeKind {
     Analog(EdgeTransform),
     /// Digital audio: copy samples src → dst within one clock domain.
     DigitalRoute,
+    /// Control events: copy the sparse event list src → dst (no electrical solve, no clock).
+    EventRoute,
 }
 
 /// One instruction in the schedule, in execution order.
@@ -313,6 +317,12 @@ impl Schedule {
                             let source = output_pool[*src].sample().as_slice();
                             let dest = input_pool[*dst].sample_mut().as_mut_slice();
                             dest.copy_from_slice(source);
+                        }
+                        EdgeKind::EventRoute => {
+                            // Copy the sparse event list (bounded, alloc-free; drops any excess
+                            // past the destination lane's capacity).
+                            let (src_pool, dst_pool) = (&output_pool[*src], &mut input_pool[*dst]);
+                            dst_pool.events_mut().copy_from(src_pool.events());
                         }
                     }
                 }
@@ -415,7 +425,13 @@ pub fn compile(
         for face in nodes[n].outputs() {
             obases.push(output_pool.len());
             for _ in 0..face.lane_count() {
-                output_pool.push(alloc_lane(face.digital(), block_len, rate, n)?);
+                output_pool.push(alloc_lane(
+                    face.digital(),
+                    face.events(),
+                    block_len,
+                    rate,
+                    n,
+                )?);
             }
         }
         out_count[n] = output_pool.len() - out_offset[n];
@@ -426,7 +442,13 @@ pub fn compile(
         for face in nodes[n].inputs() {
             ibases.push(input_pool.len());
             for _ in 0..face.lane_count() {
-                input_pool.push(alloc_lane(face.digital(), block_len, rate, n)?);
+                input_pool.push(alloc_lane(
+                    face.digital(),
+                    face.events(),
+                    block_len,
+                    rate,
+                    n,
+                )?);
             }
         }
         in_count[n] = input_pool.len() - in_offset[n];
@@ -531,6 +553,13 @@ pub fn compile(
                         .map(|_| EdgeKind::DigitalRoute)
                         .collect();
                     edge_kinds[ei] = Some(kinds);
+                }
+            }
+            Domain::Events => {
+                // No electrical solve and no clock on an event wire: each edge is a sparse
+                // event-list copy. An event port owns exactly one lane, so one route per edge.
+                for &ei in group {
+                    edge_kinds[ei] = Some(vec![EdgeKind::EventRoute]);
                 }
             }
         }
@@ -732,17 +761,23 @@ fn check_input_port(nodes: &[Box<dyn Node>], node: usize, port: usize) -> Result
 }
 
 /// Allocate one pool lane for a port, by domain: an analog lane spans the full `block_len`; a
-/// digital lane spans `block_len / M`, where `M = analog / digital` rate. Validates the
-/// integer-divide and block-length constraints (Story 1.6). `node` names the owner for errors.
+/// digital lane spans `block_len / M`, where `M = analog / digital` rate; an event lane is sparse,
+/// pre-allocated to the face's capacity. Validates the integer-divide and block-length constraints
+/// (Story 1.6). `node` names the owner for errors.
 ///
 /// In Story 1.6 every digital lane belongs to one converter clock domain; the [`ClockDomainId`] is
 /// a placeholder until the emergent multi-domain model (Epic 5).
 fn alloc_lane(
     digital: Option<DigitalFace>,
+    event: Option<EventFace>,
     block_len: usize,
     rate: AnalogRate,
     node: usize,
 ) -> Result<Lane, CompileError> {
+    if let Some(face) = event {
+        // Sparse carrier: a bounded list, sized by capacity rather than block length.
+        return Ok(Lane::Events(EventBuffer::with_capacity(face.capacity())));
+    }
     let Some(face) = digital else {
         return Ok(Lane::Voltage(VoltageBuffer::zeros(block_len, rate)));
     };
@@ -1992,5 +2027,204 @@ mod converter_phenomena {
         sched.process(&mut out);
         let amp = tone_amplitude(&out.as_slice()[block / 2..], 1_000.0, analog_rate());
         assert_relative_eq!(amp, 2.0, max_relative = 0.02);
+    }
+}
+
+/// Story 1.7.1 — the **events carrier seam** (the third carrier): the schedule pool carries
+/// `Lane::Events` lanes pre-allocated to a per-port capacity, an event edge is a sparse
+/// `EventRoute` copy, and `compile` rejects an event↔non-event edge as a `DomainMismatch`. No
+/// queue and no voice yet (those are Tasks 1.7.2/1.7.4) — these test nodes are pure scaffolding to
+/// exercise the plumbing, mirroring [`digital_seam`]. Tests inspect the private pools (white-box).
+#[cfg(test)]
+mod event_seam {
+    use super::*;
+    use crate::electrical::Ohms;
+    use crate::node::{GainStage, TestSource};
+    use crate::port::{EventFace, InputPort, OutputPort};
+    use crate::signal::{EventMessage, TimedEvent, Volts};
+
+    fn analog_rate() -> AnalogRate {
+        AnalogRate::new(384_000.0)
+    }
+
+    /// A note-on at offset 0 — the message the scaffolding source emits each block.
+    fn note_on() -> TimedEvent {
+        TimedEvent {
+            offset: 0,
+            message: EventMessage::NoteOn {
+                note: 69, // A4
+                velocity: 100,
+            },
+        }
+    }
+
+    /// An event source: no inputs, one event output it (re)fills with a single note-on each block.
+    struct EventSource {
+        outputs: [OutputPort; 1],
+    }
+    impl EventSource {
+        fn new(capacity: usize) -> Self {
+            Self {
+                outputs: [EventFace::new(capacity).into()],
+            }
+        }
+    }
+    impl Node for EventSource {
+        fn inputs(&self) -> &[InputPort] {
+            &[]
+        }
+        fn outputs(&self) -> &[OutputPort] {
+            &self.outputs
+        }
+        fn process(&mut self, _inputs: &[Lane], outputs: &mut [Lane]) {
+            let ev = outputs[0].events_mut();
+            ev.clear(); // a producer owns its lane each block — clear stale events, then emit.
+            ev.push(note_on());
+        }
+    }
+
+    /// An event sink: one event input, no outputs. A no-op — tests read its input lane.
+    struct EventSink {
+        inputs: [InputPort; 1],
+    }
+    impl EventSink {
+        fn new(capacity: usize) -> Self {
+            Self {
+                inputs: [EventFace::new(capacity).into()],
+            }
+        }
+    }
+    impl Node for EventSink {
+        fn inputs(&self) -> &[InputPort] {
+            &self.inputs
+        }
+        fn outputs(&self) -> &[OutputPort] {
+            &[]
+        }
+        fn process(&mut self, _inputs: &[Lane], _outputs: &mut [Lane]) {}
+    }
+
+    /// A silent analog source supplies the (voltage) output tap so `process` can run, since the
+    /// tap must be a voltage lane; the event component runs alongside it.
+    fn analog_tap(g: &mut Graph) {
+        let tap = g.add(TestSource::new(Volts::new(0.0), Ohms::new(150.0)));
+        g.set_output(tap, 0);
+    }
+
+    #[test]
+    fn event_lanes_are_sized_to_their_capacity() {
+        // The pool holds one source-output and one sink-input event lane, each pre-allocated to its
+        // port's capacity (the bound the hot path never grows past), and both start empty.
+        let mut g = Graph::new();
+        let src = g.add(EventSource::new(32));
+        let sink = g.add(EventSink::new(16));
+        g.connect(src, 0, sink, 0);
+        analog_tap(&mut g);
+        let sched = compile(g, 16, analog_rate(), 0).expect("valid event chain");
+
+        let event_lanes: Vec<&Lane> = sched
+            .output_pool
+            .iter()
+            .chain(sched.input_pool.iter())
+            .filter(|l| matches!(l, Lane::Events(_)))
+            .collect();
+        assert_eq!(
+            event_lanes.len(),
+            2,
+            "one source-output + one sink-input event lane"
+        );
+        let caps: Vec<usize> = event_lanes
+            .iter()
+            .map(|l| {
+                assert_eq!(l.domain(), Domain::Events);
+                assert!(l.is_empty(), "event lanes start empty");
+                l.events().capacity()
+            })
+            .collect();
+        assert!(caps.contains(&32) && caps.contains(&16), "got {caps:?}");
+    }
+
+    #[test]
+    fn event_route_copies_events() {
+        // Source emits a note-on; the EventRoute copies it into the sink's input lane.
+        let mut g = Graph::new();
+        let src = g.add(EventSource::new(32));
+        let sink = g.add(EventSink::new(32));
+        g.connect(src, 0, sink, 0);
+        analog_tap(&mut g);
+
+        let mut sched = compile(g, 16, analog_rate(), 0).expect("valid event chain");
+        let mut out = VoltageBuffer::zeros(16, analog_rate());
+        sched.process(&mut out);
+
+        let sink_in = sched
+            .input_pool
+            .iter()
+            .find(|l| matches!(l, Lane::Events(_)))
+            .expect("a sink input event lane");
+        assert_eq!(sink_in.events().as_slice(), &[note_on()]);
+
+        // Running again must not accumulate — the source clears and the route overwrites.
+        sched.process(&mut out);
+        let sink_in = sched
+            .input_pool
+            .iter()
+            .find(|l| matches!(l, Lane::Events(_)))
+            .expect("a sink input event lane");
+        assert_eq!(
+            sink_in.events().len(),
+            1,
+            "events must not accumulate across blocks"
+        );
+    }
+
+    #[test]
+    fn event_output_fans_out_to_several_sinks() {
+        // One event source into two sinks: each edge is its own EventRoute, so both receive it.
+        let mut g = Graph::new();
+        let src = g.add(EventSource::new(8));
+        let a = g.add(EventSink::new(8));
+        let b = g.add(EventSink::new(8));
+        g.connect(src, 0, a, 0);
+        g.connect(src, 0, b, 0);
+        analog_tap(&mut g);
+
+        let mut sched = compile(g, 16, analog_rate(), 0).expect("valid event fan-out");
+        let mut out = VoltageBuffer::zeros(16, analog_rate());
+        sched.process(&mut out);
+
+        let received: Vec<&Lane> = sched
+            .input_pool
+            .iter()
+            .filter(|l| matches!(l, Lane::Events(_)))
+            .collect();
+        assert_eq!(received.len(), 2);
+        for lane in received {
+            assert_eq!(lane.events().as_slice(), &[note_on()]);
+        }
+    }
+
+    #[test]
+    fn rejects_event_to_analog_domain_mismatch() {
+        // An event output into an analog input: no carrier bridges domains on a wire.
+        let mut g = Graph::new();
+        let src = g.add(EventSource::new(8));
+        let amp = g.add(GainStage::new(
+            1.0,
+            Volts::new(10.0),
+            InputZ::new(Ohms::new(10_000.0)),
+            Ohms::new(150.0),
+        ));
+        g.connect(src, 0, amp, 0);
+        g.set_output(amp, 0);
+        assert_eq!(
+            compile(g, 16, analog_rate(), 0).err(),
+            Some(CompileError::DomainMismatch {
+                from_node: 0,
+                from_port: 0,
+                to_node: 1,
+                to_port: 0,
+            })
+        );
     }
 }

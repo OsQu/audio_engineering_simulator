@@ -16,6 +16,7 @@
 
 mod bit_depth;
 mod buffer;
+mod event;
 mod lane;
 mod rate;
 mod sample;
@@ -24,6 +25,7 @@ mod volts;
 
 pub use bit_depth::BitDepth;
 pub use buffer::VoltageBuffer;
+pub use event::{EventBuffer, EventMessage, TimedEvent};
 pub use lane::{Domain, Lane};
 pub use rate::AnalogRate;
 pub use sample::{ClockDomainId, SampleBuffer};

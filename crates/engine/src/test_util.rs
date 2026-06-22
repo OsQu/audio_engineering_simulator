@@ -48,7 +48,9 @@ pub fn process_voltage(
     for (slot, lane) in outputs.iter_mut().zip(out_lanes) {
         *slot = match lane {
             Lane::Voltage(b) => b,
-            Lane::Sample(_) => unreachable!("process_voltage drives only voltage lanes"),
+            Lane::Sample(_) | Lane::Events(_) => {
+                unreachable!("process_voltage drives only voltage lanes")
+            }
         };
     }
 }

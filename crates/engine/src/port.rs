@@ -74,22 +74,62 @@ impl DigitalFace {
     }
 }
 
-/// A node input port: an analog input impedance, or a digital-audio input face.
+/// A MIDI/control-event port's face: the capacity (max events per block) of its lane.
+///
+/// The sparse-carrier peer of [`DigitalFace`]. An event lane is bounded, not block-length-sized,
+/// so the face carries the bound `compile` pre-allocates; on a full block the hot path drops the
+/// excess (see [`EventBuffer`](crate::EventBuffer)). The capacity is a per-port choice — a synth
+/// voice needs only a few events per block, a busy MIDI router more.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct EventFace {
+    capacity: usize,
+}
+
+impl EventFace {
+    /// A generous default capacity for ports that don't have a specific bound in mind.
+    pub const DEFAULT_CAPACITY: usize = 256;
+
+    /// An event face whose lane holds up to `capacity` events per block.
+    #[must_use]
+    pub fn new(capacity: usize) -> Self {
+        Self { capacity }
+    }
+
+    /// The lane's per-block event capacity.
+    pub fn capacity(self) -> usize {
+        self.capacity
+    }
+}
+
+impl Default for EventFace {
+    /// An event face at [`DEFAULT_CAPACITY`](Self::DEFAULT_CAPACITY).
+    fn default() -> Self {
+        Self::new(Self::DEFAULT_CAPACITY)
+    }
+}
+
+/// A node input port: an analog input impedance, a digital-audio input face, or a control-event
+/// input face.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum InputPort {
     /// Analog voltage input, with its input impedance.
     Analog(InputZ),
     /// Digital-audio input.
     Digital(DigitalFace),
+    /// MIDI/control-event input.
+    Events(EventFace),
 }
 
-/// A node output port: an analog output impedance, or a digital-audio output face.
+/// A node output port: an analog output impedance, a digital-audio output face, or a control-event
+/// output face.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum OutputPort {
     /// Analog voltage output, with its output impedance.
     Analog(OutputZ),
     /// Digital-audio output.
     Digital(DigitalFace),
+    /// MIDI/control-event output.
+    Events(EventFace),
 }
 
 impl From<InputZ> for InputPort {
@@ -101,6 +141,12 @@ impl From<InputZ> for InputPort {
 impl From<DigitalFace> for InputPort {
     fn from(f: DigitalFace) -> Self {
         InputPort::Digital(f)
+    }
+}
+
+impl From<EventFace> for InputPort {
+    fn from(f: EventFace) -> Self {
+        InputPort::Events(f)
     }
 }
 
@@ -116,21 +162,29 @@ impl From<DigitalFace> for OutputPort {
     }
 }
 
+impl From<EventFace> for OutputPort {
+    fn from(f: EventFace) -> Self {
+        OutputPort::Events(f)
+    }
+}
+
 impl InputPort {
     /// The carrier domain of this port.
     pub fn domain(self) -> Domain {
         match self {
             InputPort::Analog(_) => Domain::Analog,
             InputPort::Digital(_) => Domain::DigitalAudio,
+            InputPort::Events(_) => Domain::Events,
         }
     }
 
     /// How many lanes (pool buffers) this port owns: conductors for analog (1 unbalanced,
-    /// 2 balanced), channels for digital.
+    /// 2 balanced), channels for digital, and a single stream (1) for events.
     pub fn lane_count(self) -> usize {
         match self {
             InputPort::Analog(z) => z.conductors(),
             InputPort::Digital(f) => f.format().channels() as usize,
+            InputPort::Events(_) => 1,
         }
     }
 
@@ -139,7 +193,7 @@ impl InputPort {
     pub fn analog(self) -> Option<InputZ> {
         match self {
             InputPort::Analog(z) => Some(z),
-            InputPort::Digital(_) => None,
+            InputPort::Digital(_) | InputPort::Events(_) => None,
         }
     }
 
@@ -148,7 +202,16 @@ impl InputPort {
     pub fn digital(self) -> Option<DigitalFace> {
         match self {
             InputPort::Digital(f) => Some(f),
-            InputPort::Analog(_) => None,
+            InputPort::Analog(_) | InputPort::Events(_) => None,
+        }
+    }
+
+    /// The event face, if this is an event port. Off the hot path; `compile` reads its capacity
+    /// to size the bounded event lane.
+    pub fn events(self) -> Option<EventFace> {
+        match self {
+            InputPort::Events(f) => Some(f),
+            InputPort::Analog(_) | InputPort::Digital(_) => None,
         }
     }
 }
@@ -159,14 +222,17 @@ impl OutputPort {
         match self {
             OutputPort::Analog(_) => Domain::Analog,
             OutputPort::Digital(_) => Domain::DigitalAudio,
+            OutputPort::Events(_) => Domain::Events,
         }
     }
 
-    /// How many lanes (pool buffers) this port owns: conductors for analog, channels for digital.
+    /// How many lanes (pool buffers) this port owns: conductors for analog, channels for digital,
+    /// and a single stream (1) for events.
     pub fn lane_count(self) -> usize {
         match self {
             OutputPort::Analog(z) => z.conductors(),
             OutputPort::Digital(f) => f.format().channels() as usize,
+            OutputPort::Events(_) => 1,
         }
     }
 
@@ -175,7 +241,7 @@ impl OutputPort {
     pub fn analog(self) -> Option<OutputZ> {
         match self {
             OutputPort::Analog(z) => Some(z),
-            OutputPort::Digital(_) => None,
+            OutputPort::Digital(_) | OutputPort::Events(_) => None,
         }
     }
 
@@ -184,7 +250,16 @@ impl OutputPort {
     pub fn digital(self) -> Option<DigitalFace> {
         match self {
             OutputPort::Digital(f) => Some(f),
-            OutputPort::Analog(_) => None,
+            OutputPort::Analog(_) | OutputPort::Events(_) => None,
+        }
+    }
+
+    /// The event face, if this is an event port. Off the hot path; `compile` reads its capacity
+    /// to size the bounded event lane.
+    pub fn events(self) -> Option<EventFace> {
+        match self {
+            OutputPort::Events(f) => Some(f),
+            OutputPort::Analog(_) | OutputPort::Digital(_) => None,
         }
     }
 }
@@ -239,5 +314,23 @@ mod tests {
     #[should_panic(expected = "at least one channel")]
     fn rejects_zero_channels() {
         let _ = AudioFormat::new(SampleRate::new(48_000.0), BitDepth::new(24), 0);
+    }
+
+    #[test]
+    fn event_port_is_one_lane_in_the_events_domain() {
+        let inp: InputPort = EventFace::new(64).into();
+        let out: OutputPort = EventFace::default().into();
+        assert_eq!(inp.domain(), Domain::Events);
+        assert_eq!(out.domain(), Domain::Events);
+        assert_eq!(inp.lane_count(), 1); // one event stream, not conductors/channels
+        assert_eq!(out.lane_count(), 1);
+        assert_eq!(inp.events().unwrap().capacity(), 64);
+        assert_eq!(
+            out.events().unwrap().capacity(),
+            EventFace::DEFAULT_CAPACITY
+        );
+        // Not an analog or digital face.
+        assert!(inp.analog().is_none() && inp.digital().is_none());
+        assert!(out.analog().is_none() && out.digital().is_none());
     }
 }

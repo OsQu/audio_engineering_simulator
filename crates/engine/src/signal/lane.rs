@@ -1,13 +1,13 @@
 //! A carrier lane: one buffer in the schedule pool, tagged by its signal domain.
 
-use super::{SampleBuffer, VoltageBuffer};
+use super::{EventBuffer, SampleBuffer, VoltageBuffer};
 
 /// Which carrier a port — and the lane buffering it — speaks.
 ///
-/// An **open set**: analog voltage and digital audio exist now; MIDI/control events (Story 1.7)
-/// and networked audio (Epic 5) extend it. A port declares its domain; an edge may only connect
-/// two ports of the **same** domain (`compile` rejects a cross-domain edge). Converters bridge
-/// domains *inside* a node, never on an edge.
+/// An **open set**: analog voltage, digital audio, and MIDI/control events exist now; networked
+/// audio (Epic 5) extends it. A port declares its domain; an edge may only connect two ports of the
+/// **same** domain (`compile` rejects a cross-domain edge). Converters bridge domains *inside* a
+/// node, never on an edge.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Domain {
     /// Analog voltage — oversampled, in volts, at the one [`AnalogRate`](crate::AnalogRate).
@@ -15,6 +15,8 @@ pub enum Domain {
     /// Digital audio — linear normalized samples at a converter's
     /// [`SampleRate`](crate::SampleRate) and [`ClockDomainId`](crate::ClockDomainId).
     DigitalAudio,
+    /// MIDI/control events — sparse timestamped messages, not a dense buffer (Story 1.7).
+    Events,
 }
 
 /// One lane in the schedule pool: a single conductor's (analog) or channel's (digital) buffer,
@@ -32,6 +34,8 @@ pub enum Lane {
     Voltage(VoltageBuffer),
     /// Digital audio.
     Sample(SampleBuffer),
+    /// MIDI/control events — a sparse, bounded list, not a dense block.
+    Events(EventBuffer),
 }
 
 impl Lane {
@@ -40,22 +44,27 @@ impl Lane {
         match self {
             Lane::Voltage(_) => Domain::Analog,
             Lane::Sample(_) => Domain::DigitalAudio,
+            Lane::Events(_) => Domain::Events,
         }
     }
 
-    /// Number of samples in the lane's block.
+    /// The lane's count: samples in the block for the dense carriers, **current event count** for
+    /// the sparse [`Events`](Lane::Events) lane (which is sized by a capacity, not a block length).
     pub fn len(&self) -> usize {
         match self {
             Lane::Voltage(b) => b.len(),
             Lane::Sample(b) => b.len(),
+            Lane::Events(b) => b.len(),
         }
     }
 
-    /// Whether the lane's block has no samples.
+    /// Whether the lane is empty: no samples for the dense carriers, no events for
+    /// [`Events`](Lane::Events).
     pub fn is_empty(&self) -> bool {
         match self {
             Lane::Voltage(b) => b.is_empty(),
             Lane::Sample(b) => b.is_empty(),
+            Lane::Events(b) => b.is_empty(),
         }
     }
 
@@ -99,12 +108,32 @@ impl Lane {
             _ => unreachable!("lane is not Sample — compile validates port domains"),
         }
     }
+
+    /// Read the lane as control events. See [`voltage`](Self::voltage) for the panic contract.
+    #[inline]
+    pub fn events(&self) -> &EventBuffer {
+        match self {
+            Lane::Events(b) => b,
+            _ => unreachable!("lane is not Events — compile validates port domains"),
+        }
+    }
+
+    /// Write the lane as control events. See [`voltage`](Self::voltage) for the panic contract.
+    #[inline]
+    pub fn events_mut(&mut self) -> &mut EventBuffer {
+        match self {
+            Lane::Events(b) => b,
+            _ => unreachable!("lane is not Events — compile validates port domains"),
+        }
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::signal::{AnalogRate, BitDepth, ClockDomainId, SampleRate};
+    use crate::signal::{
+        AnalogRate, BitDepth, ClockDomainId, EventMessage, SampleRate, TimedEvent,
+    };
 
     fn voltage_lane() -> Lane {
         Lane::Voltage(VoltageBuffer::zeros(4, AnalogRate::new(384_000.0)))
@@ -119,28 +148,48 @@ mod tests {
         ))
     }
 
+    fn events_lane() -> Lane {
+        let mut b = EventBuffer::with_capacity(8);
+        b.push(TimedEvent {
+            offset: 0,
+            message: EventMessage::NoteOn {
+                note: 60,
+                velocity: 100,
+            },
+        });
+        Lane::Events(b)
+    }
+
     #[test]
     fn domain_follows_the_variant() {
         assert_eq!(voltage_lane().domain(), Domain::Analog);
         assert_eq!(sample_lane().domain(), Domain::DigitalAudio);
+        assert_eq!(events_lane().domain(), Domain::Events);
     }
 
     #[test]
     fn len_and_is_empty_delegate_to_the_buffer() {
         assert_eq!(voltage_lane().len(), 4);
         assert_eq!(sample_lane().len(), 2);
+        assert_eq!(events_lane().len(), 1); // event count, not capacity
         assert!(!voltage_lane().is_empty());
         assert!(Lane::Voltage(VoltageBuffer::zeros(0, AnalogRate::new(384_000.0))).is_empty());
+        assert!(Lane::Events(EventBuffer::with_capacity(8)).is_empty());
     }
 
     #[test]
     fn typed_accessors_return_the_inner_buffer() {
         assert_eq!(voltage_lane().voltage().len(), 4);
         assert_eq!(sample_lane().sample().len(), 2);
+        assert_eq!(events_lane().events().len(), 1);
 
         let mut v = voltage_lane();
         v.voltage_mut().fill(crate::signal::Volts::new(1.0));
         assert!(v.voltage().as_slice().iter().all(|&s| s == 1.0));
+
+        let mut e = events_lane();
+        e.events_mut().clear();
+        assert!(e.events().is_empty());
     }
 
     #[test]
@@ -153,5 +202,11 @@ mod tests {
     #[should_panic(expected = "lane is not Sample")]
     fn sample_on_a_voltage_lane_is_unreachable() {
         let _ = voltage_lane().sample();
+    }
+
+    #[test]
+    #[should_panic(expected = "lane is not Events")]
+    fn events_on_a_voltage_lane_is_unreachable() {
+        let _ = voltage_lane().events();
     }
 }

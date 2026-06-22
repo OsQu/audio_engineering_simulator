@@ -30,10 +30,10 @@ pub use node::{
     Node, PassiveSum, TestSource,
 };
 pub use noise::NoiseDensity;
-pub use port::{AudioFormat, DigitalFace, InputPort, OutputPort};
+pub use port::{AudioFormat, DigitalFace, EventFace, InputPort, OutputPort};
 pub use rng::Rng;
 pub use schedule::{CompileError, Schedule, ScheduleSlot, compile};
 pub use signal::{
-    AnalogRate, BitDepth, ClockDomainId, Domain, Lane, SampleBuffer, SampleRate, VoltageBuffer,
-    Volts,
+    AnalogRate, BitDepth, ClockDomainId, Domain, EventBuffer, EventMessage, Lane, SampleBuffer,
+    SampleRate, TimedEvent, VoltageBuffer, Volts,
 };
