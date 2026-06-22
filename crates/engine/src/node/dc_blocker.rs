@@ -2,7 +2,8 @@
 
 use super::Node;
 use crate::electrical::{Farads, InputZ, Ohms, OnePole, OutputZ};
-use crate::signal::{AnalogRate, VoltageBuffer};
+use crate::port::{InputPort, OutputPort};
+use crate::signal::{AnalogRate, Lane};
 
 /// A DC blocker: a one-pole **high-pass** that passes audio and rejects DC, the dual of the
 /// cable's [`OnePole`] low-pass.
@@ -35,8 +36,8 @@ pub struct DcBlocker {
     /// The DC tracker (an [`OnePole`] low-pass), baked from `r`, `c` and the rate at
     /// [`prepare`](Node::prepare). `None` until prepared — an unprepared blocker passes through.
     tracker: Option<OnePole>,
-    inputs: [InputZ; 1],
-    outputs: [OutputZ; 1],
+    inputs: [InputPort; 1],
+    outputs: [OutputPort; 1],
 }
 
 impl DcBlocker {
@@ -49,8 +50,8 @@ impl DcBlocker {
             c,
             r,
             tracker: None,
-            inputs: [InputZ::new(r)],
-            outputs: [OutputZ::new(z_out)],
+            inputs: [InputZ::new(r).into()],
+            outputs: [OutputZ::new(z_out).into()],
         }
     }
 
@@ -64,11 +65,11 @@ impl DcBlocker {
 }
 
 impl Node for DcBlocker {
-    fn inputs(&self) -> &[InputZ] {
+    fn inputs(&self) -> &[InputPort] {
         &self.inputs
     }
 
-    fn outputs(&self) -> &[OutputZ] {
+    fn outputs(&self) -> &[OutputPort] {
         &self.outputs
     }
 
@@ -87,12 +88,16 @@ impl Node for DcBlocker {
     fn replicate(&self) -> Box<dyn Node> {
         // A fresh, unprepared blocker with the same R/C/Zout; `compile` prepares each lane, which
         // bakes its own tracker (zeroed state).
-        Box::new(DcBlocker::new(self.c, self.r, self.outputs[0].z_out()))
+        let z_out = self.outputs[0]
+            .analog()
+            .expect("DC blocker output is analog")
+            .z_out();
+        Box::new(DcBlocker::new(self.c, self.r, z_out))
     }
 
-    fn process(&mut self, inputs: &[VoltageBuffer], outputs: &mut [VoltageBuffer]) {
-        let src = inputs[0].as_slice();
-        let out = outputs[0].as_mut_slice();
+    fn process(&mut self, inputs: &[Lane], outputs: &mut [Lane]) {
+        let src = inputs[0].voltage().as_slice();
+        let out = outputs[0].voltage_mut().as_mut_slice();
         match &mut self.tracker {
             Some(tracker) => {
                 for (o, &v) in out.iter_mut().zip(src) {
@@ -116,8 +121,8 @@ impl Node for DcBlocker {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::signal::Volts;
-    use crate::test_util::{measure_gain, rms};
+    use crate::signal::{VoltageBuffer, Volts};
+    use crate::test_util::{measure_gain, process_voltage, rms};
     use approx::assert_relative_eq;
 
     fn rate() -> AnalogRate {
@@ -140,15 +145,21 @@ mod tests {
     fn through(blk: &mut DcBlocker, buf: &mut VoltageBuffer) {
         let input = [buf.clone()];
         let mut out = [VoltageBuffer::zeros(buf.len(), buf.rate())];
-        blk.process(&input, &mut out);
+        process_voltage(blk, &input, &mut out);
         buf.as_mut_slice().copy_from_slice(out[0].as_slice());
     }
 
     #[test]
     fn declares_faces() {
         let b = blocker();
-        assert_eq!(b.inputs(), &[InputZ::new(Ohms::new(10_000.0))]);
-        assert_eq!(b.outputs(), &[OutputZ::new(Ohms::new(150.0))]);
+        assert_eq!(
+            b.inputs(),
+            &[InputPort::Analog(InputZ::new(Ohms::new(10_000.0)))]
+        );
+        assert_eq!(
+            b.outputs(),
+            &[OutputPort::Analog(OutputZ::new(Ohms::new(150.0)))]
+        );
     }
 
     #[test]
@@ -168,7 +179,7 @@ mod tests {
         buf.fill(Volts::new(1.0));
         let input = [buf];
         let mut out = [VoltageBuffer::zeros(4_000, rate())];
-        b.process(&input, &mut out);
+        process_voltage(&mut b, &input, &mut out);
         // Well past settling (τ = RC ≈ 61 samples), the output is ≈ 0.
         let tail = &out[0].as_slice()[2_000..];
         assert!(
@@ -224,7 +235,7 @@ mod tests {
         }
         let input = [buf];
         let mut out = [VoltageBuffer::zeros(len, rate())];
-        b.process(&input, &mut out);
+        process_voltage(&mut b, &input, &mut out);
 
         let tail = &out[0].as_slice()[len / 2..];
         // DC removed: the mean of the steady tail is ≈ 0 (the 2 V pedestal is gone).
@@ -242,7 +253,7 @@ mod tests {
         buf.fill(Volts::new(1.0));
         let input = [buf];
         let mut out = [VoltageBuffer::zeros(8, rate())];
-        b.process(&input, &mut out);
+        process_voltage(&mut b, &input, &mut out);
         assert!(out[0].as_slice().iter().all(|&v| v == 1.0));
     }
 }

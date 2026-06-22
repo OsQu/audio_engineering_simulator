@@ -1,8 +1,9 @@
 //! A test signal source.
 
 use super::Node;
-use crate::electrical::{InputZ, Ohms, OutputZ};
-use crate::signal::{VoltageBuffer, Volts};
+use crate::electrical::{Ohms, OutputZ};
+use crate::port::{InputPort, OutputPort};
+use crate::signal::{Lane, Volts};
 
 /// A source that emits a constant DC level from a real Thévenin output.
 ///
@@ -16,7 +17,7 @@ use crate::signal::{VoltageBuffer, Volts};
 /// No inputs; one output.
 pub struct TestSource {
     level: Volts,
-    outputs: [OutputZ; 1],
+    outputs: [OutputPort; 1],
 }
 
 impl TestSource {
@@ -25,29 +26,30 @@ impl TestSource {
     pub fn new(level: Volts, z_out: Ohms) -> Self {
         Self {
             level,
-            outputs: [OutputZ::new(z_out)],
+            outputs: [OutputZ::new(z_out).into()],
         }
     }
 }
 
 impl Node for TestSource {
-    fn inputs(&self) -> &[InputZ] {
+    fn inputs(&self) -> &[InputPort] {
         &[]
     }
 
-    fn outputs(&self) -> &[OutputZ] {
+    fn outputs(&self) -> &[OutputPort] {
         &self.outputs
     }
 
-    fn process(&mut self, _inputs: &[VoltageBuffer], outputs: &mut [VoltageBuffer]) {
-        outputs[0].fill(self.level);
+    fn process(&mut self, _inputs: &[Lane], outputs: &mut [Lane]) {
+        outputs[0].voltage_mut().fill(self.level);
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::signal::AnalogRate;
+    use crate::signal::{AnalogRate, VoltageBuffer};
+    use crate::test_util::process_voltage;
 
     fn rate() -> AnalogRate {
         AnalogRate::new(384_000.0)
@@ -57,14 +59,17 @@ mod tests {
     fn declares_one_output_no_inputs() {
         let src = TestSource::new(Volts::new(1.0), Ohms::new(150.0));
         assert!(src.inputs().is_empty());
-        assert_eq!(src.outputs(), &[OutputZ::new(Ohms::new(150.0))]);
+        assert_eq!(
+            src.outputs(),
+            &[OutputPort::Analog(OutputZ::new(Ohms::new(150.0)))]
+        );
     }
 
     #[test]
     fn emits_a_constant_level() {
         let mut src = TestSource::new(Volts::new(0.775), Ohms::new(150.0));
         let mut out = [VoltageBuffer::zeros(8, rate())];
-        src.process(&[], &mut out);
+        process_voltage(&mut src, &[], &mut out);
         assert!(out[0].as_slice().iter().all(|&v| v == 0.775));
     }
 }

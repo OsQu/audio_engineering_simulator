@@ -3,8 +3,9 @@
 use super::Node;
 use crate::electrical::{InputZ, Ohms, OutputZ};
 use crate::noise::NoiseDensity;
+use crate::port::{InputPort, OutputPort};
 use crate::rng::Rng;
-use crate::signal::{VoltageBuffer, Volts};
+use crate::signal::{Lane, Volts};
 
 /// A gain stage with a finite supply rail and an optional input-referred noise floor:
 /// `out = clamp((in + n) · gain, ±rail)`.
@@ -29,8 +30,8 @@ pub struct GainStage {
     noise_density: NoiseDensity,
     /// The per-node noise stream, installed by [`Node::seed`] at compile when a floor is set.
     noise: Option<Rng>,
-    inputs: [InputZ; 1],
-    outputs: [OutputZ; 1],
+    inputs: [InputPort; 1],
+    outputs: [OutputPort; 1],
 }
 
 impl GainStage {
@@ -53,8 +54,8 @@ impl GainStage {
             rail,
             noise_density: NoiseDensity::ZERO,
             noise: None,
-            inputs: [z_in],
-            outputs: [OutputZ::new(z_out)],
+            inputs: [z_in.into()],
+            outputs: [OutputZ::new(z_out).into()],
         }
     }
 
@@ -70,11 +71,11 @@ impl GainStage {
 }
 
 impl Node for GainStage {
-    fn inputs(&self) -> &[InputZ] {
+    fn inputs(&self) -> &[InputPort] {
         &self.inputs
     }
 
-    fn outputs(&self) -> &[OutputZ] {
+    fn outputs(&self) -> &[OutputPort] {
         &self.outputs
     }
 
@@ -86,14 +87,15 @@ impl Node for GainStage {
         }
     }
 
-    fn process(&mut self, inputs: &[VoltageBuffer], outputs: &mut [VoltageBuffer]) {
+    fn process(&mut self, inputs: &[Lane], outputs: &mut [Lane]) {
         let (gain, rail) = (self.gain, self.rail);
-        let src = inputs[0].as_slice();
-        let out = outputs[0].as_mut_slice();
+        let in_buf = inputs[0].voltage();
+        let src = in_buf.as_slice();
+        let out = outputs[0].voltage_mut().as_mut_slice();
         match &mut self.noise {
             Some(rng) => {
                 // σ = D·√(fs/2) from the block's rate; one √ per block, off the per-sample loop.
-                let sigma = self.noise_density.per_sample_sigma(inputs[0].rate());
+                let sigma = self.noise_density.per_sample_sigma(in_buf.rate());
                 for (o, &v) in out.iter_mut().zip(src) {
                     let n = rng.next_gaussian() * sigma;
                     *o = ((v + n) * gain).clamp(-rail, rail);
@@ -111,7 +113,8 @@ impl Node for GainStage {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::signal::AnalogRate;
+    use crate::signal::{AnalogRate, VoltageBuffer};
+    use crate::test_util::process_voltage;
     use approx::assert_relative_eq;
 
     fn rate() -> AnalogRate {
@@ -130,8 +133,14 @@ mod tests {
     #[test]
     fn declares_faces() {
         let s = stage(2.0, 10.0);
-        assert_eq!(s.inputs(), &[InputZ::new(Ohms::new(10_000.0))]);
-        assert_eq!(s.outputs(), &[OutputZ::new(Ohms::new(150.0))]);
+        assert_eq!(
+            s.inputs(),
+            &[InputPort::Analog(InputZ::new(Ohms::new(10_000.0)))]
+        );
+        assert_eq!(
+            s.outputs(),
+            &[OutputPort::Analog(OutputZ::new(Ohms::new(150.0)))]
+        );
     }
 
     #[test]
@@ -141,7 +150,7 @@ mod tests {
         let mut input = [VoltageBuffer::zeros(4, rate())];
         input[0].fill(Volts::new(0.5));
         let mut out = [VoltageBuffer::zeros(4, rate())];
-        s.process(&input, &mut out);
+        process_voltage(&mut s, &input, &mut out);
         assert!(out[0].as_slice().iter().all(|&v| (v - 2.0).abs() < 1e-6));
     }
 
@@ -154,7 +163,7 @@ mod tests {
         input[0].set(0, Volts::new(0.5));
         input[0].set(1, Volts::new(-0.5));
         let mut out = [VoltageBuffer::zeros(2, rate())];
-        s.process(&input, &mut out);
+        process_voltage(&mut s, &input, &mut out);
         assert_relative_eq!(out[0].get(0).get(), 1.5, epsilon = 1e-6);
         assert_relative_eq!(out[0].get(1).get(), -1.5, epsilon = 1e-6);
     }

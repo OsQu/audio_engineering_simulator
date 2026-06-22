@@ -1,8 +1,9 @@
 //! A condenser microphone: a phantom-powered balanced source.
 
 use super::Node;
-use crate::electrical::{InputZ, Ohms, OutputZ};
-use crate::signal::{VoltageBuffer, Volts};
+use crate::electrical::{Ohms, OutputZ};
+use crate::port::{InputPort, OutputPort};
+use crate::signal::{Lane, Volts};
 
 /// The standard phantom supply voltage.
 const PHANTOM_VOLTS: f32 = 48.0;
@@ -29,7 +30,7 @@ pub struct CondenserMic {
     signal: f32,
     /// Whether +48 V phantom is supplied — the mic is silent without it.
     powered: bool,
-    outputs: [OutputZ; 1],
+    outputs: [OutputPort; 1],
 }
 
 impl CondenserMic {
@@ -40,7 +41,7 @@ impl CondenserMic {
         Self {
             signal: signal.get(),
             powered: true,
-            outputs: [OutputZ::balanced(z_out)],
+            outputs: [OutputZ::balanced(z_out).into()],
         }
     }
 
@@ -53,15 +54,15 @@ impl CondenserMic {
 }
 
 impl Node for CondenserMic {
-    fn inputs(&self) -> &[InputZ] {
+    fn inputs(&self) -> &[InputPort] {
         &[]
     }
 
-    fn outputs(&self) -> &[OutputZ] {
+    fn outputs(&self) -> &[OutputPort] {
         &self.outputs
     }
 
-    fn process(&mut self, _inputs: &[VoltageBuffer], outputs: &mut [VoltageBuffer]) {
+    fn process(&mut self, _inputs: &[Lane], outputs: &mut [Lane]) {
         // Powered: +48 V common-mode pedestal with the audio differentially on top. Unpowered: dead.
         let (cm, half) = if self.powered {
             (PHANTOM_VOLTS, self.signal * 0.5)
@@ -69,15 +70,16 @@ impl Node for CondenserMic {
             (0.0, 0.0)
         };
         let (hot, cold) = outputs.split_at_mut(1);
-        hot[0].fill(Volts::new(cm + half));
-        cold[0].fill(Volts::new(cm - half));
+        hot[0].voltage_mut().fill(Volts::new(cm + half));
+        cold[0].voltage_mut().fill(Volts::new(cm - half));
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::signal::AnalogRate;
+    use crate::signal::{AnalogRate, VoltageBuffer};
+    use crate::test_util::process_voltage;
     use approx::assert_relative_eq;
 
     fn rate() -> AnalogRate {
@@ -88,7 +90,7 @@ mod tests {
     fn declares_a_balanced_output_no_inputs() {
         let m = CondenserMic::new(Volts::new(0.01), Ohms::new(150.0));
         assert!(m.inputs().is_empty());
-        assert_eq!(m.outputs()[0].conductors(), 2);
+        assert_eq!(m.outputs()[0].lane_count(), 2);
     }
 
     #[test]
@@ -100,7 +102,7 @@ mod tests {
             VoltageBuffer::zeros(4, rate()),
             VoltageBuffer::zeros(4, rate()),
         ];
-        m.process(&[], &mut out);
+        process_voltage(&mut m, &[], &mut out);
         let vp = out[0].get(0).get();
         let vn = out[1].get(0).get();
         assert_relative_eq!((vp + vn) / 2.0, 48.0, epsilon = 1e-5); // phantom present common-mode
@@ -115,7 +117,7 @@ mod tests {
             VoltageBuffer::zeros(4, rate()),
             VoltageBuffer::zeros(4, rate()),
         ];
-        m.process(&[], &mut out);
+        process_voltage(&mut m, &[], &mut out);
         assert!(out[0].as_slice().iter().all(|&v| v == 0.0));
         assert!(out[1].as_slice().iter().all(|&v| v == 0.0));
     }

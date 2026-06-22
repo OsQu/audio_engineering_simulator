@@ -2,8 +2,10 @@
 //!
 //! A [`Node`] is the engine's unit of processing and scheduling — the thing the graph wires
 //! together and the schedule sorts and runs. It presents **real electrical faces**
-//! (PROJECT_PLAN §5.3): each input has an input impedance ([`InputZ`]), each output an output
-//! impedance ([`OutputZ`] — the `Zout` of a [`Thevenin`](crate::Thevenin) source). We model
+//! (PROJECT_PLAN §5.3): each analog input has an input impedance ([`InputZ`](crate::InputZ)),
+//! each analog output an output impedance ([`OutputZ`](crate::OutputZ) — the `Zout` of a
+//! [`Thevenin`](crate::Thevenin) source), wrapped in a domain-tagged [`InputPort`] / [`OutputPort`].
+//! We model
 //! the *observable I/O*, not the circuitry inside — the transform from input voltages to
 //! output (open-circuit) voltages.
 //!
@@ -36,9 +38,9 @@ pub(crate) use lifted::Lifted;
 pub use source::TestSource;
 pub use sum::PassiveSum;
 
-use crate::electrical::{InputZ, OutputZ};
+use crate::port::{InputPort, OutputPort};
 use crate::rng::Rng;
-use crate::signal::{AnalogRate, VoltageBuffer};
+use crate::signal::{AnalogRate, Lane};
 
 /// A black-box processing element: fixed electrical faces plus a per-block voltage transform.
 ///
@@ -48,29 +50,31 @@ use crate::signal::{AnalogRate, VoltageBuffer};
 /// and compile. The schedule owns every buffer and hands `process` the node's own input and
 /// output blocks as already-sized slices — the node only reads inputs and writes outputs.
 ///
-/// # Buffers and conductors
-/// `inputs` and `outputs` are the node's ports' **conductors**, in port-then-conductor order: an
-/// unbalanced port owns one buffer, a **balanced** port two (V+ then V−). For an all-unbalanced
-/// node — every node before Story 1.5 — conductor index equals port index and `inputs[i]` is just
-/// port `i`'s arriving voltage. A node with a balanced port maps ports to conductor buffers itself
-/// from its declared faces' [`conductors`](crate::InputZ::conductors) (e.g. a balanced input's two
-/// buffers are `inputs[0]` = V+, `inputs[1]` = V−). Each input carries the already
-/// loaded-and-filtered voltage; the node writes each output conductor's **open-circuit** voltage.
-/// Every block is the same length, fixed at compile. A conductor with nothing connected reads
-/// silence.
+/// # Ports, lanes and conductors
+/// [`inputs`](Self::inputs) / [`outputs`](Self::outputs) declare the node's **ports** (their
+/// faces); the [`process`](Self::process) slices are the **lanes** buffering them — one
+/// [`Lane`] per conductor (analog) or channel (digital), in port-then-lane order. An unbalanced
+/// analog port owns one lane, a **balanced** one two (V+ then V−); a node maps ports to lanes
+/// from its faces' [`lane_count`](crate::InputPort::lane_count) (e.g. a balanced input's two
+/// lanes are `inputs[0]` = V+, `inputs[1]` = V−). An analog node reads each input lane as
+/// [`voltage()`](Lane::voltage) and writes each output lane via
+/// [`voltage_mut()`](Lane::voltage_mut); `compile` guarantees a lane's domain matches the port's,
+/// so the typed accessor's other arm is unreachable. Each input carries the already
+/// loaded-and-filtered signal; the node writes each output's **open-circuit** value. Every block
+/// is the same length within a domain, fixed at compile; an unconnected lane reads silence.
 pub trait Node {
-    /// The input impedance of each input port, in declaration order. Its length is the node's
-    /// input-port count and must stay constant for the node's lifetime.
-    fn inputs(&self) -> &[InputZ];
+    /// The node's input ports, in declaration order. Its length is the node's input-port count
+    /// and must stay constant for the node's lifetime.
+    fn inputs(&self) -> &[InputPort];
 
-    /// The output impedance ([`OutputZ`]) of each output port, in declaration order. Its
-    /// length is the node's output-port count and must stay constant for the node's lifetime.
-    fn outputs(&self) -> &[OutputZ];
+    /// The node's output ports, in declaration order. Its length is the node's output-port
+    /// count and must stay constant for the node's lifetime.
+    fn outputs(&self) -> &[OutputPort];
 
-    /// Transform a block: read `inputs`, write each output port's **open-circuit** voltage
-    /// into `outputs`. Hot path — no allocation, no panic. `inputs.len()` equals
-    /// [`inputs`](Self::inputs)`.len()` and likewise for `outputs`.
-    fn process(&mut self, inputs: &[VoltageBuffer], outputs: &mut [VoltageBuffer]);
+    /// Transform a block: read the `inputs` lanes, write each output lane's **open-circuit**
+    /// value into `outputs`. Hot path — no allocation, no panic. The slice lengths are the
+    /// nodes' total lane counts (sum of each port's [`lane_count`](crate::InputPort::lane_count)).
+    fn process(&mut self, inputs: &[Lane], outputs: &mut [Lane]);
 
     /// Seed this node's stochastic state from `rng`, an independent per-node stream.
     ///
@@ -121,34 +125,36 @@ pub trait Node {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::electrical::Ohms;
-    use crate::signal::{AnalogRate, Volts};
+    use crate::electrical::{InputZ, Ohms, OutputZ};
+    use crate::signal::{AnalogRate, VoltageBuffer, Volts};
+    use crate::test_util::process_voltage;
 
     fn rate() -> AnalogRate {
         AnalogRate::new(384_000.0)
     }
 
     /// A minimal node exercising the trait shape: one input, one output, doubles the signal.
-    /// Confirms the declared port counts line up with the slices `process` receives.
+    /// Confirms the declared port counts line up with the lanes `process` receives.
     struct Doubler {
-        inputs: [InputZ; 1],
-        outputs: [OutputZ; 1],
+        inputs: [InputPort; 1],
+        outputs: [OutputPort; 1],
     }
 
     impl Node for Doubler {
-        fn inputs(&self) -> &[InputZ] {
+        fn inputs(&self) -> &[InputPort] {
             &self.inputs
         }
 
-        fn outputs(&self) -> &[OutputZ] {
+        fn outputs(&self) -> &[OutputPort] {
             &self.outputs
         }
 
-        fn process(&mut self, inputs: &[VoltageBuffer], outputs: &mut [VoltageBuffer]) {
+        fn process(&mut self, inputs: &[Lane], outputs: &mut [Lane]) {
             for (out, &v) in outputs[0]
+                .voltage_mut()
                 .as_mut_slice()
                 .iter_mut()
-                .zip(inputs[0].as_slice())
+                .zip(inputs[0].voltage().as_slice())
             {
                 *out = v * 2.0;
             }
@@ -158,8 +164,8 @@ mod tests {
     #[test]
     fn port_declarations_match_the_process_slices() {
         let mut node = Doubler {
-            inputs: [InputZ::new(Ohms::new(10_000.0))],
-            outputs: [OutputZ::new(Ohms::new(150.0))],
+            inputs: [InputZ::new(Ohms::new(10_000.0)).into()],
+            outputs: [OutputZ::new(Ohms::new(150.0)).into()],
         };
         assert_eq!(node.inputs().len(), 1);
         assert_eq!(node.outputs().len(), 1);
@@ -167,7 +173,7 @@ mod tests {
         let mut input = [VoltageBuffer::zeros(4, rate())];
         input[0].fill(Volts::new(0.5));
         let mut output = [VoltageBuffer::zeros(4, rate())];
-        node.process(&input, &mut output);
+        process_voltage(&mut node, &input, &mut output);
 
         assert!(output[0].as_slice().iter().all(|&v| (v - 1.0).abs() < 1e-6));
     }

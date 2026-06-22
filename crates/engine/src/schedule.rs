@@ -31,8 +31,9 @@ use crate::electrical::{InputZ, Ohms, OnePole, fan_out_gains};
 use crate::graph::{Edge, Graph};
 use crate::node::{Lifted, Node};
 use crate::noise::NoiseDensity;
+use crate::port::DigitalFace;
 use crate::rng::Rng;
-use crate::signal::{AnalogRate, VoltageBuffer};
+use crate::signal::{AnalogRate, ClockDomainId, Domain, Lane, SampleBuffer, VoltageBuffer};
 use core::fmt;
 
 /// Salt mixed into the compile seed to derive the **edge** pickup root, keeping it independent of
@@ -40,7 +41,10 @@ use core::fmt;
 const EDGE_SEED_SALT: u64 = 0xED9E_5EED_ED9E_5EED;
 
 /// Why a [`Graph`] could not be compiled. All structural — caught here, never on the hot path.
-#[derive(Debug, Clone, PartialEq, Eq)]
+///
+/// (`PartialEq` but not `Eq`: some variants carry `f64` rates, so equality is structural-with-floats
+/// — fine for the exact, non-NaN values these errors report.)
+#[derive(Debug, Clone, PartialEq)]
 pub enum CompileError {
     /// No output tap was designated (see [`Graph::set_output`](crate::Graph::set_output)).
     NoOutput,
@@ -62,6 +66,33 @@ pub enum CompileError {
         to_node: usize,
         to_port: usize,
     },
+    /// An edge connects two ports of different carrier domains (e.g. analog into digital). No
+    /// physics bridges domains on a wire — only a converter node does, internally — so the edge
+    /// is rejected rather than guessed.
+    DomainMismatch {
+        from_node: usize,
+        from_port: usize,
+        to_node: usize,
+        to_port: usize,
+    },
+    /// A converter's digital sample rate does not integer-divide the analog rate, so its
+    /// decimation factor `M` isn't a whole number. Story 1.6 requires an integer ratio; arbitrary
+    /// ratios need the fractional resampler deferred to Epic 5.
+    RateIndivisible {
+        node: usize,
+        analog_hz: f64,
+        digital_hz: f64,
+    },
+    /// The block length is not a multiple of a converter's decimation factor `M`, so a block
+    /// would not hold a whole number of digital samples.
+    BlockLenIndivisible {
+        node: usize,
+        block_len: usize,
+        factor: usize,
+    },
+    /// A digital edge connects two different sample rates — a clock crossing that needs a
+    /// sample-rate converter (deferred to Epic 5), not yet modeled.
+    ClockCrossingUnsupported { from_node: usize, to_node: usize },
     /// The graph has a cycle; the local-solve engine has no feedback paths to resolve.
     Cycle,
 }
@@ -89,6 +120,40 @@ impl fmt::Display for CompileError {
                 f,
                 "node {from_node} output port {from_port} and node {to_node} input port \
                  {to_port} have different conductor counts (balanced vs. unbalanced)"
+            ),
+            Self::DomainMismatch {
+                from_node,
+                from_port,
+                to_node,
+                to_port,
+            } => write!(
+                f,
+                "node {from_node} output port {from_port} and node {to_node} input port \
+                 {to_port} are different carrier domains (analog vs. digital) — only a converter \
+                 bridges domains"
+            ),
+            Self::RateIndivisible {
+                node,
+                analog_hz,
+                digital_hz,
+            } => write!(
+                f,
+                "node {node}'s digital rate {digital_hz} Hz does not integer-divide the analog \
+                 rate {analog_hz} Hz"
+            ),
+            Self::BlockLenIndivisible {
+                node,
+                block_len,
+                factor,
+            } => write!(
+                f,
+                "block length {block_len} is not a multiple of node {node}'s decimation factor \
+                 {factor}"
+            ),
+            Self::ClockCrossingUnsupported { from_node, to_node } => write!(
+                f,
+                "digital edge from node {from_node} to node {to_node} crosses sample rates; \
+                 sample-rate conversion is not yet modeled (Epic 5)"
             ),
             Self::Cycle => write!(f, "the graph has a cycle"),
         }
@@ -158,6 +223,16 @@ impl EdgeTransform {
     }
 }
 
+/// A connection's baked behavior, by domain. Analog edges carry the electrical solve; digital
+/// edges are a same-clock-domain sample copy. (A digital edge across *different* clock domains is
+/// a resample — deferred to Epic 5; `compile` rejects it for now.)
+enum EdgeKind {
+    /// Analog: scale by the divider gain, optional cable rolloff, optional coupled interference.
+    Analog(EdgeTransform),
+    /// Digital audio: copy samples src → dst within one clock domain.
+    DigitalRoute,
+}
+
 /// One instruction in the schedule, in execution order.
 enum Step {
     /// Run a node: read its contiguous input-pool range, write its output-pool range.
@@ -168,11 +243,11 @@ enum Step {
         out_start: usize,
         out_len: usize,
     },
-    /// Run a connection: read output-pool buffer `src`, write input-pool buffer `dst`.
+    /// Run a connection: read output-pool lane `src`, write input-pool lane `dst`.
     Edge {
         src: usize,
         dst: usize,
-        transform: EdgeTransform,
+        kind: EdgeKind,
     },
 }
 
@@ -183,8 +258,8 @@ enum Step {
 /// allocates nothing.
 pub struct Schedule {
     nodes: Vec<Box<dyn Node>>,
-    input_pool: Vec<VoltageBuffer>,
-    output_pool: Vec<VoltageBuffer>,
+    input_pool: Vec<Lane>,
+    output_pool: Vec<Lane>,
     steps: Vec<Step>,
     /// Index into `output_pool` of the designated output tap.
     out_buf: usize,
@@ -225,20 +300,26 @@ impl Schedule {
                     let outs = &mut output_pool[*out_start..*out_start + *out_len];
                     nodes[*node].process(ins, outs);
                 }
-                Step::Edge {
-                    src,
-                    dst,
-                    transform,
-                } => {
+                Step::Edge { src, dst, kind } => {
                     // Different pools ⇒ disjoint borrows, no aliasing.
-                    let source = output_pool[*src].as_slice();
-                    let dest = input_pool[*dst].as_mut_slice();
-                    transform.process(source, dest);
+                    match kind {
+                        EdgeKind::Analog(transform) => {
+                            let source = output_pool[*src].voltage().as_slice();
+                            let dest = input_pool[*dst].voltage_mut().as_mut_slice();
+                            transform.process(source, dest);
+                        }
+                        EdgeKind::DigitalRoute => {
+                            // Same clock domain ⇒ equal length (validated at compile): a copy.
+                            let source = output_pool[*src].sample().as_slice();
+                            let dest = input_pool[*dst].sample_mut().as_mut_slice();
+                            dest.copy_from_slice(source);
+                        }
+                    }
                 }
             }
         }
 
-        let tapped = output_pool[*out_buf].as_slice();
+        let tapped = output_pool[*out_buf].voltage().as_slice();
         let dst = out.as_mut_slice();
         let n = dst.len().min(tapped.len());
         dst[..n].copy_from_slice(&tapped[..n]);
@@ -285,6 +366,17 @@ pub fn compile(
         check_node(&nodes, e.to_node.0)?;
         check_output_port(&nodes, e.from_node.0, e.from_port)?;
         check_input_port(&nodes, e.to_node.0, e.to_port)?;
+        // Carriers must match on a wire — only a converter node bridges domains, internally.
+        if nodes[e.from_node.0].outputs()[e.from_port].domain()
+            != nodes[e.to_node.0].inputs()[e.to_port].domain()
+        {
+            return Err(CompileError::DomainMismatch {
+                from_node: e.from_node.0,
+                from_port: e.from_port,
+                to_node: e.to_node.0,
+                to_port: e.to_port,
+            });
+        }
     }
 
     // --- 3. Infer each per-conductor node's conductor multiplicity from the wiring, then lift the
@@ -322,8 +414,8 @@ pub fn compile(
         let mut obases = Vec::with_capacity(nodes[n].outputs().len());
         for face in nodes[n].outputs() {
             obases.push(output_pool.len());
-            for _ in 0..face.conductors() {
-                output_pool.push(VoltageBuffer::zeros(block_len, rate));
+            for _ in 0..face.lane_count() {
+                output_pool.push(alloc_lane(face.digital(), block_len, rate, n)?);
             }
         }
         out_count[n] = output_pool.len() - out_offset[n];
@@ -333,8 +425,8 @@ pub fn compile(
         let mut ibases = Vec::with_capacity(nodes[n].inputs().len());
         for face in nodes[n].inputs() {
             ibases.push(input_pool.len());
-            for _ in 0..face.conductors() {
-                input_pool.push(VoltageBuffer::zeros(block_len, rate));
+            for _ in 0..face.lane_count() {
+                input_pool.push(alloc_lane(face.digital(), block_len, rate, n)?);
             }
         }
         in_count[n] = input_pool.len() - in_offset[n];
@@ -364,8 +456,7 @@ pub fn compile(
     //        solve them together so the parallel loading is right. A balanced edge bakes **one
     //        transform per conductor** — the same differential divider gain on each, but an
     //        independent cable one-pole (each wire has its own filter state). ---
-    let mut edge_transform: Vec<Option<Vec<EdgeTransform>>> =
-        (0..edges.len()).map(|_| None).collect();
+    let mut edge_kinds: Vec<Option<Vec<EdgeKind>>> = (0..edges.len()).map(|_| None).collect();
     let mut by_port: Vec<usize> = (0..edges.len()).collect();
     by_port.sort_by_key(|&ei| (edges[ei].from_node.0, edges[ei].from_port));
     let mut i = 0;
@@ -378,32 +469,70 @@ pub fn compile(
             j += 1;
         }
         let (from_node, from_port) = key;
-        let z_out: Ohms = nodes[from_node].outputs()[from_port].z_out();
         let group = &by_port[i..j];
-        let branches: Vec<(Ohms, InputZ)> = group
-            .iter()
-            .map(|&ei| {
-                let e = &edges[ei];
-                let r = e.cable.map_or(Ohms::ZERO, |c| c.r());
-                (r, nodes[e.to_node.0].inputs()[e.to_port])
-            })
-            .collect();
-        let gains = fan_out_gains(z_out, &branches);
-        for (k, &ei) in group.iter().enumerate() {
-            let e = &edges[ei];
-            let load = nodes[e.to_node.0].inputs()[e.to_port];
-            // One transform per conductor: same (differential) gain, an independent one-pole.
-            let conductors = load.conductors();
-            let mut transforms = Vec::with_capacity(conductors);
-            for _ in 0..conductors {
-                transforms.push(EdgeTransform {
-                    gain: gains[k],
-                    lowpass: e.cable.map(|c| c.lowpass(z_out, load, rate)),
-                    pickup: None, // pickup and hum are installed below, after the gains are baked
-                    hum: None,
-                });
+        let out_face = nodes[from_node].outputs()[from_port];
+        match out_face.domain() {
+            Domain::Analog => {
+                // Fan-out: solve the parallel loading across the whole group so the divider gains
+                // are right, then one transform per conductor (same gain, independent one-pole).
+                let z_out: Ohms = out_face.analog().expect("analog output face").z_out();
+                let branches: Vec<(Ohms, InputZ)> = group
+                    .iter()
+                    .map(|&ei| {
+                        let e = &edges[ei];
+                        let r = e.cable.map_or(Ohms::ZERO, |c| c.r());
+                        let load = nodes[e.to_node.0].inputs()[e.to_port]
+                            .analog()
+                            .expect("analog input face");
+                        (r, load)
+                    })
+                    .collect();
+                let gains = fan_out_gains(z_out, &branches);
+                for (k, &ei) in group.iter().enumerate() {
+                    let e = &edges[ei];
+                    let load = nodes[e.to_node.0].inputs()[e.to_port]
+                        .analog()
+                        .expect("analog input face");
+                    let conductors = load.conductors();
+                    let mut kinds = Vec::with_capacity(conductors);
+                    for _ in 0..conductors {
+                        kinds.push(EdgeKind::Analog(EdgeTransform {
+                            gain: gains[k],
+                            lowpass: e.cable.map(|c| c.lowpass(z_out, load, rate)),
+                            pickup: None, // pickup/hum are installed below, after the gains are baked
+                            hum: None,
+                        }));
+                    }
+                    edge_kinds[ei] = Some(kinds);
+                }
             }
-            edge_transform[ei] = Some(transforms);
+            Domain::DigitalAudio => {
+                // No electrical solve on a digital wire: each channel is a same-domain sample copy.
+                let src_rate = out_face
+                    .digital()
+                    .expect("digital output face")
+                    .format()
+                    .rate();
+                for &ei in group {
+                    let e = &edges[ei];
+                    let dst = nodes[e.to_node.0].inputs()[e.to_port]
+                        .digital()
+                        .expect("digital input face")
+                        .format();
+                    // Same sample rate ⇒ equal lane length (the copy is total). A cross-rate edge
+                    // is a sample-rate conversion, deferred to Epic 5.
+                    if dst.rate() != src_rate {
+                        return Err(CompileError::ClockCrossingUnsupported {
+                            from_node,
+                            to_node: e.to_node.0,
+                        });
+                    }
+                    let kinds = (0..dst.channels() as usize)
+                        .map(|_| EdgeKind::DigitalRoute)
+                        .collect();
+                    edge_kinds[ei] = Some(kinds);
+                }
+            }
         }
         i = j;
     }
@@ -438,12 +567,15 @@ pub fn compile(
         if hum.is_none() && pickup_sigma.is_none() {
             continue;
         }
-        if let Some(transforms) = &mut edge_transform[ei] {
-            for t in transforms {
-                if let Some(sigma) = pickup_sigma {
-                    t.pickup = Some((stream.clone(), sigma));
+        if let Some(kinds) = &mut edge_kinds[ei] {
+            for kind in kinds {
+                // Interference only couples onto analog wires (a cabled edge is always analog).
+                if let EdgeKind::Analog(t) = kind {
+                    if let Some(sigma) = pickup_sigma {
+                        t.pickup = Some((stream.clone(), sigma));
+                    }
+                    t.hum = hum;
                 }
-                t.hum = hum;
             }
         }
     }
@@ -465,17 +597,17 @@ pub fn compile(
         });
         for &ei in &edges_from[node] {
             let e = &edges[ei];
-            let transforms = edge_transform[ei]
+            let kinds = edge_kinds[ei]
                 .take()
                 .expect("each edge is baked once and emitted once");
-            // Map conductor k of the source port to conductor k of the destination port.
+            // Map lane k of the source port to lane k of the destination port.
             let src_base = out_port_base[e.from_node.0][e.from_port];
             let dst_base = in_port_base[e.to_node.0][e.to_port];
-            for (k, transform) in transforms.into_iter().enumerate() {
+            for (k, kind) in kinds.into_iter().enumerate() {
                 steps.push(Step::Edge {
                     src: src_base + k,
                     dst: dst_base + k,
-                    transform,
+                    kind,
                 });
             }
         }
@@ -532,9 +664,9 @@ fn infer_conductors(
         if per_c[node] {
             m[node]
         } else if is_output {
-            Some(nodes[node].outputs()[port].conductors())
+            Some(nodes[node].outputs()[port].lane_count())
         } else {
-            Some(nodes[node].inputs()[port].conductors())
+            Some(nodes[node].inputs()[port].lane_count())
         }
     };
 
@@ -597,6 +729,46 @@ fn check_input_port(nodes: &[Box<dyn Node>], node: usize, port: usize) -> Result
     } else {
         Err(CompileError::InputPortOutOfRange { node, port })
     }
+}
+
+/// Allocate one pool lane for a port, by domain: an analog lane spans the full `block_len`; a
+/// digital lane spans `block_len / M`, where `M = analog / digital` rate. Validates the
+/// integer-divide and block-length constraints (Story 1.6). `node` names the owner for errors.
+///
+/// In Story 1.6 every digital lane belongs to one converter clock domain; the [`ClockDomainId`] is
+/// a placeholder until the emergent multi-domain model (Epic 5).
+fn alloc_lane(
+    digital: Option<DigitalFace>,
+    block_len: usize,
+    rate: AnalogRate,
+    node: usize,
+) -> Result<Lane, CompileError> {
+    let Some(face) = digital else {
+        return Ok(Lane::Voltage(VoltageBuffer::zeros(block_len, rate)));
+    };
+    let fmt = face.format();
+    let ratio = rate.as_hz() / fmt.rate().as_hz();
+    if ratio < 1.0 || ratio.fract() != 0.0 {
+        return Err(CompileError::RateIndivisible {
+            node,
+            analog_hz: rate.as_hz(),
+            digital_hz: fmt.rate().as_hz(),
+        });
+    }
+    let m = ratio as usize;
+    if !block_len.is_multiple_of(m) {
+        return Err(CompileError::BlockLenIndivisible {
+            node,
+            block_len,
+            factor: m,
+        });
+    }
+    Ok(Lane::Sample(SampleBuffer::zeros(
+        block_len / m,
+        fmt.rate(),
+        fmt.bits(),
+        ClockDomainId(0),
+    )))
 }
 
 #[cfg(test)]
@@ -1445,5 +1617,192 @@ mod phantom_phenomena {
         let mut out = VoltageBuffer::zeros(8, rate());
         sched.process(&mut out);
         assert!(out.as_slice().iter().all(|&v| v == 0.0));
+    }
+}
+
+/// Story 1.6.1 — the **digital carrier seam**: the schedule pool carries `Lane::Sample` lanes
+/// sized to `block_len / M`, a digital edge is a same-clock-domain copy, and `compile` rejects
+/// cross-domain edges, non-integer rates, indivisible block lengths, and clock crossings. No
+/// converter yet (the AD/DA arrive in 1.6.3/1.6.4) — these test nodes are pure digital
+/// scaffolding to exercise the plumbing. Tests inspect the private pools (white-box).
+#[cfg(test)]
+mod digital_seam {
+    use super::*;
+    use crate::electrical::Ohms;
+    use crate::node::TestSource;
+    use crate::port::{AudioFormat, DigitalFace, InputPort, OutputPort};
+    use crate::signal::{BitDepth, SampleRate, Volts};
+
+    fn analog_rate() -> AnalogRate {
+        AnalogRate::new(384_000.0)
+    }
+
+    /// A mono digital format at `rate_hz`, 24-bit.
+    fn fmt(rate_hz: f64) -> AudioFormat {
+        AudioFormat::new(SampleRate::new(rate_hz), BitDepth::new(24), 1)
+    }
+
+    /// A digital source: no inputs, one digital output filled with a constant sample value.
+    struct DigitalSource {
+        level: f32,
+        outputs: [OutputPort; 1],
+    }
+    impl DigitalSource {
+        fn new(level: f32, format: AudioFormat) -> Self {
+            Self {
+                level,
+                outputs: [DigitalFace::new(format).into()],
+            }
+        }
+    }
+    impl Node for DigitalSource {
+        fn inputs(&self) -> &[InputPort] {
+            &[]
+        }
+        fn outputs(&self) -> &[OutputPort] {
+            &self.outputs
+        }
+        fn process(&mut self, _inputs: &[Lane], outputs: &mut [Lane]) {
+            outputs[0].sample_mut().fill(self.level);
+        }
+    }
+
+    /// A digital sink: one digital input, no outputs. A no-op — tests read its input lane.
+    struct DigitalSink {
+        inputs: [InputPort; 1],
+    }
+    impl DigitalSink {
+        fn new(format: AudioFormat) -> Self {
+            Self {
+                inputs: [DigitalFace::new(format).into()],
+            }
+        }
+    }
+    impl Node for DigitalSink {
+        fn inputs(&self) -> &[InputPort] {
+            &self.inputs
+        }
+        fn outputs(&self) -> &[OutputPort] {
+            &[]
+        }
+        fn process(&mut self, _inputs: &[Lane], _outputs: &mut [Lane]) {}
+    }
+
+    #[test]
+    fn digital_lanes_are_sized_by_the_decimation_factor() {
+        // analog 384 kHz, digital 48 kHz ⇒ M = 8; a block of 16 analog samples ⇒ 2 digital samples.
+        let mut g = Graph::new();
+        let src = g.add(DigitalSource::new(0.5, fmt(48_000.0)));
+        let sink = g.add(DigitalSink::new(fmt(48_000.0)));
+        g.connect(src, 0, sink, 0);
+        g.set_output(src, 0); // digital tap; this test inspects the pool, never calls process
+        let sched = compile(g, 16, analog_rate(), 0).expect("valid digital chain");
+
+        let sample_lanes: Vec<&Lane> = sched
+            .output_pool
+            .iter()
+            .chain(sched.input_pool.iter())
+            .filter(|l| matches!(l, Lane::Sample(_)))
+            .collect();
+        assert_eq!(
+            sample_lanes.len(),
+            2,
+            "one source-output + one sink-input sample lane"
+        );
+        for lane in sample_lanes {
+            assert_eq!(lane.domain(), Domain::DigitalAudio);
+            assert_eq!(lane.len(), 2, "digital lane is block_len / M = 16 / 8");
+        }
+    }
+
+    #[test]
+    fn digital_route_copies_samples() {
+        // A separate analog node provides the (voltage) output tap so `process` can run; the
+        // digital source → sink component runs alongside, and its DigitalRoute copies the samples.
+        let mut g = Graph::new();
+        let atap = g.add(TestSource::new(Volts::new(1.0), Ohms::new(150.0)));
+        g.set_output(atap, 0);
+        let src = g.add(DigitalSource::new(0.5, fmt(48_000.0)));
+        let sink = g.add(DigitalSink::new(fmt(48_000.0)));
+        g.connect(src, 0, sink, 0);
+
+        let mut sched = compile(g, 16, analog_rate(), 0).expect("valid mixed chain");
+        let mut out = VoltageBuffer::zeros(16, analog_rate());
+        sched.process(&mut out);
+
+        // The analog tap is unaffected by the digital component.
+        assert!(out.as_slice().iter().all(|&v| (v - 1.0).abs() < 1e-3));
+        // The sink's input sample lane received the source's 0.5 via the DigitalRoute copy.
+        let sink_in = sched
+            .input_pool
+            .iter()
+            .find(|l| matches!(l, Lane::Sample(_)))
+            .expect("a digital input lane");
+        assert!(sink_in.sample().as_slice().iter().all(|&s| s == 0.5));
+    }
+
+    #[test]
+    fn rejects_domain_mismatch() {
+        // An analog output into a digital input: no physics bridges domains on a wire.
+        let mut g = Graph::new();
+        let asrc = g.add(TestSource::new(Volts::new(1.0), Ohms::new(150.0)));
+        let dsink = g.add(DigitalSink::new(fmt(48_000.0)));
+        g.connect(asrc, 0, dsink, 0);
+        g.set_output(asrc, 0);
+        assert_eq!(
+            compile(g, 16, analog_rate(), 0).err(),
+            Some(CompileError::DomainMismatch {
+                from_node: 0,
+                from_port: 0,
+                to_node: 1,
+                to_port: 0,
+            })
+        );
+    }
+
+    #[test]
+    fn rejects_non_integer_rate() {
+        // 44.1 kHz does not integer-divide 384 kHz (384000 / 44100 = 8.707…).
+        let mut g = Graph::new();
+        let src = g.add(DigitalSource::new(0.5, fmt(44_100.0)));
+        g.set_output(src, 0);
+        let err = compile(g, 16, analog_rate(), 0).err().unwrap();
+        assert!(
+            matches!(err, CompileError::RateIndivisible { node: 0, .. }),
+            "got {err:?}"
+        );
+    }
+
+    #[test]
+    fn rejects_indivisible_block_len() {
+        // 48 kHz ⇒ M = 8; a block of 10 isn't a multiple of 8.
+        let mut g = Graph::new();
+        let src = g.add(DigitalSource::new(0.5, fmt(48_000.0)));
+        g.set_output(src, 0);
+        assert_eq!(
+            compile(g, 10, analog_rate(), 0).err(),
+            Some(CompileError::BlockLenIndivisible {
+                node: 0,
+                block_len: 10,
+                factor: 8,
+            })
+        );
+    }
+
+    #[test]
+    fn rejects_clock_crossing() {
+        // Both ends digital (domain matches) but at different rates ⇒ a resample, deferred.
+        let mut g = Graph::new();
+        let src = g.add(DigitalSource::new(0.5, fmt(48_000.0)));
+        let sink = g.add(DigitalSink::new(fmt(96_000.0)));
+        g.connect(src, 0, sink, 0);
+        g.set_output(src, 0);
+        assert_eq!(
+            compile(g, 16, analog_rate(), 0).err(),
+            Some(CompileError::ClockCrossingUnsupported {
+                from_node: 0,
+                to_node: 1,
+            })
+        );
     }
 }

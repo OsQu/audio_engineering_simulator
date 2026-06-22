@@ -5,12 +5,13 @@
 //! unity, no level change), and the receiver recovers it as `V+ − V−`. Interference that couples
 //! equally onto both conductors (cable pickup, hum, phantom — Story 1.5.2–1.5.5) is **common-mode**
 //! and cancels at that subtraction: common-mode rejection *emerges* from the difference, it is not
-//! a flag. The conductors live as two adjacent buffers in the schedule pool ("buffer = conductor",
+//! a flag. The conductors live as two adjacent lanes in the schedule pool ("buffer = conductor",
 //! see `IMPLEMENTATION_PLAN.md` Story 1.5); a node reads/writes them in port-then-conductor order.
 
 use super::Node;
 use crate::electrical::{InputZ, Ohms, OutputZ};
-use crate::signal::VoltageBuffer;
+use crate::port::{InputPort, OutputPort};
+use crate::signal::Lane;
 
 /// Drives a single-ended input onto a **balanced** pair: `V+ = +in/2`, `V− = −in/2`.
 ///
@@ -18,8 +19,8 @@ use crate::signal::VoltageBuffer;
 /// produces is zero — a clean differential drive. One **unbalanced** input; one **balanced**
 /// (two-conductor) output.
 pub struct BalancedDriver {
-    inputs: [InputZ; 1],
-    outputs: [OutputZ; 1],
+    inputs: [InputPort; 1],
+    outputs: [OutputPort; 1],
 }
 
 impl BalancedDriver {
@@ -28,27 +29,31 @@ impl BalancedDriver {
     #[must_use]
     pub fn new(z_in: InputZ, z_out: Ohms) -> Self {
         Self {
-            inputs: [z_in],
-            outputs: [OutputZ::balanced(z_out)],
+            inputs: [z_in.into()],
+            outputs: [OutputZ::balanced(z_out).into()],
         }
     }
 }
 
 impl Node for BalancedDriver {
-    fn inputs(&self) -> &[InputZ] {
+    fn inputs(&self) -> &[InputPort] {
         &self.inputs
     }
 
-    fn outputs(&self) -> &[OutputZ] {
+    fn outputs(&self) -> &[OutputPort] {
         &self.outputs
     }
 
-    fn process(&mut self, inputs: &[VoltageBuffer], outputs: &mut [VoltageBuffer]) {
-        // One balanced output port = two conductor buffers: [0] = V+, [1] = V−.
+    fn process(&mut self, inputs: &[Lane], outputs: &mut [Lane]) {
+        // One balanced output port = two conductor lanes: [0] = V+, [1] = V−.
         let (hot, cold) = outputs.split_at_mut(1);
-        let vp = hot[0].as_mut_slice();
-        let vn = cold[0].as_mut_slice();
-        for ((p, n), &x) in vp.iter_mut().zip(vn.iter_mut()).zip(inputs[0].as_slice()) {
+        let vp = hot[0].voltage_mut().as_mut_slice();
+        let vn = cold[0].voltage_mut().as_mut_slice();
+        for ((p, n), &x) in vp
+            .iter_mut()
+            .zip(vn.iter_mut())
+            .zip(inputs[0].voltage().as_slice())
+        {
             let half = x * 0.5;
             *p = half;
             *n = -half;
@@ -63,8 +68,8 @@ impl Node for BalancedDriver {
 /// coupled equally onto the cable — cancels. One **balanced** (two-conductor) input; one
 /// **unbalanced** output.
 pub struct BalancedReceiver {
-    inputs: [InputZ; 1],
-    outputs: [OutputZ; 1],
+    inputs: [InputPort; 1],
+    outputs: [OutputPort; 1],
 }
 
 impl BalancedReceiver {
@@ -73,26 +78,26 @@ impl BalancedReceiver {
     #[must_use]
     pub fn new(z_in: Ohms, z_out: Ohms) -> Self {
         Self {
-            inputs: [InputZ::balanced(z_in)],
-            outputs: [OutputZ::new(z_out)],
+            inputs: [InputZ::balanced(z_in).into()],
+            outputs: [OutputZ::new(z_out).into()],
         }
     }
 }
 
 impl Node for BalancedReceiver {
-    fn inputs(&self) -> &[InputZ] {
+    fn inputs(&self) -> &[InputPort] {
         &self.inputs
     }
 
-    fn outputs(&self) -> &[OutputZ] {
+    fn outputs(&self) -> &[OutputPort] {
         &self.outputs
     }
 
-    fn process(&mut self, inputs: &[VoltageBuffer], outputs: &mut [VoltageBuffer]) {
-        // One balanced input port = two conductor buffers: [0] = V+, [1] = V−.
-        let out = outputs[0].as_mut_slice();
-        let vp = inputs[0].as_slice();
-        let vn = inputs[1].as_slice();
+    fn process(&mut self, inputs: &[Lane], outputs: &mut [Lane]) {
+        // One balanced input port = two conductor lanes: [0] = V+, [1] = V−.
+        let out = outputs[0].voltage_mut().as_mut_slice();
+        let vp = inputs[0].voltage().as_slice();
+        let vn = inputs[1].voltage().as_slice();
         for (o, (&p, &n)) in out.iter_mut().zip(vp.iter().zip(vn)) {
             *o = p - n;
         }
@@ -102,7 +107,8 @@ impl Node for BalancedReceiver {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::signal::{AnalogRate, Volts};
+    use crate::signal::{AnalogRate, VoltageBuffer, Volts};
+    use crate::test_util::process_voltage;
     use approx::assert_relative_eq;
 
     fn rate() -> AnalogRate {
@@ -112,15 +118,15 @@ mod tests {
     #[test]
     fn driver_declares_unbalanced_in_balanced_out() {
         let d = BalancedDriver::new(InputZ::new(Ohms::new(10_000.0)), Ohms::new(200.0));
-        assert_eq!(d.inputs()[0].conductors(), 1);
-        assert_eq!(d.outputs()[0].conductors(), 2);
+        assert_eq!(d.inputs()[0].lane_count(), 1);
+        assert_eq!(d.outputs()[0].lane_count(), 2);
     }
 
     #[test]
     fn receiver_declares_balanced_in_unbalanced_out() {
         let r = BalancedReceiver::new(Ohms::new(20_000.0), Ohms::new(150.0));
-        assert_eq!(r.inputs()[0].conductors(), 2);
-        assert_eq!(r.outputs()[0].conductors(), 1);
+        assert_eq!(r.inputs()[0].lane_count(), 2);
+        assert_eq!(r.outputs()[0].lane_count(), 1);
     }
 
     #[test]
@@ -133,7 +139,7 @@ mod tests {
             VoltageBuffer::zeros(4, rate()),
             VoltageBuffer::zeros(4, rate()),
         ];
-        d.process(&input, &mut out);
+        process_voltage(&mut d, &input, &mut out);
         assert!(out[0].as_slice().iter().all(|&v| (v - 1.0).abs() < 1e-6));
         assert!(out[1].as_slice().iter().all(|&v| (v + 1.0).abs() < 1e-6));
     }
@@ -149,7 +155,7 @@ mod tests {
         ins[0].fill(Volts::new(6.0));
         ins[1].fill(Volts::new(4.0));
         let mut out = [VoltageBuffer::zeros(4, rate())];
-        r.process(&ins, &mut out);
+        process_voltage(&mut r, &ins, &mut out);
         assert!(out[0].as_slice().iter().all(|&v| (v - 2.0).abs() < 1e-6));
     }
 
@@ -164,9 +170,9 @@ mod tests {
             VoltageBuffer::zeros(4, rate()),
             VoltageBuffer::zeros(4, rate()),
         ];
-        d.process(&input, &mut pair);
+        process_voltage(&mut d, &input, &mut pair);
         let mut out = [VoltageBuffer::zeros(4, rate())];
-        r.process(&pair, &mut out);
+        process_voltage(&mut r, &pair, &mut out);
         assert_relative_eq!(out[0].get(0).get(), 2.0, epsilon = 1e-6);
     }
 }

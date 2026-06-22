@@ -2,7 +2,8 @@
 
 use super::Node;
 use crate::electrical::{InputZ, Ohms, OutputZ};
-use crate::signal::VoltageBuffer;
+use crate::port::{InputPort, OutputPort};
+use crate::signal::Lane;
 
 /// A passive summing node: its open-circuit output is the **sum** of its input voltages.
 ///
@@ -18,8 +19,8 @@ use crate::signal::VoltageBuffer;
 ///
 /// `n` inputs; one output.
 pub struct PassiveSum {
-    inputs: Vec<InputZ>,
-    outputs: [OutputZ; 1],
+    inputs: Vec<InputPort>,
+    outputs: [OutputPort; 1],
 }
 
 impl PassiveSum {
@@ -32,26 +33,26 @@ impl PassiveSum {
     pub fn new(inputs: Vec<InputZ>, z_out: Ohms) -> Self {
         assert!(!inputs.is_empty(), "PassiveSum needs at least one input");
         Self {
-            inputs,
-            outputs: [OutputZ::new(z_out)],
+            inputs: inputs.into_iter().map(InputPort::from).collect(),
+            outputs: [OutputZ::new(z_out).into()],
         }
     }
 }
 
 impl Node for PassiveSum {
-    fn inputs(&self) -> &[InputZ] {
+    fn inputs(&self) -> &[InputPort] {
         &self.inputs
     }
 
-    fn outputs(&self) -> &[OutputZ] {
+    fn outputs(&self) -> &[OutputPort] {
         &self.outputs
     }
 
-    fn process(&mut self, inputs: &[VoltageBuffer], outputs: &mut [VoltageBuffer]) {
-        let out = outputs[0].as_mut_slice();
+    fn process(&mut self, inputs: &[Lane], outputs: &mut [Lane]) {
+        let out = outputs[0].voltage_mut().as_mut_slice();
         out.fill(0.0);
         for input in inputs {
-            for (o, &v) in out.iter_mut().zip(input.as_slice()) {
+            for (o, &v) in out.iter_mut().zip(input.voltage().as_slice()) {
                 *o += v;
             }
         }
@@ -61,7 +62,8 @@ impl Node for PassiveSum {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::signal::{AnalogRate, Volts};
+    use crate::signal::{AnalogRate, VoltageBuffer, Volts};
+    use crate::test_util::process_voltage;
     use approx::assert_relative_eq;
 
     fn rate() -> AnalogRate {
@@ -76,7 +78,10 @@ mod tests {
     fn declares_n_inputs_one_output() {
         let s = sum(3);
         assert_eq!(s.inputs().len(), 3);
-        assert_eq!(s.outputs(), &[OutputZ::new(Ohms::new(150.0))]);
+        assert_eq!(
+            s.outputs(),
+            &[OutputPort::Analog(OutputZ::new(Ohms::new(150.0)))]
+        );
     }
 
     #[test]
@@ -90,7 +95,7 @@ mod tests {
         ins[0].fill(Volts::new(0.3));
         ins[1].fill(Volts::new(0.4));
         let mut out = [VoltageBuffer::zeros(4, rate())];
-        s.process(&ins, &mut out);
+        process_voltage(&mut s, &ins, &mut out);
         assert!(out[0].as_slice().iter().all(|&v| (v - 0.7).abs() < 1e-6));
     }
 
@@ -105,7 +110,7 @@ mod tests {
         ins[0].fill(Volts::new(0.5));
         ins[1].fill(Volts::new(-0.5));
         let mut out = [VoltageBuffer::zeros(2, rate())];
-        s.process(&ins, &mut out);
+        process_voltage(&mut s, &ins, &mut out);
         assert_relative_eq!(out[0].get(0).get(), 0.0, epsilon = 1e-6);
     }
 

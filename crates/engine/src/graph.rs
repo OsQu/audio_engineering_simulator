@@ -123,31 +123,36 @@ impl Graph {
 mod tests {
     use super::*;
     use crate::electrical::{InputZ, Ohms, OutputZ};
-    use crate::signal::VoltageBuffer;
+    use crate::port::{InputPort, OutputPort};
+    use crate::signal::Lane;
 
     /// A no-op node with configurable port counts, for wiring tests.
     struct Stub {
-        inputs: Vec<InputZ>,
-        outputs: Vec<OutputZ>,
+        inputs: Vec<InputPort>,
+        outputs: Vec<OutputPort>,
     }
 
     impl Stub {
         fn new(n_in: usize, n_out: usize) -> Self {
             Self {
-                inputs: vec![InputZ::new(Ohms::new(10_000.0)); n_in],
-                outputs: vec![OutputZ::new(Ohms::new(150.0)); n_out],
+                inputs: (0..n_in)
+                    .map(|_| InputZ::new(Ohms::new(10_000.0)).into())
+                    .collect(),
+                outputs: (0..n_out)
+                    .map(|_| OutputZ::new(Ohms::new(150.0)).into())
+                    .collect(),
             }
         }
     }
 
     impl Node for Stub {
-        fn inputs(&self) -> &[InputZ] {
+        fn inputs(&self) -> &[InputPort] {
             &self.inputs
         }
-        fn outputs(&self) -> &[OutputZ] {
+        fn outputs(&self) -> &[OutputPort] {
             &self.outputs
         }
-        fn process(&mut self, _inputs: &[VoltageBuffer], _outputs: &mut [VoltageBuffer]) {}
+        fn process(&mut self, _inputs: &[Lane], _outputs: &mut [Lane]) {}
     }
 
     #[test]

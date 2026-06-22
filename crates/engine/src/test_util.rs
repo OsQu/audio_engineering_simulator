@@ -4,9 +4,10 @@
 //! signals rather than scalar asserts (filter magnitude response now; SNR in Story 1.4).
 //! Gated behind `#[cfg(test)]`, so it's compiled only for tests and never ships.
 
-use crate::electrical::{InputZ, Ohms, OutputZ};
+use crate::electrical::{Ohms, OutputZ};
 use crate::node::Node;
-use crate::signal::{AnalogRate, VoltageBuffer, Volts};
+use crate::port::{InputPort, OutputPort};
+use crate::signal::{AnalogRate, Lane, VoltageBuffer, Volts};
 
 /// A steady sine of `len` samples: `amp · sin(2π·freq·t)`, sampled at `rate`.
 ///
@@ -30,6 +31,26 @@ pub fn rms(samples: &[f32]) -> f32 {
     }
     let sum_sq: f64 = samples.iter().map(|&x| f64::from(x) * f64::from(x)).sum();
     (sum_sq / samples.len() as f64).sqrt() as f32
+}
+
+/// Drive a node's [`Node::process`] with plain [`VoltageBuffer`]s: wrap them as voltage [`Lane`]s,
+/// run, and copy the results back. Lets an all-analog node's unit test read as it did before the
+/// carrier seam (`process_voltage(&mut node, &in, &mut out)`). Clones the buffers — test-only,
+/// never the hot path.
+pub fn process_voltage(
+    node: &mut impl Node,
+    inputs: &[VoltageBuffer],
+    outputs: &mut [VoltageBuffer],
+) {
+    let in_lanes: Vec<Lane> = inputs.iter().cloned().map(Lane::Voltage).collect();
+    let mut out_lanes: Vec<Lane> = outputs.iter().cloned().map(Lane::Voltage).collect();
+    node.process(&in_lanes, &mut out_lanes);
+    for (slot, lane) in outputs.iter_mut().zip(out_lanes) {
+        *slot = match lane {
+            Lane::Voltage(b) => b,
+            Lane::Sample(_) => unreachable!("process_voltage drives only voltage lanes"),
+        };
+    }
 }
 
 /// Steady-state magnitude response of `process` at `freq_hz`, as out-RMS / in-RMS.
@@ -95,7 +116,7 @@ pub struct SineSource {
     offset: f64,
     freq_hz: f64,
     phase: f64,
-    outputs: [OutputZ; 1],
+    outputs: [OutputPort; 1],
 }
 
 impl SineSource {
@@ -107,26 +128,26 @@ impl SineSource {
             offset: f64::from(offset.get()),
             freq_hz,
             phase: 0.0,
-            outputs: [OutputZ::new(z_out)],
+            outputs: [OutputZ::new(z_out).into()],
         }
     }
 }
 
 impl Node for SineSource {
-    fn inputs(&self) -> &[InputZ] {
+    fn inputs(&self) -> &[InputPort] {
         &[]
     }
 
-    fn outputs(&self) -> &[OutputZ] {
+    fn outputs(&self) -> &[OutputPort] {
         &self.outputs
     }
 
-    fn process(&mut self, _inputs: &[VoltageBuffer], outputs: &mut [VoltageBuffer]) {
-        let dt = outputs[0].rate().seconds_per_sample();
+    fn process(&mut self, _inputs: &[Lane], outputs: &mut [Lane]) {
+        let dt = outputs[0].voltage().rate().seconds_per_sample();
         let dphase = std::f64::consts::TAU * self.freq_hz * dt;
         let (amp, offset) = (self.amp, self.offset);
         let mut phase = self.phase;
-        for s in outputs[0].as_mut_slice() {
+        for s in outputs[0].voltage_mut().as_mut_slice() {
             *s = (offset + amp * phase.sin()) as f32;
             phase += dphase;
             if phase >= std::f64::consts::TAU {
@@ -148,7 +169,7 @@ impl Node for SineSource {
 pub struct BalancedTestSource {
     signal: f32,
     cm: f32,
-    outputs: [OutputZ; 1],
+    outputs: [OutputPort; 1],
 }
 
 impl BalancedTestSource {
@@ -158,25 +179,25 @@ impl BalancedTestSource {
         Self {
             signal: signal.get(),
             cm: cm.get(),
-            outputs: [OutputZ::balanced(z_out)],
+            outputs: [OutputZ::balanced(z_out).into()],
         }
     }
 }
 
 impl Node for BalancedTestSource {
-    fn inputs(&self) -> &[InputZ] {
+    fn inputs(&self) -> &[InputPort] {
         &[]
     }
 
-    fn outputs(&self) -> &[OutputZ] {
+    fn outputs(&self) -> &[OutputPort] {
         &self.outputs
     }
 
-    fn process(&mut self, _inputs: &[VoltageBuffer], outputs: &mut [VoltageBuffer]) {
+    fn process(&mut self, _inputs: &[Lane], outputs: &mut [Lane]) {
         let half = self.signal * 0.5;
         let (hot, cold) = outputs.split_at_mut(1);
-        hot[0].fill(Volts::new(self.cm + half));
-        cold[0].fill(Volts::new(self.cm - half));
+        hot[0].voltage_mut().fill(Volts::new(self.cm + half));
+        cold[0].voltage_mut().fill(Volts::new(self.cm - half));
     }
 }
 

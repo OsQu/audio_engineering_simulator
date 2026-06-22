@@ -5,7 +5,7 @@
 //! (the engine's [`TestSource`](engine::TestSource) emits DC, which can't show treble rolloff
 //! or a curved wave). Expect it to be superseded when Story 1.7 lands.
 
-use engine::{InputZ, Node, Ohms, OutputZ, VoltageBuffer, Volts};
+use engine::{InputPort, Lane, Node, Ohms, OutputPort, OutputZ, Volts};
 use std::f64::consts::TAU;
 
 /// A continuous sine oscillator with a real Thévenin output impedance.
@@ -23,7 +23,7 @@ pub struct SineSource {
     /// Frequency in hertz.
     freq_hz: f64,
     /// The single output face: a real `Zout` the next stage divides against.
-    outputs: [OutputZ; 1],
+    outputs: [OutputPort; 1],
     /// Running phase in radians, persisted across blocks for a continuous tone.
     phase: f64,
 }
@@ -35,29 +35,29 @@ impl SineSource {
         Self {
             amp,
             freq_hz,
-            outputs: [OutputZ::new(z_out)],
+            outputs: [OutputZ::new(z_out).into()],
             phase: 0.0,
         }
     }
 }
 
 impl Node for SineSource {
-    fn inputs(&self) -> &[InputZ] {
+    fn inputs(&self) -> &[InputPort] {
         &[]
     }
 
-    fn outputs(&self) -> &[OutputZ] {
+    fn outputs(&self) -> &[OutputPort] {
         &self.outputs
     }
 
-    fn process(&mut self, _inputs: &[VoltageBuffer], outputs: &mut [VoltageBuffer]) {
+    fn process(&mut self, _inputs: &[Lane], outputs: &mut [Lane]) {
         // The output buffer carries the analog rate `compile` sized it with, so the sample
         // period comes straight off it — the source never stores a rate of its own.
-        let dt = outputs[0].rate().seconds_per_sample();
+        let dt = outputs[0].voltage().rate().seconds_per_sample();
         let dphase = TAU * self.freq_hz * dt; // radians advanced per sample
         let amp = self.amp.get();
         let mut phase = self.phase;
-        for s in outputs[0].as_mut_slice() {
+        for s in outputs[0].voltage_mut().as_mut_slice() {
             *s = amp * (phase.sin() as f32);
             phase += dphase;
             // `dphase < 2π` for any sane freq ≪ rate, so one subtraction is enough to wrap.
@@ -72,10 +72,15 @@ impl Node for SineSource {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use engine::AnalogRate;
+    use engine::{AnalogRate, VoltageBuffer};
 
     fn rate() -> AnalogRate {
         AnalogRate::new(384_000.0)
+    }
+
+    /// One voltage lane sized `len` at the demo rate.
+    fn lane(len: usize) -> Lane {
+        Lane::Voltage(VoltageBuffer::zeros(len, rate()))
     }
 
     #[test]
@@ -83,9 +88,9 @@ mod tests {
         // 1 kHz at 384 kHz ⇒ 384 samples/cycle. Fill two cycles (768 samples).
         let amp = Volts::new(2.0);
         let mut src = SineSource::new(amp, 1_000.0, Ohms::new(100.0));
-        let mut out = [VoltageBuffer::zeros(768, rate())];
+        let mut out = [lane(768)];
         src.process(&[], &mut out);
-        let samples = out[0].as_slice();
+        let samples = out[0].voltage().as_slice();
 
         // Peak ≈ amp: with 384 samples/cycle a sample lands within a whisker of the crest,
         // so |max| sits just under 2.0 V. Allow 1 %.
@@ -118,20 +123,20 @@ mod tests {
         let make = || SineSource::new(Volts::new(1.0), 1_000.0, Ohms::new(100.0));
 
         let mut split = make();
-        let mut b1 = [VoltageBuffer::zeros(100, rate())];
-        let mut b2 = [VoltageBuffer::zeros(100, rate())];
+        let mut b1 = [lane(100)];
+        let mut b2 = [lane(100)];
         split.process(&[], &mut b1);
         split.process(&[], &mut b2);
 
         let mut whole = make();
-        let mut both = [VoltageBuffer::zeros(200, rate())];
+        let mut both = [lane(200)];
         whole.process(&[], &mut both);
 
-        for (i, &v) in both[0].as_slice().iter().enumerate() {
+        for (i, &v) in both[0].voltage().as_slice().iter().enumerate() {
             let got = if i < 100 {
-                b1[0].as_slice()[i]
+                b1[0].voltage().as_slice()[i]
             } else {
-                b2[0].as_slice()[i - 100]
+                b2[0].voltage().as_slice()[i - 100]
             };
             assert!(
                 (got - v).abs() < 1e-6,

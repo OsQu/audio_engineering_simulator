@@ -2,8 +2,9 @@
 
 use super::Node;
 use crate::electrical::{InputZ, OutputZ};
+use crate::port::{InputPort, OutputPort};
 use crate::rng::Rng;
-use crate::signal::{AnalogRate, VoltageBuffer};
+use crate::signal::{AnalogRate, Lane};
 
 /// Wraps a per-conductor node as `conductors` independent lanes — the **per-conductor lift**.
 ///
@@ -17,11 +18,12 @@ use crate::signal::{AnalogRate, VoltageBuffer};
 /// node. (Per-leg *asymmetry* would be the finite-CMRR case, deferred.)
 ///
 /// The inner node has one input and one output port (or none and one); the lift maps conductor
-/// `k` to lane `k`. Internal — only `compile` constructs it.
+/// `k` to lane `k`. Per-conductor nodes are analog (balanced is an analog concept), so the widened
+/// faces are analog. Internal — only `compile` constructs it.
 pub(crate) struct Lifted {
     lanes: Vec<Box<dyn Node>>,
-    inputs: Vec<InputZ>,
-    outputs: Vec<OutputZ>,
+    inputs: Vec<InputPort>,
+    outputs: Vec<OutputPort>,
     has_input: bool,
 }
 
@@ -31,7 +33,7 @@ impl Lifted {
     ///
     /// # Panics
     /// Panics unless `conductors >= 1` and `inner` has one input and one output port (or none and
-    /// one) — both guaranteed by `compile`, never reached on the hot path.
+    /// one) with analog faces — all guaranteed by `compile`, never reached on the hot path.
     pub(crate) fn new(inner: Box<dyn Node>, conductors: usize) -> Self {
         assert!(conductors >= 1, "a lift needs at least one conductor");
         assert!(
@@ -42,12 +44,22 @@ impl Lifted {
         let inputs = inner
             .inputs()
             .iter()
-            .map(|f| InputZ::with_conductors(f.z_in(), conductors))
+            .map(|f| {
+                let z = f
+                    .analog()
+                    .expect("a lifted per-conductor node has analog faces");
+                InputPort::from(InputZ::with_conductors(z.z_in(), conductors))
+            })
             .collect();
         let outputs = inner
             .outputs()
             .iter()
-            .map(|f| OutputZ::with_conductors(f.z_out(), conductors))
+            .map(|f| {
+                let z = f
+                    .analog()
+                    .expect("a lifted per-conductor node has analog faces");
+                OutputPort::from(OutputZ::with_conductors(z.z_out(), conductors))
+            })
             .collect();
         // One lane per conductor: replicas for the extra legs, then the original.
         let mut lanes: Vec<Box<dyn Node>> = (1..conductors).map(|_| inner.replicate()).collect();
@@ -62,15 +74,15 @@ impl Lifted {
 }
 
 impl Node for Lifted {
-    fn inputs(&self) -> &[InputZ] {
+    fn inputs(&self) -> &[InputPort] {
         &self.inputs
     }
 
-    fn outputs(&self) -> &[OutputZ] {
+    fn outputs(&self) -> &[OutputPort] {
         &self.outputs
     }
 
-    fn process(&mut self, inputs: &[VoltageBuffer], outputs: &mut [VoltageBuffer]) {
+    fn process(&mut self, inputs: &[Lane], outputs: &mut [Lane]) {
         // Conductor k ↔ lane k. Each lane is a single-conductor node, so it gets a one-element
         // input/output slice — the same disjoint-pool borrows the schedule already relies on.
         let has_input = self.has_input;
@@ -102,7 +114,8 @@ impl Node for Lifted {
 mod tests {
     use super::*;
     use crate::electrical::Ohms;
-    use crate::signal::{AnalogRate, Volts};
+    use crate::signal::{AnalogRate, VoltageBuffer, Volts};
+    use crate::test_util::process_voltage;
 
     fn rate() -> AnalogRate {
         AnalogRate::new(384_000.0)
@@ -113,32 +126,33 @@ mod tests {
     /// running total. Per-conductor, so it can be lifted.
     struct Accum {
         acc: f32,
-        inputs: [InputZ; 1],
-        outputs: [OutputZ; 1],
+        inputs: [InputPort; 1],
+        outputs: [OutputPort; 1],
     }
 
     impl Accum {
         fn new() -> Self {
             Self {
                 acc: 0.0,
-                inputs: [InputZ::new(Ohms::new(10_000.0))],
-                outputs: [OutputZ::new(Ohms::new(150.0))],
+                inputs: [InputZ::new(Ohms::new(10_000.0)).into()],
+                outputs: [OutputZ::new(Ohms::new(150.0)).into()],
             }
         }
     }
 
     impl Node for Accum {
-        fn inputs(&self) -> &[InputZ] {
+        fn inputs(&self) -> &[InputPort] {
             &self.inputs
         }
-        fn outputs(&self) -> &[OutputZ] {
+        fn outputs(&self) -> &[OutputPort] {
             &self.outputs
         }
-        fn process(&mut self, inputs: &[VoltageBuffer], outputs: &mut [VoltageBuffer]) {
+        fn process(&mut self, inputs: &[Lane], outputs: &mut [Lane]) {
             for (o, &v) in outputs[0]
+                .voltage_mut()
                 .as_mut_slice()
                 .iter_mut()
-                .zip(inputs[0].as_slice())
+                .zip(inputs[0].voltage().as_slice())
             {
                 self.acc += v;
                 *o = self.acc;
@@ -156,8 +170,8 @@ mod tests {
     fn widens_the_faces_to_the_conductor_count() {
         let lifted = Lifted::new(Box::new(Accum::new()), 2);
         assert_eq!(lifted.inputs().len(), 1);
-        assert_eq!(lifted.inputs()[0].conductors(), 2);
-        assert_eq!(lifted.outputs()[0].conductors(), 2);
+        assert_eq!(lifted.inputs()[0].lane_count(), 2);
+        assert_eq!(lifted.outputs()[0].lane_count(), 2);
     }
 
     #[test]
@@ -175,7 +189,7 @@ mod tests {
             VoltageBuffer::zeros(4, rate()),
             VoltageBuffer::zeros(4, rate()),
         ];
-        lifted.process(&ins, &mut outs);
+        process_voltage(&mut lifted, &ins, &mut outs);
         assert_eq!(
             outs[0].as_slice(),
             &[1.0, 2.0, 3.0, 4.0],
