@@ -6,3 +6,4 @@
 //! fills it in — the implicit capture, the WAV writer, and the offline render driver.
 
 pub mod capture;
+pub mod wav;

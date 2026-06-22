@@ -11,6 +11,8 @@ engine.workspace = true
 # Terminal Braille line plots — harness-only (this is a native binary, so the dep never
 # reaches the engine or its wasm32 build). Used to *see* the voltage waveforms.
 textplots = "0.8"
+# WAV read/write for offline renders and golden-file comparison — harness-only, native.
+hound = "3.5"
 
 [dev-dependencies]
 approx.workspace = true
