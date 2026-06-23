@@ -196,18 +196,21 @@ The vocabulary later epics build on. Names are the actual public API unless mark
 
 ## Epic 2 — Offline Render ("hear it" cheaply)
 
-**Progress:** Stories 2.1 ✅ and 2.2 ✅ done. 2.1 — **first audible render**: a played note runs through
-`synth → (AD → DA →) speaker`, the speaker voltage is captured off-sim-clock to 48 kHz, and written to a
-float32 WAV. 2.2 — **first real DSP**: a `Biquad` primitive + RBJ designers, a `ThreeBandEq` and a
-feed-forward `Compressor` (both pure-digital, between the modeled AD and DA), and harness scenarios that
-render the note through each. Story 2.3 (golden harness + converter-payoff demos) remains.
+**Progress:** Stories 2.1 ✅ and 2.2 ✅ done; **2.3 deferred** (see below). 2.1 — **first audible render**:
+a played note runs through `synth → (AD → DA →) speaker`, the speaker voltage is captured off-sim-clock to
+48 kHz, and written to a float32 WAV. 2.2 — **first real DSP**: a `Biquad` primitive + RBJ designers, a
+`ThreeBandEq` and a feed-forward `Compressor` (both pure-digital, between the modeled AD and DA), and
+harness scenarios that render the note through each. The epic's behavior is validated by **numeric oracles**
+(unit tests + the harness integration tests in `tests/render.rs`) and **by ear** via the render scenarios;
+the **golden-file regression harness is deferred** until drift/quality issues actually appear (2.3).
 
 **Goal:** reach the audio oracle without real-time infrastructure — the *same* engine (driven block by
 block via `Schedule::process_io`) rendered flat-out into a WAV. First real DSP and a trivial speaker so
 there's something meaningful to hear.
 
 **Exit criteria:** build a chain, render it, and the result sounds correct; DSP and converter behavior
-validated by listening **and** golden-file tests.
+validated by listening **and** numeric-oracle tests. *(The originally-planned golden-file regression layer
+is deferred to 2.3 — added if/when drift surfaces; the numeric oracles are the standing guard.)*
 
 **Epic-wide watch-outs:** this is a **test harness, not a second engine** — the render driver is a loop
 over `process_io` plus a file writer, nothing more. Determinism (seeded) is what makes golden-file tests
@@ -392,13 +395,38 @@ compression below threshold drops the sustain peak to < 60 %) via a shared `rend
 engine tests** (+22: 6 biquad, 5 envelope, 4 EQ, 7 compressor) and **5 render integration tests** (+2)
 green.
 
-### Story 2.3 — Golden-file harness + converter-payoff demos
-*Goal:* lock down the epic's renders and demonstrate the converter payoff by ear. Build the **golden-file
-regression harness** (tolerance + spectral comparison, deterministic fixed patches, a `--bless`
-regeneration path) and the **payoff demo renders**: aliasing via a weak AA filter and quantization noise
-via low bit depth — reusing the Story-1.6 tap-count and bit-depth knobs on the *modeled* AD. *Watch out:*
-artifacts must originate in the modeled converters, never the transparent implicit capture; golden refs
-are blobs in-repo (size) blessed on the documented reference target. *Absorbs old 2.3.2 + 2.3.3.*
+### Story 2.3 — Golden-file harness + converter-payoff demos — ⏸️ **Deferred**
+*Deferred (2026-06-23):* the standing **numeric oracles** (engine unit tests + the harness integration
+tests in `tests/render.rs`) already pin the epic's behavior against hand calcs, and the render scenarios
+cover the ear check. A golden-file *regression* layer only earns its keep once we're actually fighting
+drift or quality regressions — so it's deferred until that need shows up, rather than built speculatively
+now. The **converter-payoff demos** (aliasing, quantization) ride along with it and are deferred too; the
+knobs they'd use already exist (`AdConverter::with_aa_taps`, `BitDepth`) and the naive-sawtooth voice has
+the HF content aliasing needs, so picking this up later is cheap.
+
+*If/when resumed, the design is settled (decided in the 2.3 assessment pass, superseding the epic-level
+"per-sample epsilon + WAV blobs" note above):*
+- **Feature-vector goldens, not waveform blobs.** Reduce each render to a small committed JSON of measured
+  metrics (fundamental Hz + amplitude, broadband RMS, THD, peak, noise-floor; plus an alias-bin energy /
+  quantization-noise figure for the payoff demos), compared per-metric with explicit tolerances. Rationale:
+  dev is macOS-**ARM**, CI is Linux-**x86**, and coeff-design `sin`/`exp` + FMA contraction aren't
+  bit-portable across them, so a per-sample epsilon would have to be too loose to guard well; physically
+  meaningful metrics are portable, tiny in-repo, and survive harmless refactors.
+- **`--bless` via a bin flag over a shared lib.** `cargo run -p harness -- --bless` regenerates all
+  goldens; the reduce + (de)serialize logic lives in `harness::golden` so the bin and the read-and-compare
+  tests share one path and can't drift (still no arg-parser crate — minimal `std::env::args()` in `main`).
+  Goldens live in a committed dir (e.g. `crates/harness/tests/golden/*.json`), distinct from gitignored
+  `renders/`.
+- **Six renders locked down:** first_sound, first_sound_analog, eq, compressed, + the two payoff demos
+  (aliasing_weak, quant_low). The textplots scenarios (1–6) aren't WAV renders and stay unguarded.
+- **Payoff demos get numeric oracles, not just ear + golden:** aliasing asserts fold-bin energy appears
+  with weak taps and is absent with strong; quantization asserts the broadband noise floor rises ~the
+  expected per-bit amount vs a high-bit reference.
+- **Spectral helper:** promote the harness's single-bin DFT (`bin_magnitude`/`rms`, today in
+  `tests/render.rs`) into the lib and add a THD + broadband-noise-floor measure, shared by bless, the
+  oracle tests, and the golden compare. The existing eq/compressor *semantic* oracles stay — golden is
+  regression-on-top, not a replacement.
+*Absorbs old 2.3.2 + 2.3.3.*
 
 ---
 
