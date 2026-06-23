@@ -24,6 +24,14 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c8efb64bd706a16a1bdde310ae86b351e4d21550d98d056f22f8a7f7a2183fec"
 
 [[package]]
+name = "capture"
+version = "0.1.0"
+dependencies = [
+ "approx",
+ "engine",
+]
+
+[[package]]
 name = "colored"
 version = "2.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -64,6 +72,7 @@ name = "harness"
 version = "0.1.0"
 dependencies = [
  "approx",
+ "capture",
  "engine",
  "hound",
  "textplots",

@@ -6,7 +6,7 @@
 //! output tap is expected to be the speaker's voltage (Story 2.1); what comes back is mono,
 //! normalized host audio ready for [`crate::wav`].
 
-use crate::capture::Capture;
+use capture::Capture;
 use engine::{AnalogRate, EventQueue, SampleRate, Schedule, VoltageBuffer};
 
 /// What to render and how long.

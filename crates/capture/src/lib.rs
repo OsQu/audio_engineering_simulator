@@ -8,6 +8,11 @@
 //! meaning. Its one job is to stay **transparent**: every audible artifact in a render must
 //! originate in the *modeled* AD/DA under test, never here. So it reuses the same windowed-sinc
 //! [`Decimator`] the modeled AD uses, with the same steep default spec.
+//!
+//! It lives in its **own crate** (depending only on `engine`, no native deps) so it is reachable
+//! from both the native render harness *and* the wasm32 browser bindings (the in-worklet model and
+//! the feasibility benchmark both need it). Keeping it out of `engine` makes the "capture is
+//! outside the simulation" boundary explicit.
 
 use engine::{AnalogRate, Decimator, SampleRate, kaiser_beta};
 
