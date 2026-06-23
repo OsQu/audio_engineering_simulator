@@ -166,7 +166,8 @@ The vocabulary later epics build on. Names are the actual public API unless mark
 - **Polyphony / voice allocation:** the voice is monophonic, last-note priority. → past Epic 1.
 - **MIDI CC (events→param):** would blur the two-lane separation; note events only today. → deferred.
 - **Lock-free cross-thread validation** of the param/event queues and schedule swap: SPSC-shaped but
-  exercised single-threaded today. → **Epic 3** (real AudioWorklet thread).
+  exercised single-threaded today. → **Epic 3**: the param/event *drain* runs on the real audio thread from
+  3.2 (over `postMessage`), and the genuinely lock-free SAB transport lands in **3.4**.
 - **Phantom supply path / current-draw sag:** the condenser source just emits +48 V common-mode when
   powered. → informed approximation, deferred.
 
@@ -433,22 +434,138 @@ the HF content aliasing needs, so picking this up later is cheap.
 ## Epic 3 — Real-Time Playback (the north star)
 
 **Goal:** the engine live in the browser — turn knobs and play an instrument with low latency, glitch-free.
-Engine-in-AudioWorklet (WASM), shallow render-ahead, lock-free param + event lanes across the thread boundary.
+The engine runs **inside the AudioWorklet** (WASM) on the audio thread; control crosses the main→audio
+boundary as sparse messages. This epic retires the heaviest technical unknown (real-time fidelity of the
+oversampled voltage domain) flagged in PROJECT_PLAN §10.
 
 **Exit criteria:** a running patch is audible in real time, stable (no dropouts under normal use),
 with knob changes and note playing responsive at low latency (~5–12 ms target).
 
 **Watch-outs:** the hot-path contracts (zero-alloc, lock-free, panic-free, denormal flush) become
-non-negotiable here. SharedArrayBuffer needs COOP/COEP headers on the serving origin. Measure latency,
-don't assume it.
+non-negotiable here — a panic or stall on the audio thread kills the stream. `cargo wasm` is only a
+*portability check* today; this epic produces the first real WASM **build + instantiation**, a gap bigger
+than the one-line task wording used to imply. Measure latency, don't assume it. **Mono only** (epic-wide,
+inherited from Epic 2 — multichannel digital is Epic 5); the single output channel is duplicated to the
+output device's channels.
 
-- **Task 3.1.1** — WASM build of the engine (`wasm32` + SIMD), size/perf sanity, minimal JS bindings.
-- **Task 3.2.1** — AudioWorklet host: instantiate engine in the worklet, process per quantum, shallow render-ahead.
-- **Task 3.2.2** — COOP/COEP serving setup + SharedArrayBuffer for the param/event lanes.
-- **Task 3.3.1** — Live control: UI/keyboard → control-param queue across the thread boundary.
-- **Task 3.3.2** — Live events: Web MIDI + computer keyboard → timestamped event queue (playing).
-- **Task 3.4.1** — Glitch-free hardening: panic-free audit of the hot path, denormal flush, schedule hot-swap under load.
-- **Task 3.4.2** — Latency measurement + tuning (render-ahead depth vs. responsiveness).
+**Settled this planning pass (the architecture decisions that shape the stories):**
+- **Execution model — engine *inside* the AudioWorklet, single-threaded on the audio thread (not a
+  Worker+ring).** `Schedule::process_io` runs synchronously in `process()`; lowest latency, simplest, no
+  SharedArrayBuffer needed to make sound. The jitter cushion is the **browser's own output buffer**, sized
+  via `AudioContext({ latencyHint })` to ~3–4 quanta (~8 ms) — a single thread *cannot grow its own
+  render-ahead buffer* (it only computes during callbacks), so the browser buffer is the cushion, and its
+  depth *is* added latency. **This is gated on the 3.1 perf spike:** comfortable throughput headroom
+  (≳2–3× real-time) confirms it; marginal (~1.2–1.8×) forces a fallback to a **Worker + SAB ring** (engine
+  renders ahead concurrently, worklet drains — robust to sustained load but adds latency + complexity);
+  <1× means cut the oversampling factor or optimize the hot path before real-time is viable. A→Worker
+  migration keeps the engine surface intact (only *where* `process_io` is called moves).
+- **Bindings — hybrid.** `wasm-bindgen` for the cold/setup surface (construct/configure the engine,
+  generated TS types for Epic 4 to consume) — the well-beaten path — but the **per-quantum hot path
+  reads/writes raw shared linear memory directly** (a `Float32Array` view over WASM memory), bypassing
+  marshalling for zero-copy `process()`. Accepts the `wasm-bindgen-cli`/`wasm-pack` tooling + version
+  pinning. The raw hot path needs a localized `#[allow(unsafe_code)]` (the per-module opt-in the workspace
+  lint policy already anticipates).
+- **Web/dev harness — Vite + TypeScript, a *throwaway page* on *reusable infrastructure*.** A top-level
+  `web/` dir (peer to `crates/`, own `package.json`) hosts the worklet + WASM and a dumb test rig (a few
+  sliders + a keyboard). This respects **engine-before-UI** (PROJECT_PLAN §4): the *page* is disposable,
+  but the *build/serve infrastructure* (Vite, wasm integration, worklet-loading pattern, COOP/COEP) carries
+  into Epic 4's real UI. Not the Epic 4 product UI — that is built once against the proven API.
+- **Param/event transport — postMessage-first.** Both lanes cross via `port.postMessage`, drained at the
+  top of `process()` into Epic 1's existing `ParamQueue`/`EventQueue`. Params push a **latest-wins target
+  value** (the engine's own `Smoother` de-zippers — so **not** `AudioParam`, which would double-smooth and
+  can't express a graph-dynamic param set). Events push `(when, message)`. The **lock-free SAB ring**
+  (sample-accurate, zero-alloc, the thing that genuinely retires the deferred *"lock-free cross-thread
+  validation"* item) is an isolated 3.4 upgrade *behind the same `EventQueue::push` interface* — and the
+  one thing that forces COOP/COEP, so it stays off the critical path until then.
+- **The real-time correctness oracle is a native↔WASM *parity* test** (same patch, same seed → engine
+  output matches within tolerance), plus runtime health metrics (underrun counter, measured latency). You
+  cannot golden-file a live session, and `cargo wasm` won't catch numeric drift or a broken artifact, so
+  parity is the standing guard for the WASM build.
+- **SIMD is measure-driven, not upfront.** Rely on LLVM autovectorization with `+simd128` first; reach for
+  explicit intrinsics (more `unsafe`) only on hot loops the 3.1 spike proves are over budget.
+
+> *Tasks below are a coarse sketch, fleshed out to Task level when each Story is picked up — per the
+> detail-gradient convention (Epics 2–3 carry Tasks but expect churn). Goals, watch-outs, and the settled
+> decisions are recorded now.*
+
+### Story 3.1 — WASM engine + real-time feasibility spike
+*Goal:* the first real **WASM artifact of the engine** plus the **faster-than-real-time benchmark** that
+gates the whole epic — proof the oversampled chain renders the canonical patch with enough headroom for the
+in-worklet model. Stands up the hybrid-bindings scaffolding (`wasm-bindgen` cold surface + a raw-memory
+`process`) and relocates the **implicit capture** (`Decimator` + monitor-reference scale/clamp) out of the
+native harness into a WASM-reachable layer (the capture is portable engine code today, but it lives in
+`crates/harness` beside `hound`/`textplots`, which never reach wasm32).
+*Watch out:* this is the first time we build and *instantiate* WASM, not just `cargo check` it — expect
+toolchain friction. Don't optimize before measuring; SIMD/hot-loop work is justified only if the spike is
+marginal. Keep the `unsafe` of the raw hot path localized and commented.
+- WASM build pipeline (`wasm-pack`/`wasm-bindgen`, `+simd128`, release `panic=abort`); real `wasm-bindings` surface.
+- Hybrid surface: `wasm-bindgen` construct/configure; raw `process(out_ptr, n)` over linear memory.
+- Relocate the capture to a portable (wasm-reachable) spot; the WAV/textplots bits stay harness-native.
+- Faster-than-real-time benchmark of the canonical patch in WASM; record the measured headroom.
+- Native↔WASM **parity test** (same patch/seed, output within tolerance) — wired into CI alongside a real wasm build.
+
+*Validate:* WASM builds and instantiates; the canonical patch renders comfortably faster than real-time in
+WASM (headroom recorded, execution model confirmed or the fallback triggered); the parity test is green;
+the full Rust gate stays green.
+
+### Story 3.2 — First real-time sound *(the live milestone)*
+*Goal:* the Epic-3 analogue of Story 1.3's "first runnable" and 2.1's "first sound" — a fixed patch
+(`synth note → AD → (DSP) → DA → speaker → capture`) **audible in the browser in real time**, clean at
+idle. Stands up the minimal Vite + TS harness, hosts the engine in an `AudioWorkletProcessor`, and wires the
+host-rate output into the worklet's output buffer.
+*Watch out:* the **bundler↔worklet** seam — the processor must load as a real URL via `addModule`
+(`new URL('./processor.ts', import.meta.url)` or a separate entry), not get inlined. The
+**wasm-bindgen-in-worklet** seam — no reliable `fetch` in the worklet scope, so compile the module bytes on
+the main thread and `postMessage` the `WebAssembly.Module` into the worklet to instantiate there. Set the
+browser cushion via `latencyHint` (~8 ms). `block_len` is the 128-frame quantum × M analog samples — honor
+the multiple-of-M constraint. Duplicate mono → output channels.
+- Vite + TS scaffold under `web/`; dev server; load the WASM + worklet.
+- `AudioWorkletProcessor` hosting the engine instance (main-thread compile → postMessage module → instantiate).
+- Per-quantum `process()`: run the engine, capture to host rate, write the output buffer.
+- Fixed first-sound demo patch + an idle-stability check (no dropouts at no load).
+
+*Validate:* a fixed patch plays continuously and recognizably in the browser, clean at idle; the live output
+matches the offline render of the same patch (parity holds across the worklet boundary).
+
+### Story 3.3 — Live control & playing
+*Goal:* turn knobs and play the instrument live — **control params** (sliders → latest-wins target →
+`ParamQueue`) and **events** (computer keyboard + Web MIDI → `EventQueue`), both over `postMessage`, applied
+at the top of `process()`.
+*Watch out:* the **event-clock trap** — Web MIDI and DOM events fire on the main thread in host-frame /
+`AudioContext.currentTime` units, but the engine timestamps events in its own **analog-rate** sample clock
+(`sample_pos` advances by `block_len`); map host time → analog samples (× M) and schedule slightly ahead to
+absorb postMessage delivery jitter, or notes land at the wrong instant. Push **raw target values**, not
+`AudioParam` automation (the engine's `Smoother` owns de-zippering). postMessage deserialization allocates
+on the audio thread — fine at human rates, but watch it under a flood (the 3.4 SAB ring is the fix).
+- Param transport: main→worklet slider values → `ParamQueue` (a couple of mapped knobs on the demo patch).
+- Event transport: computer-keyboard keys → `EventQueue`, with the host-time→analog-sample mapping.
+- Web MIDI input → the same event path (playing from a controller).
+
+*Validate:* a slider audibly and smoothly changes a param (no zipper); playing keys / MIDI sounds notes at
+the right pitch and timing, glitch-free and responsive at low latency.
+
+### Story 3.4 — Glitch-free & low-latency hardening *(the epic exit)*
+*Goal:* make it robust and *measured* — a panic/denormal audit of the hot path under real-time, the
+**lock-free SAB event ring** (which truly retires the deferred *"lock-free cross-thread validation"* item),
+underrun-free operation under load, and **latency measurement + tuning** (cushion depth vs. responsiveness
+against the ~5–12 ms target).
+*Watch out:* the SAB ring is what **forces COOP/COEP** (cross-origin isolation) — add the headers in Vite's
+`server.headers` here, not earlier. Measure real latency (`baseLatency`/`outputLatency` + engine FIR group
+delay + cushion), don't assume it. The ring upgrades the event lane *behind* `EventQueue::push`, so nothing
+above it moves.
+- Panic-free / denormal audit of the live hot path; stress under sustained playing + load with an underrun counter.
+- SAB event ring (JS writer + Rust atomics reader) behind `EventQueue::push`; COOP/COEP via Vite.
+- Latency measurement + cushion tuning; document the achieved figure and the latency/robustness tradeoff.
+
+*Open question (resolve at story pickup):* **schedule hot-swap under load** has no real trigger in Epic 3 —
+there is no UI to edit the graph until Epic 4 (graph mutation → recompile + atomic swap is a 4.3 concern).
+Either keep a *minimal* swap smoke-test here (exercise the `ScheduleSlot` handoff on the real audio thread)
+or move that deferred item to Epic 4 with the patch-cable work. Leaning: a minimal test here (cheap, proves
+the seam cross-thread), the real graph-edit flow in 4.3.
+
+*Validate:* no underruns under sustained playing + load; measured round-trip latency within the ~5–12 ms
+target (or the gap documented with the cushion tradeoff); the hot path is audited panic-free; the SAB ring
+carries events sample-accurately. **Epic 3 exit met.**
 
 ---
 
