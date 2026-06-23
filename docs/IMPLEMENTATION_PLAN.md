@@ -464,7 +464,9 @@ output device's channels.
   reads/writes raw shared linear memory directly** (a `Float32Array` view over WASM memory), bypassing
   marshalling for zero-copy `process()`. Accepts the `wasm-bindgen-cli`/`wasm-pack` tooling + version
   pinning. The raw hot path needs a localized `#[allow(unsafe_code)]` (the per-module opt-in the workspace
-  lint policy already anticipates).
+  lint policy already anticipates). **Sequencing:** the **raw zero-copy hot path lands in 3.2**, when the
+  worklet drains it every quantum; **3.1 ships only the minimal compute-only surface** the feasibility
+  benchmark needs (loop `process` inside WASM, time from JS — no marshalling, no `unsafe`).
 - **Web/dev harness — Vite + TypeScript, a *throwaway page* on *reusable infrastructure*.** A top-level
   `web/` dir (peer to `crates/`, own `package.json`) hosts the worklet + WASM and a dumb test rig (a few
   sliders + a keyboard). This respects **engine-before-UI** (PROJECT_PLAN §4): the *page* is disposable,
@@ -477,10 +479,13 @@ output device's channels.
   (sample-accurate, zero-alloc, the thing that genuinely retires the deferred *"lock-free cross-thread
   validation"* item) is an isolated 3.4 upgrade *behind the same `EventQueue::push` interface* — and the
   one thing that forces COOP/COEP, so it stays off the critical path until then.
-- **The real-time correctness oracle is a native↔WASM *parity* test** (same patch, same seed → engine
-  output matches within tolerance), plus runtime health metrics (underrun counter, measured latency). You
-  cannot golden-file a live session, and `cargo wasm` won't catch numeric drift or a broken artifact, so
-  parity is the standing guard for the WASM build.
+- **Testing posture — unit-test each side, verify the bridge by hand, automate later if needed.** Per the
+  [[defer-speculative-test-infra]] approach: the engine is guarded by its existing Rust unit tests, JS glue
+  by TS-side unit tests, and the Rust↔JS bridge is checked **manually**. A native↔WASM **parity** test
+  (same patch/seed → output within tolerance) is the natural standing guard for numeric drift the
+  build-only `wasm-pack build` can't catch — but it is **deferred** until a wasm-only divergence actually
+  surfaces, rather than built speculatively in 3.1. Runtime health metrics (underrun counter, measured
+  latency) arrive with the hardening work in 3.4. *(You cannot golden-file a live session regardless.)*
 - **SIMD is measure-driven, not upfront.** Rely on LLVM autovectorization with `+simd128` first; reach for
   explicit intrinsics (more `unsafe`) only on hot loops the 3.1 spike proves are over budget.
 
@@ -489,24 +494,84 @@ output device's channels.
 > decisions are recorded now.*
 
 ### Story 3.1 — WASM engine + real-time feasibility spike
-*Goal:* the first real **WASM artifact of the engine** plus the **faster-than-real-time benchmark** that
-gates the whole epic — proof the oversampled chain renders the canonical patch with enough headroom for the
-in-worklet model. Stands up the hybrid-bindings scaffolding (`wasm-bindgen` cold surface + a raw-memory
-`process`) and relocates the **implicit capture** (`Decimator` + monitor-reference scale/clamp) out of the
-native harness into a WASM-reachable layer (the capture is portable engine code today, but it lives in
+*Goal:* the first real **WASM artifact of the engine** plus the **in-browser faster-than-real-time
+benchmark** that gates the whole epic — proof the oversampled voltage chain renders the canonical patch
+with enough headroom for the in-worklet model. Stands up the WASM build pipeline + a **minimal
+compute-only** `wasm-bindgen` surface, and relocates the **implicit capture** (`Decimator` +
+monitor-reference scale/clamp) out of the native harness into a new shared **`capture` crate** reachable by
+both the native harness and the WASM bindings (the capture is portable engine code today, but it lives in
 `crates/harness` beside `hound`/`textplots`, which never reach wasm32).
-*Watch out:* this is the first time we build and *instantiate* WASM, not just `cargo check` it — expect
-toolchain friction. Don't optimize before measuring; SIMD/hot-loop work is justified only if the spike is
-marginal. Keep the `unsafe` of the raw hot path localized and commented.
-- WASM build pipeline (`wasm-pack`/`wasm-bindgen`, `+simd128`, release `panic=abort`); real `wasm-bindings` surface.
-- Hybrid surface: `wasm-bindgen` construct/configure; raw `process(out_ptr, n)` over linear memory.
-- Relocate the capture to a portable (wasm-reachable) spot; the WAV/textplots bits stay harness-native.
-- Faster-than-real-time benchmark of the canonical patch in WASM; record the measured headroom.
-- Native↔WASM **parity test** (same patch/seed, output within tolerance) — wired into CI alongside a real wasm build.
 
-*Validate:* WASM builds and instantiates; the canonical patch renders comfortably faster than real-time in
-WASM (headroom recorded, execution model confirmed or the fallback triggered); the parity test is green;
-the full Rust gate stays green.
+*Scope decisions this planning pass (narrower than the original epic sketch — see the two amended
+epic-level bullets above):*
+- **The benchmark is the whole point, and it runs in a real browser, by hand.** The gate is "can the
+  oversampled chain fly with this oversampling factor." We do **not** automate end-to-end testing here:
+  the engine is guarded by its existing Rust unit tests, any JS glue by TS-side unit tests, and the
+  Rust↔JS **bridge is verified manually**. A native↔WASM **parity test is deferred** (the
+  [[defer-speculative-test-infra]] approach — same instinct as the 2.3 golden-harness deferral); it
+  becomes the fast-follow *only if a wasm-only numeric divergence (SIMD reassociation, denormals, libm
+  `exp`/`sin` drift) actually surfaces*. **Accepted risk:** until then, nothing automatically catches such
+  a divergence.
+- **Only the minimal compute-only bindgen surface ships here.** The hybrid bindings' **raw-memory
+  zero-copy `process` hot path moves to 3.2**, where the worklet actually drains output every quantum. For
+  a *feasibility gate* we loop `process` entirely inside WASM and time it from JS — this isolates raw
+  compute headroom from marshalling cost (tiny and constant) and needs almost no surface and **no
+  `unsafe`** yet.
+
+*Watch out:* this is the first time we build and *instantiate* WASM, not just `cargo check` it — expect
+toolchain friction; `wasm-bindgen-cli` must be pinned to **exactly** the `wasm-bindgen` crate version.
+Measure, don't assume — benchmark at the **real RT block size** (128 host frames × M = **1024 analog
+samples**), not the render harness's 384, and report **per-quantum worst case**, not just mean throughput
+(real-time dies on the slow callback). The benchmark page is a **throwaway static page** — *not* the Vite
+harness, which is 3.2; don't pull Vite forward. Enable `+simd128` for the gate (that's the real
+deployment) and also record a scalar number to know the SIMD win. `panic=abort` in release/wasm means a
+panic kills the run — fine, since `process` is already total.
+
+*Design notes (settled at planning):*
+- **New `capture` crate** (workspace member, peer to `engine`), depending **only on `engine`** — stays
+  pure (no `hound`/`textplots`/native deps) so it compiles to wasm32. `Capture` and its tests move
+  **verbatim** from `crates/harness/src/capture.rs`; `harness` and `wasm-bindings` both depend on it. A
+  dedicated crate keeps the "**capture is outside the simulation**" boundary explicit (better than burying
+  it in `engine`).
+- **Canonical patch, pinned (the gate fixture):** `synth → modeled AD → modeled DA → speaker` (the
+  `first_sound_graph` shape), `AnalogRate` 384 kHz, host 48 kHz (M = 8), `seed = 0`, **`block_len = 1024`**
+  (the RT quantum), 1 V full-scale; a sustained note gated on so the voice is actually generating. Built
+  **inline in the bindgen type** (a ~10-line duplication of `first_sound_graph` — acceptable; keeps the
+  harness's `main` scenarios independent). Record this config so the headroom figure is reproducible.
+- **Minimal compute-only surface:** a `#[wasm_bindgen]` engine type that, on construction, builds the
+  pinned patch via `compile(graph, block_len, rate, seed)` + a `Capture`, and exposes a `render_blocks(n)`
+  that loops `process_with_events` + `Capture::process` **inside WASM** (no per-block marshalling). JS
+  times it with `performance.now()`. No raw pointer / `Float32Array` view yet (→ 3.2).
+- **Build pipeline:** `wasm-pack build --target web` (release; `panic=abort` already set), `+simd128` via
+  a wasm32 `target-feature` (RUSTFLAGS or `.cargo/config.toml`). Add a **build-only `wasm-pack build` step
+  to CI** to catch bindgen breakage (`cargo wasm` only `check`s — it won't catch a broken artifact). The
+  benchmark itself is **run manually in a browser**, not in CI.
+- **Reporting:** the page prints the realtime ratio (wall-clock to render T s of audio ÷ T) and the
+  per-quantum max, with and without `+simd128`. The number **decides the 3.2 execution model**: ≳2–3× →
+  engine-in-worklet single-thread; marginal (~1.2–1.8×) → Worker + SAB ring fallback; <1× → cut the
+  oversample factor / optimize the hot path before real-time is viable.
+
+- **Task 3.1.1** — New shared **`capture` crate**: move `Capture` (+ its tests) out of `harness` into a
+  workspace member depending only on `engine`; repoint `harness` to it; confirm it `cargo wasm`-checks.
+  Pure mechanical move, no behavior change — the full Rust gate stays green.
+- **Task 3.1.2** — **WASM build pipeline**: add `wasm-bindgen` to `wasm-bindings`, the `+simd128` config,
+  and `wasm-pack build --target web` producing an artifact; add a build-only `wasm-pack build` step to CI.
+  Document the exact install + build commands (the `wasm-pack`/`wasm-bindgen-cli` installs are the user's
+  to run; pin the CLI to the crate version).
+- **Task 3.1.3** — **Minimal compute-only bindgen surface**: a `#[wasm_bindgen]` engine type that builds
+  the pinned canonical patch + `Capture` and exposes `render_blocks(n)` looping `process` + capture inside
+  WASM. A native rlib unit test asserts `render_blocks` runs and produces non-silence (guards the surface
+  natively, no browser needed).
+- **Task 3.1.4** — **Throwaway browser benchmark page**: static HTML + JS loading the `--target web`
+  artifact, running `render_blocks` in a `performance.now()` loop at the pinned config, reporting realtime
+  ratio + per-quantum worst case, with and without `+simd128`. Record the measured headroom here and the
+  resulting 3.2 execution-model decision.
+
+*Validate:* WASM builds and instantiates in a browser; the canonical patch renders comfortably
+faster-than-real-time (headroom recorded; in-worklet single-thread confirmed, or the Worker+SAB fallback
+triggered for 3.2); `wasm-pack build` is green in CI; the full Rust gate (`fmt`/`lint`/`test`/`wasm`/`docs`)
+stays green. *(No automated parity — Rust unit tests + TS unit tests + a manual bridge check, per the
+deferral above.)*
 
 ### Story 3.2 — First real-time sound *(the live milestone)*
 *Goal:* the Epic-3 analogue of Story 1.3's "first runnable" and 2.1's "first sound" — a fixed patch
