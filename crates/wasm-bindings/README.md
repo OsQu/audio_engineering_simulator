@@ -1,8 +1,10 @@
 # wasm-bindings — building the browser artifact
 
 The engine compiled to `wasm32-unknown-unknown` with `wasm-bindgen` glue, consumed by the Epic-3
-browser harness. Story 3.1 ships only the minimal compute-only surface for the feasibility
-benchmark (see `src/lib.rs`).
+browser harness. Two surfaces (see `src/lib.rs`): `BenchEngine` — the frozen Story 3.1 compute-only
+feasibility-benchmark fixture; and `RtEngine` — the Story 3.2 real-time surface the AudioWorklet
+drains one quantum at a time, exposing its captured host block zero-copy (`out_ptr`/`out_len`) for a
+`Float32Array` view over wasm memory.
 
 ## Prerequisites (one-time, user-run system installs)
 
@@ -49,6 +51,33 @@ It reports the realtime ratio (throughput headline), per-quantum mean/max agains
 quantum budget, and a verdict, for both the scalar and `+simd128` builds side by side. No COOP/COEP
 needed (no `SharedArrayBuffer` until 3.4). The `pkg*` dirs are gitignored; the page + `build.sh` are
 tracked.
+
+## Real-time first sound (Story 3.2, Phase A)
+
+`rt/` is a **throwaway** static page (no bundler — the Vite/TS harness is Phase B / Story 3.2.5) that
+plays the canonical patch live in an `AudioWorkletProcessor`, drained one quantum at a time from
+`RtEngine::render_quantum`.
+
+```sh
+sh crates/wasm-bindings/rt/build.sh      # builds rt/pkg/ + concatenates rt/processor.js (release)
+cd crates/wasm-bindings && python3 -m http.server 8000
+# open http://localhost:8000/rt/  →  click "start" (a user gesture is required to begin audio)
+```
+
+Two seams worth knowing:
+- **`--target no-modules`, not `--target web`.** `AudioWorkletGlobalScope` has no `import` /
+  `importScripts` and no reliable `fetch`. `build.sh` **concatenates** `worklet-polyfill.js` +
+  no-modules glue + `processor-impl.js` into the served `processor.js`, in that order (a top-level
+  `let` is not reliably shared across separate `addModule()` scripts, so it must all be one file).
+  The polyfill comes first because the worklet scope also lacks `TextDecoder`/`TextEncoder` (a Chrome
+  gap) and the glue constructs a `TextDecoder` eagerly at load time — only ever used for panic text.
+- **The wasm Module crosses by `postMessage`.** The main thread (`main.js`) `WebAssembly.compile`s the
+  bytes and posts the `Module` into the worklet, which `initSync`s it — there is no fetch in the
+  worklet. The `AudioContext` is pinned to `sampleRate: 48000` (the engine's host rate) so quanta line
+  up 1:1 (1024 analog ÷ M=8 = 128 = one render quantum); the mono block is duplicated to all channels.
+
+No COOP/COEP needed (no `SharedArrayBuffer` until 3.4). `rt/pkg/` and the generated `rt/processor.js`
+are gitignored; `index.html` / `main.js` / `processor-impl.js` / `build.sh` are tracked.
 
 ## Portability gate (no wasm-pack needed)
 
