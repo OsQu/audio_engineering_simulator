@@ -283,12 +283,15 @@ harness, not a second engine**.
 
 ## Epic 3 — Real-Time Playback (the north star)
 
-**Progress:** Stories 3.1 ✅ and 3.2 ✅ done. 3.1 — the engine builds to WASM and the in-browser
-feasibility benchmark clears the gate at **≈46× real-time** (in-worklet single-thread confirmed; the
-heaviest unknown in PROJECT_PLAN §10 is retired). 3.2 — **first real-time sound**: the canonical patch
-plays live in an `AudioWorkletProcessor`, drained zero-copy one quantum at a time, on both a throwaway
-static page and the Vite/TS harness (~5.3 ms base latency, clean at idle). Next: **3.3 — live control &
-playing** (sliders → params, keyboard/MIDI → events).
+**Progress:** Stories 3.1 ✅, 3.2 ✅, and 3.3 ✅ done. 3.1 — the engine builds to WASM and the
+in-browser feasibility benchmark clears the gate at **≈46× real-time** (in-worklet single-thread
+confirmed; the heaviest unknown in PROJECT_PLAN §10 is retired). 3.2 — **first real-time sound**: the
+canonical patch plays live in an `AudioWorkletProcessor`, drained zero-copy one quantum at a time, on
+both a throwaway static page and the Vite/TS harness (~5.3 ms base latency, clean at idle). 3.3 —
+**live control & playing**: sliders drive smoothed params and the computer keyboard / Web MIDI play
+notes, both over `port.postMessage` onto `RtEngine`'s named setters; verified by ear (smooth
+zipperless knobs, correct-pitch glitch-free notes from QWERTY and a MIDI source). Next: **3.4 —
+glitch-free & low-latency hardening** (the SAB event ring, latency measurement, the epic exit).
 
 **Goal:** the engine live in the browser — turn knobs and play an instrument with low latency, glitch-free.
 The engine runs **inside the AudioWorklet** (WASM) on the audio thread; control crosses the main→audio
@@ -564,7 +567,7 @@ processor, concatenated by `build.sh` into one classic script (`addModule` can't
 asset, `build-wasm.sh`, `.node-version` (Node 24 LTS), and **Biome** (lint+format, `biome.json` + committed
 `.vscode/` config). Both pages play identically.
 
-### Story 3.3 — Live control & playing
+### Story 3.3 — Live control & playing — ✅ **Done**
 *Goal:* turn knobs and play the instrument live — **control params** (sliders → latest-wins target →
 `ParamQueue`) and **events** (computer keyboard + Web MIDI → `EventQueue`), both over `port.postMessage`,
 drained at the top of `process()`. The patch already has what's needed: `SynthVoice` declares 5 smoothed
@@ -614,9 +617,30 @@ audio thread — fine at human rates, watch it under a flood (the 3.4 SAB ring i
 - **Task 3.3.4** — Web MIDI: request access, route note-on/off (and note-off-as-velocity-0) through the
   same message path; pick a device. Thin add over 3.3.3.
 
-*Validate:* a slider audibly and smoothly changes a param (no zipper); playing keys / a MIDI controller
-sounds notes at the right pitch, glitch-free and responsive at low latency. Hot path stays zero-alloc on
-the Rust side; the Rust gate + `web/` `biome check`/`typecheck` stay green.
+*Validate (✅ met):* a slider audibly and smoothly changes a param (no zipper); playing keys and a MIDI
+source sound notes at the right pitch, glitch-free and responsive at low latency. Hot path stays
+zero-alloc on the Rust side; the Rust gate + `web/` `biome check`/`typecheck` stayed green.
+
+*Delivered:* live control & playing — the patch is now **played and tweaked from the page**.
+**Engine (`wasm-bindings`, Task 3.3.1):** `RtEngine` resolves its five smoothed-knob handles + the
+voice event input at construction and exposes named setters — `set_level` / `set_attack_ms` /
+`set_decay_ms` / `set_sustain` / `set_release_ms` push **latest-wins targets** into an owned
+`ParamQueue` (the engine's `Smoother` de-zippers — *not* `AudioParam`), and `note_on(note, vel)` /
+`note_off(note)` push events into the `EventQueue` **stamped at the block about to render**
+(`blocks · BLOCK_LEN` — "play at the next quantum," ~2.7 ms granularity, zero host-time math).
+`render_quantum` switched to `process_io` so both lanes drain each block; the internal repeating-note
+demo was **removed** (the engine starts silent). Native rlib tests cover silence-until-`note_on` and
+`set_level` scaling output. **Web (`web/`, Tasks 3.3.2–3.3.4):** the worklet regained a
+`port.onmessage` mapping `{type:"param"|"noteOn"|"noteOff", …}` onto the setters (off the hot path —
+enqueue only, applied by the next `process_io` drain); `main.ts` wires two sliders (Level, Attack)
+with live readouts, a QWERTY→note keyboard (one octave from C4 + Z/X octave shift, key-repeat
+suppressed via a held-note `Set`), and **Web MIDI** routing every input's note-on/off (velocity-0 =
+note-off) through the *same* `send` path, re-attaching on device hot-plug. **Deviations from plan:**
+3.3.3 + 3.3.4 landed together in one `main.ts` (they share the send path); and the throwaway `rt/`
+static page was **left frozen as the 3.2 Phase-A artifact** — all live-control work went into the
+durable `web/` harness (the plan's "`web/` only if `rt/` is being retired" branch). **Note — known
+simplification (not a bug):** releasing a key *after* an octave shift can leave a note hanging (release
+keys before shifting); a held-key→note map is Epic 4 polish.
 
 ### Story 3.4 — Glitch-free & low-latency hardening *(the epic exit)*
 *Goal:* make it robust and *measured* — a panic/denormal audit of the hot path under real-time, the
