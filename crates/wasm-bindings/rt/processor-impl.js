@@ -2,50 +2,44 @@
 // `wasm_bindgen`) by rt/build.sh — the served file is rt/processor.js, not this one. Do not load
 // this file directly.
 //
-// Story 3.2, Phase A: the AudioWorklet that drains `RtEngine` one quantum at a time. The wasm
-// Module is compiled on the main thread and posted in (AudioWorkletGlobalScope has no reliable
-// `fetch`); we `initSync` it here, construct the engine, then read its captured host block
-// zero-copy via a single Float32Array view over wasm linear memory.
+// Story 3.2, Phase A: the AudioWorklet that drains `RtEngine` one quantum at a time. The wasm bytes
+// arrive via `processorOptions` (AudioWorkletGlobalScope has no reliable `fetch`); we compile +
+// instantiate them synchronously in the constructor, construct the engine, then read its captured
+// host block zero-copy via a single Float32Array view over wasm linear memory. No init message and
+// no ready/error handshake — the engine is live before the first process() call.
 
 class RtProcessor extends AudioWorkletProcessor {
-  constructor() {
+  constructor(options) {
     super();
     this.ready = false;
-    this.port.onmessage = (e) => {
-      if (!e.data || e.data.type !== "init") return;
-      // Exceptions here do NOT reach the main thread's try/catch — they just abort this handler and
-      // the node never reports `ready` (a silent hang). So catch and post the error back instead.
-      try {
-        // `wasm_bindgen` and `RtEngine` come from the glue concatenated ahead of this file.
-        if (typeof wasm_bindgen === "undefined") {
-          throw new Error("wasm_bindgen global missing — glue not concatenated ahead of processor");
-        }
-        // Hand initSync the raw bytes: it compiles them synchronously here (allowed off the main
-        // thread) via `new WebAssembly.Module(bytes)`. The main thread posts bytes, not a Module,
-        // because a Module can't be cloned into this scope in some browsers.
-        const wasm = wasm_bindgen.initSync({ module: e.data.bytes });
-        if (!wasm || !wasm.memory) throw new Error("initSync returned no memory export");
-        if (typeof wasm_bindgen.RtEngine !== "function") throw new Error("RtEngine missing from glue");
-
-        this.memory = wasm.memory;
-        this.engine = new wasm_bindgen.RtEngine();
-        this.len = this.engine.out_len(); // host samples per quantum (= 128 = the render quantum)
-        this.view = new Float32Array(this.memory.buffer, this.engine.out_ptr(), this.len);
-        this.ready = true;
-        this.port.postMessage({ type: "ready", len: this.len });
-      } catch (err) {
-        this.port.postMessage({
-          type: "error",
-          message: String((err && err.message) || err),
-          stack: err && err.stack ? String(err.stack) : null,
-        });
+    // A throw here aborts construction and fires `onprocessorerror` on the main thread (with no
+    // detail), so catch and post the message back ourselves for a legible status line.
+    try {
+      const bytes = options?.processorOptions?.bytes;
+      if (!bytes) throw new Error("no wasm bytes in processorOptions");
+      // `wasm_bindgen` and `RtEngine` come from the glue concatenated ahead of this file.
+      if (typeof wasm_bindgen === "undefined") {
+        throw new Error("wasm_bindgen global missing — glue not concatenated ahead of processor");
       }
-    };
-    // If the init message itself fails to deserialize in this scope, `message` never fires —
-    // `messageerror` does. Report it so the failure isn't silent.
-    this.port.onmessageerror = () => {
-      this.port.postMessage({ type: "error", message: "messageerror: init message failed to deserialize in worklet" });
-    };
+      // initSync compiles the bytes synchronously here (allowed off the main thread, any size) via
+      // `new WebAssembly.Module(bytes)` + instantiate.
+      const wasm = wasm_bindgen.initSync({ module: bytes });
+      if (!wasm || !wasm.memory) throw new Error("initSync returned no memory export");
+      if (typeof wasm_bindgen.RtEngine !== "function") throw new Error("RtEngine missing from glue");
+
+      this.memory = wasm.memory;
+      this.engine = new wasm_bindgen.RtEngine();
+      this.len = this.engine.out_len(); // host samples per quantum (= 128 = the render quantum)
+      this.view = new Float32Array(this.memory.buffer, this.engine.out_ptr(), this.len);
+      this.ready = true;
+      this.port.postMessage({ type: "ready", len: this.len });
+    } catch (err) {
+      this.port.postMessage({
+        type: "error",
+        message: String((err && err.message) || err),
+        stack: err && err.stack ? String(err.stack) : null,
+      });
+    }
   }
 
   process(_inputs, outputs) {

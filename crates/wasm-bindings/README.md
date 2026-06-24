@@ -71,10 +71,15 @@ Two seams worth knowing:
   `let` is not reliably shared across separate `addModule()` scripts, so it must all be one file).
   The polyfill comes first because the worklet scope also lacks `TextDecoder`/`TextEncoder` (a Chrome
   gap) and the glue constructs a `TextDecoder` eagerly at load time — only ever used for panic text.
-- **The wasm Module crosses by `postMessage`.** The main thread (`main.js`) `WebAssembly.compile`s the
-  bytes and posts the `Module` into the worklet, which `initSync`s it — there is no fetch in the
-  worklet. The `AudioContext` is pinned to `sampleRate: 48000` (the engine's host rate) so quanta line
-  up 1:1 (1024 analog ÷ M=8 = 128 = one render quantum); the mono block is duplicated to all channels.
+- **The wasm crosses as raw bytes via `processorOptions`.** The main thread (`main.js`) fetches the
+  `.wasm` bytes (the worklet has no reliable `fetch`) and hands the `ArrayBuffer` to the processor
+  through `new AudioWorkletNode(…, { processorOptions: { bytes } })`; the processor compiles +
+  instantiates them synchronously in its **constructor** (`initSync`) — no init message, no
+  ready/error handshake. We pass *bytes*, not a compiled `WebAssembly.Module`: a Module is only
+  structured-cloneable within one agent cluster and an AudioWorklet is a separate realm (cloning it in
+  can silently fail), and recompiling from bytes in the worklet is the recommended approach anyway. The
+  `AudioContext` is pinned to `sampleRate: 48000` (the engine's host rate) so quanta line up 1:1 (1024
+  analog ÷ M=8 = 128 = one render quantum); the mono block is duplicated to all channels.
 
 No COOP/COEP needed (no `SharedArrayBuffer` until 3.4). `rt/pkg/` and the generated `rt/processor.js`
 are gitignored; `index.html` / `main.js` / `processor-impl.js` / `build.sh` are tracked.

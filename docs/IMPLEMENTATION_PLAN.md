@@ -619,12 +619,20 @@ per-quantum `Float32Array` view over WASM memory the epic deferred from 3.1), an
 proven static page — stands up the minimal Vite + TS harness the rest of the epic and Epic 4 build on.
 
 *Watch out:*
-- The **wasm-in-worklet** seam — no reliable `fetch` in `AudioWorkletGlobalScope`, so compile the module
-  bytes on the main thread and `postMessage` the `WebAssembly.Module` into the worklet to instantiate there.
+- The **wasm-in-worklet** seam — no reliable `fetch` in `AudioWorkletGlobalScope`, so fetch the wasm bytes
+  on the main thread and hand **the `ArrayBuffer` bytes** to the processor via `processorOptions` on the
+  `AudioWorkletNode` constructor; the processor compiles them **synchronously** in its *constructor* via
+  `initSync` (allowed off the main thread, any size) — no init message, no ready/error handshake to race.
+  **Do *not* post a compiled `WebAssembly.Module`** — a Module is only structured-cloneable within one
+  *agent cluster*, and an AudioWorklet is a separate realm; the clone can fail as a `messageerror` (not
+  `message`) and be *silently dropped* (3.2 hit exactly this with `port.postMessage`). Bytes always clone,
+  and recompiling in the worklet is the WebKit/Emscripten-recommended approach regardless.
   `AudioWorkletGlobalScope` also has inconsistent **ES-module** support, so the glue the worklet runs must
-  be a **classic script** — use `wasm-bindgen --target no-modules` for the worklet artifact (its `initSync`
-  takes an already-compiled `Module`), *not* the `--target web` ES-module glue the 3.1 bench page uses on
-  the main thread.
+  be a **classic script** — use `wasm-bindgen --target no-modules` for the worklet artifact, *not* the
+  `--target web` ES-module glue the 3.1 bench page uses on the main thread. And it lacks
+  **`TextDecoder`/`TextEncoder`** (a Chrome gap) which the no-modules glue constructs *eagerly at load*, so
+  a tiny UTF-8 polyfill must be concatenated **ahead** of the glue or the whole module fails to evaluate
+  (and `registerProcessor` never runs ⇒ "node name not defined").
 - **Pin `AudioContext({ sampleRate: 48_000 })`.** The engine's host rate is hardcoded 48 kHz (M = 8 from
   384 kHz); if the context runs at the device default (often 44.1 kHz) every quantum is the wrong rate ⇒
   wrong pitch + drift. One line, silent bug if missed. The browser resamples 48 k → device for us.
