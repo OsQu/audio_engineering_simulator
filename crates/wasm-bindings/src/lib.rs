@@ -21,8 +21,8 @@
 use capture::Capture;
 use engine::{
     AdConverter, AnalogRate, BitDepth, DaConverter, EventInputId, EventMessage, EventQueue,
-    GainStage, Graph, InputZ, Ohms, PassiveSum, SampleRate, Schedule, Speaker, SynthVoice,
-    VoltageBuffer, Volts, compile,
+    GainStage, Graph, InputZ, Ohms, ParamHandle, ParamQueue, PassiveSum, SampleRate, Schedule,
+    Speaker, SynthVoice, VoltageBuffer, Volts, compile,
 };
 use wasm_bindgen::prelude::*;
 
@@ -232,17 +232,19 @@ impl Default for BenchEngine {
     }
 }
 
-// --- Story 3.2: the real-time surface the AudioWorklet drains. -----------------------------------
+// --- Stories 3.2 / 3.3: the real-time surface the AudioWorklet drains. ----------------------------
 
-/// Repeating-note demo cadence: the voice sounds for this many blocks, rests for the next, and
-/// repeats. Pleasanter than a held sawtooth drone, and it proves the event lane keeps advancing
-/// correctly over a long live session. At 384 kHz / `BLOCK_LEN` ≈ 375 blocks/s.
-const NOTE_ON_BLOCKS: u64 = 165; // ≈ 0.44 s sounding
-const NOTE_OFF_BLOCKS: u64 = 90; // ≈ 0.24 s rest
+/// Distinct control params [`RtEngine`] drives — the voice's five smoothed knobs (`LEVEL`,
+/// `ATTACK_MS`, `DECAY_MS`, `SUSTAIN`, `RELEASE_MS`). Sizes the latest-wins [`ParamQueue`].
+const PARAM_COUNT: usize = 5;
+/// Event-queue capacity. Generous for human-rate input within one ~2.7 ms quantum; every queued
+/// event drains the very next [`render_quantum`](RtEngine::render_quantum) so it never fills.
+const EVENT_QUEUE_CAP: usize = 64;
 
-/// The real-time engine surface (Story 3.2): the pinned canonical patch
+/// The real-time engine surface (Stories 3.2 / 3.3): the pinned canonical patch
 /// (`synth → modeled AD → modeled DA → speaker`) plus the implicit [`Capture`], driven **one
-/// AudioWorklet quantum at a time** with its captured host block exposed **zero-copy** to JS.
+/// AudioWorklet quantum at a time** with its captured host block exposed **zero-copy** to JS, and
+/// **played and tweaked live** from JS through named control setters.
 ///
 /// Unlike [`BenchEngine`] (the frozen 3.1 gate fixture, which only returns a peak float so JS can
 /// time a tight loop), this is the surface the worklet drains every callback:
@@ -251,30 +253,52 @@ const NOTE_OFF_BLOCKS: u64 = 90; // ≈ 0.24 s rest
 /// `Float32Array` view over WASM linear memory and read it each quantum — no marshalling, no
 /// per-quantum allocation. The view stays valid for the session because the hot path is zero-alloc,
 /// so linear memory never `grow`s mid-render to detach it.
+///
+/// **Story 3.3 — live control & playing.** The engine no longer drives its own notes; control
+/// arrives from the host. It owns a [`ParamQueue`] + [`EventQueue`] and exposes named setters:
+/// [`set_level`](Self::set_level) / [`set_attack_ms`](Self::set_attack_ms) /
+/// [`set_decay_ms`](Self::set_decay_ms) / [`set_sustain`](Self::set_sustain) /
+/// [`set_release_ms`](Self::set_release_ms) push **latest-wins target values** (the engine's own
+/// `Smoother` de-zippers them — so *not* `AudioParam`), and [`note_on`](Self::note_on) /
+/// [`note_off`](Self::note_off) push timestamped events. [`render_quantum`](Self::render_quantum)
+/// drains both lanes via `process_io` each block. A note is stamped at the **block about to render**
+/// (`blocks · BLOCK_LEN`) — "play at the next quantum," ~2.7 ms granularity, imperceptible for human
+/// input and zero host-time math. (Precise `currentTime`→sample mapping matters only for *sequenced*
+/// MIDI; deferred.) The named-setter API is deliberately specific — the generic, UI-enumerable param
+/// API (`ParamDecl`s + `set_param(id, value)`) is Epic 4 / Story 4.1.
 #[wasm_bindgen]
 pub struct RtEngine {
     schedule: Schedule,
     capture: Capture,
+    /// Pending control input, drained each `render_quantum` via `process_io`. Params are
+    /// latest-wins target values; events are note-on/off stamped at the current block.
+    params: ParamQueue,
     events: EventQueue,
     /// Per-quantum scratch: the speaker-voltage tap (analog rate) and the captured host samples.
     out: VoltageBuffer,
     host: Vec<f32>,
-    /// The voice's event input, kept so the repeating-note demo can re-trigger it each cycle.
+    /// The voice's event input, the target for [`note_on`](Self::note_on) /
+    /// [`note_off`](Self::note_off).
     voice_ev: EventInputId,
+    /// Resolved control-param handles, set once at construction — the live knobs.
+    level: ParamHandle,
+    attack_ms: ParamHandle,
+    decay_ms: ParamHandle,
+    sustain: ParamHandle,
+    release_ms: ParamHandle,
     /// Quanta rendered so far. `blocks * BLOCK_LEN` is the absolute analog-sample time of the next
-    /// block's first sample — the timeline the [`EventQueue`] timestamps against.
+    /// block's first sample — the timeline [`note_on`](Self::note_on) /
+    /// [`note_off`](Self::note_off) stamp against.
     blocks: u64,
-    /// Repeating-note state: whether the note is currently sounding, and the block it next toggles.
-    note_on: bool,
-    next_toggle: u64,
 }
 
 #[wasm_bindgen]
 impl RtEngine {
-    /// Build and compile the pinned canonical patch and strike the first note. Panics only here
-    /// (the construct/compile gate is allowed to); the patch is known-valid, so in practice it does
-    /// not. Duplicates the patch wiring rather than sharing it with [`BenchEngine`], which stays
+    /// Build and compile the pinned canonical patch and resolve the control handles. Panics only
+    /// here (the construct/compile gate is allowed to); the patch is known-valid, so in practice it
+    /// does not. Duplicates the patch wiring rather than sharing it with [`BenchEngine`], which stays
     /// frozen as the 3.1 fixture (≈10 lines — the cost the plan accepted to keep the gate intact).
+    /// Starts **silent** — notes come from [`note_on`](Self::note_on) (Story 3.3).
     #[wasm_bindgen(constructor)]
     #[must_use]
     pub fn new() -> Self {
@@ -305,17 +329,28 @@ impl RtEngine {
         let voice_ev = schedule
             .event_input(voice, 0)
             .expect("the voice has an event input");
+        // Resolve the five smoothed knob handles once; the setters push targets to these.
+        let level = schedule
+            .param(voice, SynthVoice::LEVEL)
+            .expect("the voice declares LEVEL");
+        let attack_ms = schedule
+            .param(voice, SynthVoice::ATTACK_MS)
+            .expect("the voice declares ATTACK_MS");
+        let decay_ms = schedule
+            .param(voice, SynthVoice::DECAY_MS)
+            .expect("the voice declares DECAY_MS");
+        let sustain = schedule
+            .param(voice, SynthVoice::SUSTAIN)
+            .expect("the voice declares SUSTAIN");
+        let release_ms = schedule
+            .param(voice, SynthVoice::RELEASE_MS)
+            .expect("the voice declares RELEASE_MS");
 
-        // Strike the first note at t = 0; render_quantum drives the repeating cadence thereafter.
-        let mut events = EventQueue::with_capacity(4);
-        events.push(
-            0,
-            voice_ev,
-            EventMessage::NoteOn {
-                note: NOTE,
-                velocity: 100,
-            },
-        );
+        // Sized for a human-rate burst within one ~2.7 ms quantum: every queued event/param is
+        // drained the very next render_quantum (notes stamp at the next block, < block end), so
+        // these never need to hold more than a quantum's worth.
+        let params = ParamQueue::with_capacity(PARAM_COUNT);
+        let events = EventQueue::with_capacity(EVENT_QUEUE_CAP);
 
         let capture = Capture::new(analog_rate, host_rate, FULL_SCALE_V);
         let host = vec![0.0_f32; capture.host_len(BLOCK_LEN)];
@@ -324,46 +359,72 @@ impl RtEngine {
             host,
             schedule,
             capture,
+            params,
             events,
             voice_ev,
+            level,
+            attack_ms,
+            decay_ms,
+            sustain,
+            release_ms,
             blocks: 0,
-            note_on: true,
-            next_toggle: NOTE_ON_BLOCKS,
         }
     }
 
     /// Render exactly one AudioWorklet quantum — one engine block (`BLOCK_LEN` analog samples) →
-    /// `BLOCK_LEN / M` host samples — into the engine-owned host buffer, advancing the
-    /// repeating-note demo. Zero-alloc, no marshalling: read the result via
-    /// [`out_ptr`](Self::out_ptr) / [`out_len`](Self::out_len).
+    /// `BLOCK_LEN / M` host samples — into the engine-owned host buffer. Drains both control lanes
+    /// first: pending param targets re-aim their smoothers, and notes due this block fire at their
+    /// offsets. Zero-alloc, no marshalling: read the result via [`out_ptr`](Self::out_ptr) /
+    /// [`out_len`](Self::out_len).
     pub fn render_quantum(&mut self) {
-        // Drive the repeating note. Events are timestamped in absolute analog samples; the block
-        // about to be processed covers `[blocks·BLOCK_LEN, (blocks+1)·BLOCK_LEN)`, so a note pushed
-        // at `blocks·BLOCK_LEN` fires on its first sample.
-        if self.blocks == self.next_toggle {
-            let when = self.blocks * BLOCK_LEN as u64;
-            if self.note_on {
-                self.events
-                    .push(when, self.voice_ev, EventMessage::NoteOff { note: NOTE });
-                self.note_on = false;
-                self.next_toggle = self.blocks + NOTE_OFF_BLOCKS;
-            } else {
-                self.events.push(
-                    when,
-                    self.voice_ev,
-                    EventMessage::NoteOn {
-                        note: NOTE,
-                        velocity: 100,
-                    },
-                );
-                self.note_on = true;
-                self.next_toggle = self.blocks + NOTE_ON_BLOCKS;
-            }
-        }
         self.schedule
-            .process_with_events(&mut self.out, &mut self.events);
+            .process_io(&mut self.out, &mut self.params, &mut self.events);
         self.capture.process(self.out.as_slice(), &mut self.host);
         self.blocks += 1;
+    }
+
+    // --- Live control (Story 3.3): named setters JS calls from the worklet. ----------------------
+
+    /// Set the voice output **level** in volts (the master volume fader). Latest-wins target; the
+    /// engine's `Smoother` glides to it (no zipper). Off the hot path — JS calls it on slider input.
+    pub fn set_level(&mut self, volts: f32) {
+        self.params.set(self.level, volts);
+    }
+
+    /// Set the envelope **attack** time in milliseconds. Latest-wins, smoothed.
+    pub fn set_attack_ms(&mut self, ms: f32) {
+        self.params.set(self.attack_ms, ms);
+    }
+
+    /// Set the envelope **decay** time in milliseconds. Latest-wins, smoothed.
+    pub fn set_decay_ms(&mut self, ms: f32) {
+        self.params.set(self.decay_ms, ms);
+    }
+
+    /// Set the envelope **sustain** level (0..=1). Latest-wins, smoothed.
+    pub fn set_sustain(&mut self, level: f32) {
+        self.params.set(self.sustain, level);
+    }
+
+    /// Set the envelope **release** time in milliseconds. Latest-wins, smoothed.
+    pub fn set_release_ms(&mut self, ms: f32) {
+        self.params.set(self.release_ms, ms);
+    }
+
+    /// Strike `note` (MIDI 0..=127) at `velocity`. Stamped at the **block about to render**
+    /// (`blocks · BLOCK_LEN`) so it fires on that quantum's first sample — "play at the next
+    /// quantum," ~2.7 ms granularity, imperceptible for live playing. Off the hot path.
+    pub fn note_on(&mut self, note: u8, velocity: u8) {
+        let when = self.blocks * BLOCK_LEN as u64;
+        self.events
+            .push(when, self.voice_ev, EventMessage::NoteOn { note, velocity });
+    }
+
+    /// Release `note`. Stamped at the block about to render, like [`note_on`](Self::note_on).
+    pub fn note_off(&mut self, note: u8) {
+        let when = self.blocks * BLOCK_LEN as u64;
+        self.events
+            .push(when, self.voice_ev, EventMessage::NoteOff { note });
     }
 
     /// Pointer to the captured host block in WASM linear memory. JS builds **one**
@@ -428,20 +489,56 @@ mod tests {
         assert!(peak > 0.05, "expected audible output, got peak {peak}");
     }
 
-    /// `RtEngine`'s per-quantum surface is exercised **natively** (no browser): a handful of quanta
-    /// of the sustained first note through the full converter chain must produce non-silent host
-    /// audio in the engine-owned buffer. Guards the patch wiring and the quantum loop; the browser
-    /// run proves it is *audible*, this asserts it has *output*.
-    #[test]
-    fn rt_engine_renders_audible_quanta() {
-        let mut engine = RtEngine::new();
+    /// Peak `|host sample|` over `n` rendered quanta — the native stand-in for "is it making sound".
+    fn peak_over(engine: &mut RtEngine, n: usize) -> f32 {
         let mut peak = 0.0_f32;
-        // 32 quanta ≈ 85 ms — past the capture FIR latency and into the sustained first note.
-        for _ in 0..32 {
+        for _ in 0..n {
             engine.render_quantum();
             peak = engine.host.iter().fold(peak, |p, &s| p.max(s.abs()));
         }
-        assert!(peak > 0.05, "expected audible output, got peak {peak}");
+        peak
+    }
+
+    /// Story 3.3: the engine starts **silent** (no internal note) and sounds only on
+    /// [`note_on`](RtEngine::note_on). Guards both that the repeating-note demo is gone and that the
+    /// event setter actually feeds the voice. The browser run proves it is *audible*; this asserts
+    /// silence-then-output natively.
+    #[test]
+    fn rt_engine_silent_until_note_on() {
+        let mut engine = RtEngine::new();
+        // No note yet: a few quanta should be effectively silent (only sub-LSB dither/transient).
+        let idle = peak_over(&mut engine, 8);
+        assert!(
+            idle < 0.01,
+            "expected near-silence before note_on, got {idle}"
+        );
+        // Strike a note, then render past the capture FIR latency into the sustain.
+        engine.note_on(NOTE, 100);
+        let sounding = peak_over(&mut engine, 32);
+        assert!(
+            sounding > 0.05,
+            "expected audible output after note_on, got {sounding}"
+        );
+    }
+
+    /// The `set_level` knob reaches the voice: a low level produces a quieter output than the
+    /// default for the same note. Confirms a param setter moves the smoother and the change is read
+    /// in `process` (drained via `process_io`).
+    #[test]
+    fn rt_engine_level_setter_scales_output() {
+        let mut loud = RtEngine::new();
+        loud.note_on(NOTE, 100);
+        let loud_peak = peak_over(&mut loud, 64);
+
+        let mut quiet = RtEngine::new();
+        quiet.set_level(0.2); // glides from the 1.0 default down over ~5 ms
+        quiet.note_on(NOTE, 100);
+        let quiet_peak = peak_over(&mut quiet, 64);
+
+        assert!(
+            quiet_peak < 0.5 * loud_peak,
+            "lower LEVEL should be clearly quieter: quiet {quiet_peak} vs loud {loud_peak}"
+        );
     }
 
     /// The exposed buffer geometry is the pinned config, and the pointer is real — the contract JS
@@ -452,26 +549,5 @@ mod tests {
         assert_eq!(engine.out_len(), 128); // 1024 / 8
         assert_eq!(engine.host_rate_hz(), 48_000.0);
         assert!(!engine.out_ptr().is_null());
-    }
-
-    /// The repeating-note demo cadence cycles deterministically: the note releases after
-    /// `NOTE_ON_BLOCKS` and re-triggers after the following `NOTE_OFF_BLOCKS`. The toggle fires on
-    /// the quantum whose start `blocks == next_toggle` (i.e. after that many quanta have advanced
-    /// `blocks`), so the on-phase needs `NOTE_ON_BLOCKS + 1` quanta to flip.
-    #[test]
-    fn rt_engine_note_cadence_cycles() {
-        let mut engine = RtEngine::new();
-        assert!(engine.note_on);
-        for _ in 0..NOTE_ON_BLOCKS + 1 {
-            engine.render_quantum();
-        }
-        assert!(!engine.note_on, "note should release after NOTE_ON_BLOCKS");
-        for _ in 0..NOTE_OFF_BLOCKS {
-            engine.render_quantum();
-        }
-        assert!(
-            engine.note_on,
-            "note should re-trigger after NOTE_OFF_BLOCKS"
-        );
     }
 }
