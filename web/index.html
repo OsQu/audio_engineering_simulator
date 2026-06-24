@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Audio Engineer Simulator — real-time (Vite harness)</title>
+    <style>
+      body {
+        font: 15px/1.5 system-ui, sans-serif;
+        max-width: 40rem;
+        margin: 3rem auto;
+        padding: 0 1rem;
+        color: #1a1a1a;
+      }
+      code {
+        background: #f0f0f0;
+        padding: 0.1em 0.3em;
+        border-radius: 3px;
+      }
+      button {
+        font: inherit;
+        padding: 0.5em 1.2em;
+        cursor: pointer;
+      }
+      #status {
+        color: #555;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>Real-time first sound — Vite harness</h1>
+    <p>
+      Story 3.2, Phase B. Same canonical patch
+      (<code>synth → AD → DA → speaker</code>) running live in an
+      <code>AudioWorkletProcessor</code> drained from <code>RtEngine::render_quantum</code>, now on
+      the Vite/TS dev harness that Epic 4's UI builds on. The worklet itself is the proven
+      self-contained classic script (<code>public/processor.js</code>), served as a static asset.
+    </p>
+    <p>
+      <strong>Build the wasm first:</strong> <code>npm run wasm</code>, then <code>npm run dev</code>.
+      Browsers require a user gesture to start audio.
+    </p>
+    <p><button id="start">▶ start</button></p>
+    <p id="status">idle</p>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

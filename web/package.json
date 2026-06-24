@@ -1,0 +1,21 @@
+{
+  "name": "aes-web",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Audio Engineer Simulator — dev/test web harness (Story 3.2 Phase B; reusable infra for Epic 4)",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "wasm": "sh build-wasm.sh",
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "typescript": "^5",
+    "vite": "^6"
+  }
+}
