@@ -25,13 +25,36 @@ class RtProcessor extends AudioWorkletProcessor {
       // `new WebAssembly.Module(bytes)` + instantiate.
       const wasm = wasm_bindgen.initSync({ module: bytes });
       if (!wasm || !wasm.memory) throw new Error("initSync returned no memory export");
-      if (typeof wasm_bindgen.RtEngine !== "function") throw new Error("RtEngine missing from glue");
+      if (typeof wasm_bindgen.RtEngine !== "function")
+        throw new Error("RtEngine missing from glue");
 
       this.memory = wasm.memory;
       this.engine = new wasm_bindgen.RtEngine();
       this.len = this.engine.out_len(); // host samples per quantum (= 128 = the render quantum)
       this.view = new Float32Array(this.memory.buffer, this.engine.out_ptr(), this.len);
       this.ready = true;
+
+      // Story 3.3 — live control. The main thread posts param/note messages here; we forward them
+      // onto the engine's named setters. The setters only enqueue (latest-wins target / timestamped
+      // event); the change is applied by the next render_quantum's process_io drain, so this is off
+      // the hot path. postMessage deserialization allocates on the audio thread — fine at human
+      // rates (the SAB ring that removes even that is Story 3.4).
+      this.port.onmessage = (e) => {
+        const d = e.data;
+        if (!this.ready || !d) return;
+        switch (d.type) {
+          case "param":
+            this.setParam(d.name, d.value);
+            break;
+          case "noteOn":
+            this.engine.note_on(d.note, d.velocity);
+            break;
+          case "noteOff":
+            this.engine.note_off(d.note);
+            break;
+        }
+      };
+
       this.port.postMessage({ type: "ready", len: this.len });
     } catch (err) {
       this.port.postMessage({
@@ -60,6 +83,28 @@ class RtProcessor extends AudioWorkletProcessor {
       out[ch].set(this.view);
     }
     return true;
+  }
+
+  // Map a knob name to the engine's typed setter. Names mirror the SynthVoice control params; the
+  // generic UI-enumerable param API (set_param by id) is Epic 4.
+  setParam(name, value) {
+    switch (name) {
+      case "level":
+        this.engine.set_level(value);
+        break;
+      case "attack_ms":
+        this.engine.set_attack_ms(value);
+        break;
+      case "decay_ms":
+        this.engine.set_decay_ms(value);
+        break;
+      case "sustain":
+        this.engine.set_sustain(value);
+        break;
+      case "release_ms":
+        this.engine.set_release_ms(value);
+        break;
+    }
   }
 }
 
