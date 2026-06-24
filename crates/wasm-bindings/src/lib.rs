@@ -14,8 +14,9 @@
 
 use capture::Capture;
 use engine::{
-    AdConverter, AnalogRate, BitDepth, DaConverter, EventMessage, EventQueue, Graph, InputZ, Ohms,
-    SampleRate, Schedule, Speaker, SynthVoice, VoltageBuffer, Volts, compile,
+    AdConverter, AnalogRate, BitDepth, DaConverter, EventMessage, EventQueue, GainStage, Graph,
+    InputZ, Ohms, PassiveSum, SampleRate, Schedule, Speaker, SynthVoice, VoltageBuffer, Volts,
+    compile,
 };
 use wasm_bindgen::prelude::*;
 
@@ -125,6 +126,84 @@ impl BenchEngine {
         peak
     }
 
+    /// Build a **scaling stress patch**: `channels` parallel `synth → gain → AD → DA` chains summed
+    /// into one speaker (so `4·channels + 2` nodes). Mixes the heavy nodes (synth, AD, DA) with
+    /// cheap ones (the gain stage, the N-input passive sum) to map **headroom vs. node count** — the
+    /// hundreds-of-nodes / stadium-routing question the 1-channel gate ([`new`](Self::new)) can't
+    /// answer. All voices hold the same note (steady-state load); the summed level clamps at the
+    /// capture, which is fine — this measures compute, not audio. `channels` is clamped to ≥ 1.
+    #[must_use]
+    pub fn scaled(channels: usize) -> BenchEngine {
+        let channels = channels.max(1);
+        let analog_rate = AnalogRate::new(ANALOG_RATE_HZ);
+        let host_rate = SampleRate::new(HOST_RATE_HZ);
+
+        let mut g = Graph::new();
+        let mut voices = Vec::with_capacity(channels);
+        let mut das = Vec::with_capacity(channels);
+        let mut sum_inputs = Vec::with_capacity(channels);
+        for _ in 0..channels {
+            let voice = g.add(SynthVoice::new(Volts::new(1.0), Ohms::new(1.0)));
+            let gain = g.add(GainStage::new(
+                1.0,
+                Volts::new(10.0),
+                InputZ::new(Ohms::new(10_000.0)),
+                Ohms::new(150.0),
+            ));
+            let ad = g.add(AdConverter::new(
+                host_rate,
+                BitDepth::new(16),
+                Volts::new(FULL_SCALE_V),
+                Ohms::new(1e6),
+            ));
+            let da = g.add(DaConverter::new(
+                host_rate,
+                BitDepth::new(16),
+                Volts::new(FULL_SCALE_V),
+                Ohms::new(150.0),
+            ));
+            g.connect(voice, 0, gain, 0);
+            g.connect(gain, 0, ad, 0);
+            g.connect(ad, 0, da, 0);
+            voices.push(voice);
+            das.push(da);
+            sum_inputs.push(InputZ::new(Ohms::new(10_000.0)));
+        }
+        let sum = g.add(PassiveSum::new(sum_inputs, Ohms::new(150.0)));
+        for (i, da) in das.iter().enumerate() {
+            g.connect(*da, 0, sum, i);
+        }
+        let spk = g.add(Speaker::new(1.0, InputZ::new(Ohms::new(10_000.0))));
+        g.connect(sum, 0, spk, 0);
+        g.set_output(spk, 0);
+
+        let schedule = compile(g, BLOCK_LEN, analog_rate, SEED).expect("scaled patch compiles");
+        let mut events = EventQueue::with_capacity(channels + 1);
+        for voice in &voices {
+            let ev = schedule
+                .event_input(*voice, 0)
+                .expect("each voice has an event input");
+            events.push(
+                0,
+                ev,
+                EventMessage::NoteOn {
+                    note: NOTE,
+                    velocity: 100,
+                },
+            );
+        }
+
+        let capture = Capture::new(analog_rate, host_rate, FULL_SCALE_V);
+        let host = vec![0.0_f32; capture.host_len(BLOCK_LEN)];
+        Self {
+            out: VoltageBuffer::zeros(BLOCK_LEN, analog_rate),
+            host,
+            schedule,
+            capture,
+            events,
+        }
+    }
+
     /// Host samples produced per rendered block (`BLOCK_LEN / M`) — JS needs it to convert a block
     /// count into seconds of audio for the realtime ratio.
     #[wasm_bindgen(getter)]
@@ -167,5 +246,14 @@ mod tests {
         let engine = BenchEngine::new();
         assert_eq!(engine.host_samples_per_block(), 128); // 1024 / 8
         assert_eq!(engine.host_rate_hz(), 48_000.0);
+    }
+
+    /// The scaling patch compiles and runs at a multi-channel size and still produces output — the
+    /// wiring (N chains → N-input sum → speaker, N note-ons) holds as `channels` grows.
+    #[test]
+    fn scaled_patch_runs_multichannel() {
+        let mut engine = BenchEngine::scaled(8);
+        let peak = engine.render_blocks(32);
+        assert!(peak > 0.05, "expected audible output, got peak {peak}");
     }
 }

@@ -51,11 +51,30 @@
   max as indicative. SIMD is the real deployment; the scalar row shows the SIMD win.
 </p>
 
+<h2 style="font-size:1.15rem;margin-top:2rem">Scaling sweep <small style="opacity:.6;font-weight:400">(SIMD build)</small></h2>
+<p class="lede">
+  Headroom vs. node count: <em>N</em> parallel <code>synth → gain → AD → DA</code> channels summed
+  into one speaker (<code>4N+2</code> nodes), mixing the heavy converter nodes with cheap gain/sum
+  nodes. Answers the hundreds-of-nodes / stadium-routing question the 1-channel gate above can't —
+  the heavy converters dominate, so watch where realtime× crosses 1 (the one-core ceiling; beyond it
+  the levers are multi-core DAG partition and a lower oversample factor).
+</p>
+<button id="sweep">Run scaling sweep</button>
+<table id="sweep-results" hidden>
+  <thead><tr><th>Channels</th><th>Nodes (4N+2)</th><th>Realtime ×</th><th>Peak (sanity)</th></tr></thead>
+  <tbody></tbody>
+</table>
+
 <script type="module">
   // Render this many seconds of audio for the throughput measurement, after a warm-up.
   const THROUGHPUT_AUDIO_SEC = 10;
   const WARMUP_BLOCKS = 1000;
   const QUANTUM_ITERS = 3000;
+  // Scaling sweep: channel counts to probe, and a shorter per-point measurement (the big patches
+  // run below real time, so keep the rendered audio short to bound wall time).
+  const SWEEP_CHANNELS = [1, 2, 4, 8, 16, 32, 64, 128];
+  const SWEEP_AUDIO_SEC = 1.0;
+  const SWEEP_WARMUP_BLOCKS = 200;
 
   async function loadVariant(dir) {
     try {
@@ -68,21 +87,26 @@
     }
   }
 
+  // Render `audioSec` of audio after a warm-up; return realtime ratio (audio time / wall time) and
+  // the peak sample (non-silence sanity). Shared by the gate table and the scaling sweep.
+  function measureThroughput(engine, audioSec, warmupBlocks) {
+    const hostPerBlock = engine.host_samples_per_block;
+    const hostRate = engine.host_rate_hz;
+    engine.render_blocks(warmupBlocks);
+    const nBlocks = Math.round((audioSec * hostRate) / hostPerBlock);
+    const t0 = performance.now();
+    const peak = engine.render_blocks(nBlocks);
+    const wallSec = (performance.now() - t0) / 1000;
+    return { realtime: ((nBlocks * hostPerBlock) / hostRate) / wallSec, peak };
+  }
+
   function benchOne(mod) {
     const engine = new mod.BenchEngine();
     const hostPerBlock = engine.host_samples_per_block;
     const hostRate = engine.host_rate_hz;
     const quantumMs = (hostPerBlock / hostRate) * 1000;
 
-    engine.render_blocks(WARMUP_BLOCKS); // let the JIT settle
-
-    // Throughput: render N blocks in one call, compare wall time to audio time.
-    const nBlocks = Math.round((THROUGHPUT_AUDIO_SEC * hostRate) / hostPerBlock);
-    const t0 = performance.now();
-    const peak = engine.render_blocks(nBlocks);
-    const wallSec = (performance.now() - t0) / 1000;
-    const audioSec = (nBlocks * hostPerBlock) / hostRate;
-    const realtime = audioSec / wallSec;
+    const { realtime, peak } = measureThroughput(engine, THROUGHPUT_AUDIO_SEC, WARMUP_BLOCKS);
 
     // Per-quantum: time individual single-quantum renders; capture mean + the jitter tail.
     let sum = 0, max = 0;
@@ -154,6 +178,34 @@
     tr.innerHTML = `<td>${label}</td><td colspan="6" style="text-align:left;opacity:.7">not built — <code>${dir}/</code> missing</td>`;
     tbody.appendChild(tr);
   }
+
+  document.getElementById("sweep").addEventListener("click", async (e) => {
+    const btn = e.target; btn.disabled = true; btn.textContent = "Running…";
+    const table = document.getElementById("sweep-results");
+    const tbody = table.querySelector("tbody");
+    tbody.innerHTML = "";
+
+    const mod = await loadVariant("pkg-simd");
+    if (!mod) {
+      addRowMissing(tbody, "—", "pkg-simd");
+      table.hidden = false;
+      btn.disabled = false; btn.textContent = "Run scaling sweep";
+      return;
+    }
+    table.hidden = false;
+    for (const n of SWEEP_CHANNELS) {
+      await new Promise((r) => setTimeout(r, 0)); // let the row paint before blocking
+      const engine = mod.BenchEngine.scaled(n);
+      const { realtime, peak } = measureThroughput(engine, SWEEP_AUDIO_SEC, SWEEP_WARMUP_BLOCKS);
+      engine.free();
+      const tr = document.createElement("tr");
+      const cls = realtime >= 3 ? "ok" : realtime >= 1 ? "marginal" : "bad";
+      tr.innerHTML = `<td>${n}</td><td>${4 * n + 2}</td>
+        <td class="headline ${cls}">${fmt(realtime)}×</td><td>${fmt(peak, 3)}</td>`;
+      tbody.appendChild(tr);
+    }
+    btn.disabled = false; btn.textContent = "Run scaling sweep";
+  });
 </script>
 </body>
 </html>
