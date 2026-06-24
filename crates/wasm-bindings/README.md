@@ -33,6 +33,23 @@ RUSTFLAGS="-C target-feature=+simd128" wasm-pack build crates/wasm-bindings --ta
 variants are buildable from explicit commands. The release profile is `panic = "abort"`
 (workspace-wide) — a panic in an AudioWorklet kills the stream, so we abort instead of unwind.
 
+## Feasibility benchmark (the Story 3.1 gate)
+
+`bench/` is a **throwaway** static page that loads the artifact and times `BenchEngine::render_blocks`
+in a `performance.now()` loop — the gate that decides whether the oversampled chain can run inside an
+AudioWorklet (and so picks the 3.2 execution model). It is *not* the Epic-4 UI and uses no bundler.
+
+```sh
+sh crates/wasm-bindings/bench/build.sh   # builds pkg-scalar/ + pkg-simd/ (release)
+cd crates/wasm-bindings && python3 -m http.server 8000
+# open http://localhost:8000/bench/  →  click "Run benchmark"
+```
+
+It reports the realtime ratio (throughput headline), per-quantum mean/max against the ~2.667 ms
+quantum budget, and a verdict, for both the scalar and `+simd128` builds side by side. No COOP/COEP
+needed (no `SharedArrayBuffer` until 3.4). The `pkg*` dirs are gitignored; the page + `build.sh` are
+tracked.
+
 ## Portability gate (no wasm-pack needed)
 
 `cargo wasm` (the workspace alias) type-checks `engine + capture + wasm-bindings` for `wasm32`

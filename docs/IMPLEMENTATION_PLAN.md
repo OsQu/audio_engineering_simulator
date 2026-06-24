@@ -433,6 +433,10 @@ the HF content aliasing needs, so picking this up later is cheap.
 
 ## Epic 3 — Real-Time Playback (the north star)
 
+**Progress:** Story 3.1 ✅ done — the engine builds to WASM and the in-browser feasibility benchmark
+clears the gate at **≈46× real-time** (in-worklet single-thread confirmed; the heaviest unknown in
+PROJECT_PLAN §10 is retired). Next: **3.2 — first real-time sound** (Vite/TS harness + AudioWorklet).
+
 **Goal:** the engine live in the browser — turn knobs and play an instrument with low latency, glitch-free.
 The engine runs **inside the AudioWorklet** (WASM) on the audio thread; control crosses the main→audio
 boundary as sparse messages. This epic retires the heaviest technical unknown (real-time fidelity of the
@@ -459,6 +463,8 @@ output device's channels.
   renders ahead concurrently, worklet drains — robust to sustained load but adds latency + complexity);
   <1× means cut the oversampling factor or optimize the hot path before real-time is viable. A→Worker
   migration keeps the engine surface intact (only *where* `process_io` is called moves).
+  **✅ Resolved (3.1 spike): ≈46× real-time in-browser (release, `+simd128`), far past the ≳2–3× bar —
+  the in-worklet single-thread model is confirmed; the Worker+SAB fallback is not needed.**
 - **Bindings — hybrid.** `wasm-bindgen` for the cold/setup surface (construct/configure the engine,
   generated TS types for Epic 4 to consume) — the well-beaten path — but the **per-quantum hot path
   reads/writes raw shared linear memory directly** (a `Float32Array` view over WASM memory), bypassing
@@ -488,12 +494,14 @@ output device's channels.
   latency) arrive with the hardening work in 3.4. *(You cannot golden-file a live session regardless.)*
 - **SIMD is measure-driven, not upfront.** Rely on LLVM autovectorization with `+simd128` first; reach for
   explicit intrinsics (more `unsafe`) only on hot loops the 3.1 spike proves are over budget.
+  **✅ Resolved (3.1 spike): nothing is over budget (~46× headroom), and `+simd128` autovectorization buys
+  only ~3% (the chain is largely serial/recursive) — so explicit SIMD intrinsics are *not* pursued.**
 
 > *Tasks below are a coarse sketch, fleshed out to Task level when each Story is picked up — per the
 > detail-gradient convention (Epics 2–3 carry Tasks but expect churn). Goals, watch-outs, and the settled
 > decisions are recorded now.*
 
-### Story 3.1 — WASM engine + real-time feasibility spike
+### Story 3.1 — WASM engine + real-time feasibility spike — ✅ **Done**
 *Goal:* the first real **WASM artifact of the engine** plus the **in-browser faster-than-real-time
 benchmark** that gates the whole epic — proof the oversampled voltage chain renders the canonical patch
 with enough headroom for the in-worklet model. Stands up the WASM build pipeline + a **minimal
@@ -567,11 +575,28 @@ panic kills the run — fine, since `process` is already total.
   ratio + per-quantum worst case, with and without `+simd128`. Record the measured headroom here and the
   resulting 3.2 execution-model decision.
 
-*Validate:* WASM builds and instantiates in a browser; the canonical patch renders comfortably
-faster-than-real-time (headroom recorded; in-worklet single-thread confirmed, or the Worker+SAB fallback
-triggered for 3.2); `wasm-pack build` is green in CI; the full Rust gate (`fmt`/`lint`/`test`/`wasm`/`docs`)
-stays green. *(No automated parity — Rust unit tests + TS unit tests + a manual bridge check, per the
-deferral above.)*
+*Validate (✅ met):* WASM builds and instantiates in a browser; the canonical patch renders far
+faster-than-real-time (headroom recorded below; **in-worklet single-thread confirmed** — the Worker+SAB
+fallback is not needed for 3.2); the full Rust gate (`fmt`/`lint`/`test`/`wasm`/`docs`) stays green and a
+build-only `wasm-pack build` step guards bindgen breakage in CI. *(No automated parity — Rust unit tests
++ a manual bridge check, per the deferral above.)*
+
+*Delivered:* the first real WASM build of the engine + the gate that clears Epic 3's heaviest unknown.
+**Gate result (in-browser, release):** the canonical patch (`synth → AD → DA → speaker`, 384 kHz / 48 kHz
+M8, block_len 1024) renders **≈46× real-time** with `+simd128` (≈45× scalar), at **≈0.058 ms mean per
+quantum against the 2.667 ms budget** — a ~46× throughput / ~13× worst-case-quantum cushion (the
+per-quantum *max* of 0.200 ms is `performance.now()` resolution-clamped, so that 13× is a conservative
+floor). **Decision: engine-in-worklet single-thread for 3.2** (comfortably past the ≳2–3× bar; no
+Worker+SAB ring needed). The **SIMD win is ~3%** — the oversampled chain is largely serial/recursive
+(one-pole filters, FIR, synth) and doesn't autovectorize much, so **explicit SIMD intrinsics are not
+justified** (the measure-driven SIMD decision, settled: rely on `+simd128` autovectorization only).
+**Shipped:** a shared **`capture`** crate (engine-only deps, wasm-reachable; the implicit capture moved
+out of the native harness) consumed by both `harness` and `wasm-bindings`; a `wasm-bindgen`/`wasm-pack`
+build pipeline (`--target web`, release `panic=abort`, `+simd128` via `RUSTFLAGS`) with a CI bindgen-build
+step; a minimal compute-only `BenchEngine` surface (`render_blocks` loops `process` + capture entirely in
+WASM, zero per-block marshalling, no `unsafe`) with native unit tests; and a throwaway `bench/` page
+(scalar vs SIMD side by side) + `build.sh`. The raw zero-copy `process` hot path and the Vite/TS harness
+remain 3.2.
 
 ### Story 3.2 — First real-time sound *(the live milestone)*
 *Goal:* the Epic-3 analogue of Story 1.3's "first runnable" and 2.1's "first sound" — a fixed patch
