@@ -1,0 +1,211 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Engine WASM feasibility benchmark — Story 3.1</title>
+<style>
+  :root { color-scheme: dark light; }
+  body { font: 15px/1.5 system-ui, sans-serif; max-width: 60rem; margin: 2rem auto; padding: 0 1rem; }
+  h1 { font-size: 1.4rem; }
+  p.lede { opacity: 0.8; }
+  button { font: inherit; padding: 0.5rem 1rem; cursor: pointer; }
+  table { border-collapse: collapse; margin-top: 1rem; width: 100%; }
+  th, td { border: 1px solid #8884; padding: 0.4rem 0.7rem; text-align: right; }
+  th:first-child, td:first-child { text-align: left; }
+  td.headline { font-weight: 700; }
+  .ok { color: #2e9e44; } .marginal { color: #d29400; } .bad { color: #d23030; }
+  #verdict { margin-top: 1rem; font-size: 1.1rem; font-weight: 600; }
+  code { background: #8882; padding: 0.05rem 0.3rem; border-radius: 3px; }
+  .note { opacity: 0.7; font-size: 0.85rem; margin-top: 1.5rem; }
+</style>
+</head>
+<body>
+<h1>Engine WASM feasibility benchmark</h1>
+<p class="lede">
+  Story 3.1 gate: can the oversampled voltage chain render the canonical patch
+  (<code>synth → AD → DA → speaker</code>, 384 kHz analog / 48 kHz host, block_len 1024 = the
+  AudioWorklet quantum) <em>faster than real time</em> with enough headroom to live inside the
+  worklet? Loops <code>render_blocks</code> entirely in WASM and times it from JS — no marshalling,
+  so this measures raw compute. Build both artifacts with <code>bench/build.sh</code> first.
+</p>
+<button id="run">Run benchmark</button>
+<div id="verdict"></div>
+<table id="results" hidden>
+  <thead><tr>
+    <th>Build</th>
+    <th>Realtime ×</th>
+    <th>Mean / quantum</th>
+    <th>Max / quantum</th>
+    <th>Quantum budget</th>
+    <th>Worst-case ×</th>
+    <th>Peak (sanity)</th>
+  </tr></thead>
+  <tbody></tbody>
+</table>
+<p class="note">
+  The <strong>quantum budget</strong> is 128 host frames ÷ 48 kHz ≈ 2.667 ms — the worklet must
+  finish each <code>render_blocks(1)</code> within it or the stream underruns. <strong>Realtime ×</strong>
+  is the headline (throughput; robust). Per-quantum max catches jitter but
+  <code>performance.now()</code> is resolution-clamped without cross-origin isolation, so treat the
+  max as indicative. SIMD is the real deployment; the scalar row shows the SIMD win.
+</p>
+
+<h2 style="font-size:1.15rem;margin-top:2rem">Scaling sweep <small style="opacity:.6;font-weight:400">(SIMD build)</small></h2>
+<p class="lede">
+  Headroom vs. node count: <em>N</em> parallel <code>synth → gain → AD → DA</code> channels summed
+  into one speaker (<code>4N+2</code> nodes), mixing the heavy converter nodes with cheap gain/sum
+  nodes. Answers the hundreds-of-nodes / stadium-routing question the 1-channel gate above can't —
+  the heavy converters dominate, so watch where realtime× crosses 1 (the one-core ceiling; beyond it
+  the levers are multi-core DAG partition and a lower oversample factor).
+</p>
+<button id="sweep">Run scaling sweep</button>
+<table id="sweep-results" hidden>
+  <thead><tr><th>Channels</th><th>Nodes (4N+2)</th><th>Realtime ×</th><th>Peak (sanity)</th></tr></thead>
+  <tbody></tbody>
+</table>
+
+<script type="module">
+  // Render this many seconds of audio for the throughput measurement, after a warm-up.
+  const THROUGHPUT_AUDIO_SEC = 10;
+  const WARMUP_BLOCKS = 1000;
+  const QUANTUM_ITERS = 3000;
+  // Scaling sweep: channel counts to probe, and a shorter per-point measurement (the big patches
+  // run below real time, so keep the rendered audio short to bound wall time).
+  const SWEEP_CHANNELS = [1, 2, 4, 8, 16, 32, 64, 128];
+  const SWEEP_AUDIO_SEC = 1.0;
+  const SWEEP_WARMUP_BLOCKS = 200;
+
+  async function loadVariant(dir) {
+    try {
+      const mod = await import(`../${dir}/wasm_bindings.js`);
+      await mod.default(); // instantiate the wasm module (fetches the .wasm beside the JS)
+      return mod;
+    } catch (e) {
+      console.warn(`variant ${dir} not loaded:`, e);
+      return null;
+    }
+  }
+
+  // Render `audioSec` of audio after a warm-up; return realtime ratio (audio time / wall time) and
+  // the peak sample (non-silence sanity). Shared by the gate table and the scaling sweep.
+  function measureThroughput(engine, audioSec, warmupBlocks) {
+    const hostPerBlock = engine.host_samples_per_block;
+    const hostRate = engine.host_rate_hz;
+    engine.render_blocks(warmupBlocks);
+    const nBlocks = Math.round((audioSec * hostRate) / hostPerBlock);
+    const t0 = performance.now();
+    const peak = engine.render_blocks(nBlocks);
+    const wallSec = (performance.now() - t0) / 1000;
+    return { realtime: ((nBlocks * hostPerBlock) / hostRate) / wallSec, peak };
+  }
+
+  function benchOne(mod) {
+    const engine = new mod.BenchEngine();
+    const hostPerBlock = engine.host_samples_per_block;
+    const hostRate = engine.host_rate_hz;
+    const quantumMs = (hostPerBlock / hostRate) * 1000;
+
+    const { realtime, peak } = measureThroughput(engine, THROUGHPUT_AUDIO_SEC, WARMUP_BLOCKS);
+
+    // Per-quantum: time individual single-quantum renders; capture mean + the jitter tail.
+    let sum = 0, max = 0;
+    const times = new Float64Array(QUANTUM_ITERS);
+    for (let i = 0; i < QUANTUM_ITERS; i++) {
+      const a = performance.now();
+      engine.render_blocks(1);
+      const d = performance.now() - a;
+      times[i] = d; sum += d; if (d > max) max = d;
+    }
+    const meanMs = sum / QUANTUM_ITERS;
+
+    engine.free();
+    return { realtime, meanMs, maxMs: max, quantumMs, peak, worst: quantumMs / max };
+  }
+
+  function fmt(n, digits = 2) { return Number.isFinite(n) ? n.toFixed(digits) : "—"; }
+
+  function addRow(tbody, label, r) {
+    const tr = document.createElement("tr");
+    tr.innerHTML = `<td>${label}</td>
+      <td class="headline">${fmt(r.realtime)}×</td>
+      <td>${fmt(r.meanMs, 3)} ms</td>
+      <td>${fmt(r.maxMs, 3)} ms</td>
+      <td>${fmt(r.quantumMs, 3)} ms</td>
+      <td>${fmt(r.worst)}×</td>
+      <td>${fmt(r.peak, 3)}</td>`;
+    tbody.appendChild(tr);
+  }
+
+  function verdictFor(realtime) {
+    if (realtime >= 3) return ["ok", `≈${fmt(realtime, 1)}× real-time — comfortable headroom: engine-in-worklet single-thread is viable (3.2).`];
+    if (realtime >= 1.2) return ["marginal", `≈${fmt(realtime, 1)}× real-time — marginal: lean to a Worker + SAB ring fallback for 3.2.`];
+    return ["bad", `≈${fmt(realtime, 1)}× real-time — below comfort: cut the oversample factor or optimize the hot path before real-time.`];
+  }
+
+  document.getElementById("run").addEventListener("click", async (e) => {
+    const btn = e.target; btn.disabled = true; btn.textContent = "Running…";
+    const verdict = document.getElementById("verdict");
+    const table = document.getElementById("results");
+    const tbody = table.querySelector("tbody");
+    tbody.innerHTML = ""; verdict.textContent = "";
+
+    const variants = [["scalar", "pkg-scalar"], ["SIMD (+simd128)", "pkg-simd"]];
+    let simdRealtime = null;
+    for (const [label, dir] of variants) {
+      const mod = await loadVariant(dir);
+      if (!mod) { addRowMissing(tbody, label, dir); continue; }
+      // Yield so the "Running…" paint lands before the blocking benchmark.
+      await new Promise((r) => setTimeout(r, 0));
+      const r = benchOne(mod);
+      addRow(tbody, label, r);
+      if (dir === "pkg-simd") simdRealtime = r.realtime;
+    }
+    table.hidden = false;
+
+    if (simdRealtime != null) {
+      const [cls, msg] = verdictFor(simdRealtime);
+      verdict.className = cls; verdict.textContent = msg;
+    } else {
+      verdict.className = "bad";
+      verdict.textContent = "No SIMD artifact found — run bench/build.sh, then serve this dir.";
+    }
+    btn.disabled = false; btn.textContent = "Run benchmark";
+  });
+
+  function addRowMissing(tbody, label, dir) {
+    const tr = document.createElement("tr");
+    tr.innerHTML = `<td>${label}</td><td colspan="6" style="text-align:left;opacity:.7">not built — <code>${dir}/</code> missing</td>`;
+    tbody.appendChild(tr);
+  }
+
+  document.getElementById("sweep").addEventListener("click", async (e) => {
+    const btn = e.target; btn.disabled = true; btn.textContent = "Running…";
+    const table = document.getElementById("sweep-results");
+    const tbody = table.querySelector("tbody");
+    tbody.innerHTML = "";
+
+    const mod = await loadVariant("pkg-simd");
+    if (!mod) {
+      addRowMissing(tbody, "—", "pkg-simd");
+      table.hidden = false;
+      btn.disabled = false; btn.textContent = "Run scaling sweep";
+      return;
+    }
+    table.hidden = false;
+    for (const n of SWEEP_CHANNELS) {
+      await new Promise((r) => setTimeout(r, 0)); // let the row paint before blocking
+      const engine = mod.BenchEngine.scaled(n);
+      const { realtime, peak } = measureThroughput(engine, SWEEP_AUDIO_SEC, SWEEP_WARMUP_BLOCKS);
+      engine.free();
+      const tr = document.createElement("tr");
+      const cls = realtime >= 3 ? "ok" : realtime >= 1 ? "marginal" : "bad";
+      tr.innerHTML = `<td>${n}</td><td>${4 * n + 2}</td>
+        <td class="headline ${cls}">${fmt(realtime)}×</td><td>${fmt(peak, 3)}</td>`;
+      tbody.appendChild(tr);
+    }
+    btn.disabled = false; btn.textContent = "Run scaling sweep";
+  });
+</script>
+</body>
+</html>

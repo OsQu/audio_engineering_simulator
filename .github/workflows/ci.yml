@@ -35,10 +35,21 @@ jobs:
       - name: Test
         run: cargo test --workspace
 
-      # Portability of engine + bindings on wasm32 (the native-only harness is excluded).
+      # Portability of engine + capture + bindings on wasm32 (the native-only harness is excluded).
       - name: Wasm check
         run: cargo wasm
 
       # Doc build with broken-intra-doc-link and bare-URL lints denied (see .cargo/config.toml).
       - name: Docs
         run: cargo docs
+
+      # `cargo wasm` only type-checks; this actually runs wasm-bindgen, catching bindgen breakage a
+      # bare check can't (e.g. an un-bindgen-able exported signature). `--dev` runs wasm-bindgen but
+      # skips the wasm-opt download, so it's fast and non-flaky. wasm-pack fetches a wasm-bindgen-cli
+      # matching the crate version in Cargo.lock. See crates/wasm-bindings/README.md.
+      - name: Install wasm-pack
+        uses: taiki-e/install-action@v2
+        with:
+          tool: wasm-pack
+      - name: Wasm build (bindgen)
+        run: wasm-pack build crates/wasm-bindings --target web --dev

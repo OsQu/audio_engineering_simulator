@@ -25,6 +25,7 @@ already seen.
 10. [Testing](#10-testing)
 11. [Tooling & ecosystem](#11-tooling--ecosystem)
 12. [Unsafe, statics & atomics](#12-unsafe-statics--atomics)
+13. [Compilation targets & WebAssembly](#13-compilation-targets--webassembly)
 
 ---
 
@@ -518,6 +519,40 @@ a file that genuinely needs it opts back in with `#![allow(unsafe_code, reason =
 **`static` vs `const`:** a `const` is inlined at each use (no address); a **`static`** is one
 value at a fixed address living for the whole program. Shared *mutable* global state must be a
 `static` of a thread-safe type (an atomic) — plain `static mut` is unsafe.
+
+## 13. Compilation targets & WebAssembly
+
+- **Target triple** — Rust names a compile target `<arch>-<vendor>-<os>[-<env>]` (e.g. our native
+  `aarch64-apple-darwin`). `rustup target add <triple>` installs one; `--target <triple>` builds
+  for it.
+- **`wasm32-unknown-unknown`** — our browser target. Decoded:
+  - `wasm32` — WebAssembly arch, 32-bit pointers (`usize` = 32-bit, linear memory ≤ ~4 GB), a
+    stack VM not x86/ARM.
+  - `unknown` (vendor) — none; no meaning.
+  - `unknown` (OS) — **no operating system underneath.** No syscalls, files, OS threads, system
+    clock, or sockets. *This field is the whole story.*
+- The OS field is what differs across the wasm targets:
+
+  | Target | OS layer | Runs in |
+  | --- | --- | --- |
+  | `wasm32-unknown-unknown` | **none** | browser / any JS host (via imports) |
+  | `wasm32-wasip1` (was `-wasi`) | WASI syscall layer | `wasmtime`, Node WASI |
+  | `wasm32-unknown-emscripten` | emulated POSIX | browser via Emscripten |
+
+- **Bare = imports-only.** A `-unknown-unknown` module *exports* functions and *imports* whatever
+  it needs; the host must supply those imports. `wasm-bindgen` generates exactly that JS glue. No
+  syscall escape hatch.
+- **Why the engine's portability rules exist** — they're literally "what the `unknown` OS lacks":
+  no `std::time`/`Instant`/`SystemTime` (no clock → determinism via the seeded `Rng`), no
+  `std::thread` (browser concurrency is Workers + `SharedArrayBuffer`), no `getrandom`/ambient
+  entropy (→ `rand` with `default-features = false`). `cargo wasm` type-checks against this target
+  so a violation fails the gate, not the browser.
+- **`wasmtime` can't run a `wasm-bindgen` artifact** — it expects WASI imports, but the module
+  imports *JS* functions. Needs a JS host (browser/Node) — which is why the feasibility benchmark
+  runs in a real browser.
+- **`-C target-feature=+simd128`** — opt into wasm SIMD (128-bit vectors). A codegen flag passed
+  via `RUSTFLAGS`; LLVM autovectorizes hot loops. We keep it *out* of `.cargo/config.toml` so both
+  scalar and SIMD artifacts stay buildable from explicit commands (to measure the SIMD win).
 
 **Atomics** are lock-free shared-mutable primitives (`AtomicUsize`, `AtomicBool`, …):
 ```rust

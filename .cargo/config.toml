@@ -10,8 +10,8 @@
 # Lint with warnings-as-errors across the whole workspace and all targets (tests, benches).
 lint = "clippy --workspace --all-targets -- -D warnings"
 
-# Portability check: engine + bindings compiled for wasm32 (excludes the native harness).
-wasm = "check -p engine -p wasm-bindings --target wasm32-unknown-unknown"
+# Portability check: engine + capture + bindings compiled for wasm32 (excludes the native harness).
+wasm = "check -p engine -p capture -p wasm-bindings --target wasm32-unknown-unknown"
 
 # Build the docs (incl. private items) so doc defects fail the gate. The lints that turn
 # broken intra-doc links and bare URLs into errors are set in [build] rustdocflags below,

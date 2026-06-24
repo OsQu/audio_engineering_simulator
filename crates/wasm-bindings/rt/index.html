@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Audio Engineer Simulator — real-time first sound</title>
+    <style>
+      body {
+        font: 15px/1.5 system-ui, sans-serif;
+        max-width: 40rem;
+        margin: 3rem auto;
+        padding: 0 1rem;
+        color: #1a1a1a;
+      }
+      code {
+        background: #f0f0f0;
+        padding: 0.1em 0.3em;
+        border-radius: 3px;
+      }
+      button {
+        font: inherit;
+        padding: 0.5em 1.2em;
+        cursor: pointer;
+      }
+      #status {
+        color: #555;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>Real-time first sound</h1>
+    <p>
+      Story 3.2, Phase A. The canonical patch
+      (<code>synth → AD → DA → speaker</code>) running live in an
+      <code>AudioWorkletProcessor</code>, drained one quantum at a time from
+      <code>RtEngine::render_quantum</code> — zero-copy over wasm linear memory. A short note
+      repeats so the event lane keeps advancing. Browsers require a user gesture to start audio.
+    </p>
+    <p><strong>Build first:</strong> <code>rt/build.sh</code>, then serve the crate dir
+      (<code>python3 -m http.server 8000</code>) and open <code>/rt/</code>.</p>
+    <p><button id="start">▶ start</button></p>
+    <p id="status">idle</p>
+    <script type="module" src="main.js"></script>
+  </body>
+</html>

@@ -49,10 +49,12 @@ Before working a task: find it in `IMPLEMENTATION_PLAN.md` and honor its **Goal 
 notes — they encode decisions and traps not recoverable from code. Each Story ends with a **Validate**
 gate; don't start the next Story until it's green.
 
-`docs/rust_concepts.md` is the user's **personal** running Rust-learning reference — per-developer and
-**not** tracked in git (each dev excludes it via `.git/info/exclude`). When you explain a **new** Rust
-concept to the user, append it there (organized by topic), creating the file if it doesn't exist yet, so
-it stays a complete cross-context reference.
+`docs/osku_rust_concepts.md` and `docs/osku_physics_concepts.md` are the user's running learning
+references (Rust, and audio/electrical physics) — **tracked in git** (the `osku_` prefix marks them as
+his personal references kept in-repo for easy access). When you explain a **new** Rust or physics concept
+to the user, append it to the matching file (organized by its existing numbered sections, in the same
+terse house style — update the Contents list when adding a section), so each stays a complete
+cross-context reference.
 
 ## 4. What this project is
 
