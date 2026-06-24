@@ -433,9 +433,12 @@ the HF content aliasing needs, so picking this up later is cheap.
 
 ## Epic 3 — Real-Time Playback (the north star)
 
-**Progress:** Story 3.1 ✅ done — the engine builds to WASM and the in-browser feasibility benchmark
-clears the gate at **≈46× real-time** (in-worklet single-thread confirmed; the heaviest unknown in
-PROJECT_PLAN §10 is retired). Next: **3.2 — first real-time sound** (Vite/TS harness + AudioWorklet).
+**Progress:** Stories 3.1 ✅ and 3.2 ✅ done. 3.1 — the engine builds to WASM and the in-browser
+feasibility benchmark clears the gate at **≈46× real-time** (in-worklet single-thread confirmed; the
+heaviest unknown in PROJECT_PLAN §10 is retired). 3.2 — **first real-time sound**: the canonical patch
+plays live in an `AudioWorkletProcessor`, drained zero-copy one quantum at a time, on both a throwaway
+static page and the Vite/TS harness (~5.3 ms base latency, clean at idle). Next: **3.3 — live control &
+playing** (sliders → params, keyboard/MIDI → events).
 
 **Goal:** the engine live in the browser — turn knobs and play an instrument with low latency, glitch-free.
 The engine runs **inside the AudioWorklet** (WASM) on the audio thread; control crosses the main→audio
@@ -611,7 +614,7 @@ synth); a realistic stadium has ~1 converter per I/O and a cheap digital routing
 ceiling on one core is **higher**. Beyond it, the levers are **multi-core DAG partition** and a **lower
 oversample factor** (8×→4× ≈ halves analog-domain cost) — Epic-5 concerns, flagged now, not built.
 
-### Story 3.2 — First real-time sound *(the live milestone)*
+### Story 3.2 — First real-time sound *(the live milestone)* — ✅ **Done**
 *Goal:* the Epic-3 analogue of Story 1.3's "first runnable" and 2.1's "first sound" — a fixed patch
 (`synth note → AD → (DSP) → DA → speaker → capture`) **audible in the browser in real time**, clean at
 idle. Hosts the engine in an `AudioWorkletProcessor`, lands the **raw zero-copy output hot path** (the
@@ -689,27 +692,81 @@ proven static page — stands up the minimal Vite + TS harness the rest of the e
   loaded via real URL through `addModule`); port the working worklet + main-thread bring-up; confirm
   identical first-sound. This is the reusable build/serve infra Epic 4 inherits.
 
-*Validate:* a fixed patch plays continuously and recognizably in the browser, **clean at idle** (no
-dropouts at no load), first on the static page and then through the Vite harness; the live output **sounds
-like** the offline render of the same patch (by-ear — automated parity stays deferred). The hot path is
-zero-copy (one `Float32Array` view, no per-quantum marshalling) and the Rust gate stays green.
+*Validate (✅ met):* the canonical patch plays continuously and recognizably in the browser, **clean at
+idle** (~5.3 ms base latency), on both the static page and the Vite harness; the live output sounds like
+the offline render (by-ear — automated parity stays deferred). The hot path is zero-copy (one
+`Float32Array` view, no per-quantum marshalling) and the Rust gate stays green.
+
+*Delivered:* first real-time sound. **Engine (`wasm-bindings`):** a new `#[wasm_bindgen]` `RtEngine`
+alongside the frozen 3.1 `BenchEngine` — owns the pinned canonical patch + `Capture`; `render_quantum()`
+renders one block (1024 analog → 128 host) zero-alloc; `out_ptr()`/`out_len()` expose the host block for a
+single `Float32Array` view over wasm memory (zero-copy — **no `unsafe` needed**: `as_ptr()` is safe, the
+view is built JS-side); a repeating-note demo (`render_quantum`-driven) proves the event lane advances.
+Native rlib tests guard the surface (non-silence, geometry, note cadence). **Two deviations from plan:** no
+`#[allow(unsafe_code)]` (returning a pointer is safe Rust); and the wasm crosses to the worklet as **raw
+bytes via `processorOptions`**, not a `postMessage`'d `WebAssembly.Module` — a Module can't be
+structured-cloned into the AudioWorklet realm (it was silently dropped); bytes always clone and the worklet
+compiles them synchronously in its constructor (the WebKit/Emscripten-recommended approach). **Phase A
+(`crates/wasm-bindings/rt/`):** a throwaway no-bundler static page — `--target no-modules` glue +
+`TextDecoder`/`TextEncoder` polyfill (the worklet scope lacks them and the glue builds one eagerly) +
+processor, concatenated by `build.sh` into one classic script (`addModule` can't import). **Phase B
+(`web/`):** the durable Vite + TS harness Epic 4 inherits — `main.ts`, the worklet served as a static
+asset, `build-wasm.sh`, `.node-version` (Node 24 LTS), and **Biome** (lint+format, `biome.json` + committed
+`.vscode/` config). Both pages play identically.
 
 ### Story 3.3 — Live control & playing
 *Goal:* turn knobs and play the instrument live — **control params** (sliders → latest-wins target →
-`ParamQueue`) and **events** (computer keyboard + Web MIDI → `EventQueue`), both over `postMessage`, applied
-at the top of `process()`.
-*Watch out:* the **event-clock trap** — Web MIDI and DOM events fire on the main thread in host-frame /
-`AudioContext.currentTime` units, but the engine timestamps events in its own **analog-rate** sample clock
-(`sample_pos` advances by `block_len`); map host time → analog samples (× M) and schedule slightly ahead to
-absorb postMessage delivery jitter, or notes land at the wrong instant. Push **raw target values**, not
-`AudioParam` automation (the engine's `Smoother` owns de-zippering). postMessage deserialization allocates
-on the audio thread — fine at human rates, but watch it under a flood (the 3.4 SAB ring is the fix).
-- Param transport: main→worklet slider values → `ParamQueue` (a couple of mapped knobs on the demo patch).
-- Event transport: computer-keyboard keys → `EventQueue`, with the host-time→analog-sample mapping.
-- Web MIDI input → the same event path (playing from a controller).
+`ParamQueue`) and **events** (computer keyboard + Web MIDI → `EventQueue`), both over `port.postMessage`,
+drained at the top of `process()`. The patch already has what's needed: `SynthVoice` declares 5 smoothed
+params (`LEVEL`, `ATTACK_MS`, `DECAY_MS`, `SUSTAIN`, `RELEASE_MS`) and the note event input RtEngine
+already uses — so 3.3 is wiring, not new engine nodes.
 
-*Validate:* a slider audibly and smoothly changes a param (no zipper); playing keys / MIDI sounds notes at
-the right pitch and timing, glitch-free and responsive at low latency.
+*Watch out:* the **event-clock trap** — Web MIDI / DOM events fire on the main thread in
+`AudioContext.currentTime` (seconds) units, but the engine timestamps events in its own **analog-rate**
+sample clock (`sample_pos`, advances by `block_len`). Push **raw target values**, not `AudioParam`
+automation (the engine's `Smoother` owns de-zippering). `postMessage` deserialization allocates on the
+audio thread — fine at human rates, watch it under a flood (the 3.4 SAB ring is the fix).
+
+*Design notes (settled at planning):*
+- **Decision — named demo setters, not a generic param registry.** `RtEngine` resolves the handles it
+  needs at construction (`schedule.param(voice, SynthVoice::LEVEL)` etc., and the existing
+  `event_input`) and exposes **specific** methods: `set_level(v)` / `set_attack_ms(v)` / … and
+  `note_on(note, vel)` / `note_off(note)`. JS calls them by name. The generic, UI-enumerable param API
+  (expose `ParamDecl`s + `set_param(id, value)`) is deferred to **Epic 4 / Story 4.1** — this page is
+  still throwaway.
+- **`render_quantum` switches to `process_io`.** `RtEngine` owns a `ParamQueue` + `EventQueue`; the
+  setters push into them (latest-wins / timestamped); `render_quantum` calls
+  `process_io(out, &mut params, &mut events)` so both lanes drain each block. The internal repeating-note
+  demo is **removed** — notes now come from input.
+- **Runtime control re-uses `port.postMessage`.** `processorOptions` delivered the wasm at construction
+  (3.2); live control is a *runtime* channel, so the worklet regains a `port.onmessage` that maps
+  `{type:"param"|"noteOn"|"noteOff", …}` messages onto the `RtEngine` setters. (Still postMessage; the
+  lock-free SAB ring is 3.4.)
+- **Event-clock — stamp at the current quantum, don't map host time.** For *live playing*, when a
+  note message reaches the worklet, stamp it at the block about to render (`blocks · BLOCK_LEN`, the
+  same timeline 3.2's demo used) — "play at the next quantum," ~2.7 ms granularity, imperceptible for
+  human input and zero host-time math. Precise `currentTime`→sample mapping only matters for *sequenced*
+  MIDI and is deferred (note it as a known simplification, not a bug).
+- **Keyboard mapping:** a small QWERTY→MIDI-note map (one octave + shift) in `main.ts` → `note_on`/
+  `note_off` with key-repeat suppressed. **Web MIDI** reuses the identical message path (a `MIDIMessage`
+  → the same `noteOn`/`noteOff`), so it's a thin add, not a separate lane.
+- **Testing posture (unchanged):** `RtEngine`'s new setters get native rlib tests (a param target moves
+  the smoother / a `note_on` produces output); keyboard/MIDI glue is verified **manually** in the browser.
+
+- **Task 3.3.1** — `RtEngine` control surface: hold a `ParamQueue` + `EventQueue`; resolve param/event
+  handles at construction; add named setters (`set_level` / `set_attack_ms` / … / `note_on` / `note_off`)
+  that push into the queues; switch `render_quantum` to `process_io`; remove the internal repeating note.
+  Native tests: a setter moves the param; `note_on` then render → non-silence.
+- **Task 3.3.2** — Worklet runtime channel: `port.onmessage` maps param/note messages onto the setters,
+  stamping notes at the current block. (Both `rt/` and `web/` — or `web/` only if `rt/` is being retired.)
+- **Task 3.3.3** — `web/` controls UI: a couple of sliders (e.g. level + attack) wired to `param`
+  messages, and a QWERTY keyboard handler → `noteOn`/`noteOff` (key-repeat suppressed).
+- **Task 3.3.4** — Web MIDI: request access, route note-on/off (and note-off-as-velocity-0) through the
+  same message path; pick a device. Thin add over 3.3.3.
+
+*Validate:* a slider audibly and smoothly changes a param (no zipper); playing keys / a MIDI controller
+sounds notes at the right pitch, glitch-free and responsive at low latency. Hot path stays zero-alloc on
+the Rust side; the Rust gate + `web/` `biome check`/`typecheck` stay green.
 
 ### Story 3.4 — Glitch-free & low-latency hardening *(the epic exit)*
 *Goal:* make it robust and *measured* — a panic/denormal audit of the hot path under real-time, the
