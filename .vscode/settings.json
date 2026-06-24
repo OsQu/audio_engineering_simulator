@@ -1,0 +1,33 @@
+{
+  // Biome is the formatter/linter for the web/ harness (config: web/biome.json). Scope it to
+  // JS/TS/JSON only — Rust stays on rust-analyzer, which formats .rs files. Requires the
+  // "biomejs.biome" extension (see .vscode/extensions.json).
+  //
+  // Biome lives in a subfolder (web/node_modules), but the workspace root is the repo root, so the
+  // extension can't auto-detect the binary ("Unable to find the Biome binary"). Point it at the
+  // wrapper explicitly (path is relative to the workspace root). macOS/Linux; a Windows teammate
+  // would use the per-platform object form, e.g.
+  //   "biome.lsp.bin": { "win32-x64": "./web/node_modules/@biomejs/cli-win32-x64/biome.exe" }
+  "biome.lsp.bin": "./web/node_modules/@biomejs/biome/bin/biome",
+  "[javascript]": {
+    "editor.defaultFormatter": "biomejs.biome",
+    "editor.formatOnSave": true
+  },
+  "[typescript]": {
+    "editor.defaultFormatter": "biomejs.biome",
+    "editor.formatOnSave": true
+  },
+  "[json]": {
+    "editor.defaultFormatter": "biomejs.biome",
+    "editor.formatOnSave": true
+  },
+  "[jsonc]": {
+    "editor.defaultFormatter": "biomejs.biome",
+    "editor.formatOnSave": true
+  },
+  // Run Biome's safe fixes + import sorting on save (only acts on files Biome handles).
+  "editor.codeActionsOnSave": {
+    "source.organizeImports.biome": "explicit",
+    "quickfix.biome": "explicit"
+  }
+}
