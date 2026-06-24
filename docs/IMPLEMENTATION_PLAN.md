@@ -495,7 +495,9 @@ output device's channels.
 - **SIMD is measure-driven, not upfront.** Rely on LLVM autovectorization with `+simd128` first; reach for
   explicit intrinsics (more `unsafe`) only on hot loops the 3.1 spike proves are over budget.
   **✅ Resolved (3.1 spike): nothing is over budget (~46× headroom), and `+simd128` autovectorization buys
-  only ~3% (the chain is largely serial/recursive) — so explicit SIMD intrinsics are *not* pursued.**
+  only ~3% (the chain is largely serial/recursive) — so explicit SIMD intrinsics are *not* pursued *now*.
+  Scoped to the mono gate: at scale, running one filter across many channels/conductors is a fresh,
+  SIMD-friendly axis the gate didn't exercise — re-measure there before concluding.**
 
 > *Tasks below are a coarse sketch, fleshed out to Task level when each Story is picked up — per the
 > detail-gradient convention (Epics 2–3 carry Tasks but expect churn). Goals, watch-outs, and the settled
@@ -598,24 +600,91 @@ WASM, zero per-block marshalling, no `unsafe`) with native unit tests; and a thr
 (scalar vs SIMD side by side) + `build.sh`. The raw zero-copy `process` hot path and the Vite/TS harness
 remain 3.2.
 
+*Scaling probe (in-browser, SIMD; `BenchEngine::scaled(N)` — N parallel `synth → gain → AD → DA` chains
+summed to one speaker, `4N+2` nodes):* **throughput is linear in node count** — `realtime× · N` converges
+to ≈68 and stays flat (8 ch → 7.97×, 32 ch/130 nodes → 2.08×, 64 ch/258 nodes → 1.06×, 128 ch/514 nodes →
+0.53×), so there is **no superlinear scheduling/edge overhead** — pure per-node compute, as the
+partitionable-DAG design intends. **One core crosses real-time at ~64–68 of these channels (~260 nodes).**
+That's ≈192 heavy units (3 per channel: synth + AD + DA) — matching the ~190 the 1-channel gate predicted,
+an independent cross-check. This patch is **conservative** (every channel gets its own AD *and* DA + a
+synth); a realistic stadium has ~1 converter per I/O and a cheap digital routing core at 1×, so its node
+ceiling on one core is **higher**. Beyond it, the levers are **multi-core DAG partition** and a **lower
+oversample factor** (8×→4× ≈ halves analog-domain cost) — Epic-5 concerns, flagged now, not built.
+
 ### Story 3.2 — First real-time sound *(the live milestone)*
 *Goal:* the Epic-3 analogue of Story 1.3's "first runnable" and 2.1's "first sound" — a fixed patch
 (`synth note → AD → (DSP) → DA → speaker → capture`) **audible in the browser in real time**, clean at
-idle. Stands up the minimal Vite + TS harness, hosts the engine in an `AudioWorkletProcessor`, and wires the
-host-rate output into the worklet's output buffer.
-*Watch out:* the **bundler↔worklet** seam — the processor must load as a real URL via `addModule`
-(`new URL('./processor.ts', import.meta.url)` or a separate entry), not get inlined. The
-**wasm-bindgen-in-worklet** seam — no reliable `fetch` in the worklet scope, so compile the module bytes on
-the main thread and `postMessage` the `WebAssembly.Module` into the worklet to instantiate there. Set the
-browser cushion via `latencyHint` (~8 ms). `block_len` is the 128-frame quantum × M analog samples — honor
-the multiple-of-M constraint. Duplicate mono → output channels.
-- Vite + TS scaffold under `web/`; dev server; load the WASM + worklet.
-- `AudioWorkletProcessor` hosting the engine instance (main-thread compile → postMessage module → instantiate).
-- Per-quantum `process()`: run the engine, capture to host rate, write the output buffer.
-- Fixed first-sound demo patch + an idle-stability check (no dropouts at no load).
+idle. Hosts the engine in an `AudioWorkletProcessor`, lands the **raw zero-copy output hot path** (the
+per-quantum `Float32Array` view over WASM memory the epic deferred from 3.1), and — once that works on the
+proven static page — stands up the minimal Vite + TS harness the rest of the epic and Epic 4 build on.
 
-*Validate:* a fixed patch plays continuously and recognizably in the browser, clean at idle; the live output
-matches the offline render of the same patch (parity holds across the worklet boundary).
+*Watch out:*
+- The **wasm-in-worklet** seam — no reliable `fetch` in `AudioWorkletGlobalScope`, so compile the module
+  bytes on the main thread and `postMessage` the `WebAssembly.Module` into the worklet to instantiate there.
+  `AudioWorkletGlobalScope` also has inconsistent **ES-module** support, so the glue the worklet runs must
+  be a **classic script** — use `wasm-bindgen --target no-modules` for the worklet artifact (its `initSync`
+  takes an already-compiled `Module`), *not* the `--target web` ES-module glue the 3.1 bench page uses on
+  the main thread.
+- **Pin `AudioContext({ sampleRate: 48_000 })`.** The engine's host rate is hardcoded 48 kHz (M = 8 from
+  384 kHz); if the context runs at the device default (often 44.1 kHz) every quantum is the wrong rate ⇒
+  wrong pitch + drift. One line, silent bug if missed. The browser resamples 48 k → device for us.
+- The **`Float32Array`-view detach** footgun — a view over WASM linear memory detaches if memory ever
+  `grow`s. Acquire the output view **after** construction; the zero-alloc hot path keeps it valid for the
+  session (it never grows mid-render).
+- The **bundler↔worklet** seam (Vite phase only) — the processor must load as a real URL via `addModule`
+  (`new URL('./processor.ts', import.meta.url)` or a separate entry), not get inlined.
+- Set the browser cushion via `latencyHint` (~8 ms). The AudioWorklet quantum is 128 host frames =
+  **exactly one engine block** (1024 analog ÷ M = 128) — honor the multiple-of-M constraint. Duplicate
+  mono → the output device's channels. **No COOP/COEP** needed here (postMessage transport only; the SAB
+  ring that forces cross-origin isolation is 3.4).
+
+*Design notes (settled at planning):*
+- **Decision — static page first, then Vite.** 3.2 introduces two independent new seams; bring them up in
+  isolation. **Phase A:** get first-sound on the existing no-bundler static page (reuse the 3.1 `bench/`
+  setup) so a failure is unambiguously the worklet/wasm seam, not the bundler. **Phase B:** stand up
+  Vite + TS under `web/` and port the working worklet over, isolating the bundler↔worklet seam. The Vite
+  *infrastructure* (not the throwaway page) carries into Epic 4 — engine-before-UI holds.
+- **Decision — new `RtEngine` bindgen type; freeze `BenchEngine`.** 3.1's `BenchEngine` (peak-float return,
+  internal host `Vec`) stays as the frozen feasibility-gate fixture. The real-time path is a new
+  `#[wasm_bindgen]` `RtEngine` that owns the same pinned patch + `Capture` but exposes the host block as a
+  **raw pointer + len** (`out_ptr()` / `out_len()`), so JS can build one `Float32Array` view over WASM
+  memory once and read it every quantum with **zero copy / zero marshalling**. `render_quantum()` runs one
+  `process_with_events` + `Capture::process` into the engine-owned host buffer (no return value on the hot
+  path). This is the localized `#[allow(unsafe_code)]` the workspace lint policy anticipates — scoped to
+  the pointer accessor; the compute stays safe.
+- **Parity stays a manual by-ear check (automated parity remains deferred, per 3.1).** Confirm the live
+  output sounds like the offline render of the same patch; do **not** build an `OfflineAudioContext` parity
+  harness now. The automated native↔WASM parity test is still the fast-follow *only if* a wasm-only numeric
+  divergence surfaces ([[defer-speculative-test-infra]]).
+- **First-sound demo content:** a short repeating note (re-queue a note-on/off cycle every N blocks), not a
+  held drone — recognizably musical and proves the event lane advances correctly over a long session,
+  without the grating sustained sawtooth. The event re-queue happens engine-side in `render_quantum` for
+  now (live keyboard/MIDI is 3.3).
+- **Testing posture (unchanged):** the engine is guarded by its Rust unit tests; `RtEngine`'s surface gets
+  a native rlib test (construct, render quanta, assert the exposed buffer is non-silent — no browser); the
+  worklet glue is verified **manually** in the browser. Little non-trivial TS logic lands until 3.3's
+  time-mapping.
+
+- **Task 3.2.1** — `RtEngine` bindgen surface (raw zero-copy output): new `#[wasm_bindgen]` type owning the
+  pinned patch + `Capture` + engine-owned host buffer; `render_quantum()` (one block, no marshalling),
+  `out_ptr()` / `out_len()` for a `Float32Array` view, `host_rate_hz` getter; scoped `#[allow(unsafe_code)]`
+  on the pointer accessor. Native rlib test: render quanta, assert non-silence and correct sample count.
+- **Task 3.2.2** — Worklet artifact + main-thread compile: build the `--target no-modules` wasm for the
+  worklet; main thread `WebAssembly.compile`s the bytes and `postMessage`s the `Module` to the worklet,
+  which `initSync`s it and constructs `RtEngine`. (Static-page scaffold — Phase A.)
+- **Task 3.2.3** — `AudioWorkletProcessor` hot path: per-`process()` call `render_quantum()`, read the
+  host buffer via the cached `Float32Array` view, write it to `outputs[0]` and duplicate mono → all output
+  channels. Pin `AudioContext({ sampleRate: 48_000, latencyHint })`. First sound on the static page.
+- **Task 3.2.4** — Idle-stability check: run the fixed patch continuously; confirm clean playback, no
+  dropouts/glitches at no load over a sustained session (manual, plus an optional `process()`-duration log).
+- **Task 3.2.5** — Vite + TS harness (Phase B): scaffold `web/` (own `package.json`, dev server, worklet
+  loaded via real URL through `addModule`); port the working worklet + main-thread bring-up; confirm
+  identical first-sound. This is the reusable build/serve infra Epic 4 inherits.
+
+*Validate:* a fixed patch plays continuously and recognizably in the browser, **clean at idle** (no
+dropouts at no load), first on the static page and then through the Vite harness; the live output **sounds
+like** the offline render of the same patch (by-ear — automated parity stays deferred). The hot path is
+zero-copy (one `Float32Array` view, no per-quantum marshalling) and the Rust gate stays green.
 
 ### Story 3.3 — Live control & playing
 *Goal:* turn knobs and play the instrument live — **control params** (sliders → latest-wins target →
