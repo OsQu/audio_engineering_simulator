@@ -371,9 +371,13 @@ impl Schedule {
         let pos = self.sample_pos;
         let end = pos + block_len;
 
-        // Apply pending param targets (latest-wins) — each re-aims its smoother's glide.
+        // Apply pending param targets (latest-wins) — each re-aims its smoother's glide. The handle
+        // comes from the external queue (the cross-thread seam), so index defensively: a stale or
+        // foreign handle is skipped, never a panic — `process` must be total on the audio thread.
         for (handle, target) in params.drain() {
-            self.param_store[handle.0].set_target(target);
+            if let Some(smoother) = self.param_store.get_mut(handle.0) {
+                smoother.set_target(target);
+            }
         }
 
         // Refill the open event inputs for this block: clear last block's events (no edge writes
@@ -383,10 +387,15 @@ impl Schedule {
         }
         for e in events.drain_due(end) {
             let offset = e.when.saturating_sub(pos).min(block_len.saturating_sub(1)) as u32;
-            self.input_pool[e.target.0].events_mut().push(TimedEvent {
-                offset,
-                message: e.message,
-            });
+            // `e.target` is host-supplied: guard both bounds *and* variant, so a foreign id that is
+            // in range but points at a non-event lane skips rather than hitting `events_mut`'s
+            // `unreachable!`. Totality over the cross-thread seam, same as the param drain above.
+            if let Some(Lane::Events(buf)) = self.input_pool.get_mut(e.target.0) {
+                buf.push(TimedEvent {
+                    offset,
+                    message: e.message,
+                });
+            }
         }
         self.sample_pos = end;
 
@@ -2810,6 +2819,202 @@ mod playable_voice {
         assert!(
             max_step < total * 0.5,
             "no single window may jump the whole change (max step {max_step} of {total})"
+        );
+    }
+}
+
+/// Story 3.4.1 — the real-time **hot-path robustness audit**, pinned as standing guards. The audit
+/// found the `process` path panic-free and denormal-flushed; these tests keep it that way, because a
+/// regression here surfaces on the audio thread — where a panic kills the stream and a denormal
+/// storm blows the per-quantum CPU budget — not somewhere a unit test would otherwise catch it.
+///
+/// Two properties:
+/// - **Totality over the cross-thread seam.** Param/event handles arrive from the external queues; a
+///   stale or foreign one is skipped (`process_io` indexes them with `.get`), never a panic.
+/// - **Exact silence / finiteness.** The voice reaches *exact* zero at idle and after release (the
+///   linear ADSR hits 0, so `saw·0·level` is identically 0 — no denormal tail); the full converter
+///   chain stays finite under sustained drive and quiet at idle (only the AD's dither floor).
+#[cfg(test)]
+mod hot_path_robustness {
+    use super::*;
+    use crate::electrical::Ohms;
+    use crate::node::{AdConverter, DaConverter, SynthVoice};
+    use crate::param::{ParamHandle, ParamQueue};
+    use crate::signal::{BitDepth, EventMessage, SampleRate, Volts};
+    use crate::test_util::rms;
+
+    fn analog_rate() -> AnalogRate {
+        AnalogRate::new(384_000.0)
+    }
+    fn digital_rate() -> SampleRate {
+        SampleRate::new(48_000.0)
+    }
+
+    /// A bare voice → analog tap (no converters), with its event-input and level handles.
+    fn voice_only(block: usize) -> (Schedule, EventInputId, ParamHandle) {
+        let mut g = Graph::new();
+        let voice = g.add(SynthVoice::new(Volts::new(1.0), Ohms::new(1.0)));
+        g.set_output(voice, 0);
+        let sched = compile(g, block, analog_rate(), 0).expect("valid voice chain");
+        let ev = sched.event_input(voice, 0).expect("voice event input");
+        let lvl = sched.param(voice, SynthVoice::LEVEL).expect("level param");
+        (sched, ev, lvl)
+    }
+
+    /// The full live patch: voice → AD → DA → analog tap, near-ideal faces.
+    fn voice_through_converters(block: usize) -> (Schedule, EventInputId) {
+        let mut g = Graph::new();
+        let voice = g.add(SynthVoice::new(Volts::new(1.0), Ohms::new(1.0)));
+        let ad = g.add(AdConverter::new(
+            digital_rate(),
+            BitDepth::new(24),
+            Volts::new(10.0),
+            Ohms::new(1e6),
+        ));
+        let da = g.add(DaConverter::new(
+            digital_rate(),
+            BitDepth::new(24),
+            Volts::new(10.0),
+            Ohms::new(150.0),
+        ));
+        g.connect(voice, 0, ad, 0);
+        g.connect(ad, 0, da, 0);
+        g.set_output(da, 0);
+        let sched = compile(g, block, analog_rate(), 0).expect("valid playable chain");
+        let ev = sched.event_input(voice, 0).expect("voice event input");
+        (sched, ev)
+    }
+
+    #[test]
+    fn idle_voice_is_exactly_silent_over_many_blocks() {
+        // No events ⇒ the envelope never leaves Idle ⇒ env == 0 ⇒ saw·0·level == 0, identically.
+        // A denormal creep (an un-flushed asymptotic state) would show as a tiny non-zero tail; the
+        // output must stay *exactly* 0.0 (and finite) over a long run.
+        let block = 1024;
+        let (mut sched, _ev, _lvl) = voice_only(block);
+        let mut out = VoltageBuffer::zeros(block, analog_rate());
+        for _ in 0..200 {
+            sched.process(&mut out);
+            assert!(
+                out.as_slice().iter().all(|&v| v == 0.0),
+                "idle voice must be identically zero — any denormal creep is a bug"
+            );
+        }
+    }
+
+    #[test]
+    fn a_released_note_decays_to_exact_zero() {
+        // Note-on then note-off; after the (10 ms) release the envelope reaches exactly 0 — a linear
+        // ramp clamped to 0, then Idle — so the tail is identically silent, no denormal residue.
+        let block = 8_192;
+        let (mut sched, ev, _lvl) = voice_only(block);
+        let mut q = EventQueue::with_capacity(4);
+        q.push(
+            0,
+            ev,
+            EventMessage::NoteOn {
+                note: 69,
+                velocity: 100,
+            },
+        );
+        q.push(64, ev, EventMessage::NoteOff { note: 69 }); // 10 ms release ≪ the rest of the block
+        let mut out = VoltageBuffer::zeros(block, analog_rate());
+        sched.process_with_events(&mut out, &mut q);
+        // The final stretch is long past the release: identically zero.
+        let tail = &out.as_slice()[block - 2048..];
+        assert!(
+            tail.iter().all(|&v| v == 0.0),
+            "the release must reach exact silence"
+        );
+        // A further idle block stays silent — state truly settled, not drifting.
+        sched.process(&mut out);
+        assert!(out.as_slice().iter().all(|&v| v == 0.0));
+    }
+
+    #[test]
+    fn a_sustained_note_through_converters_stays_finite() {
+        // Hold a note across many blocks through the AD/DA FIR + edge IIR chain; every output sample
+        // must stay finite (no NaN/inf from a runaway filter state) for the whole sustained run.
+        let block = 1024;
+        let (mut sched, ev) = voice_through_converters(block);
+        let mut q = EventQueue::with_capacity(4);
+        q.push(
+            0,
+            ev,
+            EventMessage::NoteOn {
+                note: 69,
+                velocity: 100,
+            },
+        );
+        let mut out = VoltageBuffer::zeros(block, analog_rate());
+        for _ in 0..400 {
+            sched.process_with_events(&mut out, &mut q);
+            assert!(
+                out.as_slice().iter().all(|&v| v.is_finite()),
+                "sustained output must stay finite"
+            );
+        }
+    }
+
+    #[test]
+    fn idle_chain_through_converters_is_finite_and_quiet() {
+        // At idle the chain carries only the AD's sub-µV dither floor: finite, and far below any
+        // signal — proof there's no denormal / IIR blow-up when the input is silent.
+        let block = 1024;
+        let (mut sched, _ev) = voice_through_converters(block);
+        let mut out = VoltageBuffer::zeros(block, analog_rate());
+        for _ in 0..200 {
+            sched.process(&mut out);
+            assert!(out.as_slice().iter().all(|&v| v.is_finite()));
+        }
+        assert!(
+            rms(out.as_slice()) < 1e-3,
+            "idle chain should be near-silent (dither only)"
+        );
+    }
+
+    #[test]
+    fn a_foreign_param_handle_is_skipped_not_panicked() {
+        // A handle from another schedule (or a stale one) indexes past this schedule's smoother
+        // store. `process_io` must skip it rather than panic — a panic would kill the audio stream.
+        // The valid handle pushed alongside still applies.
+        let block = 256;
+        let (mut sched, _ev, lvl) = voice_only(block);
+        let mut pq = ParamQueue::with_capacity(4);
+        pq.set(ParamHandle(usize::MAX), 0.5); // bogus: way past the store
+        pq.set(lvl, 2.0); // valid
+        let mut out = VoltageBuffer::zeros(block, analog_rate());
+        sched.process_with_params(&mut out, &mut pq); // must not panic
+    }
+
+    #[test]
+    fn a_foreign_event_id_is_skipped_not_panicked() {
+        // Same totality contract for the event lane: an out-of-range target id is skipped, never a
+        // panic (and never the `events_mut` `unreachable!`); the valid note still sounds.
+        let block = 1024;
+        let (mut sched, ev, _lvl) = voice_only(block);
+        let mut q = EventQueue::with_capacity(4);
+        q.push(
+            0,
+            EventInputId(usize::MAX), // bogus target
+            EventMessage::NoteOn {
+                note: 69,
+                velocity: 100,
+            },
+        );
+        q.push(
+            0,
+            ev, // valid target
+            EventMessage::NoteOn {
+                note: 69,
+                velocity: 100,
+            },
+        );
+        let mut out = VoltageBuffer::zeros(block, analog_rate());
+        sched.process_with_events(&mut out, &mut q); // must not panic
+        assert!(
+            out.as_slice().iter().any(|&v| v != 0.0),
+            "the valid note should still sound"
         );
     }
 }
