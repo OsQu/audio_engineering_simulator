@@ -281,20 +281,23 @@ harness, not a second engine**.
 
 ---
 
-## Epic 3 — Real-Time Playback (the north star)
+## Epic 3 — Real-Time Playback (the north star) — ✅ **Complete**
 
-**Progress:** Stories 3.1 ✅, 3.2 ✅, and 3.3 ✅ done. 3.1 — the engine builds to WASM and the
+**Progress:** Stories 3.1–3.4 ✅ — **Epic 3 complete (north star reached).** 3.1 — the engine builds to WASM and the
 in-browser feasibility benchmark clears the gate at **≈46× real-time** (in-worklet single-thread
 confirmed; the heaviest unknown in PROJECT_PLAN §10 is retired). 3.2 — **first real-time sound**: the
 canonical patch plays live in an `AudioWorkletProcessor`, drained zero-copy one quantum at a time, on
 both a throwaway static page and the Vite/TS harness (~5.3 ms base latency, clean at idle). 3.3 —
 **live control & playing**: sliders drive smoothed params and the computer keyboard / Web MIDI play
 notes, both over `port.postMessage` onto `RtEngine`'s named setters; verified by ear (smooth
-zipperless knobs, correct-pitch glitch-free notes from QWERTY and a MIDI source). Next (in progress): **3.4 —
-glitch-free & low-latency hardening** (the epic exit): panic/denormal audit, a durable real-time-health
-instrument (compute-budget-overrun + queue-overflow counters), and latency measurement + cushion tuning.
-**The SAB event ring is deferred** — `postMessage` tested clean at human rates; cheap to retrofit behind the
-`EventQueue::push` seam when live performance or scale demands it (so COOP/COEP defers with it).
+zipperless knobs, correct-pitch glitch-free notes from QWERTY and a MIDI source). 3.4 —
+**glitch-free & low-latency hardening** (the epic exit): the live hot path audited panic-free (two
+host-supplied index derefs in `process_io` hardened to total) with denormal coverage confirmed; a durable
+real-time-health instrument (worklet compute-budget-overrun counter + engine queue-drop counts) surfaced to
+the page; latency measured (engine signal-path **0.625 ms** + browser base/output, reported live).
+**Verified in-browser** — glitch-free sustained playing, health clean. The **SAB event ring + COOP/COEP**
+(deferred behind the `EventQueue::push` seam, cheap to retrofit) and the **schedule hot-swap** (→ Epic 4.3)
+stay deferred, so the *"lock-free cross-thread validation"* item is intentionally open past Epic 3.
 
 **Goal:** the engine live in the browser — turn knobs and play an instrument with low latency, glitch-free.
 The engine runs **inside the AudioWorklet** (WASM) on the audio thread; control crosses the main→audio
@@ -645,7 +648,7 @@ durable `web/` harness (the plan's "`web/` only if `rt/` is being retired" branc
 simplification (not a bug):** releasing a key *after* an octave shift can leave a note hanging (release
 keys before shifting); a held-key→note map is Epic 4 polish.
 
-### Story 3.4 — Glitch-free & low-latency hardening *(the epic exit)* — 🚧 **In progress**
+### Story 3.4 — Glitch-free & low-latency hardening *(the epic exit)* — ✅ **Done**
 *Goal:* make it robust and *measured* — a panic/denormal audit of the live hot path, a durable
 **real-time-health instrument** (compute-budget-overrun + queue-overflow counters), and **latency
 measurement + cushion tuning** against the ~5–12 ms target. The headline item of the old sketch — the
@@ -713,13 +716,42 @@ under real-time — a panic or stall on the audio thread kills the stream. Wall-
   document the achieved figure and the latency/robustness tradeoff. *Done:* the page shows a measured
   round-trip figure within target (or the gap documented with the tradeoff); gate green.
 
-*Validate:* the live hot path is audited panic-free with denormals flushed (targeted tests green); the
-real-time-health instrument (compute-budget-overrun counter + queue-overflow counts) runs in the live
-harness, fires when forced, and stays clean under sustained mono playing; measured round-trip latency is
-reported (`baseLatency` + `outputLatency` + FIR group delay + cushion) and is within ~5–12 ms **or** the gap
-is documented with the cushion tradeoff. Rust pre-push gate + `web/` `biome check`/`typecheck` green.
+*Validate (✅ met):* the live hot path is audited panic-free with denormals flushed (targeted tests green);
+the real-time-health instrument (compute-budget-overrun counter + queue-drop counts) runs in the live
+harness, fires when forced, and stays clean under sustained mono playing; round-trip latency is reported
+(`baseLatency` + `outputLatency` + 0.625 ms FIR group delay) within the ~5–12 ms target. Rust pre-push gate +
+`web/` `biome check`/`typecheck` green; **verified in-browser** (glitch-free playing, clean health line).
 **Epic 3 exit met (mono);** real-time *at scale* is bounded by the 3.1 probe (~64–68 ch/core) and
 re-confirmed in Epic 5.
+
+*Delivered (✅ verified in-browser):* the hardening +
+instrumentation landed across the engine and the `web/` harness. **3.4.1 — panic/denormal audit:** the
+denormal side was already complete (every IIR — `OnePole`, `Biquad`, `PeakEnvelope` — flushes; the linear
+ADSR + exact-snap `Smoother` + FIRs reach exact zero), so no change there. The audit's one real finding was
+panic-shaped: `Schedule::process_io` indexed the param store and input pool by **host-supplied** handles
+(`handle.0`, `e.target.0`) — a stale/foreign handle would panic on the audio thread. Hardened both to
+`.get`/`.get_mut` (the event path matches `Some(Lane::Events(_))`, so an in-range wrong-variant id also skips
+the `events_mut` `unreachable!`) — totality over the cross-thread seam. Pinned by 6 standing guards in
+`schedule::hot_path_robustness` (idle voice exactly silent; released note → exact zero; sustained chain stays
+finite; foreign handle/id skipped, not panicked). **3.4.2 — real-time-health instrument:** `RtEngine` counts
+`event_drops` / `param_drops` (queue `push` returning `false`; setters route through a private `set_param`),
+exposed as getters; the worklet times `render_quantum()` with `performance.now()` against the ~2.67 ms
+quantum budget (the "underrun" of the single-threaded model), counting **overruns** + worst render time, and
+posts a throttled (~4 Hz) health snapshot incl. the engine drops; the page renders a `#health` line. Native
+flood test confirms the drop counter. **3.4.3 — latency measurement:** added linear-phase **group-delay**
+accessors (`Decimator`/`Interpolator::group_delay` = `(taps−1)/2`), a defaulted `Node::group_delay_samples`
+(0) overridden by AD/DA, `Schedule::group_delay_samples` (chain sum), and `Capture::group_delay_samples`;
+`RtEngine::signal_path_latency_ms` composes them = **0.625 ms** (three matched 161-tap FIRs @ 384 kHz → 240
+samples) — hand-calc tested. The worklet sends it in `ready`; the page shows `base + output + engine ≈ T ms
+(+ up to ~2.7 ms note quantum)`. `latencyHint` kept **"interactive"** (smallest cushion = lowest latency;
+the 3.1 ~46× headroom makes the bigger-buffer robustness unnecessary) with the tradeoff documented in
+`main.ts`. **Deviations from plan:** the counter is named "drops" (clearer than "overflow"); the hot-swap
+and SAB ring / COOP/COEP stayed deferred (no code, as decided); group delay got a new concept-doc entry
+(`osku_physics_concepts.md` §16). **Gates:** Rust `fmt`/`lint`/`test` (engine 261, wasm-bindings 8)/`wasm`/
+`docs` green; `web/` `biome` (0 warnings) + `typecheck` green; wasm rebuilt and the new getters confirmed in
+the glue. **Verified in-browser (the Validate gate, by hand):** glitch-free sustained playing, the health line
+holding clean, and the live latency figure (`base + output + 0.625 ms engine`) within the ~5–12 ms target.
+**Epic 3 — the north star — is reached.**
 
 ---
 
