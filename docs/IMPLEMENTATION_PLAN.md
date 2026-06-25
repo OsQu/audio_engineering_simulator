@@ -290,8 +290,11 @@ canonical patch plays live in an `AudioWorkletProcessor`, drained zero-copy one 
 both a throwaway static page and the Vite/TS harness (~5.3 ms base latency, clean at idle). 3.3 —
 **live control & playing**: sliders drive smoothed params and the computer keyboard / Web MIDI play
 notes, both over `port.postMessage` onto `RtEngine`'s named setters; verified by ear (smooth
-zipperless knobs, correct-pitch glitch-free notes from QWERTY and a MIDI source). Next: **3.4 —
-glitch-free & low-latency hardening** (the SAB event ring, latency measurement, the epic exit).
+zipperless knobs, correct-pitch glitch-free notes from QWERTY and a MIDI source). Next (in progress): **3.4 —
+glitch-free & low-latency hardening** (the epic exit): panic/denormal audit, a durable real-time-health
+instrument (compute-budget-overrun + queue-overflow counters), and latency measurement + cushion tuning.
+**The SAB event ring is deferred** — `postMessage` tested clean at human rates; cheap to retrofit behind the
+`EventQueue::push` seam when live performance or scale demands it (so COOP/COEP defers with it).
 
 **Goal:** the engine live in the browser — turn knobs and play an instrument with low latency, glitch-free.
 The engine runs **inside the AudioWorklet** (WASM) on the audio thread; control crosses the main→audio
@@ -642,28 +645,81 @@ durable `web/` harness (the plan's "`web/` only if `rt/` is being retired" branc
 simplification (not a bug):** releasing a key *after* an octave shift can leave a note hanging (release
 keys before shifting); a held-key→note map is Epic 4 polish.
 
-### Story 3.4 — Glitch-free & low-latency hardening *(the epic exit)*
-*Goal:* make it robust and *measured* — a panic/denormal audit of the hot path under real-time, the
-**lock-free SAB event ring** (which truly retires the deferred *"lock-free cross-thread validation"* item),
-underrun-free operation under load, and **latency measurement + tuning** (cushion depth vs. responsiveness
-against the ~5–12 ms target).
-*Watch out:* the SAB ring is what **forces COOP/COEP** (cross-origin isolation) — add the headers in Vite's
-`server.headers` here, not earlier. Measure real latency (`baseLatency`/`outputLatency` + engine FIR group
-delay + cushion), don't assume it. The ring upgrades the event lane *behind* `EventQueue::push`, so nothing
-above it moves.
-- Panic-free / denormal audit of the live hot path; stress under sustained playing + load with an underrun counter.
-- SAB event ring (JS writer + Rust atomics reader) behind `EventQueue::push`; COOP/COEP via Vite.
-- Latency measurement + cushion tuning; document the achieved figure and the latency/robustness tradeoff.
+### Story 3.4 — Glitch-free & low-latency hardening *(the epic exit)* — 🚧 **In progress**
+*Goal:* make it robust and *measured* — a panic/denormal audit of the live hot path, a durable
+**real-time-health instrument** (compute-budget-overrun + queue-overflow counters), and **latency
+measurement + cushion tuning** against the ~5–12 ms target. The headline item of the old sketch — the
+lock-free SAB event ring — is **deferred** (see design notes); 3.4 is the hardening + instrumentation that
+maps to the actual exit criteria (audible, stable under normal use, low latency).
 
-*Open question (resolve at story pickup):* **schedule hot-swap under load** has no real trigger in Epic 3 —
-there is no UI to edit the graph until Epic 4 (graph mutation → recompile + atomic swap is a 4.3 concern).
-Either keep a *minimal* swap smoke-test here (exercise the `ScheduleSlot` handoff on the real audio thread)
-or move that deferred item to Epic 4 with the patch-cable work. Leaning: a minimal test here (cheap, proves
-the seam cross-thread), the real graph-edit flow in 4.3.
+*Watch out:* the hot-path contracts (zero-alloc, lock-free, panic-free, denormal flush) are non-negotiable
+under real-time — a panic or stall on the audio thread kills the stream. Wall-clock timing must stay
+**worklet-side**: the engine is deterministic and clock-free (no ambient `Instant`/`SystemTime`, CLAUDE.md
+§6), so budget timing lives in JS, not Rust. Latency must be **measured**, not assumed (`baseLatency` /
+`outputLatency` + engine FIR group delay + cushion). **Mono only** (epic-wide).
 
-*Validate:* no underruns under sustained playing + load; measured round-trip latency within the ~5–12 ms
-target (or the gap documented with the cushion tradeoff); the hot path is audited panic-free; the SAB ring
-carries events sample-accurately. **Epic 3 exit met.**
+*Design notes (settled at planning):*
+- **The SAB event ring is deferred, not built here — and decoupled from the sequencer goal.** 3.3 delivered
+  live playing over `postMessage`, verified clean at human input rates. The ring's payoffs are (a) no
+  audio-thread allocation and (b) *sample-accurate* timing — but **both are independent of Epic 3's exit**.
+  Sample-accuracy is a property of the *message*, not the transport: the engine's
+  `EventQueue::push(when, …)` + `drain_due` are already sample-accurate; only `RtEngine::note_on`'s
+  "next-quantum" stamp rounds. And a **sequencer schedules ahead of time**, where latency is irrelevant — the
+  standard Web-Audio look-ahead pattern (push future events with a precise `when`) works fine over
+  `postMessage`. So the eventual sequencer is unlocked by carrying `when` + a shared clock, *not* by the ring.
+  **Decision:** defer the ring until live performance actually misbehaves (or scale's higher event rate
+  demands it — Epic 5). **Cheap to retrofit:** events funnel through the single `EventQueue::push` seam (built
+  to have its backing swapped); the low-cost path is a **plain `SharedArrayBuffer` ring drained in the worklet
+  into the same setters — engine untouched, no `unsafe`, no shared-wasm-memory build** (the heavier "shared
+  wasm memory + Rust-atomics reader" variant is only if the plain ring proves insufficient). **Consequence:**
+  COOP/COEP defers *with* the ring — 3.4 does **not** touch Vite headers — and Epic 3 exits with the
+  *"lock-free cross-thread validation"* item still open, intentionally.
+- **"Underrun" reframed for the in-worklet model.** 3.1 resolved to a single-threaded engine *inside* the
+  worklet — there is no render-ahead ring to under/overflow. The honest failure mode is a *quantum whose
+  compute exceeds its ~2.67 ms budget* (128 frames @ 48 kHz). So the instrument is a **compute-budget-overrun
+  counter**, timed with `performance.now()` **in the worklet** (wall-clock health must live JS-side; the
+  engine stays clock-free), paired with engine-side **queue-overflow counts** (`EventQueue`/`ParamQueue`
+  `push` already return `false` on overflow) surfaced via `RtEngine`.
+- **The instruments are durable and scale-facing, not throwaway.** The 3.1 scaling probe found one core
+  crosses real-time at **~64–68 heavy channels / ~260 nodes** — the stadium scale this project aims for
+  (dozens of analog + a couple hundred digital channels, PROJECT_PLAN §9) is exactly where overruns become a
+  *live* risk, mitigated by multi-core DAG partition + a lower oversample factor (**Epic 5**, flagged not
+  built). So the budget-overrun counter + latency methodology are built as the **permanent real-time-health
+  instrument Epic 5 leans on**, even though 3.4 can only exercise them on the **mono** path. **Boundary:**
+  3.4 hardens + instruments mono; real-time *at scale* is bounded by the 3.1 probe and re-confirmed in Epic 5
+  with the real multichannel engine.
+- **Hot-swap deferred to Epic 4.3.** `ScheduleSlot` already exists with a native smoke test
+  (`install_swaps_the_active_schedule`); the single-threaded in-worklet model has **no cross-thread swap path**
+  to exercise, and graph edits get their first real trigger with patch cables in 4.3. The deferred swap item
+  moves there; the native smoke test stays the standing guard. *(Resolves the old open question.)*
+- **The audit is verify-plus-targeted-tests, not a rewrite.** `flush_denormal` is already applied in every
+  filter (`OnePole`, `Biquad`, envelope, `DcBlocker`) and there is no `unsafe` in the `process` path
+  (structural disjoint borrows). The audit confirms coverage and adds standing tests, changing code only
+  where a real gap surfaces.
+
+- **Task 3.4.1** — Panic/denormal audit of the live hot path. Review `Schedule::process_io` + every
+  `Node::process` for panic-capable ops (indexing, `unwrap`/`expect`, slice bounds) and denormal-accumulation
+  points; confirm `flush_denormal` coverage. Add native tests: a silent decay tail flushes to zero (no
+  denormal creep); sustained note rendering stays finite (no NaN/inf) over many blocks. Code changes only
+  where a gap is found. *Done:* audit notes recorded, new tests green, full gate green.
+- **Task 3.4.2** — Real-time-health instrument. Worklet times `render_quantum()` with `performance.now()`
+  against the quantum budget and counts overruns; `RtEngine` exposes queue-overflow counts (from `push`
+  returning `false`). Both surfaced to the page status via `port` messages, off the hot path. *Done:* the
+  counter fires when forced (an artificial spin proves it), reads zero under normal mono playing; native test
+  for the queue-overflow counters.
+- **Task 3.4.3** — Latency measurement + cushion tuning. Add a group-delay/latency accessor to the
+  converter/`capture` FIRs; set `AudioContext({ latencyHint })`; compute + surface round-trip latency =
+  `baseLatency` + `outputLatency` + engine FIR group delay + cushion; tune `latencyHint` against ~5–12 ms;
+  document the achieved figure and the latency/robustness tradeoff. *Done:* the page shows a measured
+  round-trip figure within target (or the gap documented with the tradeoff); gate green.
+
+*Validate:* the live hot path is audited panic-free with denormals flushed (targeted tests green); the
+real-time-health instrument (compute-budget-overrun counter + queue-overflow counts) runs in the live
+harness, fires when forced, and stays clean under sustained mono playing; measured round-trip latency is
+reported (`baseLatency` + `outputLatency` + FIR group delay + cushion) and is within ~5–12 ms **or** the gap
+is documented with the cushion tradeoff. Rust pre-push gate + `web/` `biome check`/`typecheck` green.
+**Epic 3 exit met (mono);** real-time *at scale* is bounded by the 3.1 probe (~64–68 ch/core) and
+re-confirmed in Epic 5.
 
 ---
 
