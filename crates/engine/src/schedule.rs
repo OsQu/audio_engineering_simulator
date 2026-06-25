@@ -302,6 +302,16 @@ impl Schedule {
         self.block_len
     }
 
+    /// The schedule's total signal-path group delay in **analog-rate samples** — the sum of every
+    /// node's [`group_delay_samples`](crate::Node::group_delay_samples) (the converter FIRs; most
+    /// nodes add 0). Exact for a **linear chain** (the path to the output passes through every node),
+    /// which the real-time patch is; for a branchy graph it over-counts delay off the output path, so
+    /// treat it as the chain-latency estimate it is. Off the hot path — read once after `compile`.
+    #[must_use]
+    pub fn group_delay_samples(&self) -> f64 {
+        self.nodes.iter().map(|n| n.group_delay_samples()).sum()
+    }
+
     /// Resolve an **open** event input port — an event-domain input with no incoming edge — to a
     /// handle the host can push external events to (see [`EventQueue`]). Returns `None` if the port
     /// isn't an open event input (it's analog/digital, out of range, or fed by an edge — an

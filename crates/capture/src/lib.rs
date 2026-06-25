@@ -70,6 +70,14 @@ impl Capture {
         self.decimator.factor()
     }
 
+    /// The capture decimator's group delay in **analog-rate samples** — the latency this final
+    /// (off-simulation) resample adds, part of the end-to-end figure even though it sits outside the
+    /// engine. Off the hot path.
+    #[must_use]
+    pub fn group_delay_samples(&self) -> f64 {
+        self.decimator.group_delay()
+    }
+
     /// Host samples produced from `analog_len` analog-rate input samples.
     #[must_use]
     pub fn host_len(&self, analog_len: usize) -> usize {

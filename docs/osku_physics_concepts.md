@@ -8,7 +8,8 @@ we're modeling and why*. Use it to skip re-explaining things already covered.
 > Status: covers the voltage-native model, impedance/Thévenin & the local solve (incl. the
 > open/short extremes, global-vs-local, feedback/algebraic loops, buffering & pushback, and
 > ground loops), cables, filters (one-pole & 2nd-order), poles, filter implementation,
-> distortion, and rail clipping — through Story 1.3 planning.
+> distortion, rail clipping, sampling/decimation/aliasing, windowed-sinc FIR, quantization &
+> dither, and group delay/latency — through Epic 3 (real-time).
 
 ## Contents
 1. [The voltage-native model](#1-the-voltage-native-model)
@@ -26,6 +27,7 @@ we're modeling and why*. Use it to skip re-explaining things already covered.
 13. [Windowed-sinc FIR & the Kaiser window](#13-windowed-sinc-fir--the-kaiser-window)
 14. [Quantization & dBFS calibration](#14-quantization--dbfs-calibration)
 15. [Dither](#15-dither)
+16. [Group delay & latency](#16-group-delay--latency)
 
 ---
 
@@ -297,6 +299,10 @@ filter does to each sine tells you what it does to everything.
 **IIR vs. FIR:** a filter whose output depends on *past outputs* (feedback) is **IIR**
 (infinite impulse response) — our emergent analog filters are IIR (the cap voltage feeds
 back). Depending only on past *inputs* is FIR.
+
+> **Want (Oskari):** a proper from-scratch crash course on filters as its own session at some
+> point — the three views together, IIR vs. FIR, phase, resonance/Q, and how design maps to
+> code. Not now. Until then these filter sections (5–9, 13, 16) are the running notes.
 
 ## 6. One-pole low-pass (rolloff)
 
@@ -630,3 +636,58 @@ hardware.
 the dithered full-scale-sine SNR is `≈ 6.02·N − 3.0 dB` — about 3 dB worse than undithered, a
 trade gladly made for clean low-level behavior. The dither is drawn from the **seeded** per-node
 RNG, so a render is reproducible. See `AdConverter::process`.
+
+## 16. Group delay & latency
+
+A filter doesn't only change *how loud* each frequency is — it also **delays the signal in time**.
+**Group delay** is the name for how long. It's the *time view* of a filter (§5), and it's where
+filter behavior becomes **latency**.
+
+**Why an FIR delays.** A FIR output is a weighted sum of the last `L` input samples (the taps). Our
+converter taps are **symmetric** — a hump, biggest in the middle, tapering to both ends — so the
+kernel's "center of mass" sits in the **middle** of the window. The output is therefore a smoothed
+copy of the input *as it was at the middle sample*, i.e. shifted later in time by **half the window**:
+
+```
+   group delay = (L − 1) / 2   samples            (symmetric / linear-phase FIR)
+```
+
+Concretely: feed a single spike into a symmetric `L`-tap filter and the output's peak lands
+`(L−1)/2` samples after the spike. For our 161-tap converters that's exactly **80 samples**.
+
+**Linear phase = one number.** "Symmetric taps" has a formal name, **linear phase**, and its payoff
+is that **every frequency is delayed by the same amount**. So the waveform isn't smeared — it just
+arrives late, whole — and the delay collapses to a *single* number `(L−1)/2`, not a per-frequency
+curve. This is a reason the converters use FIRs. An **IIR** filter (the cable one-pole §6, the biquad
+§7) is *not* linear-phase: its group delay **varies with frequency**, so it has no single delay
+figure and it does smear transients slightly. (Feed-forward FIRs can be linear-phase; feedback IIRs
+can't — the tradeoff for the IIR's cheapness and steepness-per-order.)
+
+**Samples → time.** Group delay comes out in samples; divide by the sample rate for time:
+
+```
+   delay (seconds) = delay (samples) / sample_rate
+```
+
+**Our chain (Story 3.4).** Three matched linear-phase FIRs sit in series, each 161 taps → 80 samples,
+all at the **384 kHz** analog rate:
+
+| filter | role | delay |
+| --- | --- | --- |
+| AD decimator | analog volts → 48 kHz digital | 80 |
+| DA interpolator | 48 kHz digital → analog volts | 80 |
+| capture decimator | speaker volts → host samples | 80 |
+
+```
+   80 × 3 = 240 samples  →  240 / 384 000 Hz = 0.625 ms
+```
+
+That **0.625 ms** is the engine's fixed *signal-path* latency. It's small but real, and it **grows
+as chains get longer** — so we measure it honestly rather than ignore it. (A decimator's taps tick at
+its *input* rate, an interpolator's at its *output* rate; in this chain those are all 384 kHz, so the
+three delays share one unit and simply add.)
+
+**The latency budget.** Playing a note → hearing it sums three independent parts: the browser's output
+buffer (the dominant chunk, measured live), the **note-stamping quantum** (a played note fires at the
+next engine block, ≤ ~2.7 ms — the input-side granularity), and this **signal-path group delay**
+(~0.6 ms). The page reports all three. See `RtEngine::signal_path_latency_ms` and `Decimator::group_delay`.

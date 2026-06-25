@@ -114,6 +114,12 @@ impl Node for AdConverter {
         self.dither = Some(rng);
     }
 
+    fn group_delay_samples(&self) -> f64 {
+        // The anti-alias decimator's linear-phase group delay (in analog-rate samples); 0 until
+        // `prepare` builds it, which `compile` always does before this is read.
+        self.decimator.as_ref().map_or(0.0, Decimator::group_delay)
+    }
+
     fn process(&mut self, _params: &Params, inputs: &[Lane], outputs: &mut [Lane]) {
         let src = inputs[0].voltage().as_slice();
         let out = outputs[0].sample_mut().as_mut_slice();

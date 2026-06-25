@@ -136,6 +136,14 @@ impl Decimator {
         self.factor
     }
 
+    /// The filter's group delay, `(taps − 1) / 2` samples — exact and constant because the kernel is
+    /// symmetric (linear phase). A decimator's taps live at the **input** (here analog) rate, so this
+    /// is in analog-rate samples: the latency the anti-alias decimation adds. Off the hot path.
+    #[must_use]
+    pub fn group_delay(&self) -> f64 {
+        (self.taps.len() - 1) as f64 / 2.0
+    }
+
     /// Clear the tap history (zeroed state), as at the start of a fresh run.
     pub fn reset(&mut self) {
         self.history.iter_mut().for_each(|h| *h = 0.0);
@@ -230,6 +238,14 @@ impl Interpolator {
     /// The interpolation factor `M`.
     pub fn factor(&self) -> usize {
         self.factor
+    }
+
+    /// The filter's group delay, `(taps − 1) / 2` samples — exact and constant (symmetric kernel ⇒
+    /// linear phase). An interpolator's taps live at the **output** (here analog) rate, so this is in
+    /// analog-rate samples: the latency the reconstruction adds. Off the hot path.
+    #[must_use]
+    pub fn group_delay(&self) -> f64 {
+        (self.taps.len() - 1) as f64 / 2.0
     }
 
     /// Clear the input history (zeroed state), as at the start of a fresh run.
@@ -430,5 +446,15 @@ mod tests {
         let down = decimate(&mut dec, &up);
         let amp = tone_amplitude(&down[400..], 3_000.0, lo());
         assert_relative_eq!(amp, 0.8, epsilon = 0.02);
+    }
+
+    #[test]
+    fn group_delay_is_half_the_kernel() {
+        // A symmetric (linear-phase) kernel of L taps delays by exactly (L − 1)/2 operating-rate
+        // samples: 161 taps ⇒ 80. Same for both directions (the taps live at the high/analog rate).
+        let dec = Decimator::lowpass(161, M, 8.0);
+        assert_relative_eq!(dec.group_delay(), 80.0, epsilon = 1e-12);
+        let interp = Interpolator::lowpass(161, M, kaiser_beta(96.0));
+        assert_relative_eq!(interp.group_delay(), 80.0, epsilon = 1e-12);
     }
 }

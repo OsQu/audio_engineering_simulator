@@ -494,6 +494,18 @@ impl RtEngine {
     pub fn host_rate_hz(&self) -> f64 {
         HOST_RATE_HZ
     }
+
+    /// The engine's fixed **signal-path group delay** in milliseconds — the modeled AD + DA FIRs plus
+    /// the implicit [`Capture`] decimator (all linear-phase). One component of the round-trip latency
+    /// the page reports; the dominant terms (the browser's `baseLatency` / `outputLatency`) are
+    /// measured JS-side, and the note-stamping quantum (~2.7 ms) is the input-side granularity. A
+    /// constant for the pinned patch (three matched 161-tap FIRs at 384 kHz ≈ 0.625 ms). Off the hot path.
+    #[wasm_bindgen(getter)]
+    #[must_use]
+    pub fn signal_path_latency_ms(&self) -> f64 {
+        let samples = self.schedule.group_delay_samples() + self.capture.group_delay_samples();
+        samples / ANALOG_RATE_HZ * 1000.0
+    }
 }
 
 impl Default for RtEngine {
@@ -611,6 +623,20 @@ mod tests {
             engine.event_drops(),
             10,
             "no new drop once the queue has drained"
+        );
+    }
+
+    /// Story 3.4: the signal-path latency the page reports is the three matched 161-tap converter
+    /// FIRs (AD decimator + DA interpolator + capture decimator). Hand calc: each contributes
+    /// (161 − 1)/2 = 80 analog samples ⇒ 240 total / 384 000 Hz = 0.625 ms.
+    #[test]
+    fn rt_engine_reports_signal_path_latency() {
+        let engine = RtEngine::new();
+        // 3 × 80 analog samples / 384 kHz × 1000 = 0.625 ms.
+        assert!(
+            (engine.signal_path_latency_ms() - 0.625).abs() < 1e-6,
+            "expected 0.625 ms, got {}",
+            engine.signal_path_latency_ms()
         );
     }
 

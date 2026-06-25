@@ -99,6 +99,12 @@ impl Node for DaConverter {
         ));
     }
 
+    fn group_delay_samples(&self) -> f64 {
+        // The reconstruction interpolator's linear-phase group delay (in analog-rate samples); 0
+        // until `prepare` builds it, which `compile` always does before this is read.
+        self.interp.as_ref().map_or(0.0, Interpolator::group_delay)
+    }
+
     fn process(&mut self, _params: &Params, inputs: &[Lane], outputs: &mut [Lane]) {
         let src = inputs[0].sample().as_slice();
         let out = outputs[0].voltage_mut().as_mut_slice();

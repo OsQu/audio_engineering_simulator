@@ -12,6 +12,32 @@ const setStatus = (m: string): void => {
   statusEl.textContent = m;
 };
 
+// Story 3.4 — the worklet's ready handshake now carries the engine's fixed signal-path group delay,
+// so the page can compose the end-to-end latency from it + the browser's measured base/output latency.
+type ReadyMessage = {
+  type: "ready";
+  len: number;
+  signalPathLatencyMs: number;
+};
+
+// Compose the end-to-end latency from its parts. The browser's base/output buffering dominates and is
+// what `latencyHint: "interactive"` tunes; the engine's signal-path FIR group delay is a fixed
+// ~0.6 ms; the note-stamping quantum (~2.7 ms) is the input-side granularity (a played note fires at
+// the next block). `outputLatency` isn't in every browser, so guard it.
+function latencySummary(audio: AudioContext, ready: ReadyMessage): string {
+  const baseMs = audio.baseLatency * 1000;
+  const outputMs = (audio.outputLatency ?? 0) * 1000;
+  const engineMs = ready.signalPathLatencyMs;
+  const quantumMs = (ready.len / audio.sampleRate) * 1000;
+  const outTotal = baseMs + outputMs + engineMs;
+  const fmt = (n: number): string => n.toFixed(1);
+  return (
+    `▶ playing @ ${audio.sampleRate} Hz · ${ready.len} samp/quantum · ` +
+    `latency: base ${fmt(baseMs)} + output ${fmt(outputMs)} + engine ${fmt(engineMs)} ` +
+    `≈ ${fmt(outTotal)} ms out (+ up to ${fmt(quantumMs)} ms note quantum)`
+  );
+}
+
 // Story 3.4 — the real-time-health snapshot the worklet posts on a throttle (compute-budget overruns
 // + worst render time, and the engine's input-flood queue drops). All running totals for the session.
 type HealthMessage = {
@@ -48,6 +74,15 @@ startBtn.addEventListener("click", async () => {
   try {
     // Pin the context rate to the engine's host rate (48 kHz); the browser resamples to the device.
     // Without this pin every quantum is the wrong rate ⇒ wrong pitch + drift.
+    //
+    // latencyHint "interactive" = the smallest output buffer the device allows — lowest latency, the
+    // right choice for a live instrument. The single-threaded in-worklet engine can't grow its own
+    // render-ahead buffer (it only computes during callbacks), so this browser buffer *is* the only
+    // jitter cushion, and its depth is added latency. The tradeoff is cushion vs. responsiveness:
+    // "playback" would buy a larger, glitch-proof buffer at the cost of latency. We keep the small
+    // cushion because the 3.1 spike showed ~46× real-time headroom on this patch — overruns are
+    // implausible here (the health line confirms it), so the robustness the bigger buffer buys isn't
+    // needed. (Re-evaluate at stadium scale, where headroom shrinks — Epic 5.)
     const audio = new AudioContext({
       sampleRate: 48000,
       latencyHint: "interactive",
@@ -78,10 +113,7 @@ startBtn.addEventListener("click", async () => {
     node.port.onmessage = (e: MessageEvent) => {
       const d = e.data;
       if (d?.type === "ready") {
-        const base = (audio.baseLatency * 1000).toFixed(1);
-        setStatus(
-          `▶ playing — ${d.len} samples/quantum @ ${audio.sampleRate} Hz, base latency ${base} ms`,
-        );
+        setStatus(latencySummary(audio, d as ReadyMessage));
         // The engine is live: reveal the controls and arm the keyboard. Push the slider defaults
         // once so the engine matches the UI from the first note.
         controlsEl.hidden = false;

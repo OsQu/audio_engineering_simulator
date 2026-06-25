@@ -71,7 +71,13 @@ class RtProcessor extends AudioWorkletProcessor {
         }
       };
 
-      this.port.postMessage({ type: "ready", len: this.len });
+      // Report the engine's fixed signal-path group delay (AD + DA + capture FIRs) so the page can
+      // sum it with the browser's measured base/output latency into an end-to-end figure.
+      this.port.postMessage({
+        type: "ready",
+        len: this.len,
+        signalPathLatencyMs: this.engine.signal_path_latency_ms,
+      });
     } catch (err) {
       this.port.postMessage({
         type: "error",

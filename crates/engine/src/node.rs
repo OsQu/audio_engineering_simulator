@@ -121,6 +121,17 @@ pub trait Node {
     /// needs the rate delivered to it. Off the hot path.
     fn prepare(&mut self, _rate: AnalogRate) {}
 
+    /// The latency this node adds to the signal, in **analog-rate samples** — its filters' group
+    /// delay. Default 0: memoryless or negligible-delay nodes (gain, sum, the voice, the speaker)
+    /// add none. The linear-phase converter FIRs override it (a decimator/interpolator's symmetric
+    /// kernel has a constant `(taps − 1) / 2` group delay). Off the hot path — read once after
+    /// `compile` to report end-to-end latency (see [`Schedule::group_delay_samples`]).
+    ///
+    /// [`Schedule::group_delay_samples`]: crate::Schedule::group_delay_samples
+    fn group_delay_samples(&self) -> f64 {
+        0.0
+    }
+
     /// Whether this is a **per-conductor** processor the compiler may replicate across the
     /// conductors of a balanced connection — one independent instance per leg, identical
     /// coefficients (see `IMPLEMENTATION_PLAN.md`, Story 1.5 detour).
