@@ -98,8 +98,10 @@ After agreement, edit `docs/IMPLEMENTATION_PLAN.md` in place, replacing the coar
 Story block. **Match the existing section rhythm exactly** (see a completed Story like 3.3 for the
 template):
 
-- `### Story X.Y — <Title>` — mark it in-progress (the prior Story used `— ✅ **Done**`; an in-progress one
-  is unmarked or clearly tagged — follow whatever the doc currently does for the active Story).
+- `### Story X.Y — <Title> — 🚧 **In progress**` — mark the Story in-progress with this suffix (the status
+  convention: future Stories are unmarked, the active one is `— 🚧 **In progress**`, completed ones become
+  `— ✅ **Done**`). Also update the Epic's running **Progress** line so it no longer advertises anything this
+  planning pass deferred or changed.
 - `*Goal:*` — what this Story delivers and why, anchored to `PROJECT_PLAN.md`.
 - `*Watch out:*` — the traps and constraints (hot-path contracts, clock/units pitfalls, scope guards).
 - `*Design notes (settled at planning):*` — the decisions reached in step 4, **with the rejected
