@@ -397,20 +397,135 @@ crossing the main→audio boundary as sparse messages. This epic retired the hea
 
 ## Epic 4 — UI: Skeuomorphic Panels + Patch Cables
 
-**Goal:** the product interface on the proven engine — realistic device panels, drag-to-patch cables,
-and product visualization. Pure consumer of the engine API.
+**Progress:** not started; **elaborated to Story level at epic planning (2026-06-25)** — the original
+4-story sketch was reshaped into the 5-story arc below after the UI vision grew from "device panels +
+cables" into a **game-like spatial studio/venue sim** (browsable gear catalog, racks and containers,
+freely placed in a pan/zoom world, multiple *spaces* with snakes between them, VST-grade skeuomorphic
+panels with front controls and back I/O). Stories stay at Story level by the detail-gradient convention
+(§"How this plan is structured"); each Story's Tasks + hand-calc/behavioral gates are written when it is
+picked up via the story-planning skill. Settled architecture decisions are below.
 
-**Exit criteria:** build and operate a small studio entirely through the UI and hear/see the results.
+**Goal:** the product interface on the proven engine — a game-like studio you build by browsing a gear
+catalog, placing devices in racks and spaces, wiring them with patch cables and snakes, operating
+realistic skeuomorphic panels, and seeing/hearing the result. A **pure consumer of the published engine
+API** (params, events, scene build/load, probes) — never reaching into engine internals.
 
-**Watch-outs:** the UI must never reach into engine internals — only the published API (params, events,
-scene load/save). Graph edits flow through the off-thread schedule recompile + atomic swap.
+**Exit criteria:** build and operate a small studio entirely through the UI — add gear from the catalog,
+place and patch it across spaces, turn its knobs and play it, and see/hear the results — glitch-free,
+with graph edits hot-swapping live under sound.
 
-*Tasks to be elaborated when we reach this Epic.*
+**Watch-outs:**
+- The UI never reaches into engine internals — only the published API. Engine stays UI-free (no layout,
+  no panel concepts); UI-facing vocabulary that *is* domain (param ranges, port domains) rides the API,
+  not the renderer.
+- **Graph edits run on the audio thread.** The engine lives *inside* the AudioWorklet (Epic 3), and a
+  `Schedule` is a Rust object in WASM linear memory that **cannot be compiled on the main thread and
+  shipped in**. So a graph edit compiles *in the worklet* (on a `port` message, between render quanta)
+  and installs via `ScheduleSlot` at a block boundary, dropping the old schedule off-block. `compile`
+  allocates — acceptable because edits are rare user gestures at small-studio scale, *not* per-block —
+  but it must be measured (a long compile delays the next `process()` ⇒ a glitch). This is the riskiest
+  interaction in the epic; prove it in 4.1 and re-measure as graphs grow.
+- **Data-driven gear is UI-only.** A catalog entry is a **pair**: an engine node-or-subgraph **factory
+  (real Rust code — the black-box transform and internal routing, arbitrarily complex)** + a UI
+  **descriptor** (panel layout, control→param bindings, ports). Never model a device as "just data" —
+  that paints us into a corner the moment a device needs real behavior. Start with simple single-node
+  devices; keep the seam able to express complex / multi-node ones.
+- Keep the realism budget on the volts-and-converters layer (epic-wide rule); device panels and the
+  world renderer stay understandable.
 
-- **Story 4.1** — Engine API surface for UI: TS types, scene serialize/load, the param/event bridge.
-- **Story 4.2** — Device panel rendering + controls bound to params (realistic layout).
-- **Story 4.3** — Patch-cable drag-to-connect; graph mutation → schedule recompile.
-- **Story 4.4** — Visualization: meters, scope, spectrum, analog-domain readouts.
+### Settled architecture decisions (epic planning)
+
+Reached in the planning dialogue; they constrain every Story. Where it matters, the rejected alternative
+and the why are recorded.
+
+- **Frontend stack: Svelte 5 + DOM/SVG, with the world-rendering layer isolated behind a thin
+  interface.** The spatial world is a CSS-transform pan/zoom surface; devices/racks are components driven
+  by descriptors; knobs/faders/jacks are SVG; meters/scopes/screens are small `<canvas>`es; "flip to
+  back" is a CSS 3-D transform. *Why this over the alternatives:* a pure WebGL game engine (PixiJS/Phaser
+  — "Stack 3") gives the best game feel but forces every widget, text, hit-test, and a11y to be
+  hand-drawn and turns "add new gear" into bespoke draw code — directly against the easy-to-author-gear
+  goal. A framework-over-PixiJS hybrid ("Stack 2") buys WebGL-grade world performance and Epic-5 scale
+  headroom but at real complexity (DOM panels coordinate-synced over a WebGL world) that the
+  small-studio target does not yet need. We take the simplest stack with the best gear-authoring DX
+  (**"Stack 1"**) and **isolate the world layer** so it can be swapped to a WebGL canvas later *if*
+  profiling at scale demands it — mirroring the engine's own "multi-core only if profiling demands it"
+  philosophy. Svelte 5 (runes → fine-grained reactivity) over React because the UI has many live-bound
+  controls and animating meters where a virtual DOM is the wrong tool; it builds on the existing Vite/TS
+  `web/` harness with one dependency.
+- **Device metadata lives in a `wasm-bindings` catalog**, not in the engine. The catalog maps a stable
+  **type-id → (node/subgraph factory) + serializable descriptor** (display name; params with
+  label/unit/control-kind/range/default; ports with label/kind/domain/direction; panel-layout hints).
+  *Why not the engine:* keeps the engine portable and UI-free. Lightweight name/unit *may* be added to
+  `ParamDecl` if duplication bites, but the catalog is the source of UI truth.
+- **One serializable scene IR, shared by build and persistence.** A scene = nodes (type-id + **fixed
+  construction config** + param values) + connections + output tap + UI placement (space, rack, position).
+  The *same* description the worklet builds an engine from is what we save/load. *Construction config is
+  fixed per device type* (realistic gear has fixed impedances/rails); only `params()` knobs are
+  user-facing — this keeps the node factory a simple type-id → `Box<dyn Node>` (or subgraph) and avoids a
+  generic constructor-argument marshalling problem.
+- **A device is a group of 1..N nodes (the "one chassis → many nodes" seam, settled now).** The
+  descriptor/catalog/scene IR and all addressing are built around `device → (node, param/port)` from the
+  start, so a logical device can expand to several internally-wired nodes (preamps → internal AD → router
+  → … ) with a grouped port face. *We ship single-node devices first* and introduce the first concrete
+  multi-node device only when a panel needs it — building the seam, not over-building the machinery. This
+  retires the Epic-1 deferral ("multi-stage nodes & one-chassis-many-nodes grouping → Epic 4+").
+- **Graph edits → recompile + `ScheduleSlot` hot-swap, in the worklet** (see Watch-outs). A *value* param
+  change still just reads in `process` (no recompile, per the Epic-1 params-vs-structure rule); only
+  structural edits (add/remove device, connect/disconnect) recompile.
+- **Power on/off is a control, not a structural edit.** A device exposes a "powered" param its node reads
+  (powered-off ⇒ emits silence / passes nothing); toggling power never recompiles. *Why:* power is
+  flipped often and should be instant and glitch-free, like a real unit's standby — a structural rebuild
+  per toggle would be wrong.
+- **Spaces are a UI concept; snakes are visual bundles.** Live room / control room / stage / monitors /
+  FOH are UI groupings over **one engine graph** (nodes carry a space tag); the engine never knows about
+  rooms. A *snake* between spaces is a UI bundle of individual mono analog cables drawn as one — **true
+  multichannel digital bundling stays Epic 5** (5.1/5.3); nothing in the engine changes for snakes here.
+- **Skeuomorphic = genuine interaction + recognizable layout, not photoreal textures.** Real
+  knob/fader/meter/jack behavior and gear-like layout (the VST-mimics-analog feel); branding, photoreal
+  skins, and onboarding polish are explicitly deferred (the project's deprioritize-polish non-goal). This
+  reconciles the "feels like real audio gear" goal with "fidelity over polish."
+
+### Stories
+
+- **Story 4.1 — Engine/bindings API for the UI + scene IR + device catalog (the foundation).** The
+  generic, UI-facing surface that retires the named-setter stopgap from Epic 3. Generic enumerable params
+  (`set_param(device/node, id, value)` + the descriptor's labels/units/kinds); the **scene IR** (build +
+  persistence, above); **build-engine-from-scene** in the worklet (replacing the pinned `RtEngine` patch
+  with a scene-driven one, bring-up via `processorOptions`/messages); the **device catalog** =
+  factory + descriptor with the **chassis-group seam**; and the **recompile-and-hot-swap-in-worklet**
+  mechanism. *Delivers:* load a static scene into the worklet, play it generically, and prove a full
+  scene **reload is a glitch-free swap** (the riskiest interaction, proven early). First devices are
+  single-node; the seam supports multi-node. *Open at pickup:* exact scene-IR schema + where serde lives
+  (bindings vs TS); how `CompileError` surfaces to JS; whether `ParamDecl` gains name/unit.
+- **Story 4.2 — Skeuomorphic device panels: controls → params, front/back, power.** The data-driven
+  panel system, rendered from the descriptor, for one or two devices bound to a running *static* engine:
+  real knobs/faders, a VU/meter, a screen, jacks on the **back** (CSS flip), and a **power** switch
+  (control, not recompile). Establishes the widget vocabulary and the descriptor → panel renderer that
+  every later device reuses. *Open at pickup:* the widget set + interaction model (drag-to-turn,
+  fine/coarse, value readout); the descriptor's panel-layout schema; which two devices to build first.
+- **Story 4.3 — The spatial world: spaces, racks, placement, catalog browsing.** The Svelte app shell +
+  the isolated world layer: pan/zoom; place and move devices and racks; open/close containers; multiple
+  **spaces** with switching; **browse the catalog and add/remove gear** — exercising the 4.1 recompile
+  path on add/remove. UI scene state stays in sync with the engine scene IR. *Open at pickup:* the world
+  layer's interface (the swap-to-WebGL-later boundary); rack/unit sizing model; how a space maps onto the
+  scene IR's placement fields; add/remove debouncing vs recompile cost.
+- **Story 4.4 — Patch cables & snakes → live graph mutation.** Drag-to-connect between jacks with bezier
+  cables; **snakes** as visual bundles of mono cables crossing spaces; connect/disconnect mutates the
+  graph → recompile/**hot-swap live under sound**. The "patching feels natural" payoff and the
+  swap-under-load proof (re-measure the audio-thread compile cost at realistic graph size). *Open at
+  pickup:* cable hit-testing/routing visuals; legal-connection feedback (domain compatibility from the
+  descriptor, before compile rejects it); snake bundle/break UX.
+- **Story 4.5 — Visualization: meters, scope, spectrum, analog-domain readouts.** A new engine/bindings
+  **probe** surface — per-node/port sample taps (meters, scope), an FFT path (spectrum), and the
+  distinctive **analog-domain readouts** (per-edge loading loss, clipping/headroom, noise floor, dBu/dBFS
+  levels, phantom presence) read from compiled edge gains + runtime peak/clip detection. Rendered as
+  device **screens** and as **global tools** — the pedagogical payoff (gain-staging across the AD/DA
+  boundary made visible). *Open at pickup:* probe API shape (zero-copy ring taps like `out_ptr`?); FFT in
+  engine vs JS; which readouts are device-embedded vs global; tap cost on the hot path.
+
+*Validate (epic exit):* a small studio built, placed, patched across at least two spaces, played, and
+metered entirely through the UI; structural edits hot-swap glitch-free under sound; the UI touches only
+the published engine API.
 
 ---
 
