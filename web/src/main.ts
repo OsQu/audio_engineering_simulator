@@ -7,9 +7,30 @@
 const statusEl = document.getElementById("status") as HTMLElement;
 const startBtn = document.getElementById("start") as HTMLButtonElement;
 const controlsEl = document.getElementById("controls") as HTMLElement;
+const healthEl = document.getElementById("health") as HTMLElement;
 const setStatus = (m: string): void => {
   statusEl.textContent = m;
 };
+
+// Story 3.4 — the real-time-health snapshot the worklet posts on a throttle (compute-budget overruns
+// + worst render time, and the engine's input-flood queue drops). All running totals for the session.
+type HealthMessage = {
+  type: "health";
+  quanta: number;
+  overruns: number;
+  maxMs: number;
+  budgetMs: number;
+  eventDrops: number;
+  paramDrops: number;
+};
+
+function showHealth(h: HealthMessage): void {
+  const plural = h.overruns === 1 ? "" : "s";
+  healthEl.textContent =
+    `health: ${h.overruns} overrun${plural} / ${h.quanta} quanta · ` +
+    `worst ${h.maxMs.toFixed(2)} / ${h.budgetMs.toFixed(2)} ms budget · ` +
+    `drops: ${h.eventDrops} event, ${h.paramDrops} param`;
+}
 
 let started = false; // guards against a second click while starting / once running
 
@@ -65,6 +86,8 @@ startBtn.addEventListener("click", async () => {
         // once so the engine matches the UI from the first note.
         controlsEl.hidden = false;
         wireControls(send);
+      } else if (d?.type === "health") {
+        showHealth(d as HealthMessage);
       } else if (d?.type === "error") {
         setStatus(`worklet error: ${d.message}`);
         console.error("worklet init failed:", d.message, "\n", d.stack);

@@ -290,6 +290,15 @@ pub struct RtEngine {
     /// block's first sample — the timeline [`note_on`](Self::note_on) /
     /// [`note_off`](Self::note_off) stamp against.
     blocks: u64,
+    /// Real-time-health counter (Story 3.4): control **events dropped** because the queue was full —
+    /// an input flood arriving faster than the audio thread drains it. The page polls it via
+    /// [`event_drops`](Self::event_drops). The compute-budget side of health (a quantum overrunning
+    /// its ~2.7 ms slot) is timed **JS-side** in the worklet, because the engine is deterministic and
+    /// clock-free (no ambient `Instant`/`SystemTime`, per the determinism rule).
+    event_drops: u32,
+    /// Param updates dropped because the queue was full. Latest-wins coalesces to one slot per knob,
+    /// so this stays 0 in practice; tracked for symmetry and future multi-param patches.
+    param_drops: u32,
 }
 
 #[wasm_bindgen]
@@ -368,6 +377,8 @@ impl RtEngine {
             sustain,
             release_ms,
             blocks: 0,
+            event_drops: 0,
+            param_drops: 0,
         }
     }
 
@@ -388,43 +399,76 @@ impl RtEngine {
     /// Set the voice output **level** in volts (the master volume fader). Latest-wins target; the
     /// engine's `Smoother` glides to it (no zipper). Off the hot path — JS calls it on slider input.
     pub fn set_level(&mut self, volts: f32) {
-        self.params.set(self.level, volts);
+        self.set_param(self.level, volts);
     }
 
     /// Set the envelope **attack** time in milliseconds. Latest-wins, smoothed.
     pub fn set_attack_ms(&mut self, ms: f32) {
-        self.params.set(self.attack_ms, ms);
+        self.set_param(self.attack_ms, ms);
     }
 
     /// Set the envelope **decay** time in milliseconds. Latest-wins, smoothed.
     pub fn set_decay_ms(&mut self, ms: f32) {
-        self.params.set(self.decay_ms, ms);
+        self.set_param(self.decay_ms, ms);
     }
 
     /// Set the envelope **sustain** level (0..=1). Latest-wins, smoothed.
     pub fn set_sustain(&mut self, level: f32) {
-        self.params.set(self.sustain, level);
+        self.set_param(self.sustain, level);
     }
 
     /// Set the envelope **release** time in milliseconds. Latest-wins, smoothed.
     pub fn set_release_ms(&mut self, ms: f32) {
-        self.params.set(self.release_ms, ms);
+        self.set_param(self.release_ms, ms);
     }
 
     /// Strike `note` (MIDI 0..=127) at `velocity`. Stamped at the **block about to render**
     /// (`blocks · BLOCK_LEN`) so it fires on that quantum's first sample — "play at the next
-    /// quantum," ~2.7 ms granularity, imperceptible for live playing. Off the hot path.
+    /// quantum," ~2.7 ms granularity, imperceptible for live playing. Off the hot path. A push that
+    /// overflows a full queue is dropped and counted in [`event_drops`](Self::event_drops).
     pub fn note_on(&mut self, note: u8, velocity: u8) {
         let when = self.blocks * BLOCK_LEN as u64;
-        self.events
-            .push(when, self.voice_ev, EventMessage::NoteOn { note, velocity });
+        if !self
+            .events
+            .push(when, self.voice_ev, EventMessage::NoteOn { note, velocity })
+        {
+            self.event_drops = self.event_drops.saturating_add(1);
+        }
     }
 
     /// Release `note`. Stamped at the block about to render, like [`note_on`](Self::note_on).
     pub fn note_off(&mut self, note: u8) {
         let when = self.blocks * BLOCK_LEN as u64;
-        self.events
-            .push(when, self.voice_ev, EventMessage::NoteOff { note });
+        if !self
+            .events
+            .push(when, self.voice_ev, EventMessage::NoteOff { note })
+        {
+            self.event_drops = self.event_drops.saturating_add(1);
+        }
+    }
+
+    /// Control **events dropped** because the queue was full, since construction — a real-time-health
+    /// counter the page polls each report. Zero under normal play; climbs only under an input flood
+    /// the audio thread can't drain in time (exactly the case the deferred Story 3.4 SAB ring would
+    /// address if it ever bites — so this is the evidence that would trigger building it).
+    #[must_use]
+    pub fn event_drops(&self) -> u32 {
+        self.event_drops
+    }
+
+    /// Param updates dropped because the queue was full. ~Always 0 (latest-wins coalesces to one slot
+    /// per knob); exposed for symmetry with [`event_drops`](Self::event_drops).
+    #[must_use]
+    pub fn param_drops(&self) -> u32 {
+        self.param_drops
+    }
+
+    /// Enqueue a latest-wins param target, counting a drop if the queue was full. Private (not part
+    /// of the JS surface) — the named setters route through it so the drop accounting lives in one place.
+    fn set_param(&mut self, handle: ParamHandle, value: f32) {
+        if !self.params.set(handle, value) {
+            self.param_drops = self.param_drops.saturating_add(1);
+        }
     }
 
     /// Pointer to the captured host block in WASM linear memory. JS builds **one**
@@ -538,6 +582,35 @@ mod tests {
         assert!(
             quiet_peak < 0.5 * loud_peak,
             "lower LEVEL should be clearly quieter: quiet {quiet_peak} vs loud {loud_peak}"
+        );
+    }
+
+    /// Story 3.4: the event-drop health counter. Without a render to drain it, flooding past the
+    /// queue capacity drops the excess and counts it — never a panic — and the count is a running
+    /// total, not a latch, so it doesn't move once the queue drains again. Params never drop (one
+    /// latest-wins slot per knob).
+    #[test]
+    fn rt_engine_counts_dropped_events_under_a_flood() {
+        let mut engine = RtEngine::new();
+        // Nothing drains the queue (no render_quantum yet), so only the first EVENT_QUEUE_CAP pushes
+        // are stored; the next 10 overflow and are counted.
+        for _ in 0..(EVENT_QUEUE_CAP + 10) {
+            engine.note_on(NOTE, 100);
+        }
+        assert_eq!(engine.event_drops(), 10);
+        assert_eq!(
+            engine.param_drops(),
+            0,
+            "params never overflow (latest-wins)"
+        );
+
+        // Drain a quantum: the queue empties, so a fresh note fits and the total holds at 10.
+        engine.render_quantum();
+        engine.note_on(NOTE, 100);
+        assert_eq!(
+            engine.event_drops(),
+            10,
+            "no new drop once the queue has drained"
         );
     }
 

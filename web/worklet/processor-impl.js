@@ -8,6 +8,10 @@
 // host block zero-copy via a single Float32Array view over wasm linear memory. No init message and
 // no ready/error handshake — the engine is live before the first process() call.
 
+// Story 3.4 — post a real-time-health snapshot ~4×/second (≈ 96 of the 375 quanta/s at 128 frames /
+// 48 kHz). Cheap and responsive; far below any rate where the postMessage itself would matter.
+const HEALTH_REPORT_EVERY = 96;
+
 class RtProcessor extends AudioWorkletProcessor {
   constructor(options) {
     super();
@@ -24,7 +28,7 @@ class RtProcessor extends AudioWorkletProcessor {
       // initSync compiles the bytes synchronously here (allowed off the main thread, any size) via
       // `new WebAssembly.Module(bytes)` + instantiate.
       const wasm = wasm_bindgen.initSync({ module: bytes });
-      if (!wasm || !wasm.memory) throw new Error("initSync returned no memory export");
+      if (!wasm?.memory) throw new Error("initSync returned no memory export");
       if (typeof wasm_bindgen.RtEngine !== "function")
         throw new Error("RtEngine missing from glue");
 
@@ -34,11 +38,23 @@ class RtProcessor extends AudioWorkletProcessor {
       this.view = new Float32Array(this.memory.buffer, this.engine.out_ptr(), this.len);
       this.ready = true;
 
+      // Story 3.4 — real-time health. In the single-threaded in-worklet model there is no
+      // render-ahead ring to under/overflow; a glitch is instead a quantum whose compute exceeds its
+      // slot. The budget is one quantum of audio (len host frames at the global `sampleRate`,
+      // ≈ 2.67 ms). performance.now() is the only sub-quantum clock here (`currentTime` advances once
+      // per quantum); if it's missing we simply don't time (counters stay 0) rather than fabricate.
+      this.budgetMs = (this.len / sampleRate) * 1000;
+      this.canTime = typeof performance !== "undefined" && typeof performance.now === "function";
+      this.overruns = 0; // quanta whose render exceeded the budget (all-time)
+      this.maxMs = 0; // worst single-quantum render time seen (all-time)
+      this.quanta = 0; // quanta rendered, for the report throttle
+
       // Story 3.3 — live control. The main thread posts param/note messages here; we forward them
       // onto the engine's named setters. The setters only enqueue (latest-wins target / timestamped
       // event); the change is applied by the next render_quantum's process_io drain, so this is off
       // the hot path. postMessage deserialization allocates on the audio thread — fine at human
-      // rates (the SAB ring that removes even that is Story 3.4).
+      // rates; a lock-free SAB ring that removes even that is deferred (Story 3.4 design note), to be
+      // built only if the event-drop / overrun health below shows postMessage actually costing us.
       this.port.onmessage = (e) => {
         const d = e.data;
         if (!this.ready || !d) return;
@@ -59,8 +75,8 @@ class RtProcessor extends AudioWorkletProcessor {
     } catch (err) {
       this.port.postMessage({
         type: "error",
-        message: String((err && err.message) || err),
-        stack: err && err.stack ? String(err.stack) : null,
+        message: String(err?.message || err),
+        stack: err?.stack ? String(err.stack) : null,
       });
     }
   }
@@ -68,7 +84,15 @@ class RtProcessor extends AudioWorkletProcessor {
   process(_inputs, outputs) {
     if (!this.ready) return true; // emit silence until the engine is initialized; stay alive
 
+    // Time the render against its budget — this is the "underrun" of the single-threaded model.
+    const t0 = this.canTime ? performance.now() : 0;
     this.engine.render_quantum();
+    if (this.canTime) {
+      const dt = performance.now() - t0;
+      if (dt > this.maxMs) this.maxMs = dt;
+      if (dt > this.budgetMs) this.overruns++;
+    }
+    this.quanta++;
 
     // Re-acquire the view only if wasm memory grew and detached the backing buffer. The zero-alloc
     // hot path should never trigger this; it's a cheap guard, not an expected path.
@@ -81,6 +105,20 @@ class RtProcessor extends AudioWorkletProcessor {
     const out = outputs[0];
     for (let ch = 0; ch < out.length; ch++) {
       out[ch].set(this.view);
+    }
+
+    // Throttled health snapshot: the compute-budget side (overruns / worst render) plus the engine's
+    // input-flood side (queue drops). Both are running totals so the page can show drift over a session.
+    if (this.quanta % HEALTH_REPORT_EVERY === 0) {
+      this.port.postMessage({
+        type: "health",
+        quanta: this.quanta,
+        overruns: this.overruns,
+        maxMs: this.maxMs,
+        budgetMs: this.budgetMs,
+        eventDrops: this.engine.event_drops(),
+        paramDrops: this.engine.param_drops(),
+      });
     }
     return true;
   }
