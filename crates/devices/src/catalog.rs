@@ -1,16 +1,17 @@
 //! The device catalog (Story 4.1, Task 4.1.2): the registry of device *types* the UI can place.
 //!
-//! A catalog entry is a **pair** (the epic-wide "data-driven gear is UI-only" rule): a **builder**
-//! — real Rust that constructs the engine node(s), the black-box transform — and a **descriptor** —
-//! serde data the UI reads to draw the device and its controls. This Task ships **single-node**
-//! devices (one entry → one [`Node`]); the chassis-group seam that lets one device expand to several
-//! nodes is Task 4.1.3.
+//! The catalog is **one table** — [`CATALOG`] — with one self-contained [`CatalogEntry`] per device
+//! type. Each entry bundles everything that defines a device in a single place (the "easy to add gear"
+//! goal): its `type_id`, display name, a **builder** (real Rust that constructs the engine node — the
+//! black-box transform), and the **UI metadata** for its panel. Adding a device is one entry here.
+//! This Task ships **single-node** devices (the builder makes one [`Node`]); the chassis-group seam
+//! that lets one device expand to several nodes is Task 4.1.3 (it generalizes the builder).
 //!
 //! **The descriptor is derived where it can be.** A param's id/range/default and a port's domain are
 //! *engine truth*, so [`descriptors`] reads them straight off a freshly built node — they cannot
 //! drift from the engine. Only the genuinely UI-only fields (display names, control labels/units, the
-//! knob-vs-fader and mic-vs-line *kinds*) are hand-authored, in `UI_META`, positionally aligned to
-//! the node's params/ports; a test pins that alignment.
+//! knob-vs-fader and mic-vs-line *kinds*) are hand-authored in the entry, positionally aligned to the
+//! node's params/ports; a test pins that alignment.
 //!
 //! **Construction config is fixed per type** (settled at planning): the builder bakes realistic
 //! electrical values (impedances, rails, the converter rate/bit-depth); only the node's smoothed
@@ -28,7 +29,7 @@ const HOST_RATE_HZ: f64 = 48_000.0;
 const BITS: u32 = 16;
 
 /// A device type's full UI descriptor — everything the UI needs to list it in the catalog and draw
-/// its panel. Built by [`descriptors`] (numeric/domain fields from the node, labels from `UI_META`).
+/// its panel. Built by [`descriptors`] (numeric/domain fields from the node, labels from the entry).
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DeviceDescriptor {
@@ -128,11 +129,16 @@ impl From<Domain> for PortDomain {
     }
 }
 
-/// The hand-authored UI metadata for one device type, positionally aligned to the node's
-/// `params()` / `inputs()` / `outputs()`. Everything numeric is derived from the node, not here.
-struct UiMeta {
+/// One device type in the catalog — the single place a device is defined. Bundles its identity, its
+/// **builder** (constructs the engine node with fixed config), and the **UI metadata** for its panel.
+/// The metadata is positionally aligned to the built node's `params()` / `inputs()` / `outputs()`;
+/// everything numeric (ranges, domains) is *derived* from the node by [`descriptors`], not here.
+struct CatalogEntry {
     type_id: &'static str,
     name: &'static str,
+    /// Construct the engine node with its fixed construction config. (Task 4.1.3 generalizes this
+    /// from one node to a subgraph for multi-node devices.)
+    build: fn() -> Box<dyn Node>,
     /// One per `params()`, in id order.
     params: &'static [ParamUi],
     /// One per `inputs()`, in declaration order.
@@ -152,12 +158,14 @@ struct PortUi {
     kind: PortKind,
 }
 
-/// The catalog's UI metadata. Each entry's `params`/`inputs`/`outputs` lengths must match the node
-/// [`build_node`] makes for the same `type_id` — `ui_meta_aligns_with_nodes` guards it.
-const UI_META: &[UiMeta] = &[
-    UiMeta {
+/// The device catalog: every type the UI can place, builder + descriptor together. Each entry's
+/// `params`/`inputs`/`outputs` lengths must match the node its `build` makes — `catalog_aligns_with_nodes`
+/// guards it (the `zip` in `describe` would otherwise silently truncate).
+const CATALOG: &[CatalogEntry] = &[
+    CatalogEntry {
         type_id: "synth_voice",
         name: "Synth Voice",
+        build: || -> Box<dyn Node> { Box::new(SynthVoice::new(Volts::new(1.0), Ohms::new(1.0))) },
         params: &[
             ParamUi {
                 label: "Level",
@@ -194,9 +202,17 @@ const UI_META: &[UiMeta] = &[
             kind: PortKind::Instrument,
         }],
     },
-    UiMeta {
+    CatalogEntry {
         type_id: "gain_stage",
         name: "Gain Stage",
+        build: || -> Box<dyn Node> {
+            Box::new(GainStage::new(
+                1.0,
+                Volts::new(10.0),
+                InputZ::new(Ohms::new(10_000.0)),
+                Ohms::new(150.0),
+            ))
+        },
         params: &[ParamUi {
             label: "Gain",
             unit: "×",
@@ -211,9 +227,20 @@ const UI_META: &[UiMeta] = &[
             kind: PortKind::Line,
         }],
     },
-    UiMeta {
+    CatalogEntry {
         type_id: "three_band_eq",
         name: "3-Band EQ",
+        build: || -> Box<dyn Node> {
+            Box::new(ThreeBandEq::new(
+                SampleRate::new(HOST_RATE_HZ),
+                BitDepth::new(BITS),
+                // Transparent default (all 0 dB): the UI sets bands later. Frequencies are the usual
+                // low-shelf / mid-peak / high-shelf split.
+                EqBand::new(100.0, 0.7, 0.0),
+                EqBand::new(1_000.0, 0.7, 0.0),
+                EqBand::new(8_000.0, 0.7, 0.0),
+            ))
+        },
         params: &[],
         inputs: &[PortUi {
             label: "In",
@@ -224,9 +251,17 @@ const UI_META: &[UiMeta] = &[
             kind: PortKind::Digital,
         }],
     },
-    UiMeta {
+    CatalogEntry {
         type_id: "ad_converter",
         name: "AD Converter",
+        build: || -> Box<dyn Node> {
+            Box::new(AdConverter::new(
+                SampleRate::new(HOST_RATE_HZ),
+                BitDepth::new(BITS),
+                Volts::new(1.0),
+                Ohms::new(1_000_000.0),
+            ))
+        },
         params: &[],
         inputs: &[PortUi {
             label: "Analog In",
@@ -237,9 +272,17 @@ const UI_META: &[UiMeta] = &[
             kind: PortKind::Digital,
         }],
     },
-    UiMeta {
+    CatalogEntry {
         type_id: "da_converter",
         name: "DA Converter",
+        build: || -> Box<dyn Node> {
+            Box::new(DaConverter::new(
+                SampleRate::new(HOST_RATE_HZ),
+                BitDepth::new(BITS),
+                Volts::new(1.0),
+                Ohms::new(150.0),
+            ))
+        },
         params: &[],
         inputs: &[PortUi {
             label: "Digital In",
@@ -250,9 +293,12 @@ const UI_META: &[UiMeta] = &[
             kind: PortKind::Line,
         }],
     },
-    UiMeta {
+    CatalogEntry {
         type_id: "speaker",
         name: "Speaker",
+        build: || -> Box<dyn Node> {
+            Box::new(Speaker::new(1.0, InputZ::new(Ohms::new(10_000.0))))
+        },
         params: &[],
         inputs: &[PortUi {
             label: "In",
@@ -265,65 +311,37 @@ const UI_META: &[UiMeta] = &[
     },
 ];
 
+/// The catalog entry for `type_id`, or `None` if unknown.
+fn entry(type_id: &str) -> Option<&'static CatalogEntry> {
+    CATALOG.iter().find(|e| e.type_id == type_id)
+}
+
 /// Build the engine node for `type_id` with its fixed construction config, or `None` if unknown.
 ///
-/// Single-node devices (Task 4.1.2): one `type_id` → one boxed [`Node`]. Returns `Box<dyn Node>` so
-/// the one construction site serves both graph insertion (`Graph::add_boxed`, Task 4.1.4) and
-/// descriptor introspection here. The electrical values are the realistic, fixed-per-type config.
+/// Single-node devices (Task 4.1.2): one `type_id` → one boxed [`Node`]. A lookup into [`CATALOG`]
+/// plus its `build` — the one construction site, used both for graph insertion (`Graph::add_boxed`,
+/// Task 4.1.4) and for descriptor introspection here.
 #[must_use]
 pub fn build_node(type_id: &str) -> Option<Box<dyn Node>> {
-    let host = SampleRate::new(HOST_RATE_HZ);
-    let bits = BitDepth::new(BITS);
-    Some(match type_id {
-        "synth_voice" => Box::new(SynthVoice::new(Volts::new(1.0), Ohms::new(1.0))),
-        "gain_stage" => Box::new(GainStage::new(
-            1.0,
-            Volts::new(10.0),
-            InputZ::new(Ohms::new(10_000.0)),
-            Ohms::new(150.0),
-        )),
-        "three_band_eq" => Box::new(ThreeBandEq::new(
-            host,
-            bits,
-            // Transparent default (all 0 dB): the UI sets bands later. Frequencies are the usual
-            // low-shelf / mid-peak / high-shelf split.
-            EqBand::new(100.0, 0.7, 0.0),
-            EqBand::new(1_000.0, 0.7, 0.0),
-            EqBand::new(8_000.0, 0.7, 0.0),
-        )),
-        "ad_converter" => Box::new(AdConverter::new(
-            host,
-            bits,
-            Volts::new(1.0),
-            Ohms::new(1_000_000.0),
-        )),
-        "da_converter" => Box::new(DaConverter::new(
-            host,
-            bits,
-            Volts::new(1.0),
-            Ohms::new(150.0),
-        )),
-        "speaker" => Box::new(Speaker::new(1.0, InputZ::new(Ohms::new(10_000.0)))),
-        _ => return None,
-    })
+    entry(type_id).map(|e| (e.build)())
 }
 
-/// The full catalog of device descriptors, one per `UI_META` entry. Each is built by reading a
-/// fresh node's params/ports (engine truth) and zipping the UI labels onto them. Cold path (called
-/// once at UI startup); the node-building cost is negligible.
+/// The full catalog of device descriptors, one per [`CATALOG`] entry. Each is built by reading a
+/// fresh node's params/ports (engine truth) and zipping the entry's UI labels onto them. Cold path
+/// (called once at UI startup); the node-building cost is negligible.
 #[must_use]
 pub fn descriptors() -> Vec<DeviceDescriptor> {
-    UI_META.iter().map(describe).collect()
+    CATALOG.iter().map(describe).collect()
 }
 
-/// Build one descriptor: numeric param fields + port domains from the node, labels from `meta`.
-fn describe(meta: &UiMeta) -> DeviceDescriptor {
-    let node = build_node(meta.type_id).expect("every UI_META type has a builder");
+/// Build one descriptor: numeric param fields + port domains from the node, labels from the entry.
+fn describe(e: &CatalogEntry) -> DeviceDescriptor {
+    let node = (e.build)();
 
     let params = node
         .params()
         .iter()
-        .zip(meta.params)
+        .zip(e.params)
         .map(|(decl, ui)| ParamDescriptor {
             id: decl.id.0,
             label: ui.label.to_owned(),
@@ -338,7 +356,7 @@ fn describe(meta: &UiMeta) -> DeviceDescriptor {
     let inputs = node
         .inputs()
         .iter()
-        .zip(meta.inputs)
+        .zip(e.inputs)
         .enumerate()
         .map(|(i, (port, ui))| PortDescriptor {
             id: i as u32,
@@ -350,7 +368,7 @@ fn describe(meta: &UiMeta) -> DeviceDescriptor {
     let outputs = node
         .outputs()
         .iter()
-        .zip(meta.outputs)
+        .zip(e.outputs)
         .enumerate()
         .map(|(i, (port, ui))| PortDescriptor {
             id: i as u32,
@@ -362,8 +380,8 @@ fn describe(meta: &UiMeta) -> DeviceDescriptor {
     let ports = inputs.chain(outputs).collect();
 
     DeviceDescriptor {
-        type_id: meta.type_id.to_owned(),
-        name: meta.name.to_owned(),
+        type_id: e.type_id.to_owned(),
+        name: e.name.to_owned(),
         params,
         ports,
     }
@@ -373,31 +391,31 @@ fn describe(meta: &UiMeta) -> DeviceDescriptor {
 mod tests {
     use super::*;
 
-    /// The hand-authored UI metadata lines up, position-for-position, with the node the builder
-    /// makes — equal counts of params, inputs, and outputs. This is the guard that a node gaining
-    /// or losing a param/port without the catalog following is caught (the `zip` in `describe`
-    /// would otherwise silently truncate).
+    /// Each catalog entry's hand-authored metadata lines up, position-for-position, with the node its
+    /// builder makes — equal counts of params, inputs, and outputs. This is the guard that a node
+    /// gaining or losing a param/port without the catalog following is caught (the `zip` in
+    /// `describe` would otherwise silently truncate).
     #[test]
-    fn ui_meta_aligns_with_nodes() {
-        for meta in UI_META {
-            let node = build_node(meta.type_id).expect("UI_META type builds");
+    fn catalog_aligns_with_nodes() {
+        for e in CATALOG {
+            let node = (e.build)();
             assert_eq!(
-                meta.params.len(),
+                e.params.len(),
                 node.params().len(),
                 "{} param count",
-                meta.type_id
+                e.type_id
             );
             assert_eq!(
-                meta.inputs.len(),
+                e.inputs.len(),
                 node.inputs().len(),
                 "{} input count",
-                meta.type_id
+                e.type_id
             );
             assert_eq!(
-                meta.outputs.len(),
+                e.outputs.len(),
                 node.outputs().len(),
                 "{} output count",
-                meta.type_id
+                e.type_id
             );
         }
     }
@@ -452,7 +470,7 @@ mod tests {
         }
     }
 
-    /// An unknown type id has no builder (and so no descriptor) — the lookup the scene builder
+    /// An unknown type id has no entry (and so no builder/descriptor) — the lookup the scene builder
     /// (Task 4.1.4) relies on to reject a bad `typeId` cleanly.
     #[test]
     fn unknown_type_has_no_builder() {
