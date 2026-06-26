@@ -397,12 +397,12 @@ crossing the main→audio boundary as sparse messages. This epic retired the hea
 
 ## Epic 4 — UI: Skeuomorphic Panels + Patch Cables
 
-**Progress:** not started; **elaborated to Story level at epic planning (2026-06-25)** — the original
-4-story sketch was reshaped into the 5-story arc below after the UI vision grew from "device panels +
-cables" into a **game-like spatial studio/venue sim** (browsable gear catalog, racks and containers,
-freely placed in a pan/zoom world, multiple *spaces* with snakes between them, VST-grade skeuomorphic
-panels with front controls and back I/O). Stories stay at Story level by the detail-gradient convention
-(§"How this plan is structured"); each Story's Tasks + hand-calc/behavioral gates are written when it is
+**Progress:** **Story 4.1 in progress** (planned to Task level 2026-06-25); 4.2–4.5 stay at Story level
+until picked up. The original 4-story sketch was reshaped into the 5-story arc below after the UI vision
+grew from "device panels + cables" into a **game-like spatial studio/venue sim** (browsable gear catalog,
+racks and containers, freely placed in a pan/zoom world, multiple *spaces* with snakes between them,
+VST-grade skeuomorphic panels with front controls and back I/O). Per the detail-gradient convention
+(§"How this plan is structured"), each Story's Tasks + behavioral/hand-calc gates are written when it is
 picked up via the story-planning skill. Settled architecture decisions are below.
 
 **Goal:** the product interface on the proven engine — a game-like studio you build by browsing a gear
@@ -487,16 +487,115 @@ and the why are recorded.
 
 ### Stories
 
-- **Story 4.1 — Engine/bindings API for the UI + scene IR + device catalog (the foundation).** The
-  generic, UI-facing surface that retires the named-setter stopgap from Epic 3. Generic enumerable params
-  (`set_param(device/node, id, value)` + the descriptor's labels/units/kinds); the **scene IR** (build +
-  persistence, above); **build-engine-from-scene** in the worklet (replacing the pinned `RtEngine` patch
-  with a scene-driven one, bring-up via `processorOptions`/messages); the **device catalog** =
-  factory + descriptor with the **chassis-group seam**; and the **recompile-and-hot-swap-in-worklet**
-  mechanism. *Delivers:* load a static scene into the worklet, play it generically, and prove a full
-  scene **reload is a glitch-free swap** (the riskiest interaction, proven early). First devices are
-  single-node; the seam supports multi-node. *Open at pickup:* exact scene-IR schema + where serde lives
-  (bindings vs TS); how `CompileError` surfaces to JS; whether `ParamDecl` gains name/unit.
+#### Story 4.1 — Engine/bindings API for the UI + scene IR + device catalog — 🚧 **In progress**
+
+*Goal:* the generic, UI-facing engine surface that retires the named-setter stopgap from Epic 3 and turns
+the pinned-in-Rust canonical patch into a **scene the UI builds, plays, saves, and reloads** — the
+foundation every later Epic-4 Story consumes. Delivered when the canonical patch is built from a
+*serialized scene* (not hardcoded), played and controlled **generically by device id** through the
+worklet, a scene **save→load round-trips**, and a scene **reload hot-swaps glitch-free** under sound.
+Anchors to PROJECT_PLAN §4 (Port/Device/Graph domain model), §7 (UI as a pure consumer), and the Epic-1
+params-vs-structure + `ScheduleSlot` decisions.
+
+*Watch out:*
+- **The recompile/swap runs on the audio thread** (engine-in-worklet; a `Schedule` can't cross realms).
+  `load_patch` compiles in the `port` message handler between quanta and installs at a `render_quantum`
+  boundary; `compile` allocates, so a long one delays the next `process()` ⇒ a glitch. Acceptable because
+  edits are rare gestures at small-studio scale, **not** per-block — but measure it, and keep `compile`
+  off the per-block path. This is the riskiest interaction in the epic; prove it here.
+- **Engine stays serde-free and persistence-free.** serde lives only in `wasm-bindings`; the engine gains
+  no UI/scene/versioning vocabulary. The runtime ingress is **deserialize-only** on the Rust side (TS → a
+  runnable patch → build); Rust never writes the save file.
+- **Hot-path contract unchanged.** `render_quantum` stays zero-alloc / panic-free / denormal-flushed; all
+  the new fallibility (parse a patch, build a graph, `compile`) lives off the hot path, and a malformed
+  patch must surface as a legible error, never a panic on the audio thread.
+- **Data-driven gear is UI-only** (epic rule): a catalog entry's *builder is real Rust*, not data. Scope
+  guard — 4.1 ships single-node devices + **one** minimal multi-node entry to prove the seam; it is not a
+  device-coverage story.
+
+*Design notes (settled at planning):*
+- **Persistence is two layers, decided separately.** (1) The **durable save file is TS-owned versioned
+  JSON** — `{ schemaVersion, ui, patch }`, with load-time **migrations** in TS; human-readable, diffable,
+  backward-compatible. It holds the whole scene including UI-only placement/spaces (the `ui` section,
+  populated from 4.3; a stub in 4.1). (2) The **runtime ingress** hands the engine only the current
+  **runnable `patch`** projection (devices + param values + connections + output — no UI data), which TS
+  produces *after* migrating. *Rejected:* a Rust-owned canonical serde schema serialized to JSON — it
+  pulls persistence, versioning, and UI-only fields into the engine-adjacent layer (against "UI owns UI
+  data"), and TS still needs mirrored types anyway. The engine never sees the file, versioning, or UI data.
+- **Runtime ingress = serde + `serde-wasm-bindgen`** (a structured JS object → Rust struct), not a JSON
+  string. *Rejected:* JSON strings (text + a redundant parse on each side) and `tsify` (an extra
+  proc-macro to auto-generate TS types — not worth it for the small, central patch schema, whose TS
+  interface we hand-write and keep in sync).
+- **A catalog entry = descriptor + builder.** The **descriptor** is serde data exposed to JS via a
+  `catalog()` export (display name; params with `id/label/unit/control-kind/min/max/default`; ports with
+  `id/label/kind/domain/direction`) — it drives the catalog browser, panel rendering (4.2), and
+  connection-legality hints (4.4). The **builder** is a Rust `match` on the type-id that constructs
+  **concrete** nodes straight into the `Graph` with **fixed construction config**. *Why a match, not a
+  `Box<dyn Node>` factory:* `Graph::add<N: Node>` is generic-by-value and there is no `add(Box<dyn
+  Node>)`; the match sidesteps dyn plumbing and needs **zero engine change**.
+- **Chassis-group seam (proven, not over-built).** The builder returns a **device-instance map**
+  `device → { nodes: [NodeId], param_map, port_map, event_map }`; patch connections are addressed by
+  `(device, port)` and remapped to node-port edges at build; generic control resolves `(device, paramId)
+  → ParamHandle` and `device → EventInputId` through the map. Single-node devices are the trivial case
+  (one node, identity maps). One minimal **multi-node** entry (e.g. a 2-node channel strip:
+  `GainStage → ThreeBandEq`) exercises expansion + internal wiring + exposed-port/param remapping in a
+  unit test — no panel needed. Retires the Epic-1 "one-chassis-many-nodes → Epic 4+" deferral.
+- **`RtEngine` becomes the scene-driven surface; `BenchEngine` stays frozen** (the 3.1 gate fixture).
+  `RtEngine` owns a swap seam (`ScheduleSlot` or a pending-`Box<Schedule>`) and a stable output buffer;
+  `new(patch)` / `load_patch(patch)` build → `compile` (fixed `SEED`, so same scene reproduces) → install
+  at the next block boundary, dropping the old schedule off-block; control addressing is rebuilt after
+  every swap. The named setters (`set_level`…) are removed in favor of generic
+  `set_param(device, id, value)` / `note_on(device, …)` / `note_off(device, …)`.
+- **Known simplification (not a bug):** the old schedule's `drop` (buffer dealloc) happens on the audio
+  thread *between* blocks — cheap at small-studio scale. A deferred-drop free-list is a later option if
+  profiling at scale shows it costing a quantum. Recorded, not built.
+- **Validation is behavioral/structural, not hand-calc volts.** 4.1 is plumbing; its oracle is that the
+  *existing* Epic 1–3 analog/DSP assertions still hold when the patch is built from a scene rather than
+  hardcoded — i.e. **output parity** with the pinned patch, plus round-trip identity, descriptor↔node
+  count parity, and swap continuity. All prior tests stay green.
+
+- **Task 4.1.1 — Patch IR + serde ingress in `wasm-bindings`.** Add `serde` + `serde-wasm-bindgen`; define
+  the runnable-patch structs (`DeviceInstance { id, type_id, params }`, `Connection { from:(device,port),
+  to:(device,port), cable? }`, output tap) with `#[derive(Deserialize)]`; deserialize a JS object → patch.
+  *Done:* a patch object from JS deserializes into Rust and a malformed one yields a clean error (no
+  panic); a Rust unit test round-trips a representative patch. TS `Patch` interface hand-written.
+- **Task 4.1.2 — Device catalog: descriptor + builder (single-node entries).** The type-id registry: the
+  serde **descriptor** exposed via a `catalog()` export, and the **builder** match constructing concrete
+  nodes with fixed config. Seed with `SynthVoice`, `AdConverter`, `DaConverter`, `Speaker`, `GainStage`,
+  `ThreeBandEq`. *Done:* JS can fetch the catalog; a unit test asserts every entry builds and its
+  descriptor's param/port counts match the node's `params()`/`inputs()`/`outputs()`.
+- **Task 4.1.3 — Chassis-group seam: expansion, addressing, connection remap.** Generalize the builder to
+  emit 1..N nodes + internal edges + the exposed `port/param/event` maps; build the device-instance map;
+  remap `(device, port)` connections to node-port edges. Add one minimal multi-node entry (channel strip).
+  *Done:* a unit test builds the multi-node device, asserts its internal wiring, and resolves its exposed
+  ports/params to the correct `(NodeId, …)`; single-node remains the trivial path.
+- **Task 4.1.4 — Build-engine-from-patch: assemble, compile, resolve handles, surface errors.** Assemble a
+  `Graph` from a patch via the catalog, `compile` (fixed seed), and resolve generic addressing through the
+  instance map; surface `CompileError` as a structured `Result` to JS. *Done:* a native test builds the
+  **canonical patch from a patch struct** and renders the *same* non-silent output as the pinned patch
+  (output parity); a bad patch (dangling/cycle/domain-mismatch) returns a legible error, never a panic.
+- **Task 4.1.5 — Scene-driven `RtEngine` + recompile/hot-swap + generic control.** Refactor `RtEngine` to
+  own the swap seam and a stable output buffer; `new(patch)` / `load_patch(patch)` (compile off-block,
+  install at the next `render_quantum`, drop old off-block) with addressing rebuilt post-swap; generic
+  `set_param` / `note_on` / `note_off` by device id; remove the named setters. *Done:* native tests —
+  silent-until-note still holds; loading patch A then B makes output reflect B after the swap; a no-op
+  reload preserves output continuity (the swap is glitch-free); `BenchEngine` untouched and still green.
+- **Task 4.1.6 — Worklet + TS: scene-driven bring-up, generic control, save/load, in-browser reload.**
+  Refactor `processor-impl.js` (construct from a patch via `processorOptions`; a `loadPatch` message →
+  `engine.load_patch`; generic param/note messages by device id; `CompileError` → the status line) and
+  `main.ts` (hold the authoritative scene as versioned JSON `{ schemaVersion, ui, patch }`; build the
+  default canonical scene; generic controls; save/load via a JSON string + `localStorage`; a **reload**
+  action proving the glitch-free swap with the health line clean). *Done:* the canonical patch runs *from
+  a scene* in-browser, controls work generically by device, save→load round-trips, and reload is audibly
+  glitch-free with health clean.
+
+*Validate:* the canonical patch is built from a serialized scene and played/controlled **generically by
+device id** through the worklet; `catalog()` exposes every device's descriptor; the chassis seam is proven
+by the multi-node entry's test; a scene **save→load round-trips** and a **reload hot-swaps glitch-free**
+under sound (health clean); a malformed patch surfaces a legible error, never an audio-thread panic; the
+engine touches only its public API and remains serde-free; **all prior Epic 1–3 tests stay green** and the
+full gate passes (`cargo fmt --check && cargo lint && cargo test && cargo wasm && cargo docs`, plus the
+`wasm-pack build` step and `web` Biome/build).
 - **Story 4.2 — Skeuomorphic device panels: controls → params, front/back, power.** The data-driven
   panel system, rendered from the descriptor, for one or two devices bound to a running *static* engine:
   real knobs/faders, a VU/meter, a screen, jacks on the **back** (CSS flip), and a **power** switch

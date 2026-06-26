@@ -501,6 +501,22 @@ use crate::test_util::{sine, measure_gain}; // reached from the crate root
     test build `dead_code` doesn't fire → `expect` is "unfulfilled" there → denied. Use
     **`#[allow(dead_code)]`** when an item is used in one cfg but not another (it tolerates both).
 - **rustfmt** owns layout (`cargo fmt`); it auto-wraps long lines and chains.
+- **serde** ("**ser**ialize / **de**serialize") is the de-facto standard for turning Rust data
+  **to and from** a portable form and back — the crate you reach for whenever data leaves the
+  program (a save file, a network message, a thread/realm boundary). You annotate a type with
+  `#[derive(Serialize, Deserialize)]` and the derive *generates* the conversion code — no
+  hand-written parsing. It's two layers: the **core** (`serde` — the traits + derive) is
+  format-agnostic; a **format** crate picks the encoding (`serde_json` for JSON, binary formats
+  for others). You can derive just one direction (`Deserialize` only) when data only flows in.
+  ```rust
+  #[derive(Deserialize)]
+  struct Patch { devices: Vec<DeviceInstance>, connections: Vec<Connection> }
+  ```
+- **`serde-wasm-bindgen`** is a serde *format* that targets a live **JavaScript value** instead
+  of text: `serde_wasm_bindgen::from_value(js)` turns a JS object straight into a Rust struct
+  (and `to_value` the reverse), with no JSON-string round-trip. It's how a TS object crosses into
+  WASM as typed Rust data. (Story 4.1: the UI's runnable "patch" deserializes this way to build
+  the graph; serde stays in `wasm-bindings` only — the engine never depends on it.)
 
 ## 12. Unsafe, statics & atomics
 
