@@ -167,9 +167,29 @@ let b = a.abs();      // a is Copy → still usable
 let buf2 = buf;       // VoltageBuffer move → `buf` no longer usable
 ```
 
+**A value outlives its scope by being *moved*, not by going on the heap.** Returning a value, pushing
+it into a `Vec`, storing it in a struct — all **move** ownership out of the current frame; the stack
+slot is gone but the value lives on at its new owner. Unlike C, you can't return a reference to a local
+(the borrow checker rejects it), but returning the value itself is normal and heap-free:
+```rust
+fn make() -> GainStage { GainStage::new(/* … */) }   // moved to the caller; no heap, nothing dangles
+```
+So "the stack is popped at scope exit" is **not** by itself a reason to reach for the heap / `Box` —
+moving covers it. The heap (`Box`, §2/§5) is needed for a different reason: storing/owning an **unsized**
+value (a `dyn Trait` object, whose size isn't known at compile time) or a recursive type — there a
+fixed-size *pointer* to the heap is the only way to hold it (e.g. `Box<dyn Node>`: a `GainStage` returned
+by value needs no `Box`, but the *uniform, unsized* `dyn Node` does).
+
 **References / borrowing** — use a value without owning it:
 - `&T` shared/immutable borrow — **many** allowed at once.
 - `&mut T` exclusive/mutable borrow — **exactly one**, and no shared borrows may coexist.
+
+A reference **is** a pointer at runtime, but a *borrowing* one with compile-time guarantees — contrast the
+three pointer-ish things: **`&T`** = borrowing pointer (non-owning, always valid, aliasing-checked);
+**`Box<T>`** (§2/§5) = owning pointer (frees its heap value on drop); **`*const T`/`*mut T`** = raw C-style
+pointer, no guarantees, deref only in `unsafe` (which we deny). `&` is also the **operator** that takes a
+borrow (`f(&v)` borrows `v`, caller keeps ownership); `*` dereferences. For an *unsized* target a reference
+is a **fat** pointer — `&[T]` is (ptr, len), `&dyn Node` is (ptr, vtable); for a sized `T`, `&T` is one word.
 
 The **borrow checker** enforces this **at compile time, zero runtime cost**. It guarantees
 (1) no mutation while aliased (→ no data races) and (2) no reference outlives its target
@@ -377,6 +397,32 @@ measure_gain(10_000.0, r, |_buf| {});                          // no-op; `_buf` 
   alternative would be `&mut dyn FnMut(...)`.)
 - `FnMut(&mut VoltageBuffer)` is the trait written in **function-call sugar**: takes
   `&mut VoltageBuffer`, returns `()`.
+
+**Non-capturing closures coerce to a function pointer (`fn`).** A closure that captures **nothing**
+from its environment (it references only `const`s and global functions, never a local) coerces to a
+plain `fn(Args) -> Ret` pointer — unlike a capturing closure, which has a unique unnameable type and
+only implements the `Fn*` traits. A `fn` pointer is a concrete, nameable, `Copy`, compile-time-known
+type, so it can sit in a typed slice or a `const`. The device catalog stores *builders* this way:
+```rust
+struct CatalogEntry { nodes: &'static [fn() -> Box<dyn Node>], /* … */ }   // a slice of builders
+
+const CATALOG: &[CatalogEntry] = &[CatalogEntry {
+    nodes: &[
+        || Box::new(GainStage::new(/* … */)),   // non-capturing closure → coerces to fn() -> Box<dyn Node>
+        || Box::new(GainStage::new(/* … */)),   // a *second*, distinct fn item (identical body)
+    ],
+    /* … */
+}];
+```
+- The **field type drives two coercions**: `|| …` → `fn() -> Box<dyn Node>` (closure → fn pointer),
+  and inside it `Box<GainStage>` → `Box<dyn Node>` (the unsizing coercion, §5), because the expected
+  return type is known. Spell the return out (`|| -> Box<dyn Node> { … }`) if the context doesn't
+  pin it.
+- **Why store the builder, not the built value:** a `const` can't hold a `Box` (no heap at compile
+  time), but it *can* hold fn pointers; and the builder is called **lazily, possibly more than once**
+  (once to introspect a fresh node for its descriptor, again to actually add it to a graph), minting
+  a new node each call.
+- Each `||` is its **own** `fn` item even when two bodies are identical — two separate builders.
 
 **`while let` & `bool::then_some`** (from the topo sort):
 ```rust

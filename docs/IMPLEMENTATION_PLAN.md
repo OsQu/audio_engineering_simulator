@@ -546,13 +546,30 @@ params-vs-structure + `ScheduleSlot` decisions.
   `Graph::add_boxed`. *Refinement on the planned "zero engine change":* a one-line `add_boxed` (which
   `add` now delegates to) gives **one construction site** that's both graph-insertable and introspectable
   for descriptors — killing builder/descriptor drift; worth the trivial engine addition.
-- **Chassis-group seam (proven, not over-built).** The builder returns a **device-instance map**
-  `device → { nodes: [NodeId], param_map, port_map, event_map }`; patch connections are addressed by
-  `(device, port)` and remapped to node-port edges at build; generic control resolves `(device, paramId)
-  → ParamHandle` and `device → EventInputId` through the map. Single-node devices are the trivial case
-  (one node, identity maps). One minimal **multi-node** entry (e.g. a 2-node channel strip:
-  `GainStage → ThreeBandEq`) exercises expansion + internal wiring + exposed-port/param remapping in a
-  unit test — no panel needed. Retires the Epic-1 "one-chassis-many-nodes → Epic 4+" deferral.
+- **Chassis-group seam (proven, not over-built).** `instantiate(type_id, &mut Graph)` expands a device
+  into 1..N nodes + internal edges and returns a **`BuiltDevice`** map `{ nodes: [NodeId], inputs,
+  outputs, params }` from device-level ports/params to concrete `(NodeId, …)`. The **exposed face is
+  derived by convention** — a port is exposed when no internal edge consumes it (open ports, node order);
+  all node params are exposed, concatenated — so a device needn't hand-list its face. Patch connections
+  are addressed by `(device, port)` and remapped through the map; generic control resolves `(device,
+  paramId) → (NodeId, ParamId)` (→ `ParamHandle`) and an `Events`-domain input port → `EventInputId`.
+  Single-node devices are the trivial case (one node, whole face exposed). The minimal **multi-node**
+  proof is a 2-stage analog `channel_strip` (`GainStage → GainStage`): input+output gain behind one
+  device, exposing stage 0's input, stage 1's output, and *both* gains' params (device param 1 → the
+  second node — a non-trivial remap). *(The originally sketched `GainStage → ThreeBandEq` is
+  electrically invalid — analog into a digital port — so a strip with digital EQ/dynamics needs an
+  internal AD, which arrives with deeper devices; two analog stages is the smallest valid proof.)*
+  Retires the Epic-1 "one-chassis-many-nodes → Epic 4+" deferral.
+  - **Extension points (deferred, seam is stable).** Three kinds of internal routing, three homes:
+    *(a) fixed topology* — static `InternalEdge` data (now); *(b) build-time-parameterized topology*
+    (an N-channel mixer, an interface with N preamps) — needs an **imperative builder** variant of a
+    catalog entry (e.g. `Fixed { nodes, internal } | Built(fn(&Config, &mut Graph) -> BuiltDevice)`)
+    plus an **optional structural-config field** on the scene IR's `DeviceInstance` (serde
+    `#[serde(default)]`, backward-compatible); *(c) runtime-switchable routing* (bypass, M/S, a routing
+    matrix) — lives **inside a node** via a control param (never a topology change, per
+    params-vs-structure), or is user-repatching → graph edit + recompile (4.3). Both (b)/(c) are
+    **additive behind `instantiate -> BuiltDevice`** (callers unaffected); first needed in **Epic 5.1**
+    (deeper mixer / patchbay), so built there, not now.
 - **`RtEngine` becomes the scene-driven surface; `BenchEngine` stays frozen** (the 3.1 gate fixture).
   `RtEngine` owns a swap seam (`ScheduleSlot` or a pending-`Box<Schedule>`) and a stable output buffer;
   `new(patch)` / `load_patch(patch)` build → `compile` (fixed `SEED`, so same scene reproduces) → install
@@ -580,8 +597,8 @@ params-vs-structure + `ScheduleSlot` decisions.
   `AdConverter`, `DaConverter`, `Speaker`. *Done:* JS can fetch the catalog; tests assert UI-meta↔node
   count alignment and that descriptors carry bit-exact param ranges + correct port domains.
 - **Task 4.1.3 — Chassis-group seam: expansion, addressing, connection remap.** Generalize the builder to
-  emit 1..N nodes + internal edges + the exposed `port/param/event` maps; build the device-instance map;
-  remap `(device, port)` connections to node-port edges. Add one minimal multi-node entry (channel strip).
+  emit 1..N nodes + internal edges + the exposed face; `instantiate` builds the `BuiltDevice` map.
+  Add one minimal multi-node entry (the 2-stage analog `channel_strip`).
   *Done:* a unit test builds the multi-node device, asserts its internal wiring, and resolves its exposed
   ports/params to the correct `(NodeId, …)`; single-node remains the trivial path.
 - **Task 4.1.4 — Build-engine-from-patch: assemble, compile, resolve handles, surface errors.** Assemble a
