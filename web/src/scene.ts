@@ -9,47 +9,47 @@
 
 /** A runnable patch: devices, the connections between them, and the output tap to render. */
 export interface Patch {
-	devices: DeviceInstance[];
-	connections: Connection[];
-	output: PortRef;
+  devices: DeviceInstance[];
+  connections: Connection[];
+  output: PortRef;
 }
 
 /** One placed device: a catalog `typeId` at a stable instance `id`, with param overrides. */
 export interface DeviceInstance {
-	/** Stable instance id (UI-assigned); referenced by connections and the output tap. */
-	id: string;
-	/** Catalog type id — selects the device's descriptor + builder. */
-	typeId: string;
-	/** Param values to apply after build. Omit for construction defaults. */
-	params?: ParamSetting[];
+  /** Stable instance id (UI-assigned); referenced by connections and the output tap. */
+  id: string;
+  /** Catalog type id — selects the device's descriptor + builder. */
+  typeId: string;
+  /** Param values to apply after build. Omit for construction defaults. */
+  params?: ParamSetting[];
 }
 
 /** A value for one of a device's smoothed control params, by device-local param id. */
 export interface ParamSetting {
-	/** Device-local param id (the engine `ParamId`'s value). */
-	id: number;
-	/** Target value; clamped to the param's declared range when applied. */
-	value: number;
+  /** Device-local param id (the engine `ParamId`'s value). */
+  id: number;
+  /** Target value; clamped to the param's declared range when applied. */
+  value: number;
 }
 
 /** A connection from one device port to another, optionally through a cable. */
 export interface Connection {
-	from: PortRef;
-	to: PortRef;
-	/** Optional cable (series R + shunt C); omit for an ideal wire. */
-	cable?: CableSpec;
+  from: PortRef;
+  to: PortRef;
+  /** Optional cable (series R + shunt C); omit for an ideal wire. */
+  cable?: CableSpec;
 }
 
 /** A reference to one device-level port: a device instance id + the port index. */
 export interface PortRef {
-	/** Target device instance id (matches a `DeviceInstance.id`). */
-	device: string;
-	/** Device-level port index. */
-	port: number;
+  /** Target device instance id (matches a `DeviceInstance.id`). */
+  device: string;
+  /** Device-level port index. */
+  port: number;
 }
 
 /** A cable's electrical spec, in SI units. */
 export interface CableSpec {
-	resistanceOhms: number;
-	capacitanceFarads: number;
+  resistanceOhms: number;
+  capacitanceFarads: number;
 }

@@ -18,17 +18,36 @@
 //! (`as_ptr`); the only `unsafe` is JS-side constructing the view — so there is still no `unsafe`
 //! in this crate.
 
-mod scene;
-
-pub use scene::{CableSpec, Connection, DeviceInstance, ParamSetting, Patch, PortRef};
-
 use capture::Capture;
+use devices::{Patch, descriptors};
 use engine::{
     AdConverter, AnalogRate, BitDepth, DaConverter, EventInputId, EventMessage, EventQueue,
     GainStage, Graph, InputZ, Ohms, ParamHandle, ParamQueue, PassiveSum, SampleRate, Schedule,
     Speaker, SynthVoice, VoltageBuffer, Volts, compile,
 };
 use wasm_bindgen::prelude::*;
+
+// --- Device catalog + scene ingress: the thin JS-value bridge over the `devices` crate. ----------
+
+/// The device catalog as a structured JS value — what the UI fetches once to populate the gear
+/// browser and drive panel rendering. Pure marshalling over [`devices::descriptors`]; the catalog
+/// content lives in `devices`. Cold path (UI startup), so the serialize cost is irrelevant.
+///
+/// # Errors
+/// Returns the serializer error as a `JsValue` if serialization fails (it does not in practice — the
+/// descriptors are plain data).
+#[wasm_bindgen]
+pub fn catalog() -> Result<JsValue, JsValue> {
+    serde_wasm_bindgen::to_value(&descriptors()).map_err(Into::into)
+}
+
+/// Deserialize a runnable [`Patch`] from the structured JS object the UI posts to the worklet.
+///
+/// The fallible ingress (Task 4.1.1): a malformed patch returns `Err` rather than panicking on the
+/// audio thread. Marshalling only — the IR and (Task 4.1.4) the build logic live in `devices`.
+pub fn parse_patch(value: JsValue) -> Result<Patch, serde_wasm_bindgen::Error> {
+    serde_wasm_bindgen::from_value(value)
+}
 
 // --- The pinned canonical-patch config (the gate fixture; mirror in the benchmark page). --------
 /// Oversampled analog rate — the "continuous" proxy (8× the host rate).

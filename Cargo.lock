@@ -54,6 +54,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "devices"
+version = "0.1.0"
+dependencies = [
+ "engine",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "drawille"
 version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -381,10 +390,9 @@ name = "wasm-bindings"
 version = "0.1.0"
 dependencies = [
  "capture",
+ "devices",
  "engine",
- "serde",
  "serde-wasm-bindgen",
- "serde_json",
  "wasm-bindgen",
 ]
 

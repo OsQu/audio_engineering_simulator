@@ -4,11 +4,14 @@
 #   crates/engine        — the core voltage engine (portable to wasm32; no std::thread/std::time)
 #   crates/capture       — implicit analog→host-sample capture; engine-only deps, wasm-reachable,
 #                          shared by the native harness and the browser bindings (Task 3.1.1)
-#   crates/wasm-bindings — browser bindings (real surface filled in Epic 3, Task 3.1.2+)
+#   crates/devices       — device catalog + scene/patch IR + build-from-scene; the product/content
+#                          layer ON the engine (serde lives here, not the engine). Consumed by both
+#                          wasm-bindings and harness (Story 4.1).
+#   crates/wasm-bindings — browser bindings (real surface filled in Epic 3, Task 3.1.2+); thin glue
 #   crates/harness       — render/CLI test harness (native; Epic 2)
 [workspace]
 resolver = "3"
-members = ["crates/engine", "crates/capture", "crates/wasm-bindings", "crates/harness"]
+members = ["crates/engine", "crates/capture", "crates/devices", "crates/wasm-bindings", "crates/harness"]
 
 [workspace.package]
 edition = "2024"
@@ -19,6 +22,7 @@ publish = false
 [workspace.dependencies]
 engine = { path = "crates/engine" }
 capture = { path = "crates/capture" }
+devices = { path = "crates/devices" }
 approx = "0.5"
 
 # Lint policy applied to every crate via `[lints] workspace = true`.

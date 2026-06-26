@@ -52,8 +52,16 @@ impl Graph {
     /// Add a node, returning its [`NodeId`]. The node moves into the graph (and later into
     /// the schedule), carrying its internal state.
     pub fn add<N: Node + 'static>(&mut self, node: N) -> NodeId {
+        self.add_boxed(Box::new(node))
+    }
+
+    /// Add an already-boxed node, returning its [`NodeId`]. The trait-object form of
+    /// [`add`](Self::add): for callers that build a node behind `Box<dyn Node>` — a type-id → node
+    /// factory like the UI device catalog — and so can't name the concrete type at the call site.
+    /// [`add`](Self::add) delegates here, so both share one push path.
+    pub fn add_boxed(&mut self, node: Box<dyn Node>) -> NodeId {
         let id = NodeId(self.nodes.len());
-        self.nodes.push(Box::new(node));
+        self.nodes.push(node);
         id
     }
 
@@ -176,6 +184,18 @@ mod tests {
 
         assert_eq!(g.connection_count(), 1);
         assert_eq!(g.output_tap(), Some((sink, 0)));
+    }
+
+    #[test]
+    fn add_boxed_assigns_the_same_sequential_ids_as_add() {
+        // The catalog builds nodes behind `Box<dyn Node>`; `add_boxed` must slot them in exactly
+        // like `add` does (same id sequence, same count).
+        let mut g = Graph::new();
+        let a = g.add(Stub::new(0, 1));
+        let b = g.add_boxed(Box::new(Stub::new(1, 1)));
+        assert_eq!(a, NodeId(0));
+        assert_eq!(b, NodeId(1));
+        assert_eq!(g.node_count(), 2);
     }
 
     #[test]

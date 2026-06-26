@@ -7,12 +7,13 @@
 //!
 //! What the engine *does* see is the [`Patch`]: the **runnable projection** — just the devices, their
 //! param values, the connections, and the output tap. The UI produces it (after migrating an old save)
-//! and posts it to the worklet, where it deserializes here via `serde-wasm-bindgen` ([`Patch::from_js`])
-//! into the structs below, which later Tasks turn into a `Graph` and `compile`.
+//! and posts it to the worklet, where `wasm-bindings` deserializes it (`serde-wasm-bindgen`, the
+//! `JsValue` bridge that stays in the glue crate) into the structs below, which later Tasks turn into
+//! a `Graph` and `compile`.
 //!
 //! **Ingress is deserialize-only and total.** Parsing a patch is the one fallible step on the way in;
 //! it returns a `Result` so a malformed patch surfaces a legible error instead of panicking on the
-//! audio thread. The structs also derive `Serialize` so native tests can round-trip them through JSON
+//! audio thread. The structs also derive `Serialize` so tests can round-trip them through JSON
 //! (`serde-wasm-bindgen` needs a JS realm, so the round-trip oracle runs over `serde_json` instead).
 //!
 //! Field names are **camelCase on the JS side** (`#[serde(rename_all = "camelCase")]`) so the TS UI
@@ -20,7 +21,6 @@
 //! `web/src/scene.ts`; keep the two in sync.
 
 use serde::{Deserialize, Serialize};
-use wasm_bindgen::JsValue;
 
 /// A runnable patch: the devices, the connections between them, and the output tap to render.
 ///
@@ -98,18 +98,6 @@ pub struct CableSpec {
     pub resistance_ohms: f32,
     /// Shunt capacitance, farads.
     pub capacitance_farads: f32,
-}
-
-impl Patch {
-    /// Deserialize a patch from the structured JS object the UI posts to the worklet.
-    ///
-    /// The single fallible ingress: a malformed patch returns `Err` (never panics), so the worklet
-    /// can surface a legible message rather than crashing the audio thread. Runs in the WASM realm
-    /// (`serde-wasm-bindgen` needs JS values); native tests exercise the same `Deserialize` derive
-    /// through JSON instead.
-    pub fn from_js(value: JsValue) -> Result<Self, serde_wasm_bindgen::Error> {
-        serde_wasm_bindgen::from_value(value)
-    }
 }
 
 #[cfg(test)]
