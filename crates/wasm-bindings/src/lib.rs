@@ -18,6 +18,10 @@
 //! (`as_ptr`); the only `unsafe` is JS-side constructing the view — so there is still no `unsafe`
 //! in this crate.
 
+mod scene;
+
+pub use scene::{CableSpec, Connection, DeviceInstance, ParamSetting, Patch, PortRef};
+
 use capture::Capture;
 use engine::{
     AdConverter, AnalogRate, BitDepth, DaConverter, EventInputId, EventMessage, EventQueue,

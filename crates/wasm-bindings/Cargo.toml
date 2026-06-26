@@ -21,6 +21,19 @@ capture.workspace = true
 # CLI). Kept on the cold/setup surface only; the per-quantum zero-copy hot path is an Epic-3.2
 # concern (3.1 measures pure compute, so no raw-memory/`unsafe` path here yet).
 wasm-bindgen = "0.2.125"
+# Scene IR (Story 4.1): the UI's runnable "patch" deserializes into Rust structs here to build the
+# graph. serde lives ONLY in this JS-facing crate — the engine stays serde-free and portable.
+# `serde-wasm-bindgen` is the runtime ingress: a structured JS object → Rust struct, no JSON-string
+# round-trip. (The durable save file is TS-owned versioned JSON; Rust only ever sees the runnable
+# projection, deserialized — it never writes the file.)
+serde = { version = "1", features = ["derive"] }
+serde-wasm-bindgen = "0.6"
+
+[dev-dependencies]
+# Native unit tests round-trip the patch IR through JSON (serde-wasm-bindgen needs a JS realm, so it
+# can't run under `cargo test`; the same `Deserialize` derive is exercised via JSON instead).
+# Dev-only, so it never reaches the wasm32 build.
+serde_json = "1"
 
 [lints]
 workspace = true
