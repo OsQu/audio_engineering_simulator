@@ -516,7 +516,8 @@ use crate::test_util::{sine, measure_gain}; // reached from the crate root
   of text: `serde_wasm_bindgen::from_value(js)` turns a JS object straight into a Rust struct
   (and `to_value` the reverse), with no JSON-string round-trip. It's how a TS object crosses into
   WASM as typed Rust data. (Story 4.1: the UI's runnable "patch" deserializes this way to build
-  the graph; serde stays in `wasm-bindings` only — the engine never depends on it.)
+  the graph. serde lives in the `devices` crate, which owns the catalog + scene IR; the engine
+  stays serde-free, and `wasm-bindings` keeps only the `JsValue` bridge.)
 
 ## 12. Unsafe, statics & atomics
 

@@ -503,9 +503,10 @@ params-vs-structure + `ScheduleSlot` decisions.
   boundary; `compile` allocates, so a long one delays the next `process()` ⇒ a glitch. Acceptable because
   edits are rare gestures at small-studio scale, **not** per-block — but measure it, and keep `compile`
   off the per-block path. This is the riskiest interaction in the epic; prove it here.
-- **Engine stays serde-free and persistence-free.** serde lives only in `wasm-bindings`; the engine gains
-  no UI/scene/versioning vocabulary. The runtime ingress is **deserialize-only** on the Rust side (TS → a
-  runnable patch → build); Rust never writes the save file.
+- **Engine stays serde-free and persistence-free.** serde lives in the new **`devices`** crate (the
+  catalog + scene/build layer), not the engine; the engine gains no UI/scene/versioning vocabulary. The
+  runtime ingress is **deserialize-only** on the Rust side (TS → a runnable patch → build); Rust never
+  writes the save file.
 - **Hot-path contract unchanged.** `render_quantum` stays zero-alloc / panic-free / denormal-flushed; all
   the new fallibility (parse a patch, build a graph, `compile`) lives off the hot path, and a malformed
   patch must surface as a legible error, never a panic on the audio thread.
@@ -526,13 +527,25 @@ params-vs-structure + `ScheduleSlot` decisions.
   string. *Rejected:* JSON strings (text + a redundant parse on each side) and `tsify` (an extra
   proc-macro to auto-generate TS types — not worth it for the small, central patch schema, whose TS
   interface we hand-write and keep in sync).
-- **A catalog entry = descriptor + builder.** The **descriptor** is serde data exposed to JS via a
-  `catalog()` export (display name; params with `id/label/unit/control-kind/min/max/default`; ports with
+- **The catalog + scene IR live in a new `devices` crate, not `wasm-bindings`** (reshaped during 4.1.2).
+  The catalog (builder + descriptor) and the scene/patch IR + build-from-scene are **core simulation
+  content** (what gear exists, its fixed electrical config, how a serialized arrangement becomes an engine
+  graph) — they belong *on* the engine, not in the JS glue. `devices` depends on `engine` + serde and is
+  consumed by **both** `wasm-bindings` (browser) and `harness` (native render scenarios); `wasm-bindings`
+  keeps only the `JsValue` bridge (`catalog()` → JS value, `parse_patch` ← JS value). *Why:* the engine
+  has no opinion on what gear ships (a product decision), and the catalog should be native-testable +
+  harness-usable, not trapped behind wasm. Honors "engine stays serde-free" (serde is in `devices`).
+- **A catalog entry = descriptor + builder.** The **descriptor** is serde data the UI fetches (display
+  name; params with `id/label/unit/control-kind/min/max/default`; ports with
   `id/label/kind/domain/direction`) — it drives the catalog browser, panel rendering (4.2), and
-  connection-legality hints (4.4). The **builder** is a Rust `match` on the type-id that constructs
-  **concrete** nodes straight into the `Graph` with **fixed construction config**. *Why a match, not a
-  `Box<dyn Node>` factory:* `Graph::add<N: Node>` is generic-by-value and there is no `add(Box<dyn
-  Node>)`; the match sidesteps dyn plumbing and needs **zero engine change**.
+  connection-legality hints (4.4). Its numeric/domain fields are **derived from a freshly built node**
+  (engine truth, no drift); only labels/units/kinds are hand-authored. Builder + descriptor live
+  **together in one `CATALOG` table** — each entry bundles its `type_id`, name, a `build: fn() -> Box<dyn
+  Node>` (fixed construction config), and the UI metadata, so adding gear is one self-contained entry
+  (`build_node` is a lookup; `descriptors()` iterates the same table). Nodes go in via a minimal new
+  `Graph::add_boxed`. *Refinement on the planned "zero engine change":* a one-line `add_boxed` (which
+  `add` now delegates to) gives **one construction site** that's both graph-insertable and introspectable
+  for descriptors — killing builder/descriptor drift; worth the trivial engine addition.
 - **Chassis-group seam (proven, not over-built).** The builder returns a **device-instance map**
   `device → { nodes: [NodeId], param_map, port_map, event_map }`; patch connections are addressed by
   `(device, port)` and remapped to node-port edges at build; generic control resolves `(device, paramId)
@@ -554,16 +567,18 @@ params-vs-structure + `ScheduleSlot` decisions.
   hardcoded — i.e. **output parity** with the pinned patch, plus round-trip identity, descriptor↔node
   count parity, and swap continuity. All prior tests stay green.
 
-- **Task 4.1.1 — Patch IR + serde ingress in `wasm-bindings`.** Add `serde` + `serde-wasm-bindgen`; define
-  the runnable-patch structs (`DeviceInstance { id, type_id, params }`, `Connection { from:(device,port),
-  to:(device,port), cable? }`, output tap) with `#[derive(Deserialize)]`; deserialize a JS object → patch.
+- **Task 4.1.1 — Patch IR + serde ingress.** ✅ Define the runnable-patch structs (`DeviceInstance { id,
+  type_id, params }`, `Connection { from:(device,port), to:(device,port), cable? }`, output tap) with
+  serde `#[derive]`; deserialize a JS object → patch (`parse_patch` in `wasm-bindings`, over
+  `serde-wasm-bindgen`). *(Landed in the new `devices` crate — see the crate-layout design note.)*
   *Done:* a patch object from JS deserializes into Rust and a malformed one yields a clean error (no
-  panic); a Rust unit test round-trips a representative patch. TS `Patch` interface hand-written.
-- **Task 4.1.2 — Device catalog: descriptor + builder (single-node entries).** The type-id registry: the
-  serde **descriptor** exposed via a `catalog()` export, and the **builder** match constructing concrete
-  nodes with fixed config. Seed with `SynthVoice`, `AdConverter`, `DaConverter`, `Speaker`, `GainStage`,
-  `ThreeBandEq`. *Done:* JS can fetch the catalog; a unit test asserts every entry builds and its
-  descriptor's param/port counts match the node's `params()`/`inputs()`/`outputs()`.
+  panic); native tests round-trip the IR through JSON. TS `Patch` interface hand-written.
+- **Task 4.1.2 — Device catalog: descriptor + builder (single-node entries).** ✅ The type-id registry:
+  the serde **descriptor** (numeric/domain fields derived from the node, labels authored) exposed to JS
+  via `wasm-bindings`' `catalog()` glue, and the **builder** `match` constructing nodes (`Box<dyn Node>`
+  via `Graph::add_boxed`) with fixed config. Seeded with `SynthVoice`, `GainStage`, `ThreeBandEq`,
+  `AdConverter`, `DaConverter`, `Speaker`. *Done:* JS can fetch the catalog; tests assert UI-meta↔node
+  count alignment and that descriptors carry bit-exact param ranges + correct port domains.
 - **Task 4.1.3 — Chassis-group seam: expansion, addressing, connection remap.** Generalize the builder to
   emit 1..N nodes + internal edges + the exposed `port/param/event` maps; build the device-instance map;
   remap `(device, port)` connections to node-port edges. Add one minimal multi-node entry (channel strip).
