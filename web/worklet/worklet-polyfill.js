@@ -4,9 +4,9 @@
 // Chrome — a long-standing gap), yet wasm-bindgen's glue constructs a `TextDecoder` eagerly at load
 // time. Without this, that throws a ReferenceError and the whole module fails to evaluate, so
 // `registerProcessor` never runs ("node name not defined"). Provide minimal UTF-8 implementations
-// when absent. They are only reached when a string crosses the wasm boundary — for the `RtEngine`
-// surface that is solely panic/error text, never the audio hot path — so correctness matters only
-// for legibility of an error, not for performance.
+// when absent. They are only reached when a string crosses the wasm boundary — for the `SceneEngine`
+// surface that is panic/error text and patch-build messages, never the audio hot path — so
+// correctness matters only for legibility of an error, not for performance.
 
 if (typeof TextDecoder === "undefined") {
   globalThis.TextDecoder = class {

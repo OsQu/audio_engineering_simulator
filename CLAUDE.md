@@ -6,13 +6,44 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## 1. Current state
 
-This repo is **pre-code** — two planning documents and one commit, no source tree yet. The next thing
-to build is **Story 1.1** (Cargo workspace scaffold) in `IMPLEMENTATION_PLAN.md`. Until it lands there
-is no build, test runner, or crate. The Rust conventions below are written *ahead* of the code on
-purpose, so the workspace grows in the right direction from the first commit.
+Epics 1–3 are complete and **Story 4.1** has landed; **Story 4.2** (skeuomorphic device panels) is the
+next thing to build (see `IMPLEMENTATION_PLAN.md`). What exists:
 
-When real infrastructure exists, this file should gain a concrete **Commands** section (exact `cargo`
-invocations, how to run one test) — re-run `/init` after Story 1.1.
+- **`crates/engine`** — the headless voltage engine: units/buffers, electrical local-solve, FIR
+  converters, the `Node`/`Graph`/`compile`/`Schedule` core, the AD/DA + carrier seam, DSP nodes, and
+  the two input lanes (events + control params). Serde-free and UI-free.
+- **`crates/devices`** — the product/content layer: the device **catalog** (builder + UI descriptor),
+  the serializable **scene/`Patch` IR**, and `build_patch`. Depends on `engine` + serde.
+- **`crates/capture`** — the implicit off-sim-clock capture (speaker volts → host samples); shared by
+  `harness` and `wasm-bindings`.
+- **`crates/wasm-bindings`** — `SceneEngine` (the real-time, scene-driven surface the AudioWorklet
+  drains) + the `catalog`/`parse_patch` JS bridge.
+- **`crates/harness`** — native offline WAV render driver + a terminal waveform-plot demo binary.
+- **`web/`** — the Vite + TypeScript browser harness that hosts the engine in an AudioWorklet (Epic 4's
+  base; gains Svelte in Story 4.2).
+
+### Commands
+
+Toolchain note in §2 applies (prefix with `source "$HOME/.cargo/env" &&`). Aliases live in
+`.cargo/config.toml`.
+
+```sh
+cargo build                       # build the workspace
+cargo test                        # all Rust tests
+cargo test -p engine             # one crate's tests
+cargo test <name>                # one test by name substring
+cargo lint                        # clippy, all targets, warnings-as-errors
+cargo wasm                        # wasm32 portability check (engine + capture + bindings)
+cargo docs                        # doc build, broken-intra-doc-link / bare-URL lints denied
+cargo fmt --check                 # formatting check (drop --check to apply)
+```
+
+Full pre-push gate (mirrors CI):
+`cargo fmt --check && cargo lint && cargo test && cargo wasm && cargo docs`.
+
+Browser harness: `cd web && npm install && npm run wasm && npm run dev` (then open
+`http://localhost:5173/`). `npm run wasm` rebuilds the WASM artifact via `web/build-wasm.sh`
+(wraps `wasm-pack`); `npm run check` runs Biome; `npm run typecheck` runs `tsc`.
 
 ## 2. How we work (the task loop)
 

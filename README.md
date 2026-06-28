@@ -12,8 +12,10 @@ voltage physics**. Digital samples exist only *after* a modeled AD converter sam
 The purpose is **learning** — building hands-on intuition about routing, the analog medium, AD/DA, and
 DSP that's impractical to explore with real gear.
 
-> **Status:** early. The headless Rust engine is being built and validated first (Epic 1); the UI comes
-> later as a pure consumer of the engine API. See the plans below.
+> **Status:** the headless Rust engine is built and validated (Epic 1), renders to WAV (Epic 2), and
+> runs **live in the browser** inside an AudioWorklet (Epic 3). Epic 4 is building the UI as a pure
+> consumer of the engine API — the engine→UI seam (scene IR, device catalog, hot-swap) landed in
+> Story 4.1; skeuomorphic device panels are next (Story 4.2). See the plans below.
 
 ## Documentation
 
@@ -23,13 +25,16 @@ DSP that's impractical to explore with real gear.
 
 ## Project structure
 
-A Cargo workspace:
+A Cargo workspace (plus a TypeScript web harness):
 
-| Crate | Role |
+| Crate / dir | Role |
 | --- | --- |
-| `crates/engine` | The core voltage engine (portable to `wasm32`). |
-| `crates/wasm-bindings` | Browser/WASM bindings (placeholder until Epic 3). |
-| `crates/harness` | Render/CLI test harness (placeholder until Epic 2). |
+| `crates/engine` | The core voltage engine (portable to `wasm32`; serde-free, UI-free). |
+| `crates/devices` | Product/content layer: device catalog + scene IR + `build_patch` (engine + serde). |
+| `crates/capture` | The implicit off-sim-clock capture (speaker volts → host samples); shared by harness + wasm. |
+| `crates/wasm-bindings` | Browser/WASM bindings — `SceneEngine` + the catalog/patch JS bridge. |
+| `crates/harness` | Native render/CLI test harness (offline WAV render + the waveform-plot demo). |
+| `web/` | Vite + TypeScript browser harness that hosts the engine in an AudioWorklet (Epic 4's base). |
 
 ## Setup
 
@@ -54,13 +59,20 @@ Convenience aliases live in [`.cargo/config.toml`](.cargo/config.toml):
 
 ```sh
 cargo lint           # clippy across all targets, warnings-as-errors
-cargo wasm           # wasm32 portability check (engine + bindings)
+cargo wasm           # wasm32 portability check (engine + capture + bindings)
 cargo test           # run all tests
+cargo docs           # doc build with broken-intra-doc-link / bare-URL lints denied
 cargo fmt --check    # formatting check (drop --check to apply)
 ```
 
 Run the full gate before pushing (this is exactly what CI runs):
 
 ```sh
-cargo fmt --check && cargo lint && cargo test && cargo wasm
+cargo fmt --check && cargo lint && cargo test && cargo wasm && cargo docs
+```
+
+To run the browser harness (the live engine in an AudioWorklet):
+
+```sh
+cd web && npm install && npm run wasm && npm run dev   # then open http://localhost:5173/
 ```
