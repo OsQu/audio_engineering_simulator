@@ -397,8 +397,10 @@ crossing the main→audio boundary as sparse messages. This epic retired the hea
 
 ## Epic 4 — UI: Skeuomorphic Panels + Patch Cables
 
-**Progress:** **Story 4.1 in progress** (planned to Task level 2026-06-25); 4.2–4.5 stay at Story level
-until picked up. The original 4-story sketch was reshaped into the 5-story arc below after the UI vision
+**Progress:** **Story 4.1 ✅ done** (the engine→UI seam: a new `devices` crate, scene IR + catalog +
+`build_patch`, and `SceneEngine` — scene-driven, generically controlled, hot-swappable; verified live in
+the browser). **Next: Story 4.2** (skeuomorphic device panels). 4.3–4.5 stay at Story level until picked
+up. The original 4-story sketch was reshaped into the 5-story arc below after the UI vision
 grew from "device panels + cables" into a **game-like spatial studio/venue sim** (browsable gear catalog,
 racks and containers, freely placed in a pan/zoom world, multiple *spaces* with snakes between them,
 VST-grade skeuomorphic panels with front controls and back I/O). Per the detail-gradient convention
@@ -487,7 +489,7 @@ and the why are recorded.
 
 ### Stories
 
-#### Story 4.1 — Engine/bindings API for the UI + scene IR + device catalog — 🚧 **In progress**
+#### Story 4.1 — Engine/bindings API for the UI + scene IR + device catalog — ✅ **Done**
 
 *Goal:* the generic, UI-facing engine surface that retires the named-setter stopgap from Epic 3 and turns
 the pinned-in-Rust canonical patch into a **scene the UI builds, plays, saves, and reloads** — the
@@ -621,13 +623,57 @@ params-vs-structure + `ScheduleSlot` decisions.
   a scene* in-browser, controls work generically by device, save→load round-trips, and reload is audibly
   glitch-free with health clean.
 
-*Validate:* the canonical patch is built from a serialized scene and played/controlled **generically by
-device id** through the worklet; `catalog()` exposes every device's descriptor; the chassis seam is proven
-by the multi-node entry's test; a scene **save→load round-trips** and a **reload hot-swaps glitch-free**
-under sound (health clean); a malformed patch surfaces a legible error, never an audio-thread panic; the
-engine touches only its public API and remains serde-free; **all prior Epic 1–3 tests stay green** and the
-full gate passes (`cargo fmt --check && cargo lint && cargo test && cargo wasm && cargo docs`, plus the
-`wasm-pack build` step and `web` Biome/build).
+*Validate:* ✅ **met.** The canonical patch is built from a serialized scene and played/controlled
+**generically by device id** through the worklet; `catalog()` exposes every device's descriptor; the
+chassis seam is proven by the multi-node entry's test; a scene **save→load round-trips** and a **reload
+hot-swaps glitch-free** under sound; a malformed patch surfaces a legible error, never an audio-thread
+panic; the engine touches only its public API and remains serde-free; all prior Epic 1–3 tests stay green
+and the full gate passes (`cargo fmt --check && cargo lint && cargo test && cargo wasm && cargo docs`, plus
+the `wasm-pack build` and `web` Biome/typecheck/build). Verified in-browser by ear (notes, knobs, save/load,
+reload).
+
+*Delivered:* a clean engine→UI seam, with the catalog + scene assembly factored into a new crate and the
+real-time host generalized from the pinned patch to a scene it builds, plays, saves, and hot-swaps.
+- **New `devices` crate** (the product/content layer, `engine` + serde) — extracted mid-story when the
+  catalog/scene logic was recognized as core simulation, not JS glue. Holds the **`Patch` IR** (`scene.rs`),
+  the **catalog** (`catalog.rs`), and **`build_patch`** (`build.rs`); consumed by `wasm-bindings` *and*
+  available to `harness`. `wasm-bindings` kept to the thin `JsValue` bridge (`catalog()`, `parse_patch`).
+  *Engine stays serde-free* (serde lives in `devices`).
+- **Catalog = one `CATALOG` table** of self-contained entries (builder + UI descriptor together — "add
+  gear in one place"). Descriptor numeric/domain fields are **derived from a freshly built node** (no
+  drift); only labels/units/kinds are authored. Seeded: synth, gain, 3-band EQ, AD, DA, speaker, + the
+  multi-node `channel_strip`. Exposed via `catalog()` to JS; hand-written TS mirrors in `web/src/`.
+- **Chassis-group seam** — `instantiate(type_id, &mut Graph) -> BuiltDevice` expands a device into 1..N
+  nodes + internal edges; **exposed face derived by convention** (open ports + concatenated params).
+  Proven by `channel_strip` (two analog gains; the planned gain→EQ was electrically invalid). Retires the
+  Epic-1 "one-chassis-many-nodes" deferral. *Minimal engine addition:* `Graph::add_boxed` (one
+  construction site, both insertable + introspectable).
+- **`build_patch -> BuiltScene`** assembles a scene (instantiate → remap connections/output → compile →
+  resolve control handles by device id), with `BuildError` for every failure (unknown type/device, port
+  out of range, `CompileError`) — never a panic. Oracle: **byte-exact output parity** with a hand-built
+  engine graph.
+- **`RtEngine` → `SceneEngine`** (renamed; retrofit, not rewrite — the proven Epic-3 real-time machinery
+  kept). Scene-driven (`new(patch)` / `load_patch(patch)`); **hot-swap** at a block boundary (compile
+  off-block in the message handler, install + drop-old + clear stale queues in `render_quantum`); generic
+  `set_param`/`note_on`/`note_off` by device id; named setters removed; `BenchEngine` left frozen. Engine
+  gained `ParamQueue::clear()` (drop stale handles on swap).
+- **Worklet + TS go-live** — `SceneProcessor` builds `SceneEngine(patch)` from `processorOptions {bytes,
+  patch}`, forwards generic messages, and hot-swaps on a `loadPatch` message. The page owns the
+  **versioned JSON save** (`{ schemaVersion, ui, patch }`, TS-side `migrate` scaffold; `ui` a stub until
+  4.3) with save/load (localStorage) + a live reload button.
+- **Bug found & fixed in-browser:** a hot-swap deep in a session left notes lagging multiple seconds —
+  the fresh schedule's event clock restarts at 0 but `SceneEngine.blocks` (the note-stamping clock) wasn't
+  reset. One-line fix + a regression test (`note_fires_promptly_after_deep_swap`); the prior swap test had
+  masked it (its patch silenced the synth, so *delayed* looked like *silent*).
+- **Known simplifications (not bugs):** scene **param *values*** are applied by the host via the queue
+  (glide from default), not baked at build; the old `BuiltScene` drops on the audio thread *between*
+  blocks (cheap at small scale); `ParamQueue` cap is a fixed 256; the `ui` save section is reserved;
+  build-time-parameterized + runtime-switchable device routing are deferred to Epic 5.1 (recorded). A
+  pre-existing Epic-3 limitation surfaced: the worklet's overrun *timing* is inactive when
+  `performance.now()` isn't exposed in `AudioWorkletGlobalScope` (queue-drop counters still live).
+- **Concepts captured** in `osku_rust_concepts.md`: serde / serde-wasm-bindgen; move-vs-heap & `Box` for
+  unsized; references as borrowing pointers; non-capturing closures → `fn` pointers; block-vs-closure +
+  `if let`/`Option::take`.
 - **Story 4.2 — Skeuomorphic device panels: controls → params, front/back, power.** The data-driven
   panel system, rendered from the descriptor, for one or two devices bound to a running *static* engine:
   real knobs/faders, a VU/meter, a screen, jacks on the **back** (CSS flip), and a **power** switch

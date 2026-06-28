@@ -424,6 +424,24 @@ const CATALOG: &[CatalogEntry] = &[CatalogEntry {
   a new node each call.
 - Each `||` is its **own** `fn` item even when two bodies are identical — two separate builders.
 
+**A `{ }` block is not a closure.** A bare block (after `if`/`if let`/`while`/`match` arm, or standalone)
+runs **immediately, once, inline**, with full access to the enclosing `self` and locals; its last
+expression is its value. A **closure** needs a `|…|` parameter list and is a *value* run **later** (when
+called — maybe never, maybe many times) over its captures. Same braces, opposite timing.
+```rust
+if let Some(pending) = self.pending.take() {   // the { } is the if-let body — runs now if Some
+    self.current = pending.scene;              // moves out of the owned `pending`; sees self directly
+}
+let make = || self.foo();                      // a closure — nothing runs until make() is called
+```
+
+**`if let` & `Option::take`.** `if let PATTERN = expr { … }` is sugar for a `match` with one real arm
+plus an ignored fallthrough: bind + run the block when `expr` matches, otherwise skip. `Option::take()`
+**swaps `None` into the place and returns the old value by ownership** — the idiom for *moving a value
+out from behind `&mut self`* (you can't move out of borrowed content directly). So
+`if let Some(x) = self.field.take() { … }` means "if `field` held a value, take ownership of it (leaving
+`None`) and consume it once" — exactly a one-shot drain of an `Option` field.
+
 **`while let` & `bool::then_some`** (from the topo sort):
 ```rust
 while let Some(node) = ready.pop() { ... }     // loop while pop() matches Some — drains the stack
