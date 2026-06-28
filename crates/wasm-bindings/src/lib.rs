@@ -10,20 +10,22 @@
 //! ([`BenchEngine::render_blocks`]) and is timed from JS, so there is **no per-quantum marshalling
 //! and no `unsafe`** there. It is now **frozen** as that fixture.
 //!
-//! **Scope (Story 3.2):** [`RtEngine`] is the real-time surface the AudioWorklet actually drains —
-//! [`RtEngine::render_quantum`] renders exactly one quantum (one engine block) into an
-//! engine-owned host buffer, exposed **zero-copy** via [`RtEngine::out_ptr`] /
-//! [`out_len`](RtEngine::out_len): JS builds one `Float32Array` view over WASM linear memory and
+//! **Scope (Story 3.2 → 4.1):** [`SceneEngine`] is the real-time surface the AudioWorklet actually
+//! drains — [`SceneEngine::render_quantum`] renders exactly one quantum (one engine block) into an
+//! engine-owned host buffer, exposed **zero-copy** via [`SceneEngine::out_ptr`] /
+//! [`out_len`](SceneEngine::out_len): JS builds one `Float32Array` view over WASM linear memory and
 //! reads it every quantum, with no per-quantum marshalling. Returning a pointer is safe Rust
 //! (`as_ptr`); the only `unsafe` is JS-side constructing the view — so there is still no `unsafe`
-//! in this crate.
+//! in this crate. It is **scene-driven** (Story 4.1): built from a serialized [`Patch`] via the
+//! `devices` crate, controlled **generically by device id**, and **hot-swapped** to a new scene at a
+//! block boundary. (It was `RtEngine` through Epic 3, hardcoded to the canonical patch.)
 
 use capture::Capture;
-use devices::{Patch, descriptors};
+use devices::{BuildError, BuiltScene, Patch, build_patch, descriptors};
 use engine::{
-    AdConverter, AnalogRate, BitDepth, DaConverter, EventInputId, EventMessage, EventQueue,
-    GainStage, Graph, InputZ, Ohms, ParamHandle, ParamQueue, PassiveSum, SampleRate, Schedule,
-    Speaker, SynthVoice, VoltageBuffer, Volts, compile,
+    AdConverter, AnalogRate, BitDepth, DaConverter, EventMessage, EventQueue, GainStage, Graph,
+    InputZ, Ohms, ParamHandle, ParamQueue, PassiveSum, SampleRate, Schedule, Speaker, SynthVoice,
+    VoltageBuffer, Volts, compile,
 };
 use wasm_bindgen::prelude::*;
 
@@ -255,218 +257,238 @@ impl Default for BenchEngine {
     }
 }
 
-// --- Stories 3.2 / 3.3: the real-time surface the AudioWorklet drains. ----------------------------
+// --- Stories 3.2 / 3.3 / 4.1: the real-time surface the AudioWorklet drains. ----------------------
 
-/// Distinct control params [`RtEngine`] drives — the voice's five smoothed knobs (`LEVEL`,
-/// `ATTACK_MS`, `DECAY_MS`, `SUSTAIN`, `RELEASE_MS`). Sizes the latest-wins [`ParamQueue`].
-const PARAM_COUNT: usize = 5;
+/// Capacity of the latest-wins [`ParamQueue`] — distinct controllable params pending within one
+/// quantum. Generous for a small studio (an initial scene load pushes all overridden knobs at once);
+/// a scene exceeding it drops the surplus (counted in `param_drops`). Revisit at scale.
+const PARAM_QUEUE_CAP: usize = 256;
 /// Event-queue capacity. Generous for human-rate input within one ~2.7 ms quantum; every queued
-/// event drains the very next [`render_quantum`](RtEngine::render_quantum) so it never fills.
+/// event drains the very next [`render_quantum`](SceneEngine::render_quantum) so it never fills.
 const EVENT_QUEUE_CAP: usize = 64;
 
-/// The real-time engine surface (Stories 3.2 / 3.3): the pinned canonical patch
-/// (`synth → modeled AD → modeled DA → speaker`) plus the implicit [`Capture`], driven **one
-/// AudioWorklet quantum at a time** with its captured host block exposed **zero-copy** to JS, and
-/// **played and tweaked live** from JS through named control setters.
+/// A scene compiled off-block and waiting to go live, plus the initial param values to apply once it
+/// is installed (resolved against the *new* scene's handles, so they're applied after the swap).
+struct Pending {
+    scene: BuiltScene,
+    initial: Vec<(ParamHandle, f32)>,
+}
+
+/// The real-time engine surface (Stories 3.2–3.4, generalized in 4.1): a scene built from a serialized
+/// [`Patch`] (via the `devices` crate) plus the implicit [`Capture`], driven **one AudioWorklet quantum
+/// at a time** with its captured host block exposed **zero-copy** to JS, **played and tweaked live**
+/// by device id, and **hot-swapped** to a new scene at a block boundary.
 ///
-/// Unlike [`BenchEngine`] (the frozen 3.1 gate fixture, which only returns a peak float so JS can
-/// time a tight loop), this is the surface the worklet drains every callback:
-/// [`render_quantum`](Self::render_quantum) renders exactly one block into an engine-owned host
-/// buffer, and [`out_ptr`](Self::out_ptr) / [`out_len`](Self::out_len) let JS build a single
-/// `Float32Array` view over WASM linear memory and read it each quantum — no marshalling, no
-/// per-quantum allocation. The view stays valid for the session because the hot path is zero-alloc,
-/// so linear memory never `grow`s mid-render to detach it.
+/// Unlike [`BenchEngine`] (the frozen 3.1 gate fixture, which only returns a peak float so JS can time
+/// a tight loop), this is the surface the worklet drains every callback:
+/// [`render_quantum`](Self::render_quantum) renders exactly one block into an engine-owned host buffer,
+/// and [`out_ptr`](Self::out_ptr) / [`out_len`](Self::out_len) let JS build a single `Float32Array`
+/// view over WASM linear memory and read it each quantum — no marshalling, no per-quantum allocation.
+/// The view stays valid for the session because the hot path is zero-alloc, so linear memory never
+/// `grow`s mid-render to detach it.
 ///
-/// **Story 3.3 — live control & playing.** The engine no longer drives its own notes; control
-/// arrives from the host. It owns a [`ParamQueue`] + [`EventQueue`] and exposes named setters:
-/// [`set_level`](Self::set_level) / [`set_attack_ms`](Self::set_attack_ms) /
-/// [`set_decay_ms`](Self::set_decay_ms) / [`set_sustain`](Self::set_sustain) /
-/// [`set_release_ms`](Self::set_release_ms) push **latest-wins target values** (the engine's own
-/// `Smoother` de-zippers them — so *not* `AudioParam`), and [`note_on`](Self::note_on) /
-/// [`note_off`](Self::note_off) push timestamped events. [`render_quantum`](Self::render_quantum)
-/// drains both lanes via `process_io` each block. A note is stamped at the **block about to render**
-/// (`blocks · BLOCK_LEN`) — "play at the next quantum," ~2.7 ms granularity, imperceptible for human
-/// input and zero host-time math. (Precise `currentTime`→sample mapping matters only for *sequenced*
-/// MIDI; deferred.) The named-setter API is deliberately specific — the generic, UI-enumerable param
-/// API (`ParamDecl`s + `set_param(id, value)`) is Epic 4 / Story 4.1.
+/// **Scene-driven control (Story 4.1).** Built from a [`Patch`] by [`new`](Self::new); replaced live by
+/// [`load_patch`](Self::load_patch) (compile off-block → install at the next block boundary). It owns a
+/// [`ParamQueue`] + [`EventQueue`] and exposes **generic** control: [`set_param`](Self::set_param) by
+/// `(device id, param id)` pushes latest-wins target values (the engine's own `Smoother` de-zippers
+/// them — so *not* `AudioParam`), and [`note_on`](Self::note_on) / [`note_off`](Self::note_off) by
+/// device id push timestamped events. [`render_quantum`](Self::render_quantum) drains both lanes via
+/// `process_io` each block. A note is stamped at the **block about to render** (`blocks · BLOCK_LEN`) —
+/// "play at the next quantum," ~2.7 ms granularity. (Precise `currentTime`→sample mapping matters only
+/// for *sequenced* MIDI; deferred.) Addressing resolves through the live scene's [`BuiltScene`] maps, so
+/// it stays correct across a hot-swap.
 #[wasm_bindgen]
-pub struct RtEngine {
-    schedule: Schedule,
+pub struct SceneEngine {
+    /// The live scene: compiled schedule + control resolution by device id.
+    current: BuiltScene,
+    /// A scene built off-block by [`load_patch`](Self::load_patch), installed at the next
+    /// [`render_quantum`](Self::render_quantum) boundary (where the old one is dropped off-block).
+    pending: Option<Pending>,
     capture: Capture,
-    /// Pending control input, drained each `render_quantum` via `process_io`. Params are
-    /// latest-wins target values; events are note-on/off stamped at the current block.
+    /// Pending control input, drained each `render_quantum` via `process_io`. Params are latest-wins
+    /// target values; events are note-on/off stamped at the current block.
     params: ParamQueue,
     events: EventQueue,
     /// Per-quantum scratch: the speaker-voltage tap (analog rate) and the captured host samples.
     out: VoltageBuffer,
     host: Vec<f32>,
-    /// The voice's event input, the target for [`note_on`](Self::note_on) /
-    /// [`note_off`](Self::note_off).
-    voice_ev: EventInputId,
-    /// Resolved control-param handles, set once at construction — the live knobs.
-    level: ParamHandle,
-    attack_ms: ParamHandle,
-    decay_ms: ParamHandle,
-    sustain: ParamHandle,
-    release_ms: ParamHandle,
     /// Quanta rendered so far. `blocks * BLOCK_LEN` is the absolute analog-sample time of the next
-    /// block's first sample — the timeline [`note_on`](Self::note_on) /
-    /// [`note_off`](Self::note_off) stamp against.
+    /// block's first sample — the timeline [`note_on`](Self::note_on) / [`note_off`](Self::note_off)
+    /// stamp against.
     blocks: u64,
-    /// Real-time-health counter (Story 3.4): control **events dropped** because the queue was full —
-    /// an input flood arriving faster than the audio thread drains it. The page polls it via
-    /// [`event_drops`](Self::event_drops). The compute-budget side of health (a quantum overrunning
-    /// its ~2.7 ms slot) is timed **JS-side** in the worklet, because the engine is deterministic and
+    /// Real-time-health counter (Story 3.4): control **events dropped** because the queue was full — an
+    /// input flood arriving faster than the audio thread drains it. The page polls it via
+    /// [`event_drops`](Self::event_drops). The compute-budget side of health (a quantum overrunning its
+    /// ~2.7 ms slot) is timed **JS-side** in the worklet, because the engine is deterministic and
     /// clock-free (no ambient `Instant`/`SystemTime`, per the determinism rule).
     event_drops: u32,
-    /// Param updates dropped because the queue was full. Latest-wins coalesces to one slot per knob,
-    /// so this stays 0 in practice; tracked for symmetry and future multi-param patches.
+    /// Param updates dropped because the queue was full (latest-wins coalesces per param, so rare —
+    /// only a very large scene's initial load could approach [`PARAM_QUEUE_CAP`]).
     param_drops: u32,
 }
 
-#[wasm_bindgen]
-impl RtEngine {
-    /// Build and compile the pinned canonical patch and resolve the control handles. Panics only
-    /// here (the construct/compile gate is allowed to); the patch is known-valid, so in practice it
-    /// does not. Duplicates the patch wiring rather than sharing it with [`BenchEngine`], which stays
-    /// frozen as the 3.1 fixture (≈10 lines — the cost the plan accepted to keep the gate intact).
-    /// Starts **silent** — notes come from [`note_on`](Self::note_on) (Story 3.3).
-    #[wasm_bindgen(constructor)]
-    #[must_use]
-    pub fn new() -> Self {
+/// The (handle, value) pairs to apply for a scene's saved param values: each device's `ParamSetting`s
+/// resolved against the built scene. Unknown ids are skipped — a forward/backward-compatible patch may
+/// name a param this build doesn't have.
+fn initial_params(patch: &Patch, scene: &BuiltScene) -> Vec<(ParamHandle, f32)> {
+    let mut out = Vec::new();
+    for device in &patch.devices {
+        for setting in &device.params {
+            if let Some(handle) = scene.param(&device.id, setting.id) {
+                out.push((handle, setting.value));
+            }
+        }
+    }
+    out
+}
+
+// Native (Rust-only) construction + scene management — the wasm surface below parses a JS patch and
+// then calls these, and the tests use them directly (a `JsValue` needs a JS realm).
+impl SceneEngine {
+    /// Build the engine for an initial scene, applying the patch's saved param values so it matches the
+    /// scene from the first block. The fallible, allocating step (build + compile) — off the audio path.
+    ///
+    /// # Errors
+    /// A [`BuildError`] if the patch can't be assembled or compiled.
+    pub(crate) fn from_patch(patch: &Patch) -> Result<Self, BuildError> {
         let analog_rate = AnalogRate::new(ANALOG_RATE_HZ);
         let host_rate = SampleRate::new(HOST_RATE_HZ);
-
-        let mut g = Graph::new();
-        let voice = g.add(SynthVoice::new(Volts::new(1.0), Ohms::new(1.0)));
-        let ad = g.add(AdConverter::new(
-            host_rate,
-            BitDepth::new(16),
-            Volts::new(FULL_SCALE_V),
-            Ohms::new(1e6),
-        ));
-        let da = g.add(DaConverter::new(
-            host_rate,
-            BitDepth::new(16),
-            Volts::new(FULL_SCALE_V),
-            Ohms::new(150.0),
-        ));
-        let spk = g.add(Speaker::new(1.0, InputZ::new(Ohms::new(10_000.0))));
-        g.connect(voice, 0, ad, 0);
-        g.connect(ad, 0, da, 0);
-        g.connect(da, 0, spk, 0);
-        g.set_output(spk, 0);
-
-        let schedule = compile(g, BLOCK_LEN, analog_rate, SEED).expect("canonical patch compiles");
-        let voice_ev = schedule
-            .event_input(voice, 0)
-            .expect("the voice has an event input");
-        // Resolve the five smoothed knob handles once; the setters push targets to these.
-        let level = schedule
-            .param(voice, SynthVoice::LEVEL)
-            .expect("the voice declares LEVEL");
-        let attack_ms = schedule
-            .param(voice, SynthVoice::ATTACK_MS)
-            .expect("the voice declares ATTACK_MS");
-        let decay_ms = schedule
-            .param(voice, SynthVoice::DECAY_MS)
-            .expect("the voice declares DECAY_MS");
-        let sustain = schedule
-            .param(voice, SynthVoice::SUSTAIN)
-            .expect("the voice declares SUSTAIN");
-        let release_ms = schedule
-            .param(voice, SynthVoice::RELEASE_MS)
-            .expect("the voice declares RELEASE_MS");
-
-        // Sized for a human-rate burst within one ~2.7 ms quantum: every queued event/param is
-        // drained the very next render_quantum (notes stamp at the next block, < block end), so
-        // these never need to hold more than a quantum's worth.
-        let params = ParamQueue::with_capacity(PARAM_COUNT);
-        let events = EventQueue::with_capacity(EVENT_QUEUE_CAP);
+        let current = Self::build_scene(patch)?;
 
         let capture = Capture::new(analog_rate, host_rate, FULL_SCALE_V);
         let host = vec![0.0_f32; capture.host_len(BLOCK_LEN)];
-        Self {
-            out: VoltageBuffer::zeros(BLOCK_LEN, analog_rate),
-            host,
-            schedule,
+        let mut params = ParamQueue::with_capacity(PARAM_QUEUE_CAP);
+        for (handle, value) in initial_params(patch, &current) {
+            let _ = params.set(handle, value); // applied on the first render_quantum
+        }
+
+        Ok(Self {
+            current,
+            pending: None,
             capture,
             params,
-            events,
-            voice_ev,
-            level,
-            attack_ms,
-            decay_ms,
-            sustain,
-            release_ms,
+            events: EventQueue::with_capacity(EVENT_QUEUE_CAP),
+            out: VoltageBuffer::zeros(BLOCK_LEN, analog_rate),
+            host,
             blocks: 0,
             event_drops: 0,
             param_drops: 0,
+        })
+    }
+
+    /// Compile a patch into a [`BuiltScene`] at the pinned block length / analog rate / seed (so the
+    /// same scene reproduces bit-for-bit).
+    fn build_scene(patch: &Patch) -> Result<BuiltScene, BuildError> {
+        build_patch(patch, BLOCK_LEN, AnalogRate::new(ANALOG_RATE_HZ), SEED)
+    }
+
+    /// Build a replacement scene off-block and queue it for install at the next block boundary.
+    ///
+    /// # Errors
+    /// A [`BuildError`] if the patch can't be assembled or compiled (the live scene keeps running).
+    pub(crate) fn queue_patch(&mut self, patch: &Patch) -> Result<(), BuildError> {
+        let scene = Self::build_scene(patch)?;
+        let initial = initial_params(patch, &scene);
+        self.pending = Some(Pending { scene, initial });
+        Ok(())
+    }
+
+    /// Enqueue a latest-wins param target, counting a drop if the queue was full. The setter routes
+    /// through here so the drop accounting lives in one place.
+    fn push_param(&mut self, handle: ParamHandle, value: f32) {
+        if !self.params.set(handle, value) {
+            self.param_drops = self.param_drops.saturating_add(1);
         }
+    }
+}
+
+#[wasm_bindgen]
+impl SceneEngine {
+    /// Build and compile the engine from an initial scene `patch` (a structured JS object). Starts
+    /// **silent** — notes arrive via [`note_on`](Self::note_on).
+    ///
+    /// # Errors
+    /// Throws (Err → a JS exception) with a legible message if the patch can't be parsed or built.
+    #[wasm_bindgen(constructor)]
+    pub fn new(patch: JsValue) -> Result<SceneEngine, JsValue> {
+        let patch =
+            parse_patch(patch).map_err(|e| JsValue::from_str(&format!("invalid patch: {e}")))?;
+        Self::from_patch(&patch).map_err(|e| JsValue::from_str(&format!("build failed: {e}")))
+    }
+
+    /// Replace the running scene. Compiles the new `patch` **off-block** (here, between quanta) and
+    /// queues it; the swap installs at the next [`render_quantum`](Self::render_quantum) boundary,
+    /// dropping the old scene there. This is the structural-edit path — value-only knob changes go
+    /// through [`set_param`](Self::set_param) with no recompile.
+    ///
+    /// # Errors
+    /// Throws with a legible message if the patch can't be parsed or built; the live scene keeps running.
+    pub fn load_patch(&mut self, patch: JsValue) -> Result<(), JsValue> {
+        let patch =
+            parse_patch(patch).map_err(|e| JsValue::from_str(&format!("invalid patch: {e}")))?;
+        self.queue_patch(&patch)
+            .map_err(|e| JsValue::from_str(&format!("build failed: {e}")))
     }
 
     /// Render exactly one AudioWorklet quantum — one engine block (`BLOCK_LEN` analog samples) →
-    /// `BLOCK_LEN / M` host samples — into the engine-owned host buffer. Drains both control lanes
-    /// first: pending param targets re-aim their smoothers, and notes due this block fire at their
-    /// offsets. Zero-alloc, no marshalling: read the result via [`out_ptr`](Self::out_ptr) /
-    /// [`out_len`](Self::out_len).
+    /// `BLOCK_LEN / M` host samples — into the engine-owned host buffer.
+    ///
+    /// First **installs a queued scene** if one is pending: swap it in at this block boundary (the old
+    /// scene — and its schedule — drops here, between blocks, off the per-sample path), clear the stale
+    /// control queues (their handles index the old scene's stores), and apply the new scene's saved
+    /// param values. Then drains both control lanes and renders one block. The steady path (no pending
+    /// scene) is zero-alloc; read the result via [`out_ptr`](Self::out_ptr) / [`out_len`](Self::out_len).
     pub fn render_quantum(&mut self) {
-        self.schedule
+        if let Some(pending) = self.pending.take() {
+            self.current = pending.scene; // old BuiltScene (+ schedule) dropped here, off-block
+            self.params.clear();
+            self.events.clear();
+            for (handle, value) in pending.initial {
+                let _ = self.params.set(handle, value);
+            }
+        }
+        self.current
+            .schedule_mut()
             .process_io(&mut self.out, &mut self.params, &mut self.events);
         self.capture.process(self.out.as_slice(), &mut self.host);
         self.blocks += 1;
     }
 
-    // --- Live control (Story 3.3): named setters JS calls from the worklet. ----------------------
+    // --- Live control (Story 4.1): generic, by device id — resolved through the live scene. --------
 
-    /// Set the voice output **level** in volts (the master volume fader). Latest-wins target; the
-    /// engine's `Smoother` glides to it (no zipper). Off the hot path — JS calls it on slider input.
-    pub fn set_level(&mut self, volts: f32) {
-        self.set_param(self.level, volts);
-    }
-
-    /// Set the envelope **attack** time in milliseconds. Latest-wins, smoothed.
-    pub fn set_attack_ms(&mut self, ms: f32) {
-        self.set_param(self.attack_ms, ms);
-    }
-
-    /// Set the envelope **decay** time in milliseconds. Latest-wins, smoothed.
-    pub fn set_decay_ms(&mut self, ms: f32) {
-        self.set_param(self.decay_ms, ms);
-    }
-
-    /// Set the envelope **sustain** level (0..=1). Latest-wins, smoothed.
-    pub fn set_sustain(&mut self, level: f32) {
-        self.set_param(self.sustain, level);
-    }
-
-    /// Set the envelope **release** time in milliseconds. Latest-wins, smoothed.
-    pub fn set_release_ms(&mut self, ms: f32) {
-        self.set_param(self.release_ms, ms);
-    }
-
-    /// Strike `note` (MIDI 0..=127) at `velocity`. Stamped at the **block about to render**
-    /// (`blocks · BLOCK_LEN`) so it fires on that quantum's first sample — "play at the next
-    /// quantum," ~2.7 ms granularity, imperceptible for live playing. Off the hot path. A push that
-    /// overflows a full queue is dropped and counted in [`event_drops`](Self::event_drops).
-    pub fn note_on(&mut self, note: u8, velocity: u8) {
-        let when = self.blocks * BLOCK_LEN as u64;
-        if !self
-            .events
-            .push(when, self.voice_ev, EventMessage::NoteOn { note, velocity })
-        {
-            self.event_drops = self.event_drops.saturating_add(1);
+    /// Set a smoothed control param by **device id + device-level param id** to `value` (latest-wins;
+    /// the engine's `Smoother` de-zippers it — so *not* `AudioParam`). A no-op if the device/param is
+    /// unknown in the live scene. Off the hot path — JS calls it on slider input.
+    pub fn set_param(&mut self, device: &str, param_id: u32, value: f32) {
+        if let Some(handle) = self.current.param(device, param_id) {
+            self.push_param(handle, value);
         }
     }
 
-    /// Release `note`. Stamped at the block about to render, like [`note_on`](Self::note_on).
-    pub fn note_off(&mut self, note: u8) {
-        let when = self.blocks * BLOCK_LEN as u64;
-        if !self
-            .events
-            .push(when, self.voice_ev, EventMessage::NoteOff { note })
-        {
-            self.event_drops = self.event_drops.saturating_add(1);
+    /// Strike `note` (MIDI 0..=127) at `velocity` on `device`'s event input. Stamped at the **block
+    /// about to render** (`blocks · BLOCK_LEN`) so it fires on that quantum's first sample — "play at
+    /// the next quantum," ~2.7 ms granularity. A no-op if the device has no event input; an overflow of
+    /// a full queue is dropped and counted in [`event_drops`](Self::event_drops). Off the hot path.
+    pub fn note_on(&mut self, device: &str, note: u8, velocity: u8) {
+        if let Some(ev) = self.current.event_input(device) {
+            let when = self.blocks * BLOCK_LEN as u64;
+            if !self
+                .events
+                .push(when, ev, EventMessage::NoteOn { note, velocity })
+            {
+                self.event_drops = self.event_drops.saturating_add(1);
+            }
+        }
+    }
+
+    /// Release `note` on `device`. Stamped at the block about to render, like [`note_on`](Self::note_on);
+    /// a no-op if the device has no event input.
+    pub fn note_off(&mut self, device: &str, note: u8) {
+        if let Some(ev) = self.current.event_input(device) {
+            let when = self.blocks * BLOCK_LEN as u64;
+            if !self.events.push(when, ev, EventMessage::NoteOff { note }) {
+                self.event_drops = self.event_drops.saturating_add(1);
+            }
         }
     }
 
@@ -484,14 +506,6 @@ impl RtEngine {
     #[must_use]
     pub fn param_drops(&self) -> u32 {
         self.param_drops
-    }
-
-    /// Enqueue a latest-wins param target, counting a drop if the queue was full. Private (not part
-    /// of the JS surface) — the named setters route through it so the drop accounting lives in one place.
-    fn set_param(&mut self, handle: ParamHandle, value: f32) {
-        if !self.params.set(handle, value) {
-            self.param_drops = self.param_drops.saturating_add(1);
-        }
     }
 
     /// Pointer to the captured host block in WASM linear memory. JS builds **one**
@@ -526,14 +540,9 @@ impl RtEngine {
     #[wasm_bindgen(getter)]
     #[must_use]
     pub fn signal_path_latency_ms(&self) -> f64 {
-        let samples = self.schedule.group_delay_samples() + self.capture.group_delay_samples();
+        let samples =
+            self.current.schedule().group_delay_samples() + self.capture.group_delay_samples();
         samples / ANALOG_RATE_HZ * 1000.0
-    }
-}
-
-impl Default for RtEngine {
-    fn default() -> Self {
-        Self::new()
     }
 }
 
@@ -568,8 +577,54 @@ mod tests {
         assert!(peak > 0.05, "expected audible output, got peak {peak}");
     }
 
+    // --- SceneEngine (Story 4.1): built from a scene, controlled generically, hot-swappable. -------
+    use devices::{Connection, DeviceInstance, ParamSetting, Patch, PortRef};
+
+    fn dev(id: &str, type_id: &str) -> DeviceInstance {
+        DeviceInstance {
+            id: id.into(),
+            type_id: type_id.into(),
+            params: vec![],
+        }
+    }
+
+    fn conn(from: &str, from_port: u32, to: &str, to_port: u32) -> Connection {
+        Connection {
+            from: PortRef {
+                device: from.into(),
+                port: from_port,
+            },
+            to: PortRef {
+                device: to.into(),
+                port: to_port,
+            },
+            cable: None,
+        }
+    }
+
+    /// The canonical patch (`synth → AD → DA → speaker`) as a scene — what `RtEngine` used to hardcode.
+    fn canonical_patch() -> Patch {
+        Patch {
+            devices: vec![
+                dev("synth", "synth_voice"),
+                dev("ad", "ad_converter"),
+                dev("da", "da_converter"),
+                dev("spk", "speaker"),
+            ],
+            connections: vec![
+                conn("synth", 0, "ad", 0),
+                conn("ad", 0, "da", 0),
+                conn("da", 0, "spk", 0),
+            ],
+            output: PortRef {
+                device: "spk".into(),
+                port: 0,
+            },
+        }
+    }
+
     /// Peak `|host sample|` over `n` rendered quanta — the native stand-in for "is it making sound".
-    fn peak_over(engine: &mut RtEngine, n: usize) -> f32 {
+    fn peak_over(engine: &mut SceneEngine, n: usize) -> f32 {
         let mut peak = 0.0_f32;
         for _ in 0..n {
             engine.render_quantum();
@@ -578,21 +633,33 @@ mod tests {
         peak
     }
 
-    /// Story 3.3: the engine starts **silent** (no internal note) and sounds only on
-    /// [`note_on`](RtEngine::note_on). Guards both that the repeating-note demo is gone and that the
-    /// event setter actually feeds the voice. The browser run proves it is *audible*; this asserts
-    /// silence-then-output natively.
+    /// Peak `|host sample|` over the **tail** (quanta `skip..n`) — used when a param is gliding to its
+    /// target over the first few blocks and only the settled steady state is meaningful.
+    fn peak_tail(engine: &mut SceneEngine, n: usize, skip: usize) -> f32 {
+        let mut peak = 0.0_f32;
+        for block in 0..n {
+            engine.render_quantum();
+            if block >= skip {
+                peak = engine.host.iter().fold(peak, |p, &s| p.max(s.abs()));
+            }
+        }
+        peak
+    }
+
+    /// The scene-built engine starts **silent** and sounds only on [`note_on`](SceneEngine::note_on),
+    /// addressed by device id. The browser run proves it is *audible*; this asserts silence-then-output
+    /// natively.
     #[test]
-    fn rt_engine_silent_until_note_on() {
-        let mut engine = RtEngine::new();
-        // No note yet: a few quanta should be effectively silent (only sub-LSB dither/transient).
+    fn scene_engine_silent_until_note_on() {
+        let mut engine =
+            SceneEngine::from_patch(&canonical_patch()).expect("canonical patch builds");
         let idle = peak_over(&mut engine, 8);
         assert!(
             idle < 0.01,
             "expected near-silence before note_on, got {idle}"
         );
-        // Strike a note, then render past the capture FIR latency into the sustain.
-        engine.note_on(NOTE, 100);
+
+        engine.note_on("synth", NOTE, 100);
         let sounding = peak_over(&mut engine, 32);
         assert!(
             sounding > 0.05,
@@ -600,18 +667,17 @@ mod tests {
         );
     }
 
-    /// The `set_level` knob reaches the voice: a low level produces a quieter output than the
-    /// default for the same note. Confirms a param setter moves the smoother and the change is read
-    /// in `process` (drained via `process_io`).
+    /// Generic `set_param(device, id, value)` reaches the right node: a low LEVEL is clearly quieter
+    /// than the default for the same note — so `(device id, param id)` addressing lands on the smoother.
     #[test]
-    fn rt_engine_level_setter_scales_output() {
-        let mut loud = RtEngine::new();
-        loud.note_on(NOTE, 100);
+    fn scene_engine_param_setter_scales_output() {
+        let mut loud = SceneEngine::from_patch(&canonical_patch()).expect("builds");
+        loud.note_on("synth", NOTE, 100);
         let loud_peak = peak_over(&mut loud, 64);
 
-        let mut quiet = RtEngine::new();
-        quiet.set_level(0.2); // glides from the 1.0 default down over ~5 ms
-        quiet.note_on(NOTE, 100);
+        let mut quiet = SceneEngine::from_patch(&canonical_patch()).expect("builds");
+        quiet.set_param("synth", 0, 0.2); // LEVEL (device param 0), glides from the 1.0 default
+        quiet.note_on("synth", NOTE, 100);
         let quiet_peak = peak_over(&mut quiet, 64);
 
         assert!(
@@ -620,17 +686,53 @@ mod tests {
         );
     }
 
-    /// Story 3.4: the event-drop health counter. Without a render to drain it, flooding past the
-    /// queue capacity drops the excess and counts it — never a panic — and the count is a running
-    /// total, not a latch, so it doesn't move once the queue drains again. Params never drop (one
-    /// latest-wins slot per knob).
+    /// `load_patch` hot-swaps the running scene: an engine playing patch A, after loading patch B
+    /// (the same chain but with the synth's LEVEL saved at 0), goes silent on the next note — proving
+    /// the swap installed B *and* applied B's saved param values, resolved through the new scene.
     #[test]
-    fn rt_engine_counts_dropped_events_under_a_flood() {
-        let mut engine = RtEngine::new();
-        // Nothing drains the queue (no render_quantum yet), so only the first EVENT_QUEUE_CAP pushes
-        // are stored; the next 10 overflow and are counted.
+    fn scene_engine_hot_swaps_to_a_loaded_patch() {
+        let mut engine = SceneEngine::from_patch(&canonical_patch()).expect("A builds");
+        engine.note_on("synth", NOTE, 100);
+        assert!(peak_over(&mut engine, 32) > 0.05, "A should be audible");
+
+        // Patch B: canonical, but the synth's LEVEL (device param 0) saved at 0.
+        let mut b = canonical_patch();
+        b.devices[0].params = vec![ParamSetting { id: 0, value: 0.0 }];
+        engine.queue_patch(&b).expect("B builds");
+
+        engine.render_quantum(); // installs B at this boundary, clears stale queues, applies LEVEL=0
+        engine.note_on("synth", NOTE, 100); // resolves through B
+        // LEVEL glides to 0 over ~5 ms; the settled tail is silence.
+        let tail = peak_tail(&mut engine, 64, 16);
+        assert!(
+            tail < 0.01,
+            "after loading B (LEVEL 0) the voice should be silent, got {tail}"
+        );
+    }
+
+    /// Reloading a scene leaves a working engine: after a no-op reload of the same patch (fresh
+    /// schedule, zeroed node state), a new note is still audible — the swap doesn't wedge the engine.
+    #[test]
+    fn scene_engine_reload_keeps_engine_alive() {
+        let mut engine = SceneEngine::from_patch(&canonical_patch()).expect("builds");
+        engine
+            .queue_patch(&canonical_patch())
+            .expect("reload builds");
+        engine.render_quantum(); // installs the fresh scene
+        engine.note_on("synth", NOTE, 100);
+        assert!(
+            peak_over(&mut engine, 32) > 0.05,
+            "engine still sounds after a reload"
+        );
+    }
+
+    /// The event-drop health counter (Story 3.4) still holds: flooding past the queue capacity drops
+    /// and counts the excess — never a panic — and the running total doesn't move once drained.
+    #[test]
+    fn scene_engine_counts_dropped_events_under_a_flood() {
+        let mut engine = SceneEngine::from_patch(&canonical_patch()).expect("builds");
         for _ in 0..(EVENT_QUEUE_CAP + 10) {
-            engine.note_on(NOTE, 100);
+            engine.note_on("synth", NOTE, 100);
         }
         assert_eq!(engine.event_drops(), 10);
         assert_eq!(
@@ -639,9 +741,8 @@ mod tests {
             "params never overflow (latest-wins)"
         );
 
-        // Drain a quantum: the queue empties, so a fresh note fits and the total holds at 10.
         engine.render_quantum();
-        engine.note_on(NOTE, 100);
+        engine.note_on("synth", NOTE, 100);
         assert_eq!(
             engine.event_drops(),
             10,
@@ -649,13 +750,12 @@ mod tests {
         );
     }
 
-    /// Story 3.4: the signal-path latency the page reports is the three matched 161-tap converter
-    /// FIRs (AD decimator + DA interpolator + capture decimator). Hand calc: each contributes
+    /// The signal-path latency for the canonical chain is the three matched 161-tap converter FIRs
+    /// (AD decimator + DA interpolator + capture decimator). Hand calc: each contributes
     /// (161 − 1)/2 = 80 analog samples ⇒ 240 total / 384 000 Hz = 0.625 ms.
     #[test]
-    fn rt_engine_reports_signal_path_latency() {
-        let engine = RtEngine::new();
-        // 3 × 80 analog samples / 384 kHz × 1000 = 0.625 ms.
+    fn scene_engine_reports_signal_path_latency() {
+        let engine = SceneEngine::from_patch(&canonical_patch()).expect("builds");
         assert!(
             (engine.signal_path_latency_ms() - 0.625).abs() < 1e-6,
             "expected 0.625 ms, got {}",
@@ -666,8 +766,8 @@ mod tests {
     /// The exposed buffer geometry is the pinned config, and the pointer is real — the contract JS
     /// relies on to size and place its `Float32Array` view.
     #[test]
-    fn rt_engine_exposes_pinned_block_geometry() {
-        let engine = RtEngine::new();
+    fn scene_engine_exposes_block_geometry() {
+        let engine = SceneEngine::from_patch(&canonical_patch()).expect("builds");
         assert_eq!(engine.out_len(), 128); // 1024 / 8
         assert_eq!(engine.host_rate_hz(), 48_000.0);
         assert!(!engine.out_ptr().is_null());

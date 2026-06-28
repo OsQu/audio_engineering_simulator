@@ -203,6 +203,13 @@ impl ParamQueue {
         }
     }
 
+    /// Drop all pending updates. Used when swapping schedules: a [`ParamHandle`] indexes the *old*
+    /// schedule's smoother store, so a stale update must not apply to the new one (where the same index
+    /// could be a different param). The companion to [`EventQueue::clear`](crate::EventQueue::clear).
+    pub fn clear(&mut self) {
+        self.updates.clear();
+    }
+
     /// Number of distinct params with a pending update.
     pub fn len(&self) -> usize {
         self.updates.len()
