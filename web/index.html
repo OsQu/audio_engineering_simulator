@@ -64,12 +64,13 @@
     </style>
   </head>
   <body>
-    <h1>Live control & playing — Vite harness</h1>
+    <h1>Scene-driven engine — Vite harness</h1>
     <p>
-      Story 3.3. The canonical patch (<code>synth → AD → DA → speaker</code>) running live in an
-      <code>AudioWorkletProcessor</code>, now <strong>played and tweaked from the page</strong>:
-      sliders push smoothed control params and the computer keyboard / a MIDI controller push note
-      events, both over <code>port.postMessage</code> onto <code>RtEngine</code>'s setters.
+      Story 4.1. The canonical <em>scene</em> (<code>synth → AD → DA → speaker</code>) built from a
+      serialized patch and running live in an <code>AudioWorkletProcessor</code> as
+      <code>SceneEngine</code>. Controls are <strong>generic, by device id</strong>; the scene can be
+      <strong>saved / loaded</strong> (versioned JSON in localStorage) and <strong>reloaded live</strong>
+      to exercise the engine's glitch-free hot-swap.
     </p>
     <p>
       <strong>Build the wasm first:</strong> <code>npm run wasm</code>, then <code>npm run dev</code>.
@@ -96,6 +97,11 @@
         <output id="attack-val">5</output>
       </div>
       <p id="midi-status">MIDI: requesting access…</p>
+      <p class="scene-buttons">
+        <button id="save" type="button">save scene</button>
+        <button id="load" type="button">load scene</button>
+        <button id="reload" type="button">reload (hot-swap)</button>
+      </p>
     </section>
 
     <script type="module" src="/src/main.ts"></script>

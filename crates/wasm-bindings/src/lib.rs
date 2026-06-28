@@ -443,6 +443,11 @@ impl SceneEngine {
             self.current = pending.scene; // old BuiltScene (+ schedule) dropped here, off-block
             self.params.clear();
             self.events.clear();
+            // The fresh schedule's event clock (`sample_pos`) restarts at 0, so the note-stamping clock
+            // must restart with it — `note_on` stamps `blocks * BLOCK_LEN`, which has to track the
+            // schedule's elapsed samples. Without this reset, a note after a deep-session swap lands
+            // tens of thousands of samples in the new schedule's future (a multi-second firing lag).
+            self.blocks = 0;
             for (handle, value) in pending.initial {
                 let _ = self.params.set(handle, value);
             }
@@ -707,6 +712,30 @@ mod tests {
         assert!(
             tail < 0.01,
             "after loading B (LEVEL 0) the voice should be silent, got {tail}"
+        );
+    }
+
+    /// Regression: after a hot-swap **deep into a session**, a note must fire *promptly* on the fresh
+    /// schedule. The new schedule's event clock (`sample_pos`) restarts at 0 on install, so the
+    /// note-stamping clock (`blocks`) must restart with it — otherwise a note lands tens of thousands
+    /// of samples in the fresh schedule's future (the "multi-second lag after loading" bug). Renders
+    /// ~50 blocks first, so an un-reset `blocks` would defer the note far past the measured window.
+    #[test]
+    fn scene_engine_note_fires_promptly_after_deep_swap() {
+        let mut engine = SceneEngine::from_patch(&canonical_patch()).expect("builds");
+        let _ = peak_over(&mut engine, 50); // advance well past block 0
+
+        engine
+            .queue_patch(&canonical_patch())
+            .expect("reload builds");
+        engine.render_quantum(); // installs the fresh scene + resets the note clock
+        engine.note_on("synth", NOTE, 100);
+
+        // Audible within a handful of blocks (past the FIR latency) — not delayed by the ~50 elapsed.
+        let prompt = peak_over(&mut engine, 12);
+        assert!(
+            prompt > 0.05,
+            "note should fire promptly after a deep-session swap, got {prompt}"
         );
     }
 
