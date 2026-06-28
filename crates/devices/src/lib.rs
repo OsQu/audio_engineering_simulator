@@ -11,9 +11,11 @@
 //! `harness` (render scenarios), so none of it is JS-specific. serde lives here (the IR + descriptors
 //! serialize); the `JsValue` bridge stays in `wasm-bindings`.
 
+mod build;
 mod catalog;
 mod scene;
 
+pub use build::{BuildError, BuiltScene, build_patch};
 pub use catalog::{
     BuiltDevice, DeviceDescriptor, ParamDescriptor, ParamKind, PortDescriptor, PortDirection,
     PortDomain, PortKind, descriptors, instantiate,

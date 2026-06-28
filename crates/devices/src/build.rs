@@ -1,0 +1,610 @@
+//! Assemble a runnable [`Patch`] into a compiled engine [`Schedule`] (Story 4.1, Task 4.1.4).
+//!
+//! This is where the per-device chassis seam ([`instantiate`]) meets the whole scene. [`build_patch`]:
+//! 1. **instantiates** each device into a fresh `Graph` (1..N nodes + internal edges), keying its
+//!    [`BuiltDevice`] map by the scene device id;
+//! 2. **remaps** each scene [`Connection`](crate::Connection) — addressed by `(device, device-port)` — through those maps
+//!    to concrete node-port edges, and likewise the output tap;
+//! 3. **compiles** (fixed seed → reproducible); and
+//! 4. **resolves** the generic control surface: `(device, param id) → ParamHandle` and
+//!    `device → EventInputId`, so the host can drive params/notes by device id (Task 4.1.5).
+//!
+//! Everything fallible lives here, off the audio thread: an unknown type, a dangling device reference,
+//! a port out of range, or an engine [`CompileError`] (domain mismatch, cycle, …) becomes a
+//! [`BuildError`] — never a panic. The caller (the worklet) turns that into a legible message.
+//!
+//! Scene **param *values*** (`ParamSetting`s) are not applied here — `build_patch` resolves the
+//! *handles*; the caller pushes the saved values onto its param queue (Task 4.1.5), so they de-zipper
+//! in like any control change.
+
+use std::collections::BTreeMap;
+use std::collections::btree_map::Entry;
+use std::fmt;
+
+use engine::{
+    AnalogRate, Cable, CompileError, EventInputId, Farads, Graph, NodeId, Ohms, ParamHandle,
+    Schedule, compile,
+};
+
+use crate::catalog::{BuiltDevice, instantiate};
+use crate::scene::{Patch, PortRef};
+
+/// Why assembling a [`Patch`] failed — all caught off the audio thread (the hot path never sees a
+/// patch). Each variant names the offending scene element so the UI can point at it.
+#[derive(Debug)]
+pub enum BuildError {
+    /// Two devices share an id; ids must be unique within a patch.
+    DuplicateDevice { id: String },
+    /// A device names a `type_id` that isn't in the catalog.
+    UnknownType { id: String, type_id: String },
+    /// A connection or the output tap references a device id that isn't in the patch.
+    UnknownDevice { id: String },
+    /// A connection's source / the output tap names an output port beyond the device's exposed outputs.
+    OutputPortOutOfRange { device: String, port: u32 },
+    /// A connection's destination names an input port beyond the device's exposed inputs.
+    InputPortOutOfRange { device: String, port: u32 },
+    /// The engine rejected the assembled graph (domain mismatch, cycle, indivisible rate, …).
+    Compile(CompileError),
+}
+
+impl fmt::Display for BuildError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::DuplicateDevice { id } => write!(f, "duplicate device id {id:?}"),
+            Self::UnknownType { id, type_id } => {
+                write!(f, "device {id:?} has unknown type {type_id:?}")
+            }
+            Self::UnknownDevice { id } => write!(f, "connection references unknown device {id:?}"),
+            Self::OutputPortOutOfRange { device, port } => {
+                write!(f, "device {device:?} has no output port {port}")
+            }
+            Self::InputPortOutOfRange { device, port } => {
+                write!(f, "device {device:?} has no input port {port}")
+            }
+            Self::Compile(e) => write!(f, "compile error: {e:?}"),
+        }
+    }
+}
+
+impl std::error::Error for BuildError {}
+
+impl From<CompileError> for BuildError {
+    fn from(e: CompileError) -> Self {
+        Self::Compile(e)
+    }
+}
+
+/// A compiled scene: the runnable [`Schedule`] plus the resolved control surface keyed by scene device
+/// id. The host renders through [`schedule_mut`](Self::schedule_mut) and drives control via
+/// [`param`](Self::param) / [`event_input`](Self::event_input). Built by [`build_patch`].
+pub struct BuiltScene {
+    schedule: Schedule,
+    /// device id → its `ParamHandle`s, indexed by **device-level param id**.
+    params: BTreeMap<String, Vec<ParamHandle>>,
+    /// device id → its (first) event input, for note routing. Absent for devices with no event input.
+    events: BTreeMap<String, EventInputId>,
+}
+
+impl fmt::Debug for BuiltScene {
+    // `Schedule` isn't `Debug` (and printing it would be noise); show the resolved control surface.
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("BuiltScene")
+            .field("params", &self.params.keys().collect::<Vec<_>>())
+            .field("events", &self.events.keys().collect::<Vec<_>>())
+            .finish_non_exhaustive()
+    }
+}
+
+impl BuiltScene {
+    /// The compiled schedule, mutable — the host renders one block at a time through it.
+    pub fn schedule_mut(&mut self) -> &mut Schedule {
+        &mut self.schedule
+    }
+
+    /// The schedule, by shared reference (e.g. to read group delay / block length).
+    #[must_use]
+    pub fn schedule(&self) -> &Schedule {
+        &self.schedule
+    }
+
+    /// Resolve `(device, device-level param id)` to its [`ParamHandle`] for smoothed control, or
+    /// `None` if the device or param id is unknown.
+    #[must_use]
+    pub fn param(&self, device: &str, param_id: u32) -> Option<ParamHandle> {
+        self.params
+            .get(device)
+            .and_then(|handles| handles.get(param_id as usize))
+            .copied()
+    }
+
+    /// Resolve `device` to its event input (for note-on/off), or `None` if it has none.
+    #[must_use]
+    pub fn event_input(&self, device: &str) -> Option<EventInputId> {
+        self.events.get(device).copied()
+    }
+}
+
+/// Resolve a device output `PortRef` to a concrete `(node, output port)`.
+fn resolve_output(
+    devices: &BTreeMap<String, BuiltDevice>,
+    r: &PortRef,
+) -> Result<(NodeId, usize), BuildError> {
+    let built = devices
+        .get(&r.device)
+        .ok_or_else(|| BuildError::UnknownDevice {
+            id: r.device.clone(),
+        })?;
+    built
+        .outputs
+        .get(r.port as usize)
+        .copied()
+        .ok_or_else(|| BuildError::OutputPortOutOfRange {
+            device: r.device.clone(),
+            port: r.port,
+        })
+}
+
+/// Resolve a device input `PortRef` to a concrete `(node, input port)`.
+fn resolve_input(
+    devices: &BTreeMap<String, BuiltDevice>,
+    r: &PortRef,
+) -> Result<(NodeId, usize), BuildError> {
+    let built = devices
+        .get(&r.device)
+        .ok_or_else(|| BuildError::UnknownDevice {
+            id: r.device.clone(),
+        })?;
+    built
+        .inputs
+        .get(r.port as usize)
+        .copied()
+        .ok_or_else(|| BuildError::InputPortOutOfRange {
+            device: r.device.clone(),
+            port: r.port,
+        })
+}
+
+/// Assemble a runnable [`Patch`] into a compiled [`BuiltScene`] at the given block length, analog
+/// `rate`, and `seed`. See the module docs for the four steps; all failures surface as [`BuildError`].
+///
+/// # Errors
+/// Returns a [`BuildError`] for an unknown device type, a dangling device reference, a port out of
+/// range, or an engine [`CompileError`].
+pub fn build_patch(
+    patch: &Patch,
+    block_len: usize,
+    rate: AnalogRate,
+    seed: u64,
+) -> Result<BuiltScene, BuildError> {
+    let mut graph = Graph::new();
+
+    // 1. Instantiate every device, keyed by its (unique) scene id.
+    let mut devices: BTreeMap<String, BuiltDevice> = BTreeMap::new();
+    for device in &patch.devices {
+        let built =
+            instantiate(&device.type_id, &mut graph).ok_or_else(|| BuildError::UnknownType {
+                id: device.id.clone(),
+                type_id: device.type_id.clone(),
+            })?;
+        match devices.entry(device.id.clone()) {
+            Entry::Occupied(_) => {
+                return Err(BuildError::DuplicateDevice {
+                    id: device.id.clone(),
+                });
+            }
+            Entry::Vacant(slot) => slot.insert(built),
+        };
+    }
+
+    // 2. Remap each scene connection (and the output tap) through the device maps to graph edges.
+    for conn in &patch.connections {
+        let (from_node, from_port) = resolve_output(&devices, &conn.from)?;
+        let (to_node, to_port) = resolve_input(&devices, &conn.to)?;
+        match &conn.cable {
+            Some(cable) => graph.connect_cabled(
+                from_node,
+                from_port,
+                to_node,
+                to_port,
+                Cable::new(
+                    Ohms::new(cable.resistance_ohms),
+                    Farads::new(cable.capacitance_farads),
+                ),
+            ),
+            None => graph.connect(from_node, from_port, to_node, to_port),
+        }
+    }
+    let (out_node, out_port) = resolve_output(&devices, &patch.output)?;
+    graph.set_output(out_node, out_port);
+
+    // 3. Compile (fixed seed → reproducible). Engine validation (domain, cycles, rates) lands here.
+    let schedule = compile(graph, block_len, rate, seed)?;
+
+    // 4. Resolve the generic control surface against the compiled schedule.
+    let mut params = BTreeMap::new();
+    let mut events = BTreeMap::new();
+    for device in &patch.devices {
+        let built = &devices[&device.id];
+        let handles: Vec<ParamHandle> = built
+            .params
+            .iter()
+            .map(|&(node, id)| {
+                schedule
+                    .param(node, id)
+                    .expect("a freshly built device's param resolves in its own schedule")
+            })
+            .collect();
+        params.insert(device.id.clone(), handles);
+
+        // A device's event input is its first exposed input that the schedule recognizes as one.
+        if let Some(ev) = built
+            .inputs
+            .iter()
+            .find_map(|&(node, port)| schedule.event_input(node, port))
+        {
+            events.insert(device.id.clone(), ev);
+        }
+    }
+
+    Ok(BuiltScene {
+        schedule,
+        params,
+        events,
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::scene::{Connection, DeviceInstance};
+    use engine::{
+        AdConverter, BitDepth, DaConverter, EventMessage, EventQueue, Graph, InputZ, Ohms,
+        ParamQueue, SampleRate, Speaker, SynthVoice, VoltageBuffer, Volts, compile,
+    };
+
+    const BLOCK_LEN: usize = 384; // 384 / M=8 = 48 host samples; divisible, as compile requires.
+    const NOTE: u8 = 69; // A4
+
+    fn rate() -> AnalogRate {
+        AnalogRate::new(384_000.0)
+    }
+
+    fn conn(from: &str, from_port: u32, to: &str, to_port: u32) -> Connection {
+        Connection {
+            from: PortRef {
+                device: from.into(),
+                port: from_port,
+            },
+            to: PortRef {
+                device: to.into(),
+                port: to_port,
+            },
+            cable: None,
+        }
+    }
+
+    fn device(id: &str, type_id: &str) -> DeviceInstance {
+        DeviceInstance {
+            id: id.into(),
+            type_id: type_id.into(),
+            params: vec![],
+        }
+    }
+
+    /// The pinned canonical patch as a scene: `synth → AD → DA → speaker`, tapped at the speaker.
+    fn canonical_patch() -> Patch {
+        Patch {
+            devices: vec![
+                device("synth", "synth_voice"),
+                device("ad", "ad_converter"),
+                device("da", "da_converter"),
+                device("spk", "speaker"),
+            ],
+            connections: vec![
+                conn("synth", 0, "ad", 0),
+                conn("ad", 0, "da", 0),
+                conn("da", 0, "spk", 0),
+            ],
+            output: PortRef {
+                device: "spk".into(),
+                port: 0,
+            },
+        }
+    }
+
+    /// Peak `|speaker volts|` over `blocks` blocks after striking a note on `device`.
+    fn peak_after_note(scene: &mut BuiltScene, device: &str, blocks: usize) -> f32 {
+        let ev = scene
+            .event_input(device)
+            .expect("device has an event input");
+        let mut events = EventQueue::with_capacity(4);
+        events.push(
+            0,
+            ev,
+            EventMessage::NoteOn {
+                note: NOTE,
+                velocity: 100,
+            },
+        );
+        let mut out = VoltageBuffer::zeros(BLOCK_LEN, rate());
+        let mut peak = 0.0_f32;
+        for _ in 0..blocks {
+            scene
+                .schedule_mut()
+                .process_with_events(&mut out, &mut events);
+            peak = out.as_slice().iter().fold(peak, |p, &v| p.max(v.abs()));
+        }
+        peak
+    }
+
+    /// The canonical patch, assembled from a scene, is **byte-for-byte identical** to the same chain
+    /// built by hand directly on the engine — output parity. Same device order ⇒ same node indices ⇒
+    /// same per-node seeding ⇒ identical dither, so equality (not just "close") holds. This is the
+    /// oracle that `build_patch` wires, taps, and orders the graph exactly like a hand-built engine.
+    #[test]
+    fn canonical_patch_matches_a_hand_built_graph() {
+        // Assembled from the scene.
+        let patch = canonical_patch();
+        let mut scene = build_patch(&patch, BLOCK_LEN, rate(), 0).expect("canonical patch builds");
+        let scene_ev = scene.event_input("synth").expect("synth event input");
+
+        // The same chain, built directly — identical configs and order to the catalog's builders.
+        let mut g = Graph::new();
+        let voice = g.add(SynthVoice::new(Volts::new(1.0), Ohms::new(1.0)));
+        let ad = g.add(AdConverter::new(
+            SampleRate::new(48_000.0),
+            BitDepth::new(16),
+            Volts::new(1.0),
+            Ohms::new(1_000_000.0),
+        ));
+        let da = g.add(DaConverter::new(
+            SampleRate::new(48_000.0),
+            BitDepth::new(16),
+            Volts::new(1.0),
+            Ohms::new(150.0),
+        ));
+        let spk = g.add(Speaker::new(1.0, InputZ::new(Ohms::new(10_000.0))));
+        g.connect(voice, 0, ad, 0);
+        g.connect(ad, 0, da, 0);
+        g.connect(da, 0, spk, 0);
+        g.set_output(spk, 0);
+        let mut hand = compile(g, BLOCK_LEN, rate(), 0).expect("hand graph compiles");
+        let hand_ev = hand.event_input(voice, 0).expect("voice event input");
+
+        // Strike the same note on both and compare every sample over several blocks.
+        let mut scene_events = EventQueue::with_capacity(4);
+        scene_events.push(
+            0,
+            scene_ev,
+            EventMessage::NoteOn {
+                note: NOTE,
+                velocity: 100,
+            },
+        );
+        let mut hand_events = EventQueue::with_capacity(4);
+        hand_events.push(
+            0,
+            hand_ev,
+            EventMessage::NoteOn {
+                note: NOTE,
+                velocity: 100,
+            },
+        );
+
+        let mut a = VoltageBuffer::zeros(BLOCK_LEN, rate());
+        let mut b = VoltageBuffer::zeros(BLOCK_LEN, rate());
+        for _ in 0..16 {
+            scene
+                .schedule_mut()
+                .process_with_events(&mut a, &mut scene_events);
+            hand.process_with_events(&mut b, &mut hand_events);
+            assert_eq!(
+                a.as_slice(),
+                b.as_slice(),
+                "scene-built output must match the hand-built graph"
+            );
+        }
+    }
+
+    /// End-to-end: the scene-built canonical patch is silent until a note, then audible — wiring,
+    /// output tap, compile, and event-input resolution all work.
+    #[test]
+    fn scene_built_patch_is_silent_then_audible() {
+        let mut scene = build_patch(&canonical_patch(), BLOCK_LEN, rate(), 0).expect("builds");
+
+        let mut idle = VoltageBuffer::zeros(BLOCK_LEN, rate());
+        let mut none = EventQueue::with_capacity(1);
+        let mut idle_peak = 0.0_f32;
+        for _ in 0..8 {
+            scene
+                .schedule_mut()
+                .process_with_events(&mut idle, &mut none);
+            idle_peak = idle
+                .as_slice()
+                .iter()
+                .fold(idle_peak, |p, &v| p.max(v.abs()));
+        }
+        assert!(idle_peak < 0.01, "silent before any note, got {idle_peak}");
+
+        let sounding = peak_after_note(&mut scene, "synth", 32);
+        assert!(sounding > 0.05, "audible after note, got {sounding}");
+    }
+
+    /// The resolved `ParamHandle` controls the right node: driving the synth's LEVEL (device param 0)
+    /// to zero silences it even with a note held — so generic `(device, param id)` addressing lands on
+    /// the actual smoother.
+    #[test]
+    fn resolved_param_handle_controls_its_node() {
+        let mut scene = build_patch(&canonical_patch(), BLOCK_LEN, rate(), 0).expect("builds");
+        let level = scene.param("synth", 0).expect("synth has param 0 (LEVEL)");
+
+        let ev = scene.event_input("synth").expect("synth event input");
+        let mut events = EventQueue::with_capacity(4);
+        events.push(
+            0,
+            ev,
+            EventMessage::NoteOn {
+                note: NOTE,
+                velocity: 100,
+            },
+        );
+        let mut params = ParamQueue::with_capacity(1);
+        params.set(level, 0.0); // glide LEVEL from its 1.0 default to 0 (over ~5 ms)
+
+        // Measure the *tail* only: LEVEL glides to 0 over ~5 ms, so the first blocks still sound while
+        // it ramps down. By block 16 (~16 ms here) the glide is long settled — steady state is silence.
+        let mut out = VoltageBuffer::zeros(BLOCK_LEN, rate());
+        let mut tail_peak = 0.0_f32;
+        for block in 0..64 {
+            scene
+                .schedule_mut()
+                .process_io(&mut out, &mut params, &mut events);
+            if block >= 16 {
+                tail_peak = out
+                    .as_slice()
+                    .iter()
+                    .fold(tail_peak, |p, &v| p.max(v.abs()));
+            }
+        }
+        assert!(
+            tail_peak < 0.01,
+            "LEVEL=0 should silence the voice, got {tail_peak}"
+        );
+    }
+
+    /// Control resolution is total: unknown device, unknown param id, and a no-event device all return
+    /// `None` rather than panicking.
+    #[test]
+    fn control_resolution_is_total() {
+        let scene = build_patch(&canonical_patch(), BLOCK_LEN, rate(), 0).expect("builds");
+        assert!(scene.param("synth", 0).is_some());
+        assert!(scene.param("synth", 99).is_none(), "param id out of range");
+        assert!(scene.param("nope", 0).is_none(), "unknown device");
+        assert!(scene.event_input("synth").is_some());
+        assert!(
+            scene.event_input("spk").is_none(),
+            "speaker has no event input"
+        );
+    }
+
+    /// A multi-node device (the two-stage `channel_strip`) assembles inside a full patch: connections
+    /// to its exposed ports remap onto the right internal nodes, and the chain still sounds.
+    #[test]
+    fn multi_node_device_in_a_patch() {
+        let patch = Patch {
+            devices: vec![
+                device("synth", "synth_voice"),
+                device("strip", "channel_strip"),
+                device("ad", "ad_converter"),
+                device("da", "da_converter"),
+                device("spk", "speaker"),
+            ],
+            connections: vec![
+                conn("synth", 0, "strip", 0),
+                conn("strip", 0, "ad", 0),
+                conn("ad", 0, "da", 0),
+                conn("da", 0, "spk", 0),
+            ],
+            output: PortRef {
+                device: "spk".into(),
+                port: 0,
+            },
+        };
+        let mut scene = build_patch(&patch, BLOCK_LEN, rate(), 0).expect("multi-node patch builds");
+        // The strip exposes both stage gains as device params 0 and 1.
+        assert!(scene.param("strip", 0).is_some());
+        assert!(scene.param("strip", 1).is_some());
+        assert!(scene.param("strip", 2).is_none());
+        let sounding = peak_after_note(&mut scene, "synth", 32);
+        assert!(sounding > 0.05, "audible through the strip, got {sounding}");
+    }
+
+    /// A cabled connection assembles (the cable's R·C rides the edge). Smoke test that the cable path
+    /// builds and runs; the electrical effect itself is the engine's own tested concern.
+    #[test]
+    fn cabled_connection_builds() {
+        let mut patch = canonical_patch();
+        patch.connections[0].cable = Some(crate::scene::CableSpec {
+            resistance_ohms: 150.0,
+            capacitance_farads: 1e-9,
+        });
+        let mut scene = build_patch(&patch, BLOCK_LEN, rate(), 0).expect("cabled patch builds");
+        assert!(peak_after_note(&mut scene, "synth", 32) > 0.05);
+    }
+
+    #[test]
+    fn unknown_type_is_an_error() {
+        let patch = Patch {
+            devices: vec![device("x", "no_such_device")],
+            connections: vec![],
+            output: PortRef {
+                device: "x".into(),
+                port: 0,
+            },
+        };
+        let err = build_patch(&patch, BLOCK_LEN, rate(), 0).unwrap_err();
+        assert!(matches!(err, BuildError::UnknownType { .. }), "got {err:?}");
+    }
+
+    #[test]
+    fn duplicate_device_id_is_an_error() {
+        let patch = Patch {
+            devices: vec![device("dup", "speaker"), device("dup", "speaker")],
+            connections: vec![],
+            output: PortRef {
+                device: "dup".into(),
+                port: 0,
+            },
+        };
+        let err = build_patch(&patch, BLOCK_LEN, rate(), 0).unwrap_err();
+        assert!(
+            matches!(err, BuildError::DuplicateDevice { .. }),
+            "got {err:?}"
+        );
+    }
+
+    #[test]
+    fn unknown_device_reference_is_an_error() {
+        let mut patch = canonical_patch();
+        patch.connections.push(conn("ghost", 0, "spk", 0));
+        let err = build_patch(&patch, BLOCK_LEN, rate(), 0).unwrap_err();
+        assert!(
+            matches!(err, BuildError::UnknownDevice { .. }),
+            "got {err:?}"
+        );
+    }
+
+    #[test]
+    fn port_out_of_range_is_an_error() {
+        let mut patch = canonical_patch();
+        patch.output.port = 5; // speaker has only output port 0
+        let err = build_patch(&patch, BLOCK_LEN, rate(), 0).unwrap_err();
+        assert!(
+            matches!(err, BuildError::OutputPortOutOfRange { .. }),
+            "got {err:?}"
+        );
+    }
+
+    /// A domain mismatch (a digital output wired to an analog input) is caught by the engine and
+    /// surfaces as `BuildError::Compile`, not a panic.
+    #[test]
+    fn domain_mismatch_surfaces_as_compile_error() {
+        let patch = Patch {
+            devices: vec![device("ad", "ad_converter"), device("spk", "speaker")],
+            // AD output is digital; speaker input is analog → DomainMismatch at compile.
+            connections: vec![conn("ad", 0, "spk", 0)],
+            output: PortRef {
+                device: "spk".into(),
+                port: 0,
+            },
+        };
+        let err = build_patch(&patch, BLOCK_LEN, rate(), 0).unwrap_err();
+        assert!(
+            matches!(
+                err,
+                BuildError::Compile(CompileError::DomainMismatch { .. })
+            ),
+            "got {err:?}"
+        );
+    }
+}
