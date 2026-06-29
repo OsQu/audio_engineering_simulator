@@ -1652,6 +1652,48 @@ mod param_phenomena {
         // And it genuinely moved off the start (not stuck at 1 V).
         assert!(swept.iter().any(|&v| v > 2.0));
     }
+
+    #[test]
+    fn powering_a_stage_off_gates_its_output_to_silence() {
+        // 1 V DC → GainStage(gain 4) → tap: powered on, the tap sits at ≈ 4 V. Drive POWERED to 0
+        // and, once the de-click glide settles, the output is gated to silence — a powered-off stage
+        // passes nothing, and it's a value param (no recompile).
+        let mut g = Graph::new();
+        let src = g.add(TestSource::new(Volts::new(1.0), Ohms::new(1.0)));
+        let amp = g.add(GainStage::new(
+            4.0,
+            Volts::new(100.0),
+            InputZ::new(Ohms::new(1e9)),
+            Ohms::new(1.0),
+        ));
+        g.connect_ideal(src, 0, amp, 0);
+        g.set_output(amp, 0);
+
+        let block = 64;
+        let mut sched = compile(g, block, rate(), 0).expect("valid power chain");
+        let powered = sched.param(amp, GainStage::POWERED).expect("powered param");
+
+        // Settled, powered-on (default 1.0): ≈ gain·1 V = 4 V.
+        let mut out = VoltageBuffer::zeros(block, rate());
+        sched.process(&mut out);
+        assert_relative_eq!(out.get(0).get(), 4.0, max_relative = 1e-3);
+
+        // Power off and run past the 5 ms / 1920-sample (30-block) glide; the last block is silence.
+        let mut q = ParamQueue::with_capacity(1);
+        q.set(powered, 0.0);
+        for b in 0..40 {
+            if b == 0 {
+                sched.process_with_params(&mut out, &mut q);
+            } else {
+                sched.process(&mut out);
+            }
+        }
+        let settled = out.as_slice().iter().fold(0.0_f32, |m, &v| m.max(v.abs()));
+        assert!(
+            settled < 1e-4,
+            "a powered-off stage must gate its output to silence, got {settled} V"
+        );
+    }
 }
 
 /// A **played note travels the full chain** `analog → AD → digital → DA → analog` — the end-to-end

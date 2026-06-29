@@ -511,10 +511,11 @@ mod tests {
             },
         };
         let mut scene = build_patch(&patch, BLOCK_LEN, rate(), 0).expect("multi-node patch builds");
-        // The strip exposes both stage gains as device params 0 and 1.
+        // The strip exposes each stage's gain + power, concatenated in node order: device params
+        // 0..=3 (in_gain, in_power, out_gain, out_power); 4 is past the face.
         assert!(scene.param("strip", 0).is_some());
-        assert!(scene.param("strip", 1).is_some());
-        assert!(scene.param("strip", 2).is_none());
+        assert!(scene.param("strip", 3).is_some());
+        assert!(scene.param("strip", 4).is_none());
         let sounding = peak_after_note(&mut scene, "synth", 32);
         assert!(sounding > 0.05, "audible through the strip, got {sounding}");
     }

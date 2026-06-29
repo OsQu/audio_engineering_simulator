@@ -37,7 +37,8 @@ enum Stage {
 /// - **Control params** (smoothed) are the knobs: output [`LEVEL`](Self::LEVEL) (volts, de-zippered
 ///   like a volume fader) and the envelope's [`ATTACK_MS`](Self::ATTACK_MS) /
 ///   [`DECAY_MS`](Self::DECAY_MS) / [`SUSTAIN`](Self::SUSTAIN) / [`RELEASE_MS`](Self::RELEASE_MS),
-///   read at each gate transition.
+///   read at each gate transition, plus a [`POWERED`](Self::POWERED) switch that gates the output to
+///   silence when off (de-clicked, never a recompile).
 ///
 /// The oscillator runs in the oversampled analog domain, so a naive sawtooth's harmonics extend up
 /// toward the analog Nyquist; the modeled **AD converter's** anti-alias filter removes
@@ -62,7 +63,7 @@ pub struct SynthVoice {
     release_inc: f32,
     /// Fallback output level (volts) when run without a schedule (the [`LEVEL`](Self::LEVEL) default).
     default_level: f32,
-    params: [ParamDecl; 5],
+    params: [ParamDecl; 6],
     inputs: [InputPort; 1],
     outputs: [OutputPort; 1],
 }
@@ -78,6 +79,10 @@ impl SynthVoice {
     pub const SUSTAIN: ParamId = ParamId(3);
     /// Envelope release time (ms): time to fall from the current level to silence after release.
     pub const RELEASE_MS: ParamId = ParamId(4);
+    /// Power switch (`0` = off, `1` = on). A powered-off voice emits silence — its output is gated to
+    /// zero. The smoothed value de-clicks the on/off transition, so a toggle is glitch-free without
+    /// being a structural graph edit. Defaults on (`1.0`).
+    pub const POWERED: ParamId = ParamId(5);
 
     /// How many events the voice's input lane buffers per block — generous for a single voice.
     const EVENT_CAPACITY: usize = 64;
@@ -137,6 +142,14 @@ impl SynthVoice {
                     min: 0.0,
                     max: 10_000.0,
                     smooth_ms: 0.0,
+                },
+                // Power gates the output; the 5 ms smoothing de-clicks the on/off step.
+                ParamDecl {
+                    id: Self::POWERED,
+                    default: 1.0,
+                    min: 0.0,
+                    max: 1.0,
+                    smooth_ms: 5.0,
                 },
             ],
             inputs: [EventFace::new(Self::EVENT_CAPACITY).into()],
@@ -253,9 +266,10 @@ impl Node for SynthVoice {
                 ei += 1;
             }
             let level = params.value_at_or(Self::LEVEL, i, self.default_level);
+            let powered = params.value_at_or(Self::POWERED, i, 1.0);
             let env = self.env_step();
             let saw = (2.0 * self.phase - 1.0) as f32; // naive ramp in [-1, 1)
-            *o = saw * env * level;
+            *o = saw * env * level * powered;
             self.phase += self.freq_hz / self.rate_hz;
             if self.phase >= 1.0 {
                 self.phase -= 1.0;
@@ -414,6 +428,42 @@ mod tests {
         let quiet = fundamental_at_level(0.5);
         let loud = fundamental_at_level(2.0);
         assert!(loud > quiet * 3.0, "4× the level ⇒ a much larger tone");
+    }
+
+    #[test]
+    fn powered_off_silences_the_voice() {
+        // Hold a note, but with POWERED driven to 0: the output gate ⇒ silence in the settled tail,
+        // even though the envelope is sounding. The de-click glide (5 ms) is well past by block/4.
+        let block = 16_384;
+        let mut g = Graph::new();
+        let voice = g.add(SynthVoice::new(Volts::new(1.0), Ohms::new(1.0)));
+        g.set_output(voice, 0);
+        let mut sched = compile(g, block, rate(), 0).expect("valid voice chain");
+        let ev = sched.event_input(voice, 0).expect("open event input");
+        let pwr = sched
+            .param(voice, SynthVoice::POWERED)
+            .expect("powered param");
+
+        let mut q = EventQueue::with_capacity(8);
+        q.push(
+            0,
+            ev,
+            EventMessage::NoteOn {
+                note: 69,
+                velocity: 100,
+            },
+        );
+        let mut pq = ParamQueue::with_capacity(1);
+        pq.set(pwr, 0.0); // power off
+        let mut out = VoltageBuffer::zeros(block, rate());
+        sched.process_io(&mut out, &mut pq, &mut q);
+
+        let tail = &out.as_slice()[block / 4..];
+        assert!(
+            rms(tail) < 1e-4,
+            "a powered-off voice must be silent, rms {}",
+            rms(tail)
+        );
     }
 
     #[test]

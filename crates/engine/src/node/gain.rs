@@ -9,7 +9,7 @@ use crate::rng::Rng;
 use crate::signal::{Lane, Volts};
 
 /// A gain stage with a finite supply rail and an optional input-referred noise floor:
-/// `out = clamp((in + n) · gain, ±rail)`.
+/// `out = clamp((in + n) · gain, ±rail) · powered`.
 ///
 /// Models a buffered active stage — a real `InputZ` it presents to its source and a real
 /// output impedance it drives downstream, with a voltage gain in between. The **rail** is the
@@ -31,8 +31,8 @@ pub struct GainStage {
     noise_density: NoiseDensity,
     /// The per-node noise stream, installed by [`Node::seed`] at compile when a floor is set.
     noise: Option<Rng>,
-    /// The one declared control param: [`GAIN`](Self::GAIN), initialized to the construction gain.
-    param_decls: [ParamDecl; 1],
+    /// The declared control params: [`GAIN`](Self::GAIN) and [`POWERED`](Self::POWERED).
+    param_decls: [ParamDecl; 2],
     inputs: [InputPort; 1],
     outputs: [OutputPort; 1],
 }
@@ -41,10 +41,17 @@ impl GainStage {
     /// The smoothed voltage-gain control param. The host drives it with `(node, GainStage::GAIN)`;
     /// uncontrolled, it holds the construction `gain`.
     pub const GAIN: ParamId = ParamId(0);
+    /// Power switch (`0` = off, `1` = on). A powered-off stage **passes nothing** — its output is
+    /// gated to silence (noise included). The smoothed value de-clicks the on/off transition, so a
+    /// toggle is glitch-free without being a structural graph edit. Defaults on (`1.0`).
+    pub const POWERED: ParamId = ParamId(1);
 
     /// Largest controllable gain (≈ +60 dB) and the de-zipper glide time for a gain change.
     const MAX_GAIN: f32 = 1000.0;
     const GAIN_SMOOTH_MS: f32 = 5.0;
+    /// De-click glide for the power switch — short enough to feel instant, long enough to avoid a
+    /// click on the output-gate step.
+    const POWER_SMOOTH_MS: f32 = 5.0;
 
     /// A noiseless stage with voltage gain `gain`, clipping at `±rail`, presenting `z_in` and
     /// driving from `z_out`.
@@ -65,13 +72,22 @@ impl GainStage {
             rail,
             noise_density: NoiseDensity::ZERO,
             noise: None,
-            param_decls: [ParamDecl {
-                id: Self::GAIN,
-                default: gain,
-                min: 0.0,
-                max: Self::MAX_GAIN,
-                smooth_ms: Self::GAIN_SMOOTH_MS,
-            }],
+            param_decls: [
+                ParamDecl {
+                    id: Self::GAIN,
+                    default: gain,
+                    min: 0.0,
+                    max: Self::MAX_GAIN,
+                    smooth_ms: Self::GAIN_SMOOTH_MS,
+                },
+                ParamDecl {
+                    id: Self::POWERED,
+                    default: 1.0,
+                    min: 0.0,
+                    max: 1.0,
+                    smooth_ms: Self::POWER_SMOOTH_MS,
+                },
+            ],
             inputs: [z_in.into()],
             outputs: [OutputZ::new(z_out).into()],
         }
@@ -110,8 +126,10 @@ impl Node for GainStage {
     }
 
     fn process(&mut self, params: &Params, inputs: &[Lane], outputs: &mut [Lane]) {
-        // The gain is read per sample so a control change de-zippers smoothly across the block;
-        // `fallback` (the construction gain) is used only when run without a schedule (unit tests).
+        // Gain and power are read per sample so a control change de-zippers smoothly across the
+        // block; `fallback` (the construction gain) and a powered-on `1.0` are used only when run
+        // without a schedule (unit tests). Power gates the *output* (after the gain + rail clip), so
+        // a powered-off stage passes nothing — including its own noise.
         let (fallback, rail) = (self.gain, self.rail);
         let in_buf = inputs[0].voltage();
         let src = in_buf.as_slice();
@@ -122,14 +140,16 @@ impl Node for GainStage {
                 let sigma = self.noise_density.per_sample_sigma(in_buf.rate());
                 for (i, (o, &v)) in out.iter_mut().zip(src).enumerate() {
                     let gain = params.value_at_or(Self::GAIN, i, fallback);
+                    let powered = params.value_at_or(Self::POWERED, i, 1.0);
                     let n = rng.next_gaussian() * sigma;
-                    *o = ((v + n) * gain).clamp(-rail, rail);
+                    *o = ((v + n) * gain).clamp(-rail, rail) * powered;
                 }
             }
             None => {
                 for (i, (o, &v)) in out.iter_mut().zip(src).enumerate() {
                     let gain = params.value_at_or(Self::GAIN, i, fallback);
-                    *o = (v * gain).clamp(-rail, rail);
+                    let powered = params.value_at_or(Self::POWERED, i, 1.0);
+                    *o = (v * gain).clamp(-rail, rail) * powered;
                 }
             }
         }

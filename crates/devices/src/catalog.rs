@@ -220,6 +220,11 @@ const CATALOG: &[CatalogEntry] = &[
                 unit: "ms",
                 kind: ParamKind::Knob,
             },
+            ParamUi {
+                label: "Power",
+                unit: "",
+                kind: ParamKind::Switch,
+            },
         ],
         inputs: &[PortUi {
             label: "MIDI",
@@ -242,11 +247,18 @@ const CATALOG: &[CatalogEntry] = &[
             ))
         }],
         internal: &[],
-        params: &[ParamUi {
-            label: "Gain",
-            unit: "×",
-            kind: ParamKind::Knob,
-        }],
+        params: &[
+            ParamUi {
+                label: "Gain",
+                unit: "×",
+                kind: ParamKind::Knob,
+            },
+            ParamUi {
+                label: "Power",
+                unit: "",
+                kind: ParamKind::Switch,
+            },
+        ],
         inputs: &[PortUi {
             label: "In",
             kind: PortKind::Line,
@@ -373,6 +385,8 @@ const CATALOG: &[CatalogEntry] = &[
             to_node: 1,
             to_port: 0,
         }],
+        // Params are exposed in node order — both of stage 0's, then both of stage 1's — so the
+        // interleave is gain, power, gain, power (each stage carries its own power switch).
         params: &[
             ParamUi {
                 label: "Input Gain",
@@ -380,9 +394,19 @@ const CATALOG: &[CatalogEntry] = &[
                 kind: ParamKind::Knob,
             },
             ParamUi {
+                label: "Input Power",
+                unit: "",
+                kind: ParamKind::Switch,
+            },
+            ParamUi {
                 label: "Output Gain",
                 unit: "×",
                 kind: ParamKind::Knob,
+            },
+            ParamUi {
+                label: "Output Power",
+                unit: "",
+                kind: ParamKind::Switch,
             },
         ],
         inputs: &[PortUi {
@@ -669,9 +693,10 @@ mod tests {
 
     /// The chassis seam: a multi-node device expands into several nodes wired by its internal edge,
     /// and its exposed face maps to the right `(NodeId, …)`. The two-stage channel strip exposes
-    /// stage 0's input and stage 1's output (input and output on *different* nodes), and both gain
-    /// params — with device param **1** resolving to the **second** node (a non-trivial remap, the
-    /// case a naive "everything is node 0" impl would get wrong).
+    /// stage 0's input and stage 1's output (input and output on *different* nodes), and each stage's
+    /// gain + power params — concatenated in node order, so device params **2/3** resolve to the
+    /// **second** node (a non-trivial remap, the case a naive "everything is node 0" impl would get
+    /// wrong).
     #[test]
     fn multi_node_device_expands_and_maps() {
         let mut g = Graph::new();
@@ -684,10 +709,16 @@ mod tests {
         assert_eq!(strip.inputs, vec![(strip.nodes[0], 0)]);
         assert_eq!(strip.outputs, vec![(strip.nodes[1], 0)]);
 
-        // Both gains exposed, in order — device param 1 maps to the *second* node.
+        // Each stage's gain (ParamId 0) + power (ParamId 1) exposed, in node order — device params
+        // 2/3 map to the *second* node.
         assert_eq!(
             strip.params,
-            vec![(strip.nodes[0], ParamId(0)), (strip.nodes[1], ParamId(0))]
+            vec![
+                (strip.nodes[0], ParamId(0)),
+                (strip.nodes[0], ParamId(1)),
+                (strip.nodes[1], ParamId(0)),
+                (strip.nodes[1], ParamId(1)),
+            ]
         );
     }
 
