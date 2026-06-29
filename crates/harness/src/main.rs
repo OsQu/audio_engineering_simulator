@@ -1,9 +1,9 @@
 //! Render/CLI test harness for driving the engine offline.
 //!
-//! This is the visualization *demo* (a detour after Story 1.3): it drives a sine through a
-//! real compiled schedule and plots the resulting voltage in the terminal, so amplitude,
-//! rail clipping, cable rolloff, and the device noise floor can be *seen*, not just asserted
-//! in unit tests. The WAV render driver and offline scenarios proper arrive in Epic 2.
+//! This is the visualization *demo*: it drives a sine through a real compiled schedule and plots
+//! the resulting voltage in the terminal, so amplitude, rail clipping, cable rolloff, and the
+//! device noise floor can be *seen*, not just asserted in unit tests. It also renders played
+//! notes end to end to WAV files you can listen to.
 
 mod sine;
 
@@ -47,7 +47,7 @@ fn main() {
 
 // --- Scenario 7: first sound — a played note rendered to a WAV -----------------------------
 //
-// The Epic-2 milestone: the whole journey made audible. A4 is played into the synth voice and
+// The whole journey made audible. A4 is played into the synth voice and
 // rendered end to end through `synth → modeled AD → modeled DA → speaker`, then the speaker's
 // tapped voltage is captured (off-sim-clock) to 48 kHz host samples and written to a float32 WAV
 // you can actually listen to. Unlike the other scenarios this writes a file rather than plotting.
@@ -458,7 +458,7 @@ fn scenario_noise_floor() {
 // (few-tap) one: the strong filter cliffs at Nyquist, the weak one leaks — and that leak *is*
 // audible aliasing. Then it shows a single out-of-band tone in the time domain: rejected by the
 // strong filter, folded back to an 8 kHz wave by the weak one. The FIR is a standalone primitive
-// here (the AD that wraps it is Story 1.6.3); we drive `Decimator` directly.
+// here (the modeled AD wraps it); we drive `Decimator` directly.
 
 /// Decimation factor for the demo: 384 kHz → 48 kHz.
 const M_FIR: usize = 8;

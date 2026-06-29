@@ -1,9 +1,10 @@
 //! `SineSource` — a sine oscillator, defined **here in the harness as demo scaffolding**.
 //!
-//! This is *not* the engine's oscillator: the real, event-driven one is Story 1.7. It lives
-//! in the harness only so the demo has an AC signal to push through a real compiled schedule
-//! (the engine's [`TestSource`](engine::TestSource) emits DC, which can't show treble rolloff
-//! or a curved wave). Expect it to be superseded when Story 1.7 lands.
+//! This is *not* the engine's oscillator. It lives in the harness only so the plot scenarios
+//! have a bare continuous AC tone to push through a real compiled schedule — the engine's
+//! [`TestSource`](engine::TestSource) emits DC (no treble rolloff, no curved wave to show), and
+//! its real voice [`SynthVoice`](engine::SynthVoice) is event-driven and enveloped (great for the
+//! audible first-sound renders, but not the steady tone the waveform plots want).
 
 use engine::{InputPort, Lane, Node, Ohms, OutputPort, OutputZ, Params, Volts};
 use std::f64::consts::TAU;

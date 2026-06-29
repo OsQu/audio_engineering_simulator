@@ -2,10 +2,10 @@
 //!
 //! The canonical render format is **32-bit float, mono**. Float is deliberate: a PCM-integer
 //! writer would quantize the (transparent) captured samples and add its *own* quantization noise,
-//! which would contaminate Story 2.3's measurement of the noise produced by the *modeled* AD at
-//! low bit depth. Float32 stores the capture's output losslessly, so the only artifacts in a
-//! render are the ones we're studying. (Mono: the engine's converters/lanes are mono this epic;
-//! multichannel is Epic 5.)
+//! which would contaminate the measurement of the noise produced by the *modeled* AD at low bit
+//! depth. Float32 stores the capture's output losslessly, so the only artifacts in a render are
+//! the ones we're studying. (Mono: the engine's converters/lanes are mono; multichannel isn't
+//! modeled yet.)
 
 use std::fs::File;
 use std::io::{Seek, Write};

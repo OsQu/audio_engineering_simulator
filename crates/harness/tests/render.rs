@@ -1,4 +1,4 @@
-//! Integration tests for the offline render driver (Story 2.1.5).
+//! Integration tests for the offline render driver.
 //!
 //! These render a played note through the real engine + capture + driver and assert the result
 //! numerically — the analog-domain oracle (PROJECT_PLAN §9): you can't ear-check a CI run, so the

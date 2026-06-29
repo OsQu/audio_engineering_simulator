@@ -3,15 +3,16 @@
 //!
 //! This is emphatically **not a second engine** — it loops [`Schedule::process_with_events`] (the
 //! one real code path) and feeds each block's output tap through the [`Capture`]. The schedule's
-//! output tap is expected to be the speaker's voltage (Story 2.1); what comes back is mono,
-//! normalized host audio ready for [`crate::wav`].
+//! output tap is expected to be the speaker's voltage; what comes back is mono, normalized host
+//! audio ready for [`crate::wav`].
 
 use capture::Capture;
 use engine::{AnalogRate, EventQueue, SampleRate, Schedule, VoltageBuffer};
 
 /// What to render and how long.
 pub struct RenderConfig {
-    /// The host output sample rate (must integer-divide the analog rate this epic).
+    /// The host output sample rate (must integer-divide the analog rate — a fractional resampler is
+    /// not yet modeled).
     pub host_rate: SampleRate,
     /// Speaker volts that map to digital full scale (±1.0) — the fixed monitor reference.
     pub full_scale_volts: f32,

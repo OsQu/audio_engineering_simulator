@@ -8,8 +8,8 @@ publish.workspace = true
 
 [dependencies]
 engine.workspace = true
-# The implicit capture (analog→host-sample resample), now a shared crate so the wasm bindings can
-# reuse it too (Task 3.1.1). Pure engine-only deps — no native baggage reaches it.
+# The implicit capture (analog→host-sample resample), a shared crate so the wasm bindings can
+# reuse it too. Pure engine-only deps — no native baggage reaches it.
 capture.workspace = true
 # Terminal Braille line plots — harness-only (this is a native binary, so the dep never
 # reaches the engine or its wasm32 build). Used to *see* the voltage waveforms.
