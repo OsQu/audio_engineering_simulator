@@ -8,20 +8,19 @@ publish.workspace = true
 
 [lib]
 # cdylib for the WASM artifact wasm-pack/wasm-bindgen consume; rlib so the surface stays
-# unit-testable natively (the render_blocks loop is exercised by a native test in Task 3.1.3).
+# unit-testable natively (the render loop is exercised by native tests).
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 engine.workspace = true
 # The implicit capture (analog→host-sample resample) — engine-only deps, so it compiles to wasm32
-# and the in-WASM render loop can reuse it (Task 3.1.1 / 3.1.3).
+# and the in-WASM render loop can reuse it.
 capture.workspace = true
 # JS<->Rust glue. wasm-pack auto-installs a `wasm-bindgen-cli` matching THIS crate version from
 # Cargo.lock — they must agree exactly, so let the lockfile pin it (don't hand-install a mismatched
-# CLI). Kept on the cold/setup surface only; the per-quantum zero-copy hot path is an Epic-3.2
-# concern (3.1 measures pure compute, so no raw-memory/`unsafe` path here yet).
+# CLI).
 wasm-bindgen = "0.2.125"
-# The device catalog + scene IR + build logic (Story 4.1). The serde-derived types live there; this
+# The device catalog + scene IR + build logic. The serde-derived types live there; this
 # crate stays thin glue — it only marshals them across the JS boundary.
 devices.workspace = true
 # `serde-wasm-bindgen` is the JS-value bridge: the catalog serializes to a JS object, and the UI's

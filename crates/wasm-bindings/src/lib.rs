@@ -1,18 +1,17 @@
 //! Browser/WASM bindings for the engine.
 //!
-//! Epic 3 hosts the engine in the browser. This crate is the JS-facing surface, built to
+//! This crate is the JS-facing surface that hosts the engine in the browser, built to
 //! `wasm32-unknown-unknown` with `wasm-bindgen` (via `wasm-pack`). See the crate `README.md` for
 //! the build + install commands.
 //!
-//! **Scope (Story 3.2 → 4.1):** [`SceneEngine`] is the real-time surface the AudioWorklet actually
-//! drains — [`SceneEngine::render_quantum`] renders exactly one quantum (one engine block) into an
+//! **Scope:** [`SceneEngine`] is the real-time surface the AudioWorklet actually drains —
+//! [`SceneEngine::render_quantum`] renders exactly one quantum (one engine block) into an
 //! engine-owned host buffer, exposed **zero-copy** via [`SceneEngine::out_ptr`] /
 //! [`out_len`](SceneEngine::out_len): JS builds one `Float32Array` view over WASM linear memory and
 //! reads it every quantum, with no per-quantum marshalling. Returning a pointer is safe Rust
 //! (`as_ptr`); the only `unsafe` is JS-side constructing the view — so there is still no `unsafe`
-//! in this crate. It is **scene-driven** (Story 4.1): built from a serialized [`Patch`] via the
-//! `devices` crate, controlled **generically by device id**, and **hot-swapped** to a new scene at a
-//! block boundary. (It was `RtEngine` through Epic 3, hardcoded to the canonical patch.)
+//! in this crate. It is **scene-driven**: built from a serialized [`Patch`] via the `devices` crate,
+//! controlled **generically by device id**, and **hot-swapped** to a new scene at a block boundary.
 
 use capture::Capture;
 use devices::{BuildError, BuiltScene, Patch, build_patch, descriptors};
@@ -37,8 +36,8 @@ pub fn catalog() -> Result<JsValue, JsValue> {
 
 /// Deserialize a runnable [`Patch`] from the structured JS object the UI posts to the worklet.
 ///
-/// The fallible ingress (Task 4.1.1): a malformed patch returns `Err` rather than panicking on the
-/// audio thread. Marshalling only — the IR and (Task 4.1.4) the build logic live in `devices`.
+/// The fallible ingress: a malformed patch returns `Err` rather than panicking on the audio thread.
+/// Marshalling only — the IR and the build logic live in `devices`.
 pub fn parse_patch(value: JsValue) -> Result<Patch, serde_wasm_bindgen::Error> {
     serde_wasm_bindgen::from_value(value)
 }
@@ -49,8 +48,8 @@ const ANALOG_RATE_HZ: f64 = 384_000.0;
 /// Host / converter sample rate. `M = ANALOG/HOST = 8`.
 const HOST_RATE_HZ: f64 = 48_000.0;
 /// Samples per `process` block. The **real-time quantum**: 128 host frames × M = 1024 analog
-/// samples (deliberately *not* the offline harness's 384 — the benchmark must measure the size the
-/// AudioWorklet will actually call with).
+/// samples (deliberately *not* the offline harness's 384 — this is the size the AudioWorklet
+/// actually calls with).
 const BLOCK_LEN: usize = 1024;
 /// Fixed seed (determinism) and monitor full-scale reference (speaker volts → ±1.0).
 const SEED: u64 = 0;
@@ -59,7 +58,7 @@ const FULL_SCALE_V: f32 = 1.0;
 #[cfg(test)]
 const NOTE: u8 = 69;
 
-// --- Stories 3.2 / 3.3 / 4.1: the real-time surface the AudioWorklet drains. ----------------------
+// --- The real-time surface the AudioWorklet drains. ----------------------------------------------
 
 /// Capacity of the latest-wins [`ParamQueue`] — distinct controllable params pending within one
 /// quantum. Generous for a small studio (an initial scene load pushes all overridden knobs at once);
@@ -76,7 +75,7 @@ struct Pending {
     initial: Vec<(ParamHandle, f32)>,
 }
 
-/// The real-time engine surface (Stories 3.2–3.4, generalized in 4.1): a scene built from a serialized
+/// The real-time engine surface: a scene built from a serialized
 /// [`Patch`] (via the `devices` crate) plus the implicit [`Capture`], driven **one AudioWorklet quantum
 /// at a time** with its captured host block exposed **zero-copy** to JS, **played and tweaked live**
 /// by device id, and **hot-swapped** to a new scene at a block boundary.
@@ -88,7 +87,7 @@ struct Pending {
 /// The view stays valid for the session because the hot path is zero-alloc, so linear memory never
 /// `grow`s mid-render to detach it.
 ///
-/// **Scene-driven control (Story 4.1).** Built from a [`Patch`] by [`new`](Self::new); replaced live by
+/// **Scene-driven control.** Built from a [`Patch`] by [`new`](Self::new); replaced live by
 /// [`load_patch`](Self::load_patch) (compile off-block → install at the next block boundary). It owns a
 /// [`ParamQueue`] + [`EventQueue`] and exposes **generic** control: [`set_param`](Self::set_param) by
 /// `(device id, param id)` pushes latest-wins target values (the engine's own `Smoother` de-zippers
@@ -96,7 +95,8 @@ struct Pending {
 /// device id push timestamped events. [`render_quantum`](Self::render_quantum) drains both lanes via
 /// `process_io` each block. A note is stamped at the **block about to render** (`blocks · BLOCK_LEN`) —
 /// "play at the next quantum," ~2.7 ms granularity. (Precise `currentTime`→sample mapping matters only
-/// for *sequenced* MIDI; deferred.) Addressing resolves through the live scene's [`BuiltScene`] maps, so
+/// for *sequenced* MIDI, which isn't modeled yet.) Addressing resolves through the live scene's
+/// [`BuiltScene`] maps, so
 /// it stays correct across a hot-swap.
 #[wasm_bindgen]
 pub struct SceneEngine {
@@ -117,7 +117,7 @@ pub struct SceneEngine {
     /// block's first sample — the timeline [`note_on`](Self::note_on) / [`note_off`](Self::note_off)
     /// stamp against.
     blocks: u64,
-    /// Real-time-health counter (Story 3.4): control **events dropped** because the queue was full — an
+    /// Real-time-health counter: control **events dropped** because the queue was full — an
     /// input flood arriving faster than the audio thread drains it. The page polls it via
     /// [`event_drops`](Self::event_drops). The compute-budget side of health (a quantum overrunning its
     /// ~2.7 ms slot) is timed **JS-side** in the worklet, because the engine is deterministic and
@@ -260,7 +260,7 @@ impl SceneEngine {
         self.blocks += 1;
     }
 
-    // --- Live control (Story 4.1): generic, by device id — resolved through the live scene. --------
+    // --- Live control: generic, by device id — resolved through the live scene. --------------------
 
     /// Set a smoothed control param by **device id + device-level param id** to `value` (latest-wins;
     /// the engine's `Smoother` de-zippers it — so *not* `AudioParam`). A no-op if the device/param is
@@ -300,8 +300,8 @@ impl SceneEngine {
 
     /// Control **events dropped** because the queue was full, since construction — a real-time-health
     /// counter the page polls each report. Zero under normal play; climbs only under an input flood
-    /// the audio thread can't drain in time (exactly the case the deferred Story 3.4 SAB ring would
-    /// address if it ever bites — so this is the evidence that would trigger building it).
+    /// the audio thread can't drain in time (exactly the case a lock-free SAB ring buffer would
+    /// address if it ever bites — this counter is the evidence that would justify building one).
     #[must_use]
     pub fn event_drops(&self) -> u32 {
         self.event_drops
@@ -356,7 +356,7 @@ impl SceneEngine {
 mod tests {
     use super::*;
 
-    // --- SceneEngine (Story 4.1): built from a scene, controlled generically, hot-swappable. -------
+    // --- SceneEngine: built from a scene, controlled generically, hot-swappable. -------------------
     use devices::{Connection, DeviceInstance, ParamSetting, Patch, PortRef};
 
     fn dev(id: &str, type_id: &str) -> DeviceInstance {
@@ -381,7 +381,7 @@ mod tests {
         }
     }
 
-    /// The canonical patch (`synth → AD → DA → speaker`) as a scene — what `RtEngine` used to hardcode.
+    /// The canonical patch (`synth → AD → DA → speaker`) as a scene.
     fn canonical_patch() -> Patch {
         Patch {
             devices: vec![
@@ -529,7 +529,7 @@ mod tests {
         );
     }
 
-    /// The event-drop health counter (Story 3.4) still holds: flooding past the queue capacity drops
+    /// The event-drop health counter still holds: flooding past the queue capacity drops
     /// and counts the excess — never a panic — and the running total doesn't move once drained.
     #[test]
     fn scene_engine_counts_dropped_events_under_a_flood() {
