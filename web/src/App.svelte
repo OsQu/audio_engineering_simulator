@@ -39,9 +39,7 @@
       return desc ? isPlayable(desc) : false;
     }),
   );
-  const synthDesc = $derived(
-    synthDevice ? descriptorFor(catalog, synthDevice.typeId) : undefined,
-  );
+  const synthDesc = $derived(synthDevice ? descriptorFor(catalog, synthDevice.typeId) : undefined);
 
   const key = (device: string, paramId: number): string => `${device}:${paramId}`;
 
@@ -95,7 +93,12 @@
             const desc = descriptorFor(catalog, device.typeId);
             if (!desc) continue;
             for (const p of desc.params) {
-              sendFn({ type: "param", device: device.id, paramId: p.id, value: paramValues[key(device.id, p.id)] });
+              sendFn({
+                type: "param",
+                device: device.id,
+                paramId: p.id,
+                value: paramValues[key(device.id, p.id)],
+              });
             }
           }
           if (synthDevice) {
@@ -140,9 +143,12 @@
   <p>
     The canonical <em>scene</em> (<code>synth → AD → DA → speaker</code>) built from a serialized
     patch and running live in an <code>AudioWorkletProcessor</code> as <code>SceneEngine</code>.
-    Controls are rendered <strong>from the device catalog</strong> and addressed
+    Controls are rendered
+    <strong>from the device catalog</strong>
+    and addressed
     <strong>by device id</strong>; the scene can be <strong>saved / loaded</strong> (versioned JSON
-    in localStorage) and <strong>reloaded live</strong> to exercise the engine's glitch-free hot-swap.
+    in localStorage) and
+    <strong>reloaded live</strong> to exercise the engine's glitch-free hot-swap.
   </p>
   <p>
     <strong>Build the wasm first:</strong> <code>npm run wasm</code>, then <code>npm run dev</code>.
@@ -172,8 +178,7 @@
                 id={`p-${p.id}`}
                 type="checkbox"
                 checked={value >= 0.5}
-                oninput={(e) =>
-                  onParamInput(synthDevice.id, p, e.currentTarget.checked ? 1 : 0)}
+                oninput={(e) => onParamInput(synthDevice.id, p, e.currentTarget.checked ? 1 : 0)}
               />
             {:else}
               <input
@@ -203,7 +208,9 @@
 
 <style>
   main {
-    font: 15px/1.5 system-ui, sans-serif;
+    font:
+      15px/1.5 system-ui,
+      sans-serif;
     max-width: 40rem;
     margin: 3rem auto;
     padding: 0 1rem;

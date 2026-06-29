@@ -75,7 +75,10 @@ class SceneProcessor extends AudioWorkletProcessor {
             try {
               this.engine.load_patch(d.patch); // throws on a bad patch; the live scene keeps running
             } catch (err) {
-              this.port.postMessage({ type: "error", message: String(err?.message || err) });
+              this.port.postMessage({
+                type: "error",
+                message: String(err?.message || err),
+              });
             }
             break;
         }

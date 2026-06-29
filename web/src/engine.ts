@@ -80,7 +80,11 @@ export async function startEngine(patch: Patch, handlers: EngineHandlers): Promi
   // Without this pin every quantum is the wrong rate ⇒ wrong pitch + drift. latencyHint
   // "interactive" = the smallest output buffer (lowest latency); the single-threaded in-worklet
   // engine can't grow its own render-ahead buffer, so this browser buffer is the only jitter cushion.
-  const audio = new AudioContext({ sampleRate: 48000, latencyHint: "interactive" });
+
+  const audio = new AudioContext({
+    sampleRate: 48000,
+    latencyHint: "interactive",
+  });
   handlers.onStatus(`AudioContext @ ${audio.sampleRate} Hz — loading worklet…`);
 
   // public/ assets are served from the web root by Vite (dev and build).

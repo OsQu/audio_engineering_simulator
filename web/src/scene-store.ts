@@ -87,5 +87,10 @@ function migrate(raw: unknown): Scene {
   }
   // (no migration steps yet — v1 is the first format)
   if (!scene.patch) throw new Error("scene has no patch");
-  return { schemaVersion: SCHEMA_VERSION, ui: scene.ui ?? {}, patch: scene.patch };
+
+  return {
+    schemaVersion: SCHEMA_VERSION,
+    ui: scene.ui ?? {},
+    patch: scene.patch,
+  };
 }
