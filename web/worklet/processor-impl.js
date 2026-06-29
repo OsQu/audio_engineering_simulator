@@ -33,6 +33,10 @@ class SceneProcessor extends AudioWorkletProcessor {
         throw new Error("SceneEngine missing from glue");
 
       this.memory = wasm.memory;
+      // The device catalog (descriptors) is fetched here, where the wasm instance lives, and posted
+      // to the page in `ready` — the main thread has no wasm instance of its own to call it on.
+      if (typeof wasm_bindgen.catalog !== "function") throw new Error("catalog missing from glue");
+      const catalog = wasm_bindgen.catalog();
       // Build the engine from the scene's patch. Throws (Result→exception) on a bad patch — caught below.
       this.engine = new wasm_bindgen.SceneEngine(patch);
       this.len = this.engine.out_len(); // host samples per quantum (= 128 = the render quantum)
@@ -83,6 +87,7 @@ class SceneProcessor extends AudioWorkletProcessor {
         type: "ready",
         len: this.len,
         signalPathLatencyMs: this.engine.signal_path_latency_ms,
+        catalog,
       });
     } catch (err) {
       this.port.postMessage({

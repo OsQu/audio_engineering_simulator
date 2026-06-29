@@ -52,3 +52,16 @@ export type PortDomain = "analog" | "digital" | "events";
 
 /** Connector kind, for jack styling and connection-legality hints (UI-only; engine validates by domain). */
 export type PortKind = "mic" | "line" | "instrument" | "speaker" | "digital" | "midi";
+
+/** The descriptor for a `typeId`, or `undefined` if the catalog has no such type. */
+export function descriptorFor(
+  catalog: DeviceDescriptor[],
+  typeId: string,
+): DeviceDescriptor | undefined {
+  return catalog.find((d) => d.typeId === typeId);
+}
+
+/** Whether a descriptor presents an event (MIDI/note) input — i.e. it's a playable instrument. */
+export function isPlayable(desc: DeviceDescriptor): boolean {
+  return desc.ports.some((p) => p.domain === "events" && p.direction === "input");
+}

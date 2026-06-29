@@ -3,107 +3,10 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Audio Engineer Simulator — real-time (Vite harness)</title>
-    <style>
-      body {
-        font: 15px/1.5 system-ui, sans-serif;
-        max-width: 40rem;
-        margin: 3rem auto;
-        padding: 0 1rem;
-        color: #1a1a1a;
-      }
-      code {
-        background: #f0f0f0;
-        padding: 0.1em 0.3em;
-        border-radius: 3px;
-      }
-      button {
-        font: inherit;
-        padding: 0.5em 1.2em;
-        cursor: pointer;
-      }
-      #status {
-        color: #555;
-      }
-      #health {
-        color: #777;
-        font-size: 0.85em;
-        font-variant-numeric: tabular-nums;
-      }
-      #controls {
-        margin-top: 1.5rem;
-      }
-      #controls[hidden] {
-        display: none;
-      }
-      .knob {
-        display: flex;
-        align-items: center;
-        gap: 0.75rem;
-        margin: 0.4rem 0;
-      }
-      .knob label {
-        width: 7rem;
-        flex: none;
-      }
-      .knob input {
-        flex: 1;
-      }
-      .knob output {
-        width: 5rem;
-        flex: none;
-        font-variant-numeric: tabular-nums;
-        color: #555;
-      }
-      kbd {
-        background: #f0f0f0;
-        border: 1px solid #ccc;
-        border-radius: 3px;
-        padding: 0.05em 0.35em;
-      }
-    </style>
+    <title>Audio Engineer Simulator — real-time (Svelte harness)</title>
   </head>
   <body>
-    <h1>Scene-driven engine — Vite harness</h1>
-    <p>
-      The canonical <em>scene</em> (<code>synth → AD → DA → speaker</code>) built from a
-      serialized patch and running live in an <code>AudioWorkletProcessor</code> as
-      <code>SceneEngine</code>. Controls are <strong>generic, by device id</strong>; the scene can be
-      <strong>saved / loaded</strong> (versioned JSON in localStorage) and <strong>reloaded live</strong>
-      to exercise the engine's glitch-free hot-swap.
-    </p>
-    <p>
-      <strong>Build the wasm first:</strong> <code>npm run wasm</code>, then <code>npm run dev</code>.
-      Browsers require a user gesture to start audio.
-    </p>
-    <p><button id="start" type="button">▶ start</button></p>
-    <p id="status">idle</p>
-    <p id="health"></p>
-
-    <section id="controls" hidden>
-      <p>
-        Play with the keyboard: <kbd>A</kbd> <kbd>W</kbd> <kbd>S</kbd> <kbd>E</kbd> <kbd>D</kbd>
-        <kbd>F</kbd> <kbd>T</kbd> <kbd>G</kbd> <kbd>Y</kbd> <kbd>H</kbd> <kbd>U</kbd> <kbd>J</kbd>
-        <kbd>K</kbd> map to one octave from C4. (<kbd>Z</kbd>/<kbd>X</kbd> shift octave down/up.)
-      </p>
-      <div class="knob">
-        <label for="level">Level (V)</label>
-        <input id="level" type="range" min="0" max="2" step="0.01" value="1" />
-        <output id="level-val">1.00</output>
-      </div>
-      <div class="knob">
-        <label for="attack">Attack (ms)</label>
-        <input id="attack" type="range" min="0" max="500" step="1" value="5" />
-        <output id="attack-val">5</output>
-      </div>
-      <p id="midi-status">MIDI: requesting access…</p>
-      <p class="scene-buttons">
-        <button id="save" type="button">save scene</button>
-        <button id="load" type="button">load scene</button>
-        <button id="reload" type="button">reload (hot-swap)</button>
-      </p>
-    </section>
-
+    <div id="app"></div>
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>
