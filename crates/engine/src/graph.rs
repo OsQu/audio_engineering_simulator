@@ -1,9 +1,9 @@
 //! The patch graph: nodes (processing elements) wired by connections (edges).
 //!
 //! A construct-in-code description of a studio — nodes and the cables between them — built up
-//! with [`Graph::add`] / [`Graph::connect`], then handed to `compile`, which consumes it and
-//! validates it into a runnable schedule. The graph is the *what*; the schedule is the *how and
-//! in what order*.
+//! with [`Graph::add`] / [`Graph::connect_ideal`] / [`Graph::connect_cabled`], then handed to
+//! `compile`, which consumes it and validates it into a runnable schedule. The graph is the *what*;
+//! the schedule is the *how and in what order*.
 //!
 //! Connections are recorded as given; **all validation happens at compile** (the doctrine:
 //! validation and error reporting live in graph construction and `compile`, never the hot

@@ -23,11 +23,14 @@
 //! depending on both endpoints, which generalizes the representation without touching callers.
 
 mod events;
+mod hum;
 mod swap;
 mod topo;
 
 pub use events::{EventInputId, EventQueue};
 pub use swap::ScheduleSlot;
+
+use hum::HumGen;
 
 use crate::electrical::{InputZ, Ohms, OnePole, fan_out_gains};
 use crate::graph::{Edge, Graph, NodeId};
@@ -166,29 +169,6 @@ impl fmt::Display for CompileError {
 }
 
 impl std::error::Error for CompileError {}
-
-/// A deterministic 50/60 Hz ground-loop hum generator coupled onto an edge: `amp·sin(phase)` per
-/// sample. `Copy` so every conductor of one edge holds an identical generator (same seeded phase,
-/// same increment) — the hum is common-mode and cancels at a balanced receiver.
-#[derive(Clone, Copy)]
-struct HumGen {
-    phase: f64,
-    dphase: f64,
-    amp: f32,
-}
-
-impl HumGen {
-    /// Next hum sample, advancing the phase. Hot path: no allocation, no panic.
-    #[inline]
-    fn step(&mut self) -> f32 {
-        let v = self.amp * self.phase.sin() as f32;
-        self.phase += self.dphase;
-        if self.phase >= core::f64::consts::TAU {
-            self.phase -= core::f64::consts::TAU;
-        }
-        v
-    }
-}
 
 /// A connection's baked local solve: scale by a constant gain, then (if cabled) the one-pole
 /// treble rolloff, then (if the cable couples it) add interference — broadband pickup and/or
@@ -737,15 +717,9 @@ pub fn compile(
         let Some(cable) = e.cable else { continue };
 
         // Hum: a deterministic 50/60 Hz tone whose initial phase is seeded from the edge stream.
-        let hum = cable.hum().map(|(freq, amp)| {
-            let phase = f64::from(stream.next_f32_unit()) * core::f64::consts::TAU;
-            let dphase = core::f64::consts::TAU * freq * rate.seconds_per_sample();
-            HumGen {
-                phase,
-                dphase,
-                amp: amp.get(),
-            }
-        });
+        let hum = cable
+            .hum()
+            .map(|(freq, amp)| HumGen::new(freq, amp, rate, &mut stream));
         // Pickup: broadband Gaussian; the same (post-phase) stream clone on every conductor.
         let pickup_sigma = {
             let d = cable.pickup();
