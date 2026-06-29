@@ -31,10 +31,9 @@ const DEFAULT_STOPBAND_DB: f64 = 96.0;
 ///    with **non-subtractive TPDF dither** (±1 LSB, from the seeded per-node RNG) decorrelating the
 ///    error into a flat noise floor.
 ///
-/// Single-ended analog input, one digital channel out (Story 1.6 keeps converters mono; a balanced
-/// front-end is a separate `BalancedReceiver` / preamp node). It **opens a clock domain**: every
-/// sample it produces is stamped with the converter's rate (the emergent multi-domain model is
-/// Epic 5).
+/// Single-ended analog input, one digital channel out (converters are mono; a balanced front-end
+/// is a separate `BalancedReceiver` / preamp node). It **opens a clock domain**: every sample it
+/// produces is stamped with the converter's rate.
 pub struct AdConverter {
     rate: SampleRate,
     /// Anti-alias FIR length — the "weak filter" knob.

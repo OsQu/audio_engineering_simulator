@@ -4,10 +4,10 @@ use super::{BitDepth, SampleRate};
 
 /// Identifies the clock domain — the oscillator — that produced a digital stream.
 ///
-/// In Story 1.6 there is a single internal converter clock, so this is a trivial identity. It
-/// exists now so the emergent multi-domain model (independent rates drifting, an async-boundary
-/// FIFO that genuinely slips, sample-rate conversion — Epic 5) can grow in without reshaping the
-/// buffer: it is the *identity* of a clock, not its rate (the rate rides in [`SampleRate`]).
+/// With a single internal converter clock this is a trivial identity. It is the *identity* of a
+/// clock, not its rate (the rate rides in [`SampleRate`]), so multiple domains drifting against
+/// each other — an async-boundary FIFO that slips, sample-rate conversion — can grow in later
+/// without reshaping the buffer.
 #[repr(transparent)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct ClockDomainId(pub u32);
@@ -15,8 +15,8 @@ pub struct ClockDomainId(pub u32);
 /// A block of single-channel digital-audio samples: **linear, normalized** so ±1.0 is full scale.
 ///
 /// The digital-domain peer of [`VoltageBuffer`](super::VoltageBuffer). Linear only — dBFS is a
-/// *measurement* produced by conversion helpers (Story 1.6), never a storage format, exactly as
-/// volts are stored linear and dBu is derived. One **channel** per buffer (a multichannel digital
+/// *measurement* produced by conversion helpers, never a storage format, exactly as volts are
+/// stored linear and dBu is derived. One **channel** per buffer (a multichannel digital
 /// port owns several, as a balanced analog port owns two conductors). It carries the rate, bit
 /// depth, and clock domain stamped on by the AD that produced it. All allocation happens at
 /// construction; the hot path mutates an existing buffer via [`as_mut_slice`](Self::as_mut_slice)

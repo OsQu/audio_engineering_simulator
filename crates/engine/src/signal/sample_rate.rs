@@ -5,7 +5,7 @@
 /// A **distinct** newtype from [`AnalogRate`](crate::AnalogRate) on purpose: the analog
 /// continuous-proxy clock and a converter's digital rate are different domains that only ever
 /// meet at an AD/DA, and the type system must refuse to mix them. There is no global digital
-/// rate — each converter stamps its own onto the samples it produces (Story 1.6).
+/// rate — each converter stamps its own onto the samples it produces.
 ///
 /// Stored in hertz as `f64`: the analog rate it divides is `f64`, and the decimation ratio
 /// `analog / digital` must be computed exactly to validate the integer-divide constraint.
@@ -35,7 +35,7 @@ impl SampleRate {
     }
 
     /// The Nyquist frequency, in hertz (`rate / 2`) — the highest frequency this stream can
-    /// represent, and the edge the AD's anti-alias filter must protect (Story 1.6).
+    /// represent, and the edge the AD's anti-alias filter must protect.
     pub fn nyquist_hz(self) -> f64 {
         self.hz * 0.5
     }

@@ -40,7 +40,7 @@ enum Stage {
 ///   read at each gate transition.
 ///
 /// The oscillator runs in the oversampled analog domain, so a naive sawtooth's harmonics extend up
-/// toward the analog Nyquist; the modeled **AD converter's** anti-alias filter (Story 1.6) removes
+/// toward the analog Nyquist; the modeled **AD converter's** anti-alias filter removes
 /// the ones that would fold — no band-limiting tricks are needed here, which is the converter
 /// payoff, not a special case. Instruments are deliberately simple (PROJECT_PLAN §6): recognizable,
 /// not realistic. No analog input; one analog output with a real source impedance.

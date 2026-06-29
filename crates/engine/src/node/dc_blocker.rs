@@ -82,7 +82,7 @@ impl Node for DcBlocker {
     fn per_conductor(&self) -> bool {
         // AC coupling is a per-leg series cap: on a balanced pair it's one blocker on each
         // conductor. So the compiler may lift this node across a balanced connection — each leg
-        // gets its own identical high-pass (Story 1.5 detour).
+        // gets its own identical high-pass.
         true
     }
 

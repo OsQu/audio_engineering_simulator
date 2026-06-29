@@ -26,8 +26,8 @@ const LEVEL_FLOOR: f64 = 1e-12;
 ///    the gain-staging lesson, not something hidden by auto-makeup.
 ///
 /// **Feed-forward, no lookahead** — the gain is computed from the current envelope and applied to
-/// the current sample (no delay buffer). One digital channel in, one out (Story 2.2 keeps DSP
-/// mono). The realism budget stays on the volts-and-converters layer; this transform stays legible.
+/// the current sample (no delay buffer). One digital channel in, one out (DSP is mono). The realism
+/// budget stays on the volts-and-converters layer; this transform stays legible.
 pub struct Compressor {
     threshold_db: f64,
     /// `1/ratio − 1` ≤ 0 — the slope of dB gain reduction per dB over threshold (0 ⇒ no compression).

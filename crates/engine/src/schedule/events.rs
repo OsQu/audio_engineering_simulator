@@ -8,10 +8,9 @@
 //! target node's event input lane. Events beyond the block stay queued for a later one.
 //!
 //! Like the [`ScheduleSlot`](super::ScheduleSlot) swap seam, this is **single-producer /
-//! single-consumer in shape but exercised single-threaded** for now: headless there is no audio
-//! thread to hand events across. The lock-free cross-thread ring that carries events from a UI/MIDI
-//! thread to the audio thread arrives with the real worklet in Epic 3; the queue's push/drain
-//! interface is what that will swap its internals beneath.
+//! single-consumer in shape**: events are handed from a UI/MIDI producer to the audio-thread
+//! consumer. A genuinely lock-free shared-memory ring is not yet built; the queue's push/drain
+//! interface is what that would swap its internals beneath.
 
 use crate::signal::EventMessage;
 

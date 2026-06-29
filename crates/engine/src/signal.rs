@@ -11,7 +11,7 @@
 //! The analog domain has exactly one clock, [`AnalogRate`]. The digital domain is a separate
 //! carrier ([`SampleBuffer`], at a per-converter [`SampleRate`] / [`BitDepth`] / [`ClockDomainId`])
 //! that only meets the analog one at an AD/DA — the two are distinct newtypes the type system
-//! keeps apart (Story 1.6). [`VoltageBuffer`] is per-conductor (balanced lines, Story 1.5);
+//! keeps apart. [`VoltageBuffer`] is per-conductor (one buffer per leg of a balanced line);
 //! [`SampleBuffer`] is per-channel.
 
 mod bit_depth;

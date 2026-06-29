@@ -3,10 +3,10 @@
 //! A balanced line carries the audio **differentially** across two conductors. The driver puts
 //! the signal on as `V+ = +s/2`, `V− = −s/2` (so the differential `V+ − V−` equals the input —
 //! unity, no level change), and the receiver recovers it as `V+ − V−`. Interference that couples
-//! equally onto both conductors (cable pickup, hum, phantom — Story 1.5.2–1.5.5) is **common-mode**
-//! and cancels at that subtraction: common-mode rejection *emerges* from the difference, it is not
-//! a flag. The conductors live as two adjacent lanes in the schedule pool ("buffer = conductor",
-//! see `IMPLEMENTATION_PLAN.md` Story 1.5); a node reads/writes them in port-then-conductor order.
+//! equally onto both conductors (cable pickup, hum, phantom) is **common-mode** and cancels at that
+//! subtraction: common-mode rejection *emerges* from the difference, it is not a flag. The
+//! conductors live as two adjacent lanes in the schedule pool ("buffer = conductor"); a node
+//! reads/writes them in port-then-conductor order.
 
 use super::Node;
 use crate::electrical::{InputZ, Ohms, OutputZ};

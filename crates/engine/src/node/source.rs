@@ -12,8 +12,8 @@ use crate::signal::{Lane, Volts};
 /// calculations stay trivial: the open-circuit output is a flat `level`, and the output
 /// impedance makes the source a real electrical face that downstream loading divides against.
 /// Steady-state output is pure DC, so the resistive dividers (not the cable rolloff, which
-/// passes DC) are what an end-to-end test asserts. AC sources — oscillators driven by events —
-/// arrive in Story 1.7; until then this is the canonical source.
+/// passes DC) are what an end-to-end test asserts. This is the simple constant-level test source;
+/// an AC source driven by events is the [`SynthVoice`](crate::SynthVoice).
 ///
 /// No inputs; one output.
 pub struct TestSource {

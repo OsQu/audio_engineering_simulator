@@ -12,9 +12,8 @@
 //! **Node vs. device.** A *node* is one schedulable processing element. A physical *device*
 //! (a chassis — a mixer, an audio interface) may map to **several** nodes when its signal
 //! path leaves and re-enters the box (an insert, a routed interface): those are distinct
-//! stages of the path, scheduled separately. Today every node is a whole simple device
-//! (the single-stage case); the node ⇄ logical-device grouping arrives with the first
-//! multi-stage device (see `IMPLEMENTATION_PLAN.md`, Story 1.3 design notes).
+//! stages of the path, scheduled separately. The node ⇄ logical-device grouping (one chassis,
+//! many nodes) lives above the engine, in the device catalog.
 //!
 //! The fixed electrical faces are declared up front ([`Node::inputs`] / [`Node::outputs`]);
 //! the dynamic per-block signal flows through [`Node::process`]. The voltage *between* nodes
@@ -114,11 +113,8 @@ pub trait Node {
     /// is where a node bakes any coefficient that depends on the sample period — a filter pole,
     /// an oscillator increment, an anti-alias kernel — so the expensive setup (an `exp`, a
     /// kernel design) is paid here, not on the hot path. Rate-free nodes use the default no-op.
-    ///
-    /// The companion to [`seed`](Self::seed): `seed` hands a node its randomness, `prepare`
-    /// hands it the clock. It exists because nodes own their state across compiles, so — unlike
-    /// the connection's cable filter, which `compile` builds directly — a stateful filter *node*
-    /// needs the rate delivered to it. Off the hot path.
+    /// Nodes own their state across compiles, so a stateful filter node needs the rate delivered
+    /// to it here. Off the hot path.
     fn prepare(&mut self, _rate: AnalogRate) {}
 
     /// The latency this node adds to the signal, in **analog-rate samples** — its filters' group
@@ -134,7 +130,7 @@ pub trait Node {
 
     /// Whether this is a **per-conductor** processor the compiler may replicate across the
     /// conductors of a balanced connection — one independent instance per leg, identical
-    /// coefficients (see `IMPLEMENTATION_PLAN.md`, Story 1.5 detour).
+    /// coefficients.
     ///
     /// A balanced line is two ordinary wires; an inline processor (a DC blocker, a gain) acts on
     /// each leg independently, and that per-leg *symmetry* is what makes common-mode cancel at the

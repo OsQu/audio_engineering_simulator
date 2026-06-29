@@ -12,11 +12,11 @@ use crate::signal::{AnalogRate, Lane};
 /// A balanced line is two ordinary wires, so an inline processor (a DC blocker, a gain) is just
 /// that processor applied to each leg independently — its own state, identical coefficients.
 /// `compile` infers a [per-conductor](Node::per_conductor) node's conductor count from the wiring
-/// (Story 1.5 detour) and, when it is >1, wraps it here: one lane per conductor (the original plus
+/// and, when it is >1, wraps it here: one lane per conductor (the original plus
 /// [`replicate`](Node::replicate)d copies), with the faces widened to that conductor count.
 /// Because both legs run the *identical* transform, whatever is common to them stays common and
 /// cancels at the receiver — common-mode rejection emerges, with no "balanced" variant of the
-/// node. (Per-leg *asymmetry* would be the finite-CMRR case, deferred.)
+/// node. (Per-leg *asymmetry* would be the finite-CMRR case, not modeled.)
 ///
 /// The inner node has one input and one output port (or none and one); the lift maps conductor
 /// `k` to lane `k`. Per-conductor nodes are analog (balanced is an analog concept), so the widened

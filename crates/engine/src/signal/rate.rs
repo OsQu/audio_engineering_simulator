@@ -5,8 +5,8 @@
 ///
 /// It is always a constructor parameter, never a constant. There is deliberately **no**
 /// global oversample factor and **no** global digital base rate — digital sample rates
-/// are per-converter and emerge at the AD (Story 1.6). Crossing any clock boundary is a
-/// resample; nothing here encodes a fixed analog↔digital ratio.
+/// are per-converter and emerge at the AD. Crossing any clock boundary is a resample;
+/// nothing here encodes a fixed analog↔digital ratio.
 ///
 /// Stored in hertz as `f64` (accumulator precision; time math derives from it).
 #[derive(Debug, Clone, Copy, PartialEq, PartialOrd)]

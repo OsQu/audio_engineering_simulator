@@ -49,8 +49,7 @@ pub fn divider_gain(z_out: Ohms, z_cable: Ohms, load: InputZ) -> f32 {
 /// For a single branch this collapses to exactly [`divider_gain`]. This is the **resistive**
 /// solve; each branch's treble rolloff (the cable's shunt-C one-pole) is built separately by
 /// [`Cable::lowpass`](super::Cable::lowpass), and under genuine fan-out its corner is the
-/// per-branch single-load approximation (documented there) — exact for the no-fan-out chains
-/// we run through Epic 2.
+/// per-branch single-load approximation (documented there) — exact for a no-fan-out chain.
 ///
 /// Allocates (compile-time only, never the hot path). Empty `branches` ⇒ empty result.
 ///

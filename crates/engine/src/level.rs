@@ -9,7 +9,7 @@
 //! - **dBFS** — full-scale digital level: [`sample_to_dbfs`] reads a normalized
 //!   [`SampleBuffer`](crate::SampleBuffer) value (±1.0 = full scale) as `20·log10(|sample|)`. The
 //!   volts↔dBFS *calibration* (how a real voltage maps to full scale) is owned by the AD converter
-//!   via its reference voltage (Story 1.6); this is the pure sample-domain reading.
+//!   via its reference voltage; this is the pure sample-domain reading.
 //!
 //! Inputs are *levels* (a magnitude/RMS voltage, expected ≥ 0). A level of 0 V converts
 //! to −∞ dB, as the math dictates. Computation is done in `f64` so round-trips stay tight.

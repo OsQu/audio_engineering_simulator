@@ -1,7 +1,7 @@
 //! Test-only signal generators and measurements.
 //!
 //! Not part of the public API — shared infrastructure for unit tests that need real audio
-//! signals rather than scalar asserts (filter magnitude response now; SNR in Story 1.4).
+//! signals rather than scalar asserts (e.g. filter magnitude response, signal-to-noise ratio).
 //! Gated behind `#[cfg(test)]`, so it's compiled only for tests and never ships.
 
 use crate::electrical::{Ohms, OutputZ};
@@ -108,9 +108,8 @@ pub fn tone_amplitude(samples: &[f32], freq_hz: f64, rate: AnalogRate) -> f32 {
 ///
 /// The engine's [`TestSource`](crate::TestSource) emits pure DC; this drives **AC** (optionally
 /// with a DC offset) through a real compiled patch — enough to test the analog chain on signals
-/// that move, without pulling the real event-driven oscillator forward from Story 1.7. With
-/// `offset = 0` it's a plain tone; with `amp = 0` a DC source; together, "DC riding on the AC"
-/// for the DC-blocker tests.
+/// that move, without involving the event-driven oscillator. With `offset = 0` it's a plain tone;
+/// with `amp = 0` a DC source; together, "DC riding on the AC" for the DC-blocker tests.
 ///
 /// Phase is held in `f64` and **persists across blocks**, so the tone is continuous from one
 /// `process` call to the next. The sample period is read off the output buffer (the rate
@@ -166,8 +165,8 @@ impl Node for SineSource {
 ///
 /// Emits `V+ = cm + signal/2`, `V− = cm − signal/2` on a two-conductor (balanced) output, so a
 /// test can inject a known common-mode voltage by hand and prove a [`BalancedReceiver`] rejects
-/// it (Story 1.5.1) — before the edge-injection seam that supplies pickup/hum exists (1.5.2). No
-/// inputs; one balanced output.
+/// it — independent of the edge-injection seam that supplies cable pickup/hum. No inputs; one
+/// balanced output.
 ///
 /// [`BalancedReceiver`]: crate::BalancedReceiver
 pub struct BalancedTestSource {

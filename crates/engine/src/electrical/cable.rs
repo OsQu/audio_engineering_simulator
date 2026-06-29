@@ -16,15 +16,14 @@ use crate::signal::{AnalogRate, VoltageBuffer, Volts};
 ///   rolloff ([`Cable::lowpass`]);
 /// - the optional **pickup** ([`with_pickup`](Self::with_pickup)) is broadband interference (EMI)
 ///   coupling *onto* the wire as a noise voltage. It couples **common-mode** — equally onto every
-///   conductor — so on a balanced pair it cancels at the receiver difference (Story 1.5.2). The
-///   schedule gives the edge its own seeded stream and adds the *same* per-sample draw to each
-///   conductor.
+///   conductor — so on a balanced pair it cancels at the receiver difference. The schedule gives
+///   the edge its own seeded stream and adds the *same* per-sample draw to each conductor.
 /// - the optional **hum** ([`with_hum`](Self::with_hum)) is a 50/60 Hz ground-loop tone, also
 ///   **common-mode** — the same sine on every conductor — so balanced rejects it and unbalanced
-///   carries it (Story 1.5.5). Its phase is seeded from the edge stream for determinism.
+///   carries it. Its phase is seeded from the edge stream for determinism.
 ///
 /// `r` and `c` describe the cable's **differential** path; on a balanced edge the schedule
-/// applies the same divider gain and an independent one-pole to each conductor (Story 1.5).
+/// applies the same divider gain and an independent one-pole to each conductor.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Cable {
     r: Ohms,
@@ -59,10 +58,9 @@ impl Cable {
     ///
     /// This is a **manual** injection: you are asserting a ground loop exists on this cable. Whether
     /// a loop *actually* exists is a property of the patch's grounding topology (two mains-earthed
-    /// devices bonded by a shield), and is intended to become **emergent** from a compile-time
-    /// ground-cycle-detection pass — a ground lift or a floating device would then remove the hum on
-    /// its own. The amplitude stays phenomenological either way. See `IMPLEMENTATION_PLAN.md`, the
-    /// Epic 5 ground-topology decision.
+    /// devices bonded by a shield), which is not yet modeled — when it is, the hum's *appearance*
+    /// would emerge from a compile-time ground-cycle pass (a ground lift or floating device removing
+    /// it on its own), while the amplitude stays phenomenological.
     #[must_use]
     pub fn with_hum(mut self, freq_hz: f64, amplitude: Volts) -> Self {
         self.hum = Some((freq_hz, amplitude));

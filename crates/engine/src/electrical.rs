@@ -8,13 +8,12 @@
 //!
 //! Impedance is **resistive (real)** here; the only reactive element, the cable's shunt
 //! capacitance, is modeled as a separate one-pole filter rather than a complex `Ohms`.
-//! See the Story 1.2 design notes for why higher-order/reactive behavior is deferred and
-//! how the connection seam is kept open for it.
+//! Higher-order/reactive behavior is not modeled; the connection seam is kept open for it.
 //!
 //! A face is **unbalanced** (one conductor) or **balanced** (two conductors, V+/V−); see
 //! [`InputZ::balanced`] / [`OutputZ::balanced`]. For a balanced face the stored impedance is the
 //! **differential** impedance, and the schedule applies the resulting divider gain to each
-//! conductor of the edge (Story 1.5). The impedances themselves are still scalar [`Ohms`].
+//! conductor of the edge. The impedances themselves are still scalar [`Ohms`].
 
 mod cable;
 mod divider;

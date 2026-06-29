@@ -2,9 +2,9 @@
 
 /// The bit depth (word length) of a digital-audio stream, e.g. 16 or 24 bits.
 ///
-/// It fixes the quantization grid — step `Δ = FS / 2^(bits−1)` for a signed PCM word
-/// (Story 1.6). The samples themselves stay linear, normalized `f32`; the depth records the
-/// resolution they were quantized at, so a downstream consumer knows the stream's noise floor.
+/// It fixes the quantization grid — step `Δ = FS / 2^(bits−1)` for a signed PCM word.
+/// The samples themselves stay linear, normalized `f32`; the depth records the resolution they
+/// were quantized at, so a downstream consumer knows the stream's noise floor.
 #[repr(transparent)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub struct BitDepth(u32);
@@ -34,7 +34,7 @@ impl BitDepth {
     ///
     /// A signed `bits`-bit word spans `2^bits` codes over `[−FS, +FS)`, so adjacent codes are
     /// `2·FS / 2^bits = FS / 2^(bits−1)` apart. Computed in `f64`; the AD uses it to quantize
-    /// and the tests use it as the noise-floor oracle (RMS `Δ/2` with TPDF dither, Story 1.6).
+    /// and the tests use it as the noise-floor oracle (RMS `Δ/2` with TPDF dither).
     pub fn step(self, full_scale: f64) -> f64 {
         full_scale / 2.0_f64.powi(self.0 as i32 - 1)
     }

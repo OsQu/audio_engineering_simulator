@@ -13,9 +13,9 @@ use crate::signal::VoltageBuffer;
 /// exists to prove: a scene reload is a pointer swap, never a stall.
 ///
 /// A [`Schedule`] is stateful (filter and node state), so it can't be shared across threads
-/// behind an atomic — the swap is an ownership *handoff*, not shared-pointer publication.
-/// Exercised single-threaded here; the lock-free cross-thread channel that carries a new
-/// schedule from a builder thread to the audio thread arrives with the real worklet in Epic 3.
+/// behind an atomic — the swap is an ownership *handoff*, not shared-pointer publication. A
+/// lock-free cross-thread channel handing a freshly built schedule to the audio thread is not yet
+/// built; the push/install interface is what that would swap its internals beneath.
 pub struct ScheduleSlot {
     current: Box<Schedule>,
 }

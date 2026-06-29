@@ -11,10 +11,9 @@
 //!
 //! where `σ` is the standard deviation of each independent Gaussian sample (and the wideband
 //! RMS on the wire). We store the **density**, not `σ`, on purpose: the density is
-//! rate-independent *in band*. When the AD converter band-limits to an audio bandwidth `B`
-//! (Story 1.6), the in-band noise becomes `D·√B`, and the oversampling SNR gain falls out of
-//! the physics with no remodelling — there is no throwaway parameter to migrate later
-//! (PROJECT_PLAN §2).
+//! rate-independent *in band*. When the AD converter band-limits to an audio bandwidth `B`, the
+//! in-band noise becomes `D·√B`, and the oversampling SNR gain falls out of the physics with no
+//! remodelling — there is no throwaway parameter to migrate later.
 
 use crate::signal::AnalogRate;
 

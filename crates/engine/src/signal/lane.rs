@@ -5,7 +5,7 @@ use super::{EventBuffer, SampleBuffer, VoltageBuffer};
 /// Which carrier a port — and the lane buffering it — speaks.
 ///
 /// An **open set**: analog voltage, digital audio, and MIDI/control events exist now; networked
-/// audio (Epic 5) extends it. A port declares its domain; an edge may only connect two ports of the
+/// audio would extend it. A port declares its domain; an edge may only connect two ports of the
 /// **same** domain (`compile` rejects a cross-domain edge). Converters bridge domains *inside* a
 /// node, never on an edge.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -15,7 +15,7 @@ pub enum Domain {
     /// Digital audio — linear normalized samples at a converter's
     /// [`SampleRate`](crate::SampleRate) and [`ClockDomainId`](crate::ClockDomainId).
     DigitalAudio,
-    /// MIDI/control events — sparse timestamped messages, not a dense buffer (Story 1.7).
+    /// MIDI/control events — sparse timestamped messages, not a dense buffer.
     Events,
 }
 

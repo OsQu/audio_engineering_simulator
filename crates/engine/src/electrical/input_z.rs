@@ -4,10 +4,10 @@ use super::Ohms;
 
 /// The electrical face of a device input: its input impedance, `Zin`.
 ///
-/// Named `InputZ`, **not** `Port`: `Port` is reserved for the Story 1.3 graph connection
-/// point (typed, directional, carrying a signal), which will *contain* an `InputZ` on its
-/// input side and a [`Thevenin`](super::Thevenin) on its output side. Keeping the electrical
-/// description separate from the graph wiring keeps the layering clean.
+/// Named `InputZ`, **not** `Port`: a [`Port`](crate::InputPort) is the graph connection point
+/// (typed, directional, carrying a signal) and *contains* an `InputZ` on its input side and a
+/// [`Thevenin`](super::Thevenin) on its output side. Keeping the electrical description separate
+/// from the graph wiring keeps the layering clean.
 ///
 /// `Zin` sets how hard a load the input presents:
 /// - high `Zin` (≫ source `Zout`) → **bridging**: the input barely loads the source,
@@ -21,7 +21,7 @@ use super::Ohms;
 /// pair), and the divider solve treats it as such — each conductor of an edge is scaled by the
 /// differential divider gain. Unbalanced is the degenerate one-conductor case (the cold leg is
 /// ground), so a balanced→unbalanced mismatch isn't special-cased: it's just two ports with
-/// different conductor counts (rejected at compile until adapters land — see Story 1.5 notes).
+/// different conductor counts (rejected at compile; an explicit adapter device is not yet modeled).
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct InputZ {
     z_in: Ohms,

@@ -55,7 +55,7 @@ impl AudioFormat {
 /// A digital-audio port's face: its stream format.
 ///
 /// A thin wrapper over [`AudioFormat`] now; it is where a port's **clock role** (internal /
-/// recovered / external word clock) will live when the emergent clock model lands (Epic 5).
+/// recovered / external word clock) would live once multiple clock domains are modeled.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct DigitalFace {
     format: AudioFormat,

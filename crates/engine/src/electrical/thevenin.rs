@@ -8,13 +8,13 @@ use crate::signal::Volts;
 ///
 /// `v_src` is the **open-circuit** source voltage — what the output would produce into an
 /// infinite load. The voltage a real receiver sees is lower, set by the voltage divider the
-/// source, cable, and load form (the `divider_gain` solve, Story 1.2.2). Holding a scalar
-/// `v_src` here is a setup/test convenience; in the running engine the source voltage is a
+/// source, cable, and load form (the [`divider_gain`](super::divider_gain) solve). Holding a
+/// scalar `v_src` here is a setup/test convenience; in the running engine the source voltage is a
 /// per-sample signal while `z_out` stays the fixed electrical property.
 ///
 /// One conductor's worth of source. A balanced (V+/V−) output is two such legs driven
 /// differentially; its conductor count lives on the [`OutputZ`](super::OutputZ) face, and the
-/// schedule carries each conductor as its own buffer (Story 1.5).
+/// schedule carries each conductor as its own buffer.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Thevenin {
     /// Open-circuit (unloaded) source voltage.

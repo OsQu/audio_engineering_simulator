@@ -7,11 +7,10 @@ use std::ops::Add;
 /// A distinct newtype (not a bare `f32`) so impedances can't be silently mixed with
 /// voltages or dimensionless gains. Stored as `f32` per the engine's scalar policy.
 ///
-/// Impedance is **resistive only** at this stage — a single real number. Reactive
-/// (frequency-dependent) impedance is deliberately *not* modeled yet: it's the door to
-/// emergent cross-device resonance (see Story 1.2 design notes), opened later if a
-/// reactive device earns it. The cable's one reactive element (its shunt capacitance) is
-/// handled separately as a one-pole filter, not as a complex `Ohms`.
+/// Impedance is **resistive only** — a single real number. Reactive (frequency-dependent)
+/// impedance is deliberately *not* modeled: it's the door to emergent cross-device resonance,
+/// opened later if a reactive device earns it. The cable's one reactive element (its shunt
+/// capacitance) is handled separately as a one-pole filter, not as a complex `Ohms`.
 ///
 /// Arithmetic models the network: impedances in series **add** (`+`); impedances in
 /// parallel combine via [`Ohms::parallel`] (fan-out of loads).

@@ -27,8 +27,8 @@ const DEFAULT_STOPBAND_DB: f64 = 96.0;
 ///    +4 dBu. Interpolation is linear, so this scaling commutes with stage 1 — it's done in place on
 ///    the analog output after interpolation.
 ///
-/// One digital channel in, single-ended analog out (Story 1.6 keeps converters mono; a balanced
-/// line driver is a separate node). There is no quantization or dither here — the DA reads samples
+/// One digital channel in, single-ended analog out (converters are mono; a balanced line driver is
+/// a separate node). There is no quantization or dither here — the DA reads samples
 /// that are already on the bit grid and produces continuous volts.
 pub struct DaConverter {
     rate: SampleRate,

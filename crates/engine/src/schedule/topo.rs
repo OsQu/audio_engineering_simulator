@@ -5,7 +5,7 @@
 /// `deps` is a list of `(from, to)` edges meaning "`from` must be processed before `to`"
 /// (signal flows `from → to`). Returns one valid topological order, or `None` if the graph
 /// has a cycle — which, because the engine solves connections locally with no feedback
-/// paths, is always a wiring mistake for `compile` (Task 1.3.5) to reject.
+/// paths, is always a wiring mistake for `compile` to reject.
 ///
 /// Parallel edges between the same pair of nodes are fine: each is counted as its own
 /// dependency and cancelled once, so the in-degree bookkeeping stays consistent. A self-loop

@@ -13,8 +13,8 @@ const PHANTOM_VOLTS: f32 = 48.0;
 ///
 /// Phantom rides the balanced pair as **common-mode DC**: the same +48 V on both conductors,
 /// supplied in reality by the preamp *upstream*. Against the pull-based DAG that direction would
-/// run backwards, so (per the Story 1.5 design notes — an informed approximation, §5.3) the mic
-/// emits the phantom directly when powered, with its audio differentially:
+/// run backwards, so (an informed approximation) the mic emits the phantom directly when powered,
+/// with its audio differentially:
 ///
 /// ```text
 ///   V+ = 48 + s/2,  V− = 48 − s/2    ⇒    common-mode = 48 V,  differential = s
@@ -24,10 +24,9 @@ const PHANTOM_VOLTS: f32 = 48.0;
 /// difference** (which returns just the audio `s`) — exactly how a real balanced input separates
 /// phantom from signal, emerging from the same common-mode rejection as hum and pickup. Unpowered,
 /// the mic is dead: it draws no phantom and produces nothing. The current draw and any voltage sag
-/// are deferred (§5.3). No inputs; one balanced output.
+/// are not modeled. No inputs; one balanced output.
 pub struct CondenserMic {
-    /// The differential audio level the capsule produces (a constant test level for now; the
-    /// event-driven oscillator arrives in Story 1.7).
+    /// The differential audio level the capsule produces (a constant test level).
     signal: f32,
     /// Whether +48 V phantom is supplied — the mic is silent without it.
     powered: bool,

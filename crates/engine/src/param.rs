@@ -14,9 +14,9 @@
 //! target — lives here, once, so no node reimplements it (which would make smoothing a per-node
 //! detail, the very thing we avoid).
 //!
-//! Like the event queue and the schedule swap, the [`ParamQueue`] is **single-threaded in shape
-//! but exercised single-threaded** now; the lock-free cross-thread form arrives with the worklet
-//! in Epic 3.
+//! Like the event queue and the schedule swap, the [`ParamQueue`] is shaped for single-producer /
+//! single-consumer hand-off (host thread → audio thread); a fully lock-free shared-memory transport
+//! is not yet built.
 
 /// A node-local parameter identifier: its index in the node's
 /// [`params()`](crate::Node::params) declaration list. A node names its params with `const`s

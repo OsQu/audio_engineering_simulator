@@ -8,8 +8,8 @@ use super::{AnalogRate, Volts};
 /// path); element access is offered as [`Volts`] for type safety at the edges. Linear
 /// values only — dB is a measurement unit, never a storage format.
 ///
-/// Single-conductor for now; balanced (V+/V−) lines arrive in Story 1.5. All allocation
-/// happens at construction — the eventual processing path mutates an existing buffer via
+/// Single-conductor: a balanced (V+/V−) line is two of these, one buffer per leg. All
+/// allocation happens at construction — the processing path mutates an existing buffer via
 /// [`VoltageBuffer::as_mut_slice`] and never allocates.
 #[derive(Debug, Clone, PartialEq)]
 pub struct VoltageBuffer {

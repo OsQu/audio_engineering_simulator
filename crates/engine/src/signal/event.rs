@@ -4,9 +4,9 @@
 /// to a sample — there is no per-sample value, only occasional messages.
 ///
 /// MIDI-native values ride as the integers they are on the wire (note number, 0–127 velocity); a
-/// consuming node maps them to whatever it needs (a frequency, a level). Story 1.7 carries just
-/// the note lifecycle; continuous controllers (CC) — which would drive a *control param*, blurring
-/// the two input lanes — are deferred (see `IMPLEMENTATION_PLAN.md`, Story 1.7 design notes).
+/// consuming node maps them to whatever it needs (a frequency, a level). Only the note lifecycle is
+/// carried; continuous controllers (CC) — which would drive a *control param*, blurring the two
+/// input lanes — are deliberately not modeled.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EventMessage {
     /// Start a note: MIDI note number and 0–127 velocity.

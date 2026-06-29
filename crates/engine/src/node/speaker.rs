@@ -12,11 +12,10 @@ use crate::signal::Lane;
 /// physics, no V→SPL, no air or room — PROJECT_PLAN §5.5): the speaker stays in the voltage
 /// domain, applying a single **sensitivity** gain to the drive voltage it's fed, and its output
 /// is the voltage the harness *taps and captures* as "what we hear" (the implicit
-/// analog→digital capture lives off-engine, in the render harness — see `IMPLEMENTATION_PLAN.md`
-/// Story 2.1). The output port is therefore a benign terminus fiction: nothing in the graph
-/// loads it, so its `OutputZ` is nominal.
+/// analog→digital capture lives off-engine, in the render harness). The output port is therefore a
+/// benign terminus fiction: nothing in the graph loads it, so its `OutputZ` is nominal.
 ///
-/// Flat this story — a frequency-response curve is cosmetic and deliberately deferred (it would
+/// Flat response — a frequency-response curve is cosmetic and deliberately not modeled (it would
 /// reuse [`OnePole`](crate::OnePole) or, later, a biquad). A speaker's real low-impedance load
 /// and power transfer are out of scope (we model neither current draw nor amplifier power), so it
 /// presents a high, **bridging** `InputZ` and does not load its source.

@@ -42,7 +42,7 @@ impl EqBand {
 /// coefficients is its own problem.) The three filters run as a cascade, so their responses
 /// multiply — an all-0-dB EQ is exactly transparent.
 ///
-/// One digital channel in, one out (Story 2.2 keeps DSP mono, matching the converters).
+/// One digital channel in, one out — DSP is mono, matching the converters.
 pub struct ThreeBandEq {
     rate: SampleRate,
     low: EqBand,

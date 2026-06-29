@@ -11,7 +11,7 @@
 //! off the hot path); [`Decimator::process`] then only multiplies and accumulates. The number of
 //! taps is the demonstrable **"weak filter" knob**: a short kernel widens the transition band and
 //! lifts the stopband floor, so content above the decimated Nyquist leaks through and folds back
-//! (the audible aliasing of Story 1.6.5).
+//! as audible aliasing.
 
 use std::f64::consts::PI;
 
@@ -301,7 +301,7 @@ mod tests {
     use crate::test_util::{sine, tone_amplitude};
     use approx::assert_relative_eq;
 
-    /// 8× decimation: 384 kHz → 48 kHz, the Story 1.6 default.
+    /// 8× decimation: 384 kHz → 48 kHz.
     const M: usize = 8;
     fn hi() -> AnalogRate {
         AnalogRate::new(384_000.0)
