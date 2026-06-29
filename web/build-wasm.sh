@@ -1,5 +1,5 @@
 #!/usr/bin/env sh
-# Build the worklet's wasm asset for the Vite harness (Story 3.2, Phase B). Run via `npm run wasm`.
+# Build the worklet's wasm asset for the Vite harness. Run via `npm run wasm`.
 #
 # Produces, into web/public/ (Vite static assets, served from the web root and NOT processed by the
 # bundler):

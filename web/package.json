@@ -3,7 +3,7 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
-  "description": "Audio Engineer Simulator — dev/test web harness (Story 3.2 Phase B; reusable infra for Epic 4)",
+  "description": "Audio Engineer Simulator — dev/test web harness (reusable infra for the real UI)",
   "engines": {
     "node": ">=24"
   },

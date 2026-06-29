@@ -1,18 +1,18 @@
-// Story 4.1, Task 4.1.6 — the authoritative *scene* the UI owns, and its durable save format.
+// The authoritative *scene* the UI owns, and its durable save format.
 //
-// A scene is the whole studio: UI data (placement/spaces — Story 4.3) plus the runnable `Patch` the
-// engine builds from. This is the layer the architecture put in TS, not Rust (see IMPLEMENTATION_PLAN
-// §4.1): the save file is **versioned JSON** owned here, with load-time migration; the engine only
-// ever receives the current `patch` projection, which it deserializes and builds.
+// A scene is the whole studio: UI data (placement/spaces, not yet built) plus the runnable `Patch`
+// the engine builds from. This is the layer the architecture put in TS, not Rust: the save file is
+// **versioned JSON** owned here, with load-time migration; the engine only ever receives the current
+// `patch` projection, which it deserializes and builds.
 
 import type { Patch } from "./scene";
 
 /** Current save-format version. Bump when the saved shape changes, and add a migration step below. */
 export const SCHEMA_VERSION = 1;
 
-/** UI-only scene data — never sent to the engine. Reserved now; populated in Story 4.3. */
+/** UI-only scene data — never sent to the engine. Reserved for the spatial world (not yet built). */
 export interface SceneUi {
-  /** Per-device placement (rack/space/position). Lands with the spatial world (Story 4.3). */
+  /** Per-device placement (rack/space/position). Lands with the spatial world (not yet built). */
   placements?: Record<string, { x: number; y: number; space?: string }>;
 }
 

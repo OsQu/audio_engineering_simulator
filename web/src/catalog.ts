@@ -1,6 +1,6 @@
 // Hand-written TS mirror of the Rust device catalog (crates/wasm-bindings/src/catalog.rs).
 //
-// Story 4.1, Task 4.1.2. The catalog is the registry of device *types* the UI can place. The worklet
+// The catalog is the registry of device *types* the UI can place. The worklet
 // exposes it via the wasm `catalog()` export (a structured value, serde-wasm-bindgen); these types
 // are what that value deserializes to. Numeric param fields and port domains are engine truth
 // (derived from the node on the Rust side); the labels/units/kinds are authored. Field names are

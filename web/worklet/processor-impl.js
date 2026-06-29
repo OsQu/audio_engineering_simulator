@@ -1,13 +1,13 @@
 // Appended after the wasm-bindgen `--target no-modules` glue (which defines the global `wasm_bindgen`)
 // by build-wasm.sh — the served file is public/processor.js, not this one. Do not load this directly.
 //
-// Story 3.2 → 4.1: the AudioWorklet that drains `SceneEngine` one quantum at a time. The wasm bytes
+// The AudioWorklet that drains `SceneEngine` one quantum at a time. The wasm bytes
 // AND the runnable patch arrive via `processorOptions` (AudioWorkletGlobalScope has no reliable
 // `fetch`); we instantiate the module and build `SceneEngine(patch)` synchronously in the constructor,
 // then read its captured host block zero-copy via one Float32Array view over wasm linear memory.
 // Control is generic, by device id; a `loadPatch` message hot-swaps the running scene.
 
-// Story 3.4 — post a real-time-health snapshot ~4×/second (≈ 96 of the 375 quanta/s at 128 frames /
+// Post a real-time-health snapshot ~4×/second (≈ 96 of the 375 quanta/s at 128 frames /
 // 48 kHz). Cheap and responsive; far below any rate where the postMessage itself would matter.
 const HEALTH_REPORT_EVERY = 96;
 
@@ -39,7 +39,7 @@ class SceneProcessor extends AudioWorkletProcessor {
       this.view = new Float32Array(this.memory.buffer, this.engine.out_ptr(), this.len);
       this.ready = true;
 
-      // Story 3.4 — real-time health. In the single-threaded in-worklet model there is no render-ahead
+      // Real-time health. In the single-threaded in-worklet model there is no render-ahead
       // ring to under/overflow; a glitch is instead a quantum whose compute exceeds its slot. The budget
       // is one quantum of audio (len host frames at the global `sampleRate`, ≈ 2.67 ms). performance.now()
       // is the only sub-quantum clock here; if it's missing we simply don't time (counters stay 0).
@@ -49,7 +49,7 @@ class SceneProcessor extends AudioWorkletProcessor {
       this.maxMs = 0; // worst single-quantum render time seen (all-time)
       this.quanta = 0; // quanta rendered, for the report throttle
 
-      // Live control (Story 4.1). The main thread posts generic, device-addressed messages; we forward
+      // Live control. The main thread posts generic, device-addressed messages; we forward
       // them onto the engine, which only enqueues (latest-wins target / timestamped event), applied by
       // the next render_quantum's process_io drain — so this is off the hot path. A `loadPatch` builds a
       // new scene off-block (the compile happens here, between quanta) and queues it; render_quantum

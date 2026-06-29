@@ -1,4 +1,4 @@
-// Story 3.2/3.3 → 4.1. Brings up the engine in an AudioWorklet from a *scene*: fetch the wasm bytes
+// Brings up the engine in an AudioWorklet from a *scene*: fetch the wasm bytes
 // (no reliable fetch in the worklet) and the runnable patch, hand both to the processor via
 // `processorOptions`; it instantiates the module and builds `SceneEngine(patch)` in its constructor.
 // Control is **generic, by device id** — sliders push param targets and the keyboard/MIDI push notes,
@@ -17,7 +17,7 @@ const setStatus = (m: string): void => {
 };
 
 // The instrument the on-screen sliders and the keyboard address. (One instrument in the canonical
-// scene; descriptor-driven multi-device panels are Story 4.2.)
+// scene; descriptor-driven multi-device panels aren't built yet.)
 const SYNTH = "synth";
 // SynthVoice param ids (its `params()` order): LEVEL = 0, ATTACK_MS = 1 (the two sliders we expose).
 const LEVEL = 0;
@@ -26,8 +26,8 @@ const ATTACK = 1;
 // The page's authoritative scene: a saved one if present, else the default studio.
 let scene: Scene = loadScene() ?? defaultScene();
 
-// Story 3.4 — the worklet's ready handshake carries the engine's fixed signal-path group delay, so the
-// page can compose end-to-end latency from it + the browser's measured base/output latency.
+// The worklet's ready handshake carries the engine's fixed signal-path group delay, so the page can
+// compose end-to-end latency from it + the browser's measured base/output latency.
 type ReadyMessage = { type: "ready"; len: number; signalPathLatencyMs: number };
 
 function latencySummary(audio: AudioContext, ready: ReadyMessage): string {
@@ -44,8 +44,8 @@ function latencySummary(audio: AudioContext, ready: ReadyMessage): string {
   );
 }
 
-// Story 3.4 — the real-time-health snapshot the worklet posts on a throttle (compute-budget overruns +
-// worst render time, and the engine's input-flood queue drops). All running totals for the session.
+// The real-time-health snapshot the worklet posts on a throttle (compute-budget overruns + worst
+// render time, and the engine's input-flood queue drops). All running totals for the session.
 type HealthMessage = {
   type: "health";
   quanta: number;
@@ -82,7 +82,7 @@ startBtn.addEventListener("click", async () => {
     // Without this pin every quantum is the wrong rate ⇒ wrong pitch + drift. latencyHint
     // "interactive" = the smallest output buffer (lowest latency); the single-threaded in-worklet
     // engine can't grow its own render-ahead buffer, so this browser buffer is the only jitter
-    // cushion. The 3.1 spike showed ~46× real-time headroom, so overruns are implausible here.
+    // cushion. Measured headroom is ~46× real-time, so overruns are implausible here.
     const audio = new AudioContext({ sampleRate: 48000, latencyHint: "interactive" });
     setStatus(`AudioContext @ ${audio.sampleRate} Hz — loading worklet…`);
 
@@ -263,7 +263,7 @@ function wireKeyboard(send: (msg: ControlMessage) => void): void {
   });
 }
 
-// --- Web MIDI (Story 3.3.4): the same note path, fed by a hardware controller. --------------------
+// --- Web MIDI: the same note path, fed by a hardware controller. ----------------------------------
 
 /** Request Web MIDI access and route note-on/off from every input through the same `send` path. */
 function wireMidi(send: (msg: ControlMessage) => void): void {

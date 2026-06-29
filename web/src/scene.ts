@@ -1,6 +1,6 @@
 // Hand-written TS mirror of the Rust patch IR (crates/wasm-bindings/src/scene.rs).
 //
-// Story 4.1. A *scene* (the whole studio, owned + persisted by this UI as versioned JSON) projects
+// A *scene* (the whole studio, owned + persisted by this UI as versioned JSON) projects
 // down to a runnable `Patch` — the engine-facing subset: devices, their param values, the
 // connections, and the output tap. The UI posts a `Patch` to the worklet, where Rust deserializes it
 // (serde-wasm-bindgen) to build the graph. These interfaces are the wire contract; the Rust structs
