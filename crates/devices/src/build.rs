@@ -1,4 +1,4 @@
-//! Assemble a runnable [`Patch`] into a compiled engine [`Schedule`] (Story 4.1, Task 4.1.4).
+//! Assemble a runnable [`Patch`] into a compiled engine [`Schedule`].
 //!
 //! This is where the per-device chassis seam ([`instantiate`]) meets the whole scene. [`build_patch`]:
 //! 1. **instantiates** each device into a fresh `Graph` (1..N nodes + internal edges), keying its
@@ -7,14 +7,14 @@
 //!    to concrete node-port edges, and likewise the output tap;
 //! 3. **compiles** (fixed seed → reproducible); and
 //! 4. **resolves** the generic control surface: `(device, param id) → ParamHandle` and
-//!    `device → EventInputId`, so the host can drive params/notes by device id (Task 4.1.5).
+//!    `device → EventInputId`, so the host can drive params/notes by device id.
 //!
 //! Everything fallible lives here, off the audio thread: an unknown type, a dangling device reference,
 //! a port out of range, or an engine [`CompileError`] (domain mismatch, cycle, …) becomes a
 //! [`BuildError`] — never a panic. The caller (the worklet) turns that into a legible message.
 //!
 //! Scene **param *values*** (`ParamSetting`s) are not applied here — `build_patch` resolves the
-//! *handles*; the caller pushes the saved values onto its param queue (Task 4.1.5), so they de-zipper
+//! *handles*; the caller pushes the saved values onto its param queue, so they de-zipper
 //! in like any control change.
 
 use std::collections::BTreeMap;

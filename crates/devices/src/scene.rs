@@ -1,4 +1,4 @@
-//! The runnable **patch** — the engine-facing projection of a UI scene (Story 4.1).
+//! The runnable **patch** — the engine-facing projection of a UI scene.
 //!
 //! A *scene* is the whole studio the user builds: devices, their settings, how they're wired, **and**
 //! UI-only data (where each device sits, which rack/space it belongs to). That full scene is owned and
@@ -8,8 +8,8 @@
 //! What the engine *does* see is the [`Patch`]: the **runnable projection** — just the devices, their
 //! param values, the connections, and the output tap. The UI produces it (after migrating an old save)
 //! and posts it to the worklet, where `wasm-bindings` deserializes it (`serde-wasm-bindgen`, the
-//! `JsValue` bridge that stays in the glue crate) into the structs below, which later Tasks turn into
-//! a `Graph` and `compile`.
+//! `JsValue` bridge that stays in the glue crate) into the structs below, which the scene builder
+//! turns into a `Graph` and `compile`.
 //!
 //! **Ingress is deserialize-only and total.** Parsing a patch is the one fallible step on the way in;
 //! it returns a `Result` so a malformed patch surfaces a legible error instead of panicking on the
@@ -25,7 +25,7 @@ use serde::{Deserialize, Serialize};
 /// A runnable patch: the devices, the connections between them, and the output tap to render.
 ///
 /// This is the engine-facing projection of a scene — no placement, no spaces, no version. Build a
-/// `Graph` from it (Task 4.1.4) and `compile`.
+/// `Graph` from it and `compile`.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Patch {
@@ -39,13 +39,13 @@ pub struct Patch {
 
 /// One placed device: a catalog **type** at a stable instance **id**, with any non-default param
 /// values to apply. The id is UI-assigned and is what [`Connection`]s and the output [`PortRef`]
-/// address; it maps (Task 4.1.3) to the one-or-many engine nodes the device expands into.
+/// address; it maps to the one-or-many engine nodes the device expands into.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DeviceInstance {
     /// Stable instance id (UI-assigned), referenced by connections and the output tap.
     pub id: String,
-    /// Catalog type id — selects the descriptor + builder (Task 4.1.2).
+    /// Catalog type id — selects the descriptor + builder.
     pub type_id: String,
     /// Param values to apply after build. Omitted ⇒ the device keeps its construction defaults.
     #[serde(default)]
@@ -79,7 +79,7 @@ pub struct Connection {
 
 /// A reference to one **device-level** port: a device instance id plus the port index on that
 /// device's exposed face. For a single-node device this is the node's own port; for a multi-node
-/// device it maps (Task 4.1.3) to a port on one of its internal nodes.
+/// device it maps to a port on one of its internal nodes.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PortRef {
@@ -90,7 +90,7 @@ pub struct PortRef {
 }
 
 /// A cable's electrical spec: series resistance and shunt capacitance, in SI units. Mapped to the
-/// engine's `Cable` at build (Task 4.1.4); the loading divider and treble rolloff emerge from it.
+/// engine's `Cable` at build; the loading divider and treble rolloff emerge from it.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CableSpec {

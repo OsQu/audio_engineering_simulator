@@ -5,7 +5,7 @@
 //! Stage" rails at 10 V is a product decision, not a law of physics. This crate is that decision: the
 //! `catalog` of named device *types* (each a builder that constructs engine nodes + a UI
 //! [`DeviceDescriptor`]), and the `scene` IR — the serializable runnable [`Patch`] the UI builds,
-//! saves, and (Task 4.1.4) is assembled back into an engine graph.
+//! saves, and assembles back into an engine graph.
 //!
 //! It sits **on** the engine and is consumed by both `wasm-bindings` (the browser) and the native
 //! `harness` (render scenarios), so none of it is JS-specific. serde lives here (the IR + descriptors

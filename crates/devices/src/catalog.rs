@@ -1,4 +1,4 @@
-//! The device catalog (Story 4.1): the registry of device *types* the UI can place.
+//! The device catalog: the registry of device *types* the UI can place.
 //!
 //! The catalog is **one table** — [`CATALOG`] — with one self-contained [`CatalogEntry`] per device
 //! type. Each entry bundles everything that defines a device in a single place (the "easy to add gear"
@@ -6,23 +6,22 @@
 //! the **internal edges** wiring them, and the **UI metadata** for its panel. Adding a device is one
 //! entry here.
 //!
-//! **One chassis → one-or-many nodes (the chassis-group seam, Task 4.1.3).** A device expands into 1..N
+//! **One chassis → one-or-many nodes (the chassis-group seam).** A device expands into 1..N
 //! engine nodes wired by internal edges; a physical multi-I/O box (a preamp + its converter, a channel
 //! strip) is several nodes behind one logical device. The device's **exposed face** is derived by
 //! convention: an input/output port is exposed when **no internal edge consumes it** (open ports, in
 //! node order); all node params are exposed, concatenated in node order. [`instantiate`] expands an
 //! entry into a `Graph` and returns a [`BuiltDevice`] — the map from device-level ports/params to
-//! concrete `(NodeId, …)` the scene builder (Task 4.1.4) uses to remap connections and resolve handles.
+//! concrete `(NodeId, …)` `build_patch` uses to remap connections and resolve handles.
 //! A single-node device is the trivial case (no internal edges; the one node's whole face is exposed).
 //!
-//! **Routing seam (extension points, deferred to Epic 5.1).** [`instantiate`] → [`BuiltDevice`] is the
-//! stable boundary: callers never see *how* a device built itself. Static [`InternalEdge`] data covers
-//! fixed topology (now). *Build-time-parameterized* topology (an N-channel mixer, an interface with N
-//! preamps) will add an imperative-builder variant of [`CatalogEntry`] + an optional structural-config
-//! field on the scene `DeviceInstance` — additive behind `instantiate`. *Runtime-switchable* routing
-//! (bypass, mid/side, a routing matrix) is **not** a topology change — it lives inside a node behind a
-//! control param (or is user-repatching → a graph edit + recompile). First needed with the deeper
-//! mixer / patchbay in Epic 5.1.
+//! **Routing seam (extension points, not yet built).** [`instantiate`] → [`BuiltDevice`] is the stable
+//! boundary: callers never see *how* a device built itself, so richer topologies stay additive behind
+//! it. Static [`InternalEdge`] data covers fixed topology (what exists). *Build-time-parameterized*
+//! topology (an N-channel mixer, an interface with N preamps) needs an imperative-builder variant of
+//! [`CatalogEntry`] + an optional structural-config field on the scene `DeviceInstance`.
+//! *Runtime-switchable* routing (bypass, mid/side, a routing matrix) is **not** a topology change — it
+//! lives inside a node behind a control param (or is user-repatching → a graph edit + recompile).
 //!
 //! **The descriptor is derived where it can be.** A param's id/range/default and a port's domain are
 //! *engine truth*, so [`descriptors`] reads them off freshly built nodes — they cannot drift from the
@@ -30,8 +29,8 @@
 //! mic-vs-line *kinds*) are hand-authored in the entry, positionally aligned to the exposed face; a
 //! test pins that alignment.
 //!
-//! **Construction config is fixed per type** (settled at planning): builders bake realistic electrical
-//! values; only the nodes' smoothed `params()` are user-facing. Field names are camelCase on the JS side.
+//! **Construction config is fixed per type:** builders bake realistic electrical values; only the
+//! nodes' smoothed `params()` are user-facing. Field names are camelCase on the JS side.
 
 use engine::{
     AdConverter, BitDepth, DaConverter, Domain, EqBand, GainStage, Graph, InputZ, Node, NodeId,
@@ -122,7 +121,7 @@ pub enum PortDomain {
     Events,
 }
 
-/// Connector kind, for jack styling and (Story 4.4) connection-legality hints. UI-only — the engine
+/// Connector kind, for jack styling and connection-legality hints. UI-only — the engine
 /// validates by *domain*, not by this tag.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -344,10 +343,9 @@ const CATALOG: &[CatalogEntry] = &[
     // The minimal **multi-node** device, proving the chassis seam: two analog gain stages in series
     // (input gain → output gain) behind one logical device. The internal edge hides stage 0's output
     // and stage 1's input; the exposed face is stage 0's input, stage 1's output, and *both* gains'
-    // params (so device param 1 maps to the second node — a non-trivial remap). (The planned
-    // gain→EQ example is electrically invalid — analog into a digital port — so a richer strip with
-    // EQ/dynamics needs an internal AD; that arrives with deeper devices. Two analog stages is the
-    // smallest valid multi-node proof.)
+    // params (so device param 1 maps to the second node — a non-trivial remap). A strip with
+    // EQ/dynamics would need an internal AD (analog can't enter a digital port), so two analog stages
+    // is the smallest electrically valid multi-node device.
     CatalogEntry {
         type_id: "channel_strip",
         name: "Channel Strip",
@@ -399,8 +397,8 @@ const CATALOG: &[CatalogEntry] = &[
 ];
 
 /// A built device's footprint in a graph: its engine nodes and the resolved maps from device-level
-/// ports/params to concrete `(NodeId, …)`. Built by [`instantiate`]; consumed by the scene builder
-/// (Task 4.1.4) to remap inter-device connections to graph edges and to resolve control handles.
+/// ports/params to concrete `(NodeId, …)`. Built by [`instantiate`]; consumed by `build_patch` to
+/// remap inter-device connections to graph edges and to resolve control handles.
 ///
 /// `inputs`/`outputs` are indexed by **device-level port id** (the same index a scene's `PortRef`
 /// uses); `params` by **device-level param id**. An event input is just an input port whose node port
@@ -507,8 +505,8 @@ fn expand(entry: &CatalogEntry) -> Expansion {
 /// Expand the device type `type_id` into `g`: add its node(s), wire its internal edges, and return the
 /// instance map (device-level ports/params → concrete `(NodeId, …)`). `None` if the type is unknown.
 ///
-/// The chassis-seam primitive (Task 4.1.3): the scene builder (Task 4.1.4) calls this per device, then
-/// uses the returned [`BuiltDevice`] to remap inter-device connections and resolve control handles.
+/// The chassis-seam primitive: `build_patch` calls this per device, then uses the returned
+/// [`BuiltDevice`] to remap inter-device connections and resolve control handles.
 pub fn instantiate(type_id: &str, g: &mut Graph) -> Option<BuiltDevice> {
     let entry = entry(type_id)?;
     let Expansion {
@@ -706,8 +704,8 @@ mod tests {
         assert_eq!(spk.outputs, vec![(spk.nodes[0], 0)]);
     }
 
-    /// An unknown type id has no entry — `instantiate` returns `None` (no nodes added), the lookup the
-    /// scene builder (Task 4.1.4) relies on to reject a bad `typeId` cleanly.
+    /// An unknown type id has no entry — `instantiate` returns `None` (no nodes added), the lookup
+    /// `build_patch` relies on to reject a bad `typeId` cleanly.
     #[test]
     fn unknown_type_does_not_instantiate() {
         let mut g = Graph::new();
