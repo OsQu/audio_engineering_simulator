@@ -67,7 +67,7 @@ impl Graph {
 
     /// Connect `from`'s output port `out_port` to `to`'s input port `in_port` with an ideal
     /// wire (no cable). Recorded as-is; validated at compile.
-    pub fn connect(&mut self, from: NodeId, out_port: usize, to: NodeId, in_port: usize) {
+    pub fn connect_ideal(&mut self, from: NodeId, out_port: usize, to: NodeId, in_port: usize) {
         self.push_edge(from, out_port, to, in_port, None);
     }
 
@@ -179,7 +179,7 @@ mod tests {
         let mut g = Graph::new();
         let src = g.add(Stub::new(0, 1));
         let sink = g.add(Stub::new(1, 1));
-        g.connect(src, 0, sink, 0);
+        g.connect_ideal(src, 0, sink, 0);
         g.set_output(sink, 0);
 
         assert_eq!(g.connection_count(), 1);

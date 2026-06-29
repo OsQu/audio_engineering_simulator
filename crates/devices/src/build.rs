@@ -211,7 +211,7 @@ pub fn build_patch(
                     Farads::new(cable.capacitance_farads),
                 ),
             ),
-            None => graph.connect(from_node, from_port, to_node, to_port),
+            None => graph.connect_ideal(from_node, from_port, to_node, to_port),
         }
     }
     let (out_node, out_port) = resolve_output(&devices, &patch.output)?;
@@ -364,9 +364,9 @@ mod tests {
             Ohms::new(150.0),
         ));
         let spk = g.add(Speaker::new(1.0, InputZ::new(Ohms::new(10_000.0))));
-        g.connect(voice, 0, ad, 0);
-        g.connect(ad, 0, da, 0);
-        g.connect(da, 0, spk, 0);
+        g.connect_ideal(voice, 0, ad, 0);
+        g.connect_ideal(ad, 0, da, 0);
+        g.connect_ideal(da, 0, spk, 0);
         g.set_output(spk, 0);
         let mut hand = compile(g, BLOCK_LEN, rate(), 0).expect("hand graph compiles");
         let hand_ev = hand.event_input(voice, 0).expect("voice event input");

@@ -520,7 +520,7 @@ pub fn instantiate(type_id: &str, g: &mut Graph) -> Option<BuiltDevice> {
 
     let node_ids: Vec<NodeId> = nodes.into_iter().map(|node| g.add_boxed(node)).collect();
     for edge in entry.internal {
-        g.connect(
+        g.connect_ideal(
             node_ids[edge.from_node],
             edge.from_port,
             node_ids[edge.to_node],

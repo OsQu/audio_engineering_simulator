@@ -33,8 +33,8 @@ mod compile_and_solve {
             vec![InputZ::new(Ohms::new(10_000.0))],
             Ohms::new(150.0),
         ));
-        g.connect(src, 0, amp, 0);
-        g.connect(amp, 0, sum, 0);
+        g.connect_ideal(src, 0, amp, 0);
+        g.connect_ideal(amp, 0, sum, 0);
         g.set_output(sum, 0);
 
         let mut sched = compile(g, 8, rate(), 0).expect("valid chain");
@@ -63,10 +63,10 @@ mod compile_and_solve {
             ],
             Ohms::new(150.0),
         ));
-        g.connect(src, 0, a, 0);
-        g.connect(src, 0, b, 0);
-        g.connect(a, 0, sum, 0);
-        g.connect(b, 0, sum, 1);
+        g.connect_ideal(src, 0, a, 0);
+        g.connect_ideal(src, 0, b, 0);
+        g.connect_ideal(a, 0, sum, 0);
+        g.connect_ideal(b, 0, sum, 1);
         g.set_output(sum, 0);
 
         let mut sched = compile(g, 4, rate(), 0).expect("valid fan-out chain");
@@ -90,8 +90,8 @@ mod compile_and_solve {
         let mut g = Graph::new();
         let a = g.add(gain(1.0));
         let b = g.add(gain(1.0));
-        g.connect(a, 0, b, 0);
-        g.connect(b, 0, a, 0);
+        g.connect_ideal(a, 0, b, 0);
+        g.connect_ideal(b, 0, a, 0);
         g.set_output(b, 0);
         assert_eq!(compile(g, 8, rate(), 0).err(), Some(CompileError::Cycle));
     }
@@ -105,8 +105,8 @@ mod compile_and_solve {
             vec![InputZ::new(Ohms::new(10_000.0))],
             Ohms::new(150.0),
         ));
-        g.connect(s1, 0, sum, 0);
-        g.connect(s2, 0, sum, 0); // same input port 0
+        g.connect_ideal(s1, 0, sum, 0);
+        g.connect_ideal(s2, 0, sum, 0); // same input port 0
         g.set_output(sum, 0);
         assert_eq!(
             compile(g, 8, rate(), 0).err(),
@@ -174,7 +174,7 @@ mod noise_phenomena {
         let mut tail = g.add(TestSource::new(Volts::new(0.0), Ohms::new(1.0)));
         for &d in densities {
             let b = g.add(noisy_buffer(d));
-            g.connect(tail, 0, b, 0);
+            g.connect_ideal(tail, 0, b, 0);
             tail = b;
         }
         g.set_output(tail, 0);
@@ -261,7 +261,7 @@ mod dc_phenomena {
             Ohms::new(1_000_000.0),
             Ohms::new(150.0),
         ));
-        g.connect(src, 0, blk, 0);
+        g.connect_ideal(src, 0, blk, 0);
         g.set_output(blk, 0);
 
         // One long block: 200k samples ≫ the settling time (τ = RC ≈ 12.2k samples), so the
@@ -314,7 +314,7 @@ mod clipping_phenomena {
             InputZ::new(Ohms::new(1_000_000.0)),
             Ohms::new(150.0),
         ));
-        g.connect(src, 0, stage, 0);
+        g.connect_ideal(src, 0, stage, 0);
         g.set_output(stage, 0);
         let mut sched = compile(g, len, rate(), 0).expect("valid clip chain");
         let mut out = VoltageBuffer::zeros(len, rate());
@@ -426,8 +426,8 @@ mod balanced_phenomena {
             Ohms::new(1.0),
         ));
         let rcv = g.add(BalancedReceiver::new(Ohms::new(1e9), Ohms::new(150.0)));
-        g.connect(src, 0, drv, 0);
-        g.connect(drv, 0, rcv, 0);
+        g.connect_ideal(src, 0, drv, 0);
+        g.connect_ideal(drv, 0, rcv, 0);
         g.set_output(rcv, 0);
 
         let mut sched = compile(g, 8, rate(), 0).expect("valid balanced chain");
@@ -452,7 +452,7 @@ mod balanced_phenomena {
                 Ohms::new(1.0),
             ));
             let rcv = g.add(BalancedReceiver::new(Ohms::new(1e9), Ohms::new(150.0)));
-            g.connect(src, 0, rcv, 0);
+            g.connect_ideal(src, 0, rcv, 0);
             g.set_output(rcv, 0);
             let mut sched = compile(g, 8, rate(), 0).expect("valid balanced chain");
             let mut out = VoltageBuffer::zeros(8, rate());
@@ -482,7 +482,7 @@ mod balanced_phenomena {
             InputZ::new(Ohms::new(10_000.0)),
             Ohms::new(150.0),
         ));
-        g.connect(drv, 0, amp, 0); // balanced out → unbalanced in
+        g.connect_ideal(drv, 0, amp, 0); // balanced out → unbalanced in
         g.set_output(amp, 0);
         assert_eq!(
             compile(g, 8, rate(), 0).err(),
@@ -523,9 +523,9 @@ mod balanced_phenomena {
             Ohms::new(150.0),
         ));
         let rcv = g.add(BalancedReceiver::new(Ohms::new(1e9), Ohms::new(150.0)));
-        g.connect(src, 0, drv, 0);
-        g.connect(drv, 0, blk, 0);
-        g.connect(blk, 0, rcv, 0);
+        g.connect_ideal(src, 0, drv, 0);
+        g.connect_ideal(drv, 0, blk, 0);
+        g.connect_ideal(blk, 0, rcv, 0);
         g.set_output(rcv, 0);
 
         let len = 40_000; // ≫ settling (τ = RC ≈ 61 samples)
@@ -667,7 +667,7 @@ mod cmrr_phenomena {
             Ohms::new(1.0),
         ));
         let rcv = g.add(BalancedReceiver::new(Ohms::new(1e9), Ohms::new(150.0)));
-        g.connect(src, 0, drv, 0);
+        g.connect_ideal(src, 0, drv, 0);
         g.connect_cabled(drv, 0, rcv, 0, pickup_cable());
         g.set_output(rcv, 0);
         let mut sched = compile(g, len, rate(), seed).expect("balanced pickup chain");
@@ -707,7 +707,7 @@ mod cmrr_phenomena {
             Ohms::new(1.0),
         ));
         let rcv = g.add(BalancedReceiver::new(Ohms::new(1e9), Ohms::new(150.0)));
-        g.connect(src, 0, drv, 0);
+        g.connect_ideal(src, 0, drv, 0);
         g.connect_cabled(drv, 0, rcv, 0, pickup_cable());
         g.set_output(rcv, 0);
         let mut sched = compile(g, 16, rate(), 5).expect("balanced signal+pickup chain");
@@ -777,7 +777,7 @@ mod hum_phenomena {
             Ohms::new(1.0),
         ));
         let rcv = g.add(BalancedReceiver::new(Ohms::new(1e9), Ohms::new(150.0)));
-        g.connect(src, 0, drv, 0);
+        g.connect_ideal(src, 0, drv, 0);
         g.connect_cabled(drv, 0, rcv, 0, hum_cable());
         g.set_output(rcv, 0);
         let mut sched = compile(g, LEN, rate(), 9).expect("balanced hum chain");
@@ -812,7 +812,7 @@ mod phantom_phenomena {
         let mut g = Graph::new();
         let mic = g.add(CondenserMic::new(Volts::new(2.0), Ohms::new(150.0)));
         let rcv = g.add(BalancedReceiver::new(Ohms::new(1e9), Ohms::new(150.0)));
-        g.connect(mic, 0, rcv, 0);
+        g.connect_ideal(mic, 0, rcv, 0);
         g.set_output(rcv, 0);
         let mut sched = compile(g, 8, rate(), 0).expect("phantom mic chain");
         let mut out = VoltageBuffer::zeros(8, rate());
@@ -828,7 +828,7 @@ mod phantom_phenomena {
         let mut g = Graph::new();
         let mic = g.add(CondenserMic::new(Volts::new(2.0), Ohms::new(150.0)).unpowered());
         let rcv = g.add(BalancedReceiver::new(Ohms::new(1e9), Ohms::new(150.0)));
-        g.connect(mic, 0, rcv, 0);
+        g.connect_ideal(mic, 0, rcv, 0);
         g.set_output(rcv, 0);
         let mut sched = compile(g, 8, rate(), 0).expect("unpowered mic chain");
         let mut out = VoltageBuffer::zeros(8, rate());
@@ -910,7 +910,7 @@ mod digital_seam {
         let mut g = Graph::new();
         let src = g.add(DigitalSource::new(0.5, fmt(48_000.0)));
         let sink = g.add(DigitalSink::new(fmt(48_000.0)));
-        g.connect(src, 0, sink, 0);
+        g.connect_ideal(src, 0, sink, 0);
         g.set_output(src, 0); // digital tap; this test inspects the pool, never calls process
         let sched = compile(g, 16, analog_rate(), 0).expect("valid digital chain");
 
@@ -940,7 +940,7 @@ mod digital_seam {
         g.set_output(atap, 0);
         let src = g.add(DigitalSource::new(0.5, fmt(48_000.0)));
         let sink = g.add(DigitalSink::new(fmt(48_000.0)));
-        g.connect(src, 0, sink, 0);
+        g.connect_ideal(src, 0, sink, 0);
 
         let mut sched = compile(g, 16, analog_rate(), 0).expect("valid mixed chain");
         let mut out = VoltageBuffer::zeros(16, analog_rate());
@@ -963,7 +963,7 @@ mod digital_seam {
         let mut g = Graph::new();
         let asrc = g.add(TestSource::new(Volts::new(1.0), Ohms::new(150.0)));
         let dsink = g.add(DigitalSink::new(fmt(48_000.0)));
-        g.connect(asrc, 0, dsink, 0);
+        g.connect_ideal(asrc, 0, dsink, 0);
         g.set_output(asrc, 0);
         assert_eq!(
             compile(g, 16, analog_rate(), 0).err(),
@@ -1011,7 +1011,7 @@ mod digital_seam {
         let mut g = Graph::new();
         let src = g.add(DigitalSource::new(0.5, fmt(48_000.0)));
         let sink = g.add(DigitalSink::new(fmt(96_000.0)));
-        g.connect(src, 0, sink, 0);
+        g.connect_ideal(src, 0, sink, 0);
         g.set_output(src, 0);
         assert_eq!(
             compile(g, 16, analog_rate(), 0).err(),
@@ -1058,7 +1058,7 @@ mod converter_phenomena {
         let mut g = Graph::new();
         let s = g.add(src);
         let a = g.add(ad);
-        g.connect(s, 0, a, 0);
+        g.connect_ideal(s, 0, a, 0);
         let tap = g.add(TestSource::new(Volts::new(0.0), Ohms::new(150.0)));
         g.set_output(tap, 0);
 
@@ -1193,10 +1193,10 @@ mod converter_phenomena {
             Volts::new(10.0),
             Ohms::new(150.0),
         ));
-        g.connect(src, 0, drv, 0);
-        g.connect(drv, 0, rcv, 0);
-        g.connect(rcv, 0, ad, 0);
-        g.connect(ad, 0, da, 0);
+        g.connect_ideal(src, 0, drv, 0);
+        g.connect_ideal(drv, 0, rcv, 0);
+        g.connect_ideal(rcv, 0, ad, 0);
+        g.connect_ideal(ad, 0, da, 0);
         g.set_output(da, 0);
 
         // 15360 analog ⇒ 1920 digital = 40 whole cycles of 1 kHz; drop the first half as the
@@ -1296,7 +1296,7 @@ mod event_seam {
         let mut g = Graph::new();
         let src = g.add(EventSource::new(32));
         let sink = g.add(EventSink::new(16));
-        g.connect(src, 0, sink, 0);
+        g.connect_ideal(src, 0, sink, 0);
         analog_tap(&mut g);
         let sched = compile(g, 16, analog_rate(), 0).expect("valid event chain");
 
@@ -1328,7 +1328,7 @@ mod event_seam {
         let mut g = Graph::new();
         let src = g.add(EventSource::new(32));
         let sink = g.add(EventSink::new(32));
-        g.connect(src, 0, sink, 0);
+        g.connect_ideal(src, 0, sink, 0);
         analog_tap(&mut g);
 
         let mut sched = compile(g, 16, analog_rate(), 0).expect("valid event chain");
@@ -1363,8 +1363,8 @@ mod event_seam {
         let src = g.add(EventSource::new(8));
         let a = g.add(EventSink::new(8));
         let b = g.add(EventSink::new(8));
-        g.connect(src, 0, a, 0);
-        g.connect(src, 0, b, 0);
+        g.connect_ideal(src, 0, a, 0);
+        g.connect_ideal(src, 0, b, 0);
         analog_tap(&mut g);
 
         let mut sched = compile(g, 16, analog_rate(), 0).expect("valid event fan-out");
@@ -1393,7 +1393,7 @@ mod event_seam {
             InputZ::new(Ohms::new(10_000.0)),
             Ohms::new(150.0),
         ));
-        g.connect(src, 0, amp, 0);
+        g.connect_ideal(src, 0, amp, 0);
         g.set_output(amp, 0);
         assert_eq!(
             compile(g, 16, analog_rate(), 0).err(),
@@ -1553,7 +1553,7 @@ mod event_seam {
         let src = g.add(EventSource::new(8));
         let fed = g.add(EventSink::new(8)); // node 1: event input fed by an edge
         let open = g.add(EventSink::new(8)); // node 2: event input left open
-        g.connect(src, 0, fed, 0);
+        g.connect_ideal(src, 0, fed, 0);
         analog_tap(&mut g); // node 3: the voltage tap
         let sched = compile(g, 16, analog_rate(), 0).expect("valid event chain");
 
@@ -1606,7 +1606,7 @@ mod param_phenomena {
             InputZ::new(Ohms::new(1e9)),
             Ohms::new(1.0),
         ));
-        g.connect(src, 0, amp, 0);
+        g.connect_ideal(src, 0, amp, 0);
         g.set_output(amp, 0);
 
         let block = 64;
@@ -1693,8 +1693,8 @@ mod playable_voice {
             Volts::new(10.0),
             Ohms::new(150.0),
         ));
-        g.connect(voice, 0, ad, 0);
-        g.connect(ad, 0, da, 0);
+        g.connect_ideal(voice, 0, ad, 0);
+        g.connect_ideal(ad, 0, da, 0);
         g.set_output(da, 0);
         let sched = compile(g, block, analog_rate(), 0).expect("valid playable chain");
         let ev = sched.event_input(voice, 0).expect("voice event input");
@@ -1877,8 +1877,8 @@ mod hot_path_robustness {
             Volts::new(10.0),
             Ohms::new(150.0),
         ));
-        g.connect(voice, 0, ad, 0);
-        g.connect(ad, 0, da, 0);
+        g.connect_ideal(voice, 0, ad, 0);
+        g.connect_ideal(ad, 0, da, 0);
         g.set_output(da, 0);
         let sched = compile(g, block, analog_rate(), 0).expect("valid playable chain");
         let ev = sched.event_input(voice, 0).expect("voice event input");

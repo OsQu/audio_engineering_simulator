@@ -32,7 +32,7 @@ fn render_voice(note_on: u64, seconds: f64) -> Vec<f32> {
     let mut g = Graph::new();
     let voice = g.add(SynthVoice::new(Volts::new(1.0), Ohms::new(1.0)));
     let spk = g.add(Speaker::new(1.0, InputZ::new(Ohms::new(10_000.0))));
-    g.connect(voice, 0, spk, 0);
+    g.connect_ideal(voice, 0, spk, 0);
     g.set_output(spk, 0);
 
     let mut schedule = compile(g, BLOCK_LEN, analog_rate(), 0).expect("voice patch compiles");
@@ -82,15 +82,15 @@ where
         Ohms::new(150.0),
     ));
     let spk = g.add(Speaker::new(1.0, InputZ::new(Ohms::new(10_000.0))));
-    g.connect(voice, 0, ad, 0);
+    g.connect_ideal(voice, 0, ad, 0);
     match insert(&mut g, host_rate, bits) {
         Some(proc) => {
-            g.connect(ad, 0, proc, 0);
-            g.connect(proc, 0, da, 0);
+            g.connect_ideal(ad, 0, proc, 0);
+            g.connect_ideal(proc, 0, da, 0);
         }
-        None => g.connect(ad, 0, da, 0),
+        None => g.connect_ideal(ad, 0, da, 0),
     }
-    g.connect(da, 0, spk, 0);
+    g.connect_ideal(da, 0, spk, 0);
     g.set_output(spk, 0);
 
     let mut schedule = compile(g, BLOCK_LEN, analog_rate(), 0).expect("converter patch compiles");

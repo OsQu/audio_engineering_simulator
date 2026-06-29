@@ -106,11 +106,11 @@ fn analog_chain_is_allocation_free() {
             .with_pickup(NoiseDensity::new(10e-9))
             .with_hum(60.0, Volts::new(0.01)),
     );
-    g.connect(amp, 0, dc, 0);
-    g.connect(dc, 0, sum, 0);
-    g.connect(sum, 0, drv, 0);
-    g.connect(drv, 0, bal_dc, 0);
-    g.connect(bal_dc, 0, rcv, 0);
+    g.connect_ideal(amp, 0, dc, 0);
+    g.connect_ideal(dc, 0, sum, 0);
+    g.connect_ideal(sum, 0, drv, 0);
+    g.connect_ideal(drv, 0, bal_dc, 0);
+    g.connect_ideal(bal_dc, 0, rcv, 0);
     g.set_output(rcv, 0);
 
     let mut sched = compile(g, 64, rate(), 0).expect("valid chain");

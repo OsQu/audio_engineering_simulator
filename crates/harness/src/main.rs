@@ -90,9 +90,9 @@ fn first_sound_graph() -> (Graph, NodeId) {
         Ohms::new(150.0),
     ));
     let spk = g.add(Speaker::new(1.0, InputZ::new(Ohms::new(10_000.0))));
-    g.connect(voice, 0, ad, 0);
-    g.connect(ad, 0, da, 0);
-    g.connect(da, 0, spk, 0);
+    g.connect_ideal(voice, 0, ad, 0);
+    g.connect_ideal(ad, 0, da, 0);
+    g.connect_ideal(da, 0, spk, 0);
     g.set_output(spk, 0);
     (g, voice)
 }
@@ -104,7 +104,7 @@ fn first_sound_analog_graph() -> (Graph, NodeId) {
     let mut g = Graph::new();
     let voice = g.add(SynthVoice::new(Volts::new(1.0), Ohms::new(1.0)));
     let spk = g.add(Speaker::new(1.0, InputZ::new(Ohms::new(10_000.0))));
-    g.connect(voice, 0, spk, 0);
+    g.connect_ideal(voice, 0, spk, 0);
     g.set_output(spk, 0);
     (g, voice)
 }
@@ -140,10 +140,10 @@ fn first_sound_eq_graph() -> (Graph, NodeId) {
         Ohms::new(150.0),
     ));
     let spk = g.add(Speaker::new(1.0, InputZ::new(Ohms::new(10_000.0))));
-    g.connect(voice, 0, ad, 0);
-    g.connect(ad, 0, eq, 0);
-    g.connect(eq, 0, da, 0);
-    g.connect(da, 0, spk, 0);
+    g.connect_ideal(voice, 0, ad, 0);
+    g.connect_ideal(ad, 0, eq, 0);
+    g.connect_ideal(eq, 0, da, 0);
+    g.connect_ideal(da, 0, spk, 0);
     g.set_output(spk, 0);
     (g, voice)
 }
@@ -178,10 +178,10 @@ fn first_sound_compressed_graph() -> (Graph, NodeId) {
         Ohms::new(150.0),
     ));
     let spk = g.add(Speaker::new(1.0, InputZ::new(Ohms::new(10_000.0))));
-    g.connect(voice, 0, ad, 0);
-    g.connect(ad, 0, comp, 0);
-    g.connect(comp, 0, da, 0);
-    g.connect(da, 0, spk, 0);
+    g.connect_ideal(voice, 0, ad, 0);
+    g.connect_ideal(ad, 0, comp, 0);
+    g.connect_ideal(comp, 0, da, 0);
+    g.connect_ideal(da, 0, spk, 0);
     g.set_output(spk, 0);
     (g, voice)
 }
@@ -750,7 +750,7 @@ fn chain(amp: Volts) -> Graph {
         InputZ::new(Ohms::new(10_000.0)),
         Ohms::new(150.0),
     ));
-    g.connect(src, 0, stage, 0);
+    g.connect_ideal(src, 0, stage, 0);
     g.set_output(stage, 0);
     g
 }
@@ -788,7 +788,7 @@ fn noisy_preamp(gain: f32) -> Graph {
         )
         .with_noise(NoiseDensity::new(NOISE_DENSITY)),
     );
-    g.connect(src, 0, pre, 0);
+    g.connect_ideal(src, 0, pre, 0);
     g.set_output(pre, 0);
     g
 }
