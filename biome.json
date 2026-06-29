@@ -1,5 +1,6 @@
 {
   "$schema": "https://biomejs.dev/schemas/2.5.1/schema.json",
+  "root": true,
   "vcs": {
     "enabled": true,
     "clientKind": "git",
@@ -7,7 +8,14 @@
   },
   "files": {
     "ignoreUnknown": true,
-    "includes": ["**", "!**/*.svelte"]
+    "includes": [
+      "**",
+      "!**/*.svelte",
+      "!**/dist/**",
+      "!**/.wasm-build/**",
+      "!**/public/processor.js",
+      "!**/public/wasm_bindings_bg.wasm"
+    ]
   },
   "formatter": {
     "enabled": true,
