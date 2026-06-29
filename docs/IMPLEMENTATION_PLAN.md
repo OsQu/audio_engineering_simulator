@@ -483,6 +483,38 @@ and the why are recorded.
   FOH are UI groupings over **one engine graph** (nodes carry a space tag); the engine never knows about
   rooms. A *snake* between spaces is a UI bundle of individual mono analog cables drawn as one — **true
   multichannel digital bundling stays Epic 5** (5.1/5.3); nothing in the engine changes for snakes here.
+- **The spatial sim is a data/constraint model with a 2-D presentation — it stays on the Svelte + DOM/SVG
+  stack; it is *not* a rendering problem.** Devices have real physical dimensions and live in containers
+  (rack / desk / room); placement is constrained (rackmount → rack U-slots, desktop gear → a desk
+  surface); the sim tracks the operator's position and what's within **reach** (zoom out for the overview,
+  but then you can't touch); back-panel access is **gated behind a physical action** (flip a unit, pull it
+  from the rack, roll the rack off the wall); bounds-checking is cheap **axis-aligned-rectangle (AABB)**
+  overlap because audio gear is boxes; switching rooms switches the interactable set. *Why the stack is
+  unchanged:* the novel, hard parts — the spatial model, placement legality, reach, view projection — are
+  **framework-agnostic data + math**, and the *presentation* is only tens-to-low-hundreds of rectangles in
+  a 2-D projection (≈260 nodes is the Epic-5 napkin ceiling), which DOM/SVG over the CSS-transform pan/zoom
+  surface handles comfortably. A WebGL/game-engine stack only earns its complexity for thousands of
+  animated sprites, a true 3-D perspective camera, or per-pixel shaders — **none of which this wants**
+  (explicitly "no fancy 3-D"). The Stack-1 decision's *isolated world layer* is the standing escape hatch:
+  swap that layer to a WebGL canvas later **only if** profiling at venue scale demands it — same
+  "multi-core only if profiling demands it" philosophy as the engine; don't pre-build it.
+  - **Model in 3-D, render in 2-D (the one discipline that matters).** Store a *single* coordinate truth
+    per object — position `(x, y, z)` + a footprint box + a facing — and render top/side/front views as
+    **projections** of it (each view just picks which two axes map to screen X/Y). Storing per-view 2-D
+    positions is the trap that drifts the views out of sync. The "flip to back" CSS 3-D transform from 4.2
+    is reused, but **gated** by a clearance state (the unit must be pulled out / the rack rolled off the
+    wall before its back is reachable).
+  - **Where the model lives — split by what it *is*.** *Placement, player position, reach, zoom/view
+    state, room membership* are UI state → the TS `ui` layer (the scene IR's reserved placement section;
+    engine-stays-UI-free, "spaces are a UI concept"). *Physical dimensions* (rack-U height, footprint) are
+    **content, not UI** — about as intrinsic as a device's impedance — so they belong on the **`devices`
+    catalog descriptor** (derived/authored alongside the rest of the device, native-testable, no drift),
+    **not** invented in TS. *Rejected:* dimensions as TS-only UI data (re-invents content the catalog owns,
+    risks drift); a single "spatial = UI" lump (conflates intrinsic gear facts with view state). The engine
+    gains **nothing** either way — no rooms, racks, or position.
+  - **The spatial logic is pure and rendering-free → unit-testable** (AABB overlap, placement legality,
+    reach queries, projection), fitting the project's "tests are the oracle" temperament; keep model and
+    renderer separate and the WebGL escape hatch stays open for free.
 - **Skeuomorphic = genuine interaction + recognizable layout, not photoreal textures.** Real
   knob/fader/meter/jack behavior and gear-like layout (the VST-mimics-analog feel); branding, photoreal
   skins, and onboarding polish are explicitly deferred (the project's deprioritize-polish non-goal). This
@@ -786,12 +818,22 @@ recompile); **Svelte 5** stands up the renderer on the untouched worklet/transpo
 the `powered` params (no probe/readout lane — deferred to 4.5) and stays UI-free; the full Rust gate
 (`cargo fmt --check && cargo lint && cargo test && cargo wasm && cargo docs`) plus `wasm-pack build` and the
 `web` `check`/`typecheck`/`build` pass; verified in-browser by ear and eye.
-- **Story 4.3 — The spatial world: spaces, racks, placement, catalog browsing.** The Svelte app shell +
-  the isolated world layer: pan/zoom; place and move devices and racks; open/close containers; multiple
-  **spaces** with switching; **browse the catalog and add/remove gear** — exercising the 4.1 recompile
-  path on add/remove. UI scene state stays in sync with the engine scene IR. *Open at pickup:* the world
-  layer's interface (the swap-to-WebGL-later boundary); rack/unit sizing model; how a space maps onto the
-  scene IR's placement fields; add/remove debouncing vs recompile cost.
+- **Story 4.3 — The spatial world: spaces, racks, placement, reach, catalog browsing.** The Svelte app
+  shell + the isolated world layer, now carrying a **physical-space simulation** (settled decision above):
+  a single 3-D-ish coordinate/footprint model rendered as **2-D top/side/front projections**, pan/zoom,
+  place and move devices and racks with **AABB bounds-checking** and **snap-to-rack-U**, open/close
+  containers (rack / desk / room), multiple **spaces** with switching (each switches the interactable
+  set), **operator position + reach** (zoom out for the overview but interaction disables beyond reach),
+  **back-panel access gated** behind a physical action (flip / pull-from-rack / roll-rack-off-wall, reusing
+  the 4.2 CSS flip), and **browse the catalog and add/remove gear** — exercising the 4.1 recompile path on
+  add/remove. Physical **dimensions ride the `devices` catalog descriptor** (content); placement / player /
+  view state lives in the TS `ui` layer and stays in sync with the engine scene IR. The spatial logic
+  (overlap, placement legality, reach, projection) is **pure and unit-tested**, rendering-free. *Open at
+  pickup:* the world layer's interface (the swap-to-WebGL-later boundary); the rack-U / desk-surface /
+  footprint sizing model and its descriptor fields; how a space + 3-D placement map onto the scene IR's
+  reserved placement section; the reach/zoom-gating rule; the clearance state-machine for back access;
+  add/remove debouncing vs recompile cost. *Scope guard:* this is the spatial-sim home — resist pulling
+  cables/snakes (4.4) or probes/meters (4.5) forward.
 - **Story 4.4 — Patch cables & snakes → live graph mutation.** Drag-to-connect between jacks with bezier
   cables; **snakes** as visual bundles of mono cables crossing spaces; connect/disconnect mutates the
   graph → recompile/**hot-swap live under sound**. The "patching feels natural" payoff and the
