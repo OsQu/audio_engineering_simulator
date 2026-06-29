@@ -399,8 +399,9 @@ crossing the main→audio boundary as sparse messages. This epic retired the hea
 
 **Progress:** **Story 4.1 ✅ done** (the engine→UI seam: a new `devices` crate, scene IR + catalog +
 `build_patch`, and `SceneEngine` — scene-driven, generically controlled, hot-swappable; verified live in
-the browser). **Next: Story 4.2** (skeuomorphic device panels). 4.3–4.5 stay at Story level until picked
-up. The original 4-story sketch was reshaped into the 5-story arc below after the UI vision
+the browser). **Story 4.2 🚧 in progress** (skeuomorphic device panels — descriptor → panel renderer +
+widget vocabulary, introducing Svelte 5; metering deferred to 4.5, see its note). 4.3–4.5 stay at Story
+level until picked up. The original 4-story sketch was reshaped into the 5-story arc below after the UI vision
 grew from "device panels + cables" into a **game-like spatial studio/venue sim** (browsable gear catalog,
 racks and containers, freely placed in a pan/zoom world, multiple *spaces* with snakes between them,
 VST-grade skeuomorphic panels with front controls and back I/O). Per the detail-gradient convention
@@ -674,12 +675,117 @@ real-time host generalized from the pinned patch to a scene it builds, plays, sa
 - **Concepts captured** in `osku_rust_concepts.md`: serde / serde-wasm-bindgen; move-vs-heap & `Box` for
   unsized; references as borrowing pointers; non-capturing closures → `fn` pointers; block-vs-closure +
   `if let`/`Option::take`.
-- **Story 4.2 — Skeuomorphic device panels: controls → params, front/back, power.** The data-driven
-  panel system, rendered from the descriptor, for one or two devices bound to a running *static* engine:
-  real knobs/faders, a VU/meter, a screen, jacks on the **back** (CSS flip), and a **power** switch
-  (control, not recompile). Establishes the widget vocabulary and the descriptor → panel renderer that
-  every later device reuses. *Open at pickup:* the widget set + interaction model (drag-to-turn,
-  fine/coarse, value readout); the descriptor's panel-layout schema; which two devices to build first.
+#### Story 4.2 — Skeuomorphic device panels: controls → params, front/back, power — 🚧 **In progress**
+
+*Goal:* the **descriptor → panel renderer** — the data-driven panel system every later device reuses —
+plus the skeuomorphic **widget vocabulary** (knobs, faders, switches, jacks, a screen, a VU), introducing
+**Svelte 5** to the harness (the Epic-4 stack decision) and standing it up against the *static* canonical
+engine. Two devices (`synth_voice` showcased; one `gain_stage` for renderer-generality + a back-panel jack
+story) get real panels: drag-real knobs/faders driving params live, a front/back **CSS flip** to
+descriptor-driven jacks, a synth ADSR **screen**, a master-output **VU**, and a real **power** switch
+(a control param, never a recompile). Anchors to PROJECT_PLAN §4 (Device/Port domain model surfaced as a
+panel) and §7 (UI as a pure consumer of the published engine API), and to the Epic-4 settled decisions
+(Svelte 5 + DOM/SVG; descriptor-as-UI-truth; power-as-control; skeuomorphic = genuine interaction +
+recognizable layout, not photoreal).
+
+*Watch out:*
+- **UI touches only the published API** — `catalog()` descriptors + `set_param`/`note_on`/`note_off`/
+  `load_patch`. The engine and the `devices` descriptor gain **no** panel/layout vocabulary; visual layout
+  lives entirely in TS. (Engine-stays-UI-free, epic rule.)
+- **Power is a *value* param, so no recompile** (params-vs-structure, Epic 1). Toggling is instant and
+  **de-clicked** by the existing `Smoother` ramp — never a graph edit. Adding `powered` must stay an
+  **identity at the default (`1.0`)** so every existing Epic 1–3 analog/DSP test still holds.
+- **Hot-path contract unchanged.** The `powered` gate runs *in* `process` (a smoothed multiply) — must
+  stay zero-alloc, panic-free, denormal-flushed; all new fallibility (panel build, catalog fetch) is cold.
+- **Do not pull Story 4.5 forward.** No node→host readout lane, no per-device probe, no scope/spectrum.
+  The only live signal a meter may read in 4.2 is the **already-exposed master-output buffer**
+  (`out_ptr`/`out_len`) — see the 4.5 "meter is a node" note. The synth screen draws the ADSR curve from
+  param *values* (pure TS), not from a tap.
+- **Static engine only** — no graph mutation (→ 4.4) and no spatial world / app shell (→ 4.3). Jacks
+  render but are **display-only**; panels just stack.
+- **Svelte is additive** on the existing Vite/TS harness — repackage `main.ts`'s transport/keyboard/MIDI
+  logic, **don't rebuild** the worklet, the scene store, or the engine bring-up.
+
+*Design notes (settled at planning):*
+- **Metering is deferred (the headline decision).** A VU meter is a **node** (voltage-native: bridging
+  `InputZ`, ~300 ms ballistics, `0 VU ≙ +4 dBu ≙ 1.228 V RMS`) computing a scalar reading in-engine — *not*
+  a getter retrofitted onto every node — and surfacing it needs a **new node→host scalar readout
+  side-channel** the engine doesn't have today. Both land in **Story 4.5** (recorded in its sketch). 4.2
+  therefore ships **no engine metering surface**: its panel VU reads the **master-output buffer** (the host
+  monitor level — honest, but not a simulated meter device) and repoints onto a `VuMeter` node's readout in
+  4.5. *Rejected:* building the readout lane now (overlaps 4.5, adds engine surface to a UI story);
+  retrofitting a VU getter onto every node (wrong model — measurement belongs in a meter node).
+- **Power = real per-node `powered` control param**, added to `SynthVoice` and `GainStage`: a Switch-kind
+  param, range `[0, 1]`, default `1.0`, whose **smoothed** value gates the node's output (powered-off ⇒
+  output × 0 ⇒ silence, with the smoother's ramp de-clicking the transition — the "instant, glitch-free
+  standby" the Epic decision asks for). *Rejected for now:* a **generic framework-level** power gate (like
+  smoothing-written-once) — cleaner long-term and the natural future refactor, but it touches the node/param
+  framework broadly, beyond a UI story; doing it per-node keeps 4.2 contained (known simplification, not a
+  bug). *Rejected:* a UI-only cosmetic switch (contradicts the settled power-as-control decision). Ripple:
+  `catalog_aligns_with_exposed_face` forces the catalog UI metadata for `synth_voice`, `gain_stage`, **and**
+  `channel_strip` (two `GainStage`s) to list the new switch param(s) — bookkeeping, expected.
+- **Panel layout is TS-side auto-layout, no descriptor fields.** The generic renderer lays out a panel from
+  the descriptor: param `kind` (`knob`/`fader`/`switch`) picks the widget; port `direction`+`kind` style and
+  place the back-panel jacks. Per-type **embellishments** (the synth's ADSR screen) are opt-in TS components,
+  not descriptor data. *Rejected:* layout-hint fields (positions/groupings) on the Rust `DeviceDescriptor` —
+  couples the engine/content layer to visual layout, against keeping `devices` lean and the renderer the home
+  of UI truth.
+- **Second device = `gain_stage`, not `channel_strip`.** A multi-node device's chassis-ness is **invisible**
+  to the descriptor-driven renderer (4.1 flattens the exposed face), so `channel_strip` adds no rendering
+  proof — while its two internal gains would force the panel's single power switch to coalesce two `powered`
+  params. `gain_stage` is a clean single-node panel (one gain knob + one power switch + in/out jacks) and
+  still proves the renderer is generic across device types. The **default scene** gains a unity gain stage:
+  `synth → gain_stage → ad → da → spk` (gain `1.0` = passthrough, so audio is unchanged).
+- **Interaction model:** pointer-drag widgets (vertical drag for knobs, along-axis for faders), **Shift =
+  fine** (reduced sensitivity), **double-click = reset to the descriptor default**, with a live value readout
+  in the param's unit. Functional skeuomorphism (SVG + CSS), not photoreal — branding/skins/onboarding stay
+  deferred (project non-goal).
+- **`catalog()` reaches the main thread via the worklet's `ready` message.** The wasm instance lives in the
+  worklet (`--target no-modules`); rather than instantiate a second copy on the main thread, the processor
+  calls `catalog()` in its constructor and includes the descriptors in `ready`. The page hands them to the
+  Svelte app. (Hand-written TS mirrors in `web/src/catalog.ts` already type them.)
+
+- **Task 4.2.1 — `powered` control param on `SynthVoice` + `GainStage` (engine + catalog).** Add a
+  Switch-kind `powered` `ParamDecl` (`[0,1]`, default `1.0`) to both nodes; gate each node's output by the
+  smoothed `powered` value in `process` (zero-alloc, denormal-flushed). Update the `synth_voice`,
+  `gain_stage`, and `channel_strip` catalog entries' UI metadata to expose the new switch param(s).
+  *Done:* engine tests assert powered→0 settles to silence and powered→1 is normal on both nodes; the
+  default `1.0` leaves every prior engine test green; `catalog_aligns_with_exposed_face` +
+  `descriptors_carry_engine_truth` pass with the added param. (Oracle: behavioral — peak(powered 0) ≈ 0 vs
+  peak(powered 1) > 0 for the same input/note.)
+- **Task 4.2.2 — Svelte 5 in the harness + transport repackage + catalog ingress.** Add Svelte 5 +
+  `@sveltejs/vite-plugin-svelte` (one dependency) to `web/`; wire `vite.config.ts`, `tsconfig`, and Biome
+  for `.svelte`. Mount a Svelte root replacing the hardcoded `#controls` block; move `main.ts`'s
+  transport/keyboard/MIDI/scene-button logic into a Svelte-consumable module/store (engine bring-up, worklet,
+  and `scene-store` untouched). Have the worklet post `catalog()` descriptors in `ready`; expose them to the
+  app. *Done:* the existing synth controls work, now rendered by Svelte and **driven by the fetched
+  descriptor** (not hardcoded ids); `npm run check`, `npm run typecheck`, `npm run build` green; in-browser
+  parity with current behavior (notes, knobs, save/load/reload, health/latency).
+- **Task 4.2.3 — Descriptor-driven panel renderer + control widgets.** The generic `Panel` (front face)
+  auto-laid-out from a descriptor, with `Knob` / `Fader` / `Switch` widgets chosen by param `kind` —
+  pointer-drag + Shift-fine + double-click-reset + live unit readout — each bound to `set_param` *and* the
+  scene (persists on save). Render a panel per scene device (synth + gain_stage operable; zero-param devices
+  show only power + jacks); add `gain_stage` to `defaultScene`. Power switch drives the `powered` param.
+  *Done:* in-browser, the synth and gain_stage panels operate the live engine (knobs/faders/power change the
+  sound), values persist across save/load, and a low `powered` audibly silences the device.
+- **Task 4.2.4 — Back panel (jacks) + front/back flip.** The back face rendered from the descriptor's
+  ports: `Jack` widgets styled by port `kind`/`domain`, inputs and outputs laid out and labeled; a per-panel
+  CSS 3-D **flip** affordance. Jacks are **display-only** (patching → 4.4). *Done:* each panel flips
+  front↔back; the back shows correctly-styled, labeled jacks for every descriptor port; verified in-browser.
+- **Task 4.2.5 — Synth ADSR screen + master-output VU.** A synth-specific `Screen` embellishment (a small
+  `<canvas>` drawing the envelope from the live `level`/A/D/S/R param values, updating as knobs turn); a
+  `Vu` widget driven by a **throttled level message** the worklet computes from the already-exposed output
+  buffer (peak/RMS over recent quanta — **no engine change**). *Done:* the ADSR screen tracks the synth
+  knobs; the master VU moves with output level and rests at idle; verified in-browser by eye.
+
+*Validate:* descriptor-driven panels for `synth_voice` + `gain_stage` operate the live static engine
+(knobs/faders change the sound and persist to the scene); each panel **flips** front↔back to
+descriptor-driven, correctly-styled (display-only) jacks; the synth **ADSR screen** tracks its knobs and the
+**master-output VU** moves with output; **power** is a real `powered` param (off ⇒ silence, de-clicked, no
+recompile); **Svelte 5** stands up the renderer on the untouched worklet/transport; the engine gains only
+the `powered` params (no probe/readout lane — deferred to 4.5) and stays UI-free; the full Rust gate
+(`cargo fmt --check && cargo lint && cargo test && cargo wasm && cargo docs`) plus `wasm-pack build` and the
+`web` `check`/`typecheck`/`build` pass; verified in-browser by ear and eye.
 - **Story 4.3 — The spatial world: spaces, racks, placement, catalog browsing.** The Svelte app shell +
   the isolated world layer: pan/zoom; place and move devices and racks; open/close containers; multiple
   **spaces** with switching; **browse the catalog and add/remove gear** — exercising the 4.1 recompile
@@ -697,8 +803,21 @@ real-time host generalized from the pinned patch to a scene it builds, plays, sa
   distinctive **analog-domain readouts** (per-edge loading loss, clipping/headroom, noise floor, dBu/dBFS
   levels, phantom presence) read from compiled edge gains + runtime peak/clip detection. Rendered as
   device **screens** and as **global tools** — the pedagogical payoff (gain-staging across the AD/DA
-  boundary made visible). *Open at pickup:* probe API shape (zero-copy ring taps like `out_ptr`?); FFT in
-  engine vs JS; which readouts are device-embedded vs global; tap cost on the hot path.
+  boundary made visible). *Open at pickup:* the raw-sample-tap probe shape (zero-copy ring taps like
+  `out_ptr`?) for scope/spectrum; FFT in engine vs JS; which readouts are device-embedded vs global; tap
+  cost on the hot path.
+  - **Settled (4.2 planning) — a meter is a node, not a getter on every node; metering splits into two
+    pieces.** *(1) The measurement* lives in a **meter node** (e.g. a voltage-native `VuMeter`: bridging
+    `InputZ`, ~300 ms quasi-RMS ballistics, analog-world calibration `0 VU ≙ +4 dBu ≙ 1.228 V RMS`) that
+    taps volts and computes a **scalar reading** in-engine — emergent from the voltage model, never a flag
+    bolted onto other nodes. *(2) The exposure* is a genuinely **new node→host scalar readout
+    side-channel** — the engine has host→node (params) and routed (events) lanes but **nothing node→host
+    today**; this lane carries a node's per-block scalar(s) out to the UI. These two land **here in 4.5**.
+    A meter's scalar readout is **distinct from (and lighter than) the raw per-sample taps** a scope /
+    spectrum need — design the scalar lane first; rings are for waveform probes. **4.2 deferred this lane**
+    and drives its panel VU from the already-exposed **master-output buffer** (`out_ptr`/`out_len`, the
+    host monitor level — an honest signal but *not* a simulated meter device); the 4.2 widget repoints onto
+    a `VuMeter` node's readout when this lands.
 
 *Validate (epic exit):* a small studio built, placed, patched across at least two spaces, played, and
 metered entirely through the UI; structural edits hot-swap glitch-free under sound; the UI touches only
