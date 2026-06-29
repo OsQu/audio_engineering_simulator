@@ -10,9 +10,8 @@
 //! [`Decimator`] the modeled AD uses, with the same steep default spec.
 //!
 //! It lives in its **own crate** (depending only on `engine`, no native deps) so it is reachable
-//! from both the native render harness *and* the wasm32 browser bindings (the in-worklet model and
-//! the feasibility benchmark both need it). Keeping it out of `engine` makes the "capture is
-//! outside the simulation" boundary explicit.
+//! from both the native render harness *and* the wasm32 browser bindings. Keeping it out of
+//! `engine` makes the "capture is outside the simulation" boundary explicit.
 
 use engine::{AnalogRate, Decimator, SampleRate, kaiser_beta};
 
@@ -40,8 +39,8 @@ impl Capture {
     /// voltage to digital full scale (±1.0).
     ///
     /// # Panics
-    /// Panics unless `host_rate` integer-divides `analog_rate` (Epic 2 keeps the host rate an
-    /// integer divisor of the analog rate — a fractional resampler is deferred), and unless
+    /// Panics unless `host_rate` integer-divides `analog_rate` (the host rate must be an integer
+    /// divisor of the analog rate — a fractional resampler is not yet modeled), and unless
     /// `full_scale_volts` is finite and `> 0`. This is render tooling, off the engine's hot path,
     /// so it validates loudly at construction.
     #[must_use]

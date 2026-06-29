@@ -7,9 +7,8 @@ authors.workspace = true
 publish.workspace = true
 
 # The implicit capture: harness-side analog→digital plumbing that resamples the tapped speaker
-# voltage to host samples. Lives in its own crate (depending only on `engine`, no native deps) so
-# it is reachable from BOTH the native render harness and the wasm32 browser bindings. It is
-# deliberately NOT part of `engine` — it sits *outside* the simulation (see the lib docs).
+# voltage to host samples. Own crate, engine-only deps so both the native harness and the wasm
+# bindings can reach it; see the lib docs for why it sits outside the simulation.
 [dependencies]
 engine.workspace = true
 
