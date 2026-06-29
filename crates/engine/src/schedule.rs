@@ -956,11 +956,14 @@ fn alloc_lane(
             factor: m,
         });
     }
+    // Every digital lane is assigned the one clock domain: with a single analog reference and exact
+    // integer ratios nothing can drift. Once devices declare a clock source, the domain will be
+    // resolved from the producing converter here instead of fixed. See `ClockDomainId::SINGLE`.
     Ok(Lane::Sample(SampleBuffer::zeros(
         block_len / m,
         fmt.rate(),
         fmt.bits(),
-        ClockDomainId(0),
+        ClockDomainId::SINGLE,
     )))
 }
 

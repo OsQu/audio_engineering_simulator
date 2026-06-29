@@ -195,13 +195,13 @@ mod tests {
             vec![level; len],
             fs(),
             bits(),
-            ClockDomainId(0),
+            ClockDomainId::SINGLE,
         ))];
         let mut out = [Lane::Sample(SampleBuffer::zeros(
             len,
             fs(),
             bits(),
-            ClockDomainId(0),
+            ClockDomainId::SINGLE,
         ))];
         comp.process(&Params::EMPTY, &inp, &mut out);
         *out[0].sample().as_slice().last().unwrap()

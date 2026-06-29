@@ -181,7 +181,7 @@ mod tests {
             input_volts.len() / 8,
             lo(),
             bits,
-            ClockDomainId(0),
+            ClockDomainId::SINGLE,
         ))];
         ad.process(&Params::EMPTY, &inp, &mut out);
         out[0].sample().as_slice().to_vec()

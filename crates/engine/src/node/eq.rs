@@ -153,13 +153,13 @@ mod tests {
             samples,
             fs(),
             bits(),
-            ClockDomainId(0),
+            ClockDomainId::SINGLE,
         ))];
         let mut out = [Lane::Sample(SampleBuffer::zeros(
             n,
             fs(),
             bits(),
-            ClockDomainId(0),
+            ClockDomainId::SINGLE,
         ))];
         eq.process(&Params::EMPTY, &inp, &mut out);
         let out_amp = tone_amplitude(

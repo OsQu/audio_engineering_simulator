@@ -699,7 +699,7 @@ fn ad_convert(analog: &[f32], digital_rate: SampleRate) -> Vec<f32> {
         analog.len() / SAW_M,
         digital_rate,
         BitDepth::new(16),
-        ClockDomainId(0),
+        ClockDomainId::SINGLE,
     ))];
     ad.process(&Params::EMPTY, &input, &mut digital);
     digital[0].sample().as_slice().to_vec()
@@ -719,7 +719,7 @@ fn da_convert(digital: &[f32], digital_rate: SampleRate) -> Vec<f32> {
         digital.to_vec(),
         digital_rate,
         BitDepth::new(16),
-        ClockDomainId(0),
+        ClockDomainId::SINGLE,
     ))];
     let mut analog = [Lane::Voltage(VoltageBuffer::zeros(
         digital.len() * SAW_M,

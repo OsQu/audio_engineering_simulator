@@ -147,7 +147,7 @@ mod tests {
             samples.to_vec(),
             lo(),
             BitDepth::new(24),
-            ClockDomainId(0),
+            ClockDomainId::SINGLE,
         ))];
         let mut out = [Lane::Voltage(VoltageBuffer::zeros(samples.len() * 8, hi()))];
         da.process(&Params::EMPTY, &inp, &mut out);

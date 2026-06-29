@@ -144,7 +144,7 @@ mod tests {
             2,
             SampleRate::new(48_000.0),
             BitDepth::new(24),
-            ClockDomainId(0),
+            ClockDomainId::SINGLE,
         ))
     }
 

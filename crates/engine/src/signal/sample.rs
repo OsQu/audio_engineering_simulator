@@ -12,6 +12,19 @@ use super::{BitDepth, SampleRate};
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct ClockDomainId(pub u32);
 
+impl ClockDomainId {
+    /// The one clock domain every digital stream currently belongs to.
+    ///
+    /// Today there is exactly one domain: every converter runs off the single analog reference rate
+    /// at an exact integer ratio, so nothing can drift and the domain is *assigned*, not *derived*.
+    /// This constant is that assignment's single owner — the one place the "one domain" assumption
+    /// lives. When devices declare a **clock source** (internal crystal / recovered-from-input /
+    /// external word clock) and clocking is resolved as a distribution side-graph at compile, the
+    /// domain a stream belongs to becomes *resolved from the producing device's source* rather than
+    /// fixed here, and independently-clocked domains can drift and slip at their async boundaries.
+    pub const SINGLE: ClockDomainId = ClockDomainId(0);
+}
+
 /// A block of single-channel digital-audio samples: **linear, normalized** so ±1.0 is full scale.
 ///
 /// The digital-domain peer of [`VoltageBuffer`](super::VoltageBuffer). Linear only — dBFS is a
@@ -107,7 +120,7 @@ mod tests {
         (
             SampleRate::new(48_000.0),
             BitDepth::new(24),
-            ClockDomainId(0),
+            ClockDomainId::SINGLE,
         )
     }
 

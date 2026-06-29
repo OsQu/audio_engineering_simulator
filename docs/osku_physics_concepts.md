@@ -691,3 +691,9 @@ three delays share one unit and simply add.)
 buffer (the dominant chunk, measured live), the **note-stamping quantum** (a played note fires at the
 next engine block, ≤ ~2.7 ms — the input-side granularity), and this **signal-path group delay**
 (~0.6 ms). The page reports all three. See `RtEngine::signal_path_latency_ms` and `Decimator::group_delay`.
+
+> **Want (Oskari):** a from-scratch crash course on **phase** as its own session — what phase actually
+> is, a filter's phase response, **phase delay vs. group delay**, linear vs. nonlinear phase and the
+> transient smearing nonlinear phase causes, phase in the s-plane (and all-pass filters), and why it
+> matters both for the ear and for keeping parallel paths aligned. Not now; §16 and the filter sections
+> (5–9, 13) are the running notes until then.
