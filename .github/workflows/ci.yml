@@ -53,3 +53,41 @@ jobs:
           tool: wasm-pack
       - name: Wasm build (bindgen)
         run: wasm-pack build crates/wasm-bindings --target web --dev
+
+  # The web harness (Svelte/TS). Mirrors the local web gate: typecheck, Biome, Vitest, and a build.
+  # Independent of the Rust gate above, so it runs in parallel. No wasm artifact is needed — the build
+  # bundles main.ts and copies public/; the wasm is fetched at runtime, not at build.
+  web:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - name: Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: web/pnpm-lock.yaml
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      - name: Typecheck
+        run: pnpm run typecheck
+
+      - name: Lint (Biome)
+        run: pnpm run check
+
+      - name: Test
+        run: pnpm run test
+
+      - name: Build
+        run: pnpm run build
