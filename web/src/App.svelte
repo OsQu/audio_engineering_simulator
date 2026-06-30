@@ -173,6 +173,7 @@
             <Panel
               name={desc.name}
               params={desc.params}
+              ports={desc.ports}
               valueFor={(id) => paramValue(device.id, desc, id)}
               onParam={(p, v) => onParamInput(device.id, p, v)}
             />
