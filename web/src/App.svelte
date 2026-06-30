@@ -278,6 +278,73 @@
     send?.({ type: "param", device, paramId: p.id, value });
   }
 
+  // Push every device's current param values to the engine — after a (re)build the host re-applies the
+  // scene's control values over the queue (they'd glide from the node defaults otherwise).
+  function pushParams(sendFn: (msg: ControlMessage) => void): void {
+    for (const device of scene.patch.devices) {
+      const desc = descriptorFor(catalog, device.typeId);
+      if (!desc) continue;
+      for (const p of desc.params) {
+        sendFn({ type: "param", device: device.id, paramId: p.id, value: paramValue(device.id, desc, p.id) });
+      }
+    }
+  }
+
+  // A structural edit → rebuild the engine from the new patch (compile + ScheduleSlot hot-swap, in the
+  // worklet, the Story 4.1 path) and re-apply param values. Edits are rare gestures, so the off-block
+  // compile cost is acceptable; the live audio thread swaps at a block boundary.
+  function hotSwap(): void {
+    if (!send) return;
+    send({ type: "loadPatch", patch: plainPatch() });
+    seedParamValues();
+    pushParams(send);
+  }
+
+  // Add gear from the catalog: a new instance placed free-standing in the current space (just past the
+  // existing gear), then a hot-swap. Its ports read silence until patched (Story 4.4).
+  function addDevice(typeId: string): void {
+    const rightX = placedItems.reduce((m, it) => Math.max(m, it.rect.x + it.rect.width), 0);
+    let n = 1;
+    while (scene.patch.devices.some((d) => d.id === `${typeId}-${n}`)) n++;
+    const id = `${typeId}-${n}`;
+    scene.patch.devices.push({ id, typeId });
+    scene.ui.placements[id] = {
+      space: currentSpace,
+      position: { x: rightX + 60, y: 0, z: 0 },
+      facing: "front",
+      pulledOut: false,
+    };
+    hotSwap();
+  }
+
+  // Remove a device (never the output tap, which would invalidate the patch): drop it from the patch,
+  // its connections, and its placement, then hot-swap. Anything it fed now reads silence.
+  function removeDevice(id: string): void {
+    if (scene.patch.output.device === id) return;
+    scene.patch.devices = scene.patch.devices.filter((d) => d.id !== id);
+    scene.patch.connections = scene.patch.connections.filter(
+      (c) => c.from.device !== id && c.to.device !== id,
+    );
+    delete scene.ui.placements[id];
+    hotSwap();
+  }
+
+  // Add / remove a rack — purely UI furniture (the engine has no racks), so no hot-swap. Removing a
+  // rack un-mounts its gear, leaving each unit free-standing.
+  function addRack(): void {
+    const rightX = placedItems.reduce((m, it) => Math.max(m, it.rect.x + it.rect.width), 0);
+    let n = 1;
+    while (scene.ui.racks.some((r) => r.id === `rack-${n}`)) n++;
+    scene.ui.racks.push({ id: `rack-${n}`, space: currentSpace, position: { x: rightX + 60, y: 0, z: 0 }, slots: 8 });
+  }
+  function removeRack(id: string): void {
+    for (const d of scene.patch.devices) {
+      const place = scene.ui.placements[d.id];
+      if (place?.rack?.id === id) place.rack = undefined; // un-mount; keep its free position
+    }
+    scene.ui.racks = scene.ui.racks.filter((r) => r.id !== id);
+  }
+
   async function start(): Promise<void> {
     if (started) return;
     started = true;
@@ -299,19 +366,7 @@
           send = sendFn;
           ready = true;
           seedParamValues();
-          // Push the seeded values so the engine matches the scene from the first interaction.
-          for (const device of scene.patch.devices) {
-            const desc = descriptorFor(catalog, device.typeId);
-            if (!desc) continue;
-            for (const p of desc.params) {
-              sendFn({
-                type: "param",
-                device: device.id,
-                paramId: p.id,
-                value: paramValues[key(device.id, p.id)],
-              });
-            }
-          }
+          pushParams(sendFn); // match the engine to the scene from the first interaction
           if (synthDevice) {
             wireKeyboard(sendFn, synthDevice.id);
             wireMidi(sendFn, synthDevice.id, (m) => {
@@ -411,6 +466,16 @@
         {/each}
         <button type="button" class="space-tab add" onclick={addSpace}>+ space</button>
       </div>
+
+      <div class="palette">
+        <span class="palette-label">Add to {currentSpace}:</span>
+        {#each catalog as desc (desc.typeId)}
+          <button type="button" class="add-chip" onclick={() => addDevice(desc.typeId)}>
+            {desc.name}
+          </button>
+        {/each}
+        <button type="button" class="add-chip rack" onclick={addRack}>Rack</button>
+      </div>
       <p class="world-hint">
         Drag the background to pan, scroll to zoom; drag a unit by its top bar to move it (snap into a
         rack's free U-slot, or out onto the floor; red = an illegal spot). To see a unit's back,
@@ -432,6 +497,9 @@
                   <option value={s.id}>{s.name}</option>
                 {/each}
               </select>
+              <button type="button" class="chip" aria-label="remove rack" onclick={() => removeRack(itemId)}>
+                ✕
+              </button>
             {/if}
           {:else}
             {@const place = scene.ui.placements[itemId]}
@@ -456,6 +524,17 @@
                     <option value={s.id}>{s.name}</option>
                   {/each}
                 </select>
+              {/if}
+              {#if scene.patch.output.device !== itemId}
+                <!-- The output tap can't be removed (it would invalidate the patch). -->
+                <button
+                  type="button"
+                  class="chip"
+                  aria-label="remove device"
+                  onclick={() => removeDevice(itemId)}
+                >
+                  ✕
+                </button>
               {/if}
             {/if}
           {/if}
@@ -600,6 +679,34 @@
     border-radius: 3px;
     background: #4a4d52;
     color: #e0e0e0;
+  }
+  .palette {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.3rem;
+    margin: 0.3rem 0;
+  }
+  .palette-label {
+    font-size: 0.75rem;
+    color: #888;
+  }
+  .add-chip {
+    font: inherit;
+    font-size: 0.75rem;
+    padding: 0.2rem 0.6rem;
+    border: 1px solid #bbb;
+    border-radius: 12px;
+    background: #f4f4f4;
+    color: #333;
+    cursor: pointer;
+  }
+  .add-chip:hover {
+    background: #e6e6e6;
+  }
+  .add-chip.rack {
+    border-style: dashed;
+    color: #666;
   }
   .world-hint {
     font-size: 0.8rem;
