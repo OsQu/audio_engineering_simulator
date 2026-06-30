@@ -33,8 +33,10 @@
     onMoveTo: (id: string, x: number, y: number) => void;
     /** Legality predicate for live drag feedback + the commit gate: is `(x,y)` a legal spot for `id`? */
     canPlace?: (id: string, x: number, y: number) => boolean;
+    /** When this changes (e.g. the shown space switches), the camera re-frames the new content. */
+    fitKey?: string;
   }
-  let { items, item, controls, onMoveTo, canPlace }: Props = $props();
+  let { items, item, controls, onMoveTo, canPlace, fitKey }: Props = $props();
 
   // The room the surface spans, world mm. Generous so there's room to pan around; refined per-space later.
   const ROOM_WIDTH = 4000;
@@ -166,9 +168,19 @@
     panY = vh / 2 - z * ((top + bottom) / 2);
   }
 
-  // Frame the gear on first appearance; stop once the user takes over the camera.
+  let lastFitKey = $state<string | undefined>(undefined);
+
+  // Frame the gear on first appearance and whenever `fitKey` changes (switching spaces re-centers,
+  // re-enabling auto-fit); otherwise stop once the user takes over the camera.
   $effect(() => {
-    if (!userAdjusted && viewport && items.length > 0) fit();
+    if (!viewport || items.length === 0) return;
+    if (fitKey !== lastFitKey) {
+      lastFitKey = fitKey;
+      userAdjusted = false;
+      fit();
+    } else if (!userAdjusted) {
+      fit();
+    }
   });
 </script>
 

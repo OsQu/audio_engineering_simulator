@@ -59,8 +59,11 @@
     localStorage.setItem(VOLUME_KEY, String(v));
   }
 
-  // The page's authoritative scene: a saved one if present, else the default studio.
-  let scene = $state<Scene>(loadScene() ?? defaultScene());
+  // The page's authoritative scene: a saved one if present, else the default studio. The plain
+  // `initialScene` const lets both `scene` and `currentSpace` seed from the same value without one
+  // $state initializer reading another (which would only capture its initial value).
+  const initialScene = loadScene() ?? defaultScene();
+  let scene = $state<Scene>(initialScene);
 
   // Live control-param values, keyed `device:paramId`, mirrored into the scene on change so they
   // persist on save. Re-seeded from the scene whenever it's (re)loaded.
@@ -86,8 +89,8 @@
   const plainPatch = (): Patch => $state.snapshot(scene.patch);
 
   // --- The spatial world ---------------------------------------------------------------------------
-  // The space currently shown. One space for now; switching between several lands in Story 4.3.6.
-  const currentSpace = $derived(scene.ui.spaces[0]?.id ?? "");
+  // The space (room) currently shown; switching changes the rendered/interactable set.
+  let currentSpace = $state(initialScene.ui.spaces[0]?.id ?? "");
 
   const FRAME_MARGIN = 14; // mm of rack frame drawn around the U-slot region
 
@@ -207,10 +210,39 @@
     const units = deviceUnits(device.typeId);
     const hit = units > 0 ? rackSlotAt(id, x, y, units) : null;
     if (hit) {
+      const rack = rackById(hit.rackId);
       place.rack = { id: hit.rackId, uSlot: hit.slot };
+      if (rack) place.space = rack.space; // a mounted device lives in its rack's space
     } else {
       place.rack = undefined;
       place.position = { x, y, z: place.position.z };
+    }
+  }
+
+  // Spaces (rooms). Switching shows only that space's gear; membership persists in the scene.
+  function addSpace(): void {
+    let n = scene.ui.spaces.length + 1;
+    while (scene.ui.spaces.some((s) => s.id === `space-${n}`)) n++;
+    const space = { id: `space-${n}`, name: `Space ${n}` };
+    scene.ui.spaces.push(space);
+    currentSpace = space.id;
+  }
+  // Send a free-standing device to another space (it lands at that space's floor origin).
+  function moveDeviceToSpace(id: string, spaceId: string): void {
+    const place = scene.ui.placements[id];
+    if (!place) return;
+    place.rack = undefined;
+    place.space = spaceId;
+    place.position = { x: 0, y: 0, z: 0 };
+  }
+  // Move a rack to another space; its mounted gear follows.
+  function moveRackToSpace(id: string, spaceId: string): void {
+    const rack = rackById(id);
+    if (!rack) return;
+    rack.space = spaceId;
+    for (const d of scene.patch.devices) {
+      const place = scene.ui.placements[d.id];
+      if (place?.rack?.id === id) place.space = spaceId;
     }
   }
 
@@ -309,6 +341,7 @@
       return;
     }
     scene = loaded;
+    currentSpace = loaded.ui.spaces[0]?.id ?? "";
     seedParamValues();
     send?.({ type: "loadPatch", patch: plainPatch() }); // hot-swap the engine to the saved scene
     status = "scene loaded";
@@ -365,14 +398,42 @@
         <kbd>K</kbd> map to one octave from C4. (<kbd>Z</kbd>/<kbd>X</kbd> shift octave down/up.)
       </p>
 
+      <div class="spaces">
+        {#each scene.ui.spaces as space (space.id)}
+          <button
+            type="button"
+            class="space-tab"
+            class:active={space.id === currentSpace}
+            onclick={() => (currentSpace = space.id)}
+          >
+            {space.name}
+          </button>
+        {/each}
+        <button type="button" class="space-tab add" onclick={addSpace}>+ space</button>
+      </div>
       <p class="world-hint">
         Drag the background to pan, scroll to zoom; drag a unit by its top bar to move it (snap into a
         rack's free U-slot, or out onto the floor; red = an illegal spot). To see a unit's back,
-        <strong>pull it out</strong> first, then flip. Zoom in to operate a panel.
+        <strong>pull it out</strong> first, then flip. Send a unit or rack to another room with its
+        space selector. Zoom in to operate a panel.
       </p>
-      <WorldView items={placedItems} onMoveTo={moveTo} {canPlace}>
+      <WorldView items={placedItems} onMoveTo={moveTo} {canPlace} fitKey={currentSpace}>
         {#snippet controls(itemId)}
-          {#if !isRack(itemId)}
+          {#if isRack(itemId)}
+            {@const rack = rackById(itemId)}
+            {#if rack}
+              <select
+                class="space-select"
+                aria-label="rack space"
+                value={rack.space}
+                onchange={(e) => moveRackToSpace(itemId, e.currentTarget.value)}
+              >
+                {#each scene.ui.spaces as s (s.id)}
+                  <option value={s.id}>{s.name}</option>
+                {/each}
+              </select>
+            {/if}
+          {:else}
             {@const place = scene.ui.placements[itemId]}
             {#if place}
               <button type="button" class="chip" onclick={() => togglePulled(itemId)}>
@@ -382,6 +443,19 @@
                 <button type="button" class="chip" onclick={() => toggleFlip(itemId)}>
                   {place.facing === "back" ? "front" : "back"}
                 </button>
+              {/if}
+              {#if !place.rack}
+                <!-- Mounted gear follows its rack's space, so the selector only shows when free-standing. -->
+                <select
+                  class="space-select"
+                  aria-label="device space"
+                  value={place.space}
+                  onchange={(e) => moveDeviceToSpace(itemId, e.currentTarget.value)}
+                >
+                  {#each scene.ui.spaces as s (s.id)}
+                    <option value={s.id}>{s.name}</option>
+                  {/each}
+                </select>
               {/if}
             {/if}
           {/if}
@@ -489,6 +563,43 @@
   }
   .controls {
     margin-top: 1.5rem;
+  }
+  .spaces {
+    display: flex;
+    gap: 0.3rem;
+    margin: 0.5rem 0 0.3rem;
+    flex-wrap: wrap;
+  }
+  .space-tab {
+    font: inherit;
+    font-size: 0.8rem;
+    padding: 0.25rem 0.7rem;
+    border: 1px solid #ccc;
+    border-bottom: none;
+    border-radius: 5px 5px 0 0;
+    background: #ececec;
+    color: #555;
+    cursor: pointer;
+  }
+  .space-tab.active {
+    background: #2a2d31;
+    color: #fff;
+    border-color: #2a2d31;
+  }
+  .space-tab.add {
+    color: #888;
+    background: transparent;
+    border-style: dashed;
+  }
+  .space-select {
+    font: inherit;
+    font-size: 9px;
+    margin-left: 2px;
+    max-width: 6rem;
+    border: 1px solid #555;
+    border-radius: 3px;
+    background: #4a4d52;
+    color: #e0e0e0;
   }
   .world-hint {
     font-size: 0.8rem;
