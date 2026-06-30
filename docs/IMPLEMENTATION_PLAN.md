@@ -397,16 +397,18 @@ crossing the main→audio boundary as sparse messages. This epic retired the hea
 
 ## Epic 4 — UI: Skeuomorphic Panels + Patch Cables
 
-**Progress:** **Stories 4.1 ✅ and 4.2 ✅ done.** 4.1 — the engine→UI seam: a new `devices` crate, scene IR
-+ catalog + `build_patch`, and `SceneEngine` (scene-driven, generically controlled, hot-swappable). 4.2 —
-the skeuomorphic panel system on a **Svelte 5** harness: a descriptor → panel renderer + widget vocabulary
-(knobs/faders/switches/jacks/screen/VU), front/back flip, a real `powered` control param, and a host-side
-monitor volume; metering (a `VuMeter` node + node→host readout lane) stays deferred to 4.5. **Story 4.3 —
-🚧 In progress:** the spatial world, scoped at pickup to a **front-elevation pan/zoom** view with
-**real rack-U placement**, multiple **spaces**, and **catalog add/remove** (the recompile exercise);
-operator **reach** and **multi-view projections** are deferred (3-D coordinate truth is stored now so they
-stay cheap), landing instead in the new **Story 4.6** (top view + reach). 4.4–4.6 stay at Story level until
-picked up. The original 4-story sketch was reshaped into the now-6-story arc below after the UI vision
+**Progress:** **Stories 4.1 ✅, 4.2 ✅, and 4.3 ✅ done.** 4.1 — the engine→UI seam: a new `devices` crate,
+scene IR + catalog + `build_patch`, and `SceneEngine` (scene-driven, generically controlled, hot-swappable).
+4.2 — the skeuomorphic panel system on a **Svelte 5** harness: a descriptor → panel renderer + widget
+vocabulary (knobs/faders/switches/jacks/screen/VU), front/back flip, a real `powered` control param, and a
+host-side monitor volume; metering (a `VuMeter` node + node→host readout lane) stays deferred to 4.5. 4.3 —
+the **spatial world**: a front-elevation pan/zoom studio where gear lives at real coordinates, mounts in
+**rack U-slots** (drag-snap), moves between **rooms**, and is **added/removed from a catalog palette** (the
+4.1 hot-swap recompile path); pure Vitest-tested spatial logic + a thin world layer (WebGL escape hatch),
+engine untouched. Operator **reach** and **multi-view projections** were deferred to the new **Story 4.6**
+(3-D coordinate truth is stored now so they stay cheap). **Next: Story 4.4** (patch cables & snakes). 4.4–4.6
+stay at Story level until picked up. The original 4-story sketch was reshaped into the now-6-story arc below
+after the UI vision
 grew from "device panels + cables" into a **game-like spatial studio/venue sim** (browsable gear catalog,
 racks and containers, freely placed in a pan/zoom world, multiple *spaces* with snakes between them,
 VST-grade skeuomorphic panels with front controls and back I/O). Per the detail-gradient convention
@@ -863,7 +865,7 @@ on a Svelte 5 harness, with two device panels operating the live engine and the 
   host monitor level, not a voltage-native `VuMeter` node + node→host readout lane (→ 4.5); panel layout is
   TS auto-layout from param/port `kind` (no descriptor layout fields); **physical dimensions are not yet on
   the descriptor** (the spatial-sim content → 4.3, per the spatial-sim settled decision in this Epic).
-#### Story 4.3 — The spatial world: spaces, racks, placement, catalog browsing — 🚧 **In progress**
+#### Story 4.3 — The spatial world: spaces, racks, placement, catalog browsing — ✅ **Done**
 
 *Goal:* turn the flat panel rack into a **game-like spatial studio** — the Svelte app shell + an isolated
 world layer where you pan/zoom across a **space** rendered as a **front rack-elevation**, place and move
@@ -964,14 +966,53 @@ problem" decision); the engine learns nothing about rooms, racks, or position.
   add/remove through the UI hot-swaps the engine **glitch-free under sound** with the health line clean —
   the 4.1 recompile path proven on user-driven add/remove. Verified in-browser by ear.
 
-*Validate:* through the UI, in a pan/zoom **front-elevation** world: place and move gear in **real rack-U
-slots** and on a desk (illegal placements rejected); switch between **at least two spaces**; flip a unit to
-its back **only after** the clearance action; **browse the catalog and add/remove gear**, which hot-swaps
-the engine **glitch-free** (health clean) — proving the 4.1 recompile path on add/remove. The spatial logic
-(projection, AABB, U-slot legality) is unit-tested (Vitest); device dimensions are **catalog content** with
-native tests; the engine and `patch` stay free of any rooms/racks/positions; the full gate is green
-(`cargo fmt --check && cargo lint && cargo test && cargo wasm && cargo docs`, plus `wasm-pack build` and the
-`web` Biome/typecheck/build). Verified in-browser.
+*Validate:* ✅ **met.** Through the UI, in a pan/zoom **front-elevation** world: gear is placed and moved
+in **real rack-U slots** (drag-snap to the nearest free slot) and free-standing on the floor, with illegal
+(overlapping / no-free-slot) drops rejected; rooms are **created and switched** (the default ships one room
++ an "add space" control, and gear/racks move between rooms); a unit's back is reachable **only after** the
+pull-out clearance action; the catalog palette **adds and removes gear**, hot-swapping the engine via the
+4.1 `loadPatch` recompile path. The spatial logic (projection, AABB, U-slot legality, nearest-free-slot) is
+**Vitest-unit-tested**; device dimensions are **catalog content** with native tests; the engine and `patch`
+stay free of any rooms/racks/positions. Full gate green (`cargo fmt --check && cargo lint && cargo test &&
+cargo wasm && cargo docs`, plus `web` Vitest/Biome/typecheck/build). Verified in-browser.
+
+*Delivered:* a game-like spatial studio on the Svelte harness — a pan/zoom front-elevation world where gear
+lives at real coordinates, mounts in rack U-slots, and moves between rooms, with add/remove driving the
+engine's hot-swap. The engine and runnable `patch` gained **nothing** (no rooms/racks/positions) — all
+spatial state is UI-only, and add/remove rides the existing 4.1 `loadPatch`/`catalog()` surface, so **no
+Rust changed** beyond the catalog dimensions.
+- **Device dimensions are catalog content.** `DeviceDescriptor` gained a `FormFactor` (`Rackmount { rack_units }`
+  | `Desktop { width/height/depth_mm }`), authored per `CATALOG` entry, mirrored in `catalog.ts`; native
+  tests pin sane values + the tagged camelCase wire shape. The UI derives a device's box from it.
+- **Pure spatial module (`web/src/spatial.ts`), Vitest-tested.** 3-D coordinate/footprint types, the
+  `project(pos, size, view)` **seam** (front renders now; top/side exist so Story 4.6 is a few lines),
+  `footprint`, `rectsOverlap` (AABB), and the rack model (`fitsInRack` / `canPlaceInRack` /
+  `nearestFreeSlot`). Rendering-free — the "tests are the oracle" temperament applied to the UI.
+- **Scene `ui` reshaped (`scene-store.ts`, schema v4, no migration).** `SceneUi = { spaces, racks, placements }`;
+  a `Placement` carries `position` (3-D truth) + optional rack mount + `facing` + `pulledOut`. localStorage
+  is disposable, so the shape was replaced outright (parse discards any other version). Pure
+  `serializeScene`/`parseScene` are unit-tested for round-trip + version-discard.
+- **Isolated world layer (`WorldView.svelte`)** behind a thin prop contract (`items` in world-mm + an `item`
+  snippet + a generic `controls` snippet + `onMoveTo`/`canPlace`/`fitKey`) — the standing WebGL escape hatch.
+  CSS-transform **pan/zoom** (cursor-anchored, scroll-distance-proportional), **fit-to-content** framing that
+  re-frames on room switch (`fitKey`) and backs off once the user takes over, per-device **drag grip**
+  (so operating a control never drags or pans), and a red-outline illegal-drop preview.
+- **App wiring (`App.svelte`):** front-elevation projection of placements; **drag-snap** rackmount gear into
+  the nearest free U-slot (or out to the floor); **movable racks** rendered as U-slot frames; **clearance-gated
+  back access** (`Panel`'s flip is now a controlled prop, gated behind pull-out); **multiple rooms** with tab
+  switching + add + per-item room selectors; a **catalog palette** whose add/remove mutate the `patch` and
+  hot-swap the engine (re-pushing params after each swap).
+- **Deviations from the plan (not bugs):** rack **collapse/expand was built then removed** — real racks don't
+  collapse (user call); **"desk" is the free floor**, not a distinct desk container (deferred); the default
+  scene ships **one room** (add more via the control) rather than two; **reach + multi-view projections stay
+  deferred to Story 4.6** as planned (the 3-D coordinate truth is stored now so they're cheap).
+- **Known limitations (recorded):** the computer keyboard is wired once to the **initial** synth — removing it
+  or adding a second doesn't re-route input; dragging a **rack** moves its frame live and its mounted gear
+  repositions on drop; racks reposition **freely** (no rack-vs-rack overlap rejection); "pulled out" has **no
+  z-offset** in the front elevation (z isn't visible head-on — it only unlocks the flip; the visible
+  pull-forward is a Story 4.6 top-view concern).
+- **Tooling:** stood up **Vitest** in `web/` (the project is pnpm-managed; `CLAUDE.md` corrected from npm).
+  No web CI job exists yet, so `web` typecheck/Biome/test/build aren't gated on PRs — a candidate follow-up.
 - **Story 4.4 — Patch cables & snakes → live graph mutation.** Drag-to-connect between jacks with bezier
   cables; **snakes** as visual bundles of mono cables crossing spaces; connect/disconnect mutates the
   graph → recompile/**hot-swap live under sound**. The "patching feels natural" payoff and the
