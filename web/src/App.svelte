@@ -16,6 +16,7 @@
   } from "./engine";
   import type { Patch } from "./scene";
   import { defaultScene, loadScene, type Scene, saveScene, setSceneParam } from "./scene-store";
+  import Panel from "./widgets/Panel.svelte";
 
   let status = $state("idle");
   let health = $state("");
@@ -39,9 +40,13 @@
       return desc ? isPlayable(desc) : false;
     }),
   );
-  const synthDesc = $derived(synthDevice ? descriptorFor(catalog, synthDevice.typeId) : undefined);
-
   const key = (device: string, paramId: number): string => `${device}:${paramId}`;
+
+  // The current value of a device-local param: the live override if any, else the descriptor default.
+  function paramValue(deviceId: string, desc: DeviceDescriptor, id: number): number {
+    const v = paramValues[key(deviceId, id)];
+    return v !== undefined ? v : (desc.params.find((p) => p.id === id)?.default ?? 0);
+  }
 
   // A plain (non-proxied) deep copy of the patch for crossing to the worklet: `$state` wraps the
   // scene in a reactive Proxy, which `postMessage` cannot structured-clone (DataCloneError).
@@ -64,12 +69,6 @@
     paramValues[key(device, p.id)] = value;
     setSceneParam(scene, device, p.id, value); // keep the scene in sync for save
     send?.({ type: "param", device, paramId: p.id, value });
-  }
-
-  function formatValue(p: ParamDescriptor, value: number): string {
-    if (p.kind === "switch") return value >= 0.5 ? "on" : "off";
-    const text = Number.isInteger(value) ? String(value) : value.toFixed(2);
-    return p.unit ? `${text} ${p.unit}` : text;
   }
 
   async function start(): Promise<void> {
@@ -167,34 +166,19 @@
         <kbd>K</kbd> map to one octave from C4. (<kbd>Z</kbd>/<kbd>X</kbd> shift octave down/up.)
       </p>
 
-      {#if synthDevice && synthDesc}
-        <h2>{synthDesc.name}</h2>
-        {#each synthDesc.params as p (p.id)}
-          {@const value = paramValues[key(synthDevice.id, p.id)] ?? p.default}
-          <div class="control">
-            <label for={`p-${p.id}`}>{p.label}</label>
-            {#if p.kind === "switch"}
-              <input
-                id={`p-${p.id}`}
-                type="checkbox"
-                checked={value >= 0.5}
-                oninput={(e) => onParamInput(synthDevice.id, p, e.currentTarget.checked ? 1 : 0)}
-              />
-            {:else}
-              <input
-                id={`p-${p.id}`}
-                type="range"
-                min={p.min}
-                max={p.max}
-                step={(p.max - p.min) / 200 || 0.01}
-                {value}
-                oninput={(e) => onParamInput(synthDevice.id, p, Number(e.currentTarget.value))}
-              />
-            {/if}
-            <output>{formatValue(p, value)}</output>
-          </div>
+      <div class="rack">
+        {#each scene.patch.devices as device (device.id)}
+          {@const desc = descriptorFor(catalog, device.typeId)}
+          {#if desc}
+            <Panel
+              name={desc.name}
+              params={desc.params}
+              valueFor={(id) => paramValue(device.id, desc, id)}
+              onParam={(p, v) => onParamInput(device.id, p, v)}
+            />
+          {/if}
         {/each}
-      {/if}
+      </div>
 
       <p class="midi">{midiStatus}</p>
       <p class="scene-buttons">
@@ -237,24 +221,12 @@
   .controls {
     margin-top: 1.5rem;
   }
-  .control {
+  .rack {
     display: flex;
-    align-items: center;
+    flex-wrap: wrap;
     gap: 0.75rem;
-    margin: 0.4rem 0;
-  }
-  .control label {
-    width: 7rem;
-    flex: none;
-  }
-  .control input[type="range"] {
-    flex: 1;
-  }
-  .control output {
-    width: 5rem;
-    flex: none;
-    font-variant-numeric: tabular-nums;
-    color: #555;
+    align-items: flex-start;
+    margin: 0.5rem 0 1rem;
   }
   kbd {
     background: #f0f0f0;

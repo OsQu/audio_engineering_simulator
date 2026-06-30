@@ -23,8 +23,10 @@ export interface Scene {
   patch: Patch;
 }
 
-/** The default studio: the canonical chain `synth → AD → DA → speaker`, tapped at the speaker. The
- * `typeId`s match the `devices` catalog; device ids are what control messages address. */
+/** The default studio: the chain `synth → gain → AD → DA → speaker`, tapped at the speaker. The gain
+ * stage is unity by default (a passthrough) — it gives the panel UI a second controllable device with a
+ * knob + power switch. The `typeId`s match the `devices` catalog; device ids are what control messages
+ * address. */
 export function defaultScene(): Scene {
   return {
     schemaVersion: SCHEMA_VERSION,
@@ -32,12 +34,14 @@ export function defaultScene(): Scene {
     patch: {
       devices: [
         { id: "synth", typeId: "synth_voice" },
+        { id: "gain", typeId: "gain_stage" },
         { id: "ad", typeId: "ad_converter" },
         { id: "da", typeId: "da_converter" },
         { id: "spk", typeId: "speaker" },
       ],
       connections: [
-        { from: { device: "synth", port: 0 }, to: { device: "ad", port: 0 } },
+        { from: { device: "synth", port: 0 }, to: { device: "gain", port: 0 } },
+        { from: { device: "gain", port: 0 }, to: { device: "ad", port: 0 } },
         { from: { device: "ad", port: 0 }, to: { device: "da", port: 0 } },
         { from: { device: "da", port: 0 }, to: { device: "spk", port: 0 } },
       ],
