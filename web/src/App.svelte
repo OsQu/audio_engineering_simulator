@@ -16,9 +16,11 @@
   } from "./engine";
   import type { Patch } from "./scene";
   import { defaultScene, loadScene, type Scene, saveScene, setSceneParam } from "./scene-store";
+  import { footprint, project, type Rect2, rectsOverlap } from "./spatial";
   import Panel from "./widgets/Panel.svelte";
   import Screen from "./widgets/Screen.svelte";
   import Vu from "./widgets/Vu.svelte";
+  import WorldView from "./widgets/WorldView.svelte";
 
   let status = $state("idle");
   let health = $state("");
@@ -73,6 +75,47 @@
   // A plain (non-proxied) deep copy of the patch for crossing to the worklet: `$state` wraps the
   // scene in a reactive Proxy, which `postMessage` cannot structured-clone (DataCloneError).
   const plainPatch = (): Patch => $state.snapshot(scene.patch);
+
+  // --- The spatial world ---------------------------------------------------------------------------
+  // The space currently shown. One space for now; switching between several lands in Story 4.3.6.
+  const currentSpace = $derived(scene.ui.spaces[0]?.id ?? "");
+
+  // The front-elevation rect of one placed device, world mm — its placement projected through its
+  // catalog footprint. `null` if the device has no descriptor (catalog not ready) or no placement.
+  function deviceRect(deviceId: string, typeId: string): Rect2 | null {
+    const desc = descriptorFor(catalog, typeId);
+    const placement = scene.ui.placements[deviceId];
+    if (!desc || !placement) return null;
+    return project(placement.position, footprint(desc.formFactor), "front");
+  }
+
+  // The devices to render in the world: those placed in the current space, with their projected rect.
+  const placedItems = $derived(
+    scene.patch.devices
+      .filter((d) => scene.ui.placements[d.id]?.space === currentSpace)
+      .map((d) => ({ id: d.id, rect: deviceRect(d.id, d.typeId) }))
+      .filter((it): it is { id: string; rect: Rect2 } => it.rect !== null),
+  );
+
+  // Legality: a candidate spot for `id` is legal iff its footprint rect overlaps no other device's
+  // rect in the same space (free-standing AABB no-overlap; rack U-slots arrive in Story 4.3.5).
+  function canPlace(id: string, x: number, y: number): boolean {
+    const placement = scene.ui.placements[id];
+    const device = scene.patch.devices.find((d) => d.id === id);
+    if (!placement || !device) return false;
+    const desc = descriptorFor(catalog, device.typeId);
+    if (!desc) return false;
+    const candidate = project({ x, y, z: placement.position.z }, footprint(desc.formFactor), "front");
+    return !placedItems.some((other) => other.id !== id && rectsOverlap(candidate, other.rect));
+  }
+
+  // Commit a legal drag into the scene (so it renders there and persists on save).
+  function moveTo(id: string, x: number, y: number): void {
+    const placement = scene.ui.placements[id];
+    if (!placement || !canPlace(id, x, y)) return;
+    placement.position.x = x;
+    placement.position.y = y;
+  }
 
   function seedParamValues(): void {
     const values: Record<string, number> = {};
@@ -212,10 +255,15 @@
         <kbd>K</kbd> map to one octave from C4. (<kbd>Z</kbd>/<kbd>X</kbd> shift octave down/up.)
       </p>
 
-      <div class="rack">
-        {#each scene.patch.devices as device (device.id)}
-          {@const desc = descriptorFor(catalog, device.typeId)}
-          {#if desc}
+      <p class="world-hint">
+        Drag the background to pan, scroll to zoom; drag a unit to move it (a red outline = an
+        illegal, overlapping spot — the move is rejected). Zoom in to operate a panel.
+      </p>
+      <WorldView items={placedItems} onMoveTo={moveTo} {canPlace}>
+        {#snippet item(deviceId)}
+          {@const device = scene.patch.devices.find((d) => d.id === deviceId)}
+          {@const desc = device ? descriptorFor(catalog, device.typeId) : undefined}
+          {#if device && desc}
             <Panel
               name={desc.name}
               params={desc.params}
@@ -234,8 +282,8 @@
               {/if}
             </Panel>
           {/if}
-        {/each}
-      </div>
+        {/snippet}
+      </WorldView>
 
       <p class="midi">{midiStatus}</p>
       <p class="scene-buttons">
@@ -299,12 +347,10 @@
   .controls {
     margin-top: 1.5rem;
   }
-  .rack {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 0.75rem;
-    align-items: flex-start;
-    margin: 0.5rem 0 1rem;
+  .world-hint {
+    font-size: 0.8rem;
+    color: #777;
+    margin: 0.5rem 0;
   }
   kbd {
     background: #f0f0f0;

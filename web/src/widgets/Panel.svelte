@@ -89,6 +89,11 @@
 
 <style>
   .panel {
+    /* In the spatial world the panel fills its chassis box (sized to the device's footprint); zoom in
+       to operate it. box-sizing keeps the padding inside the footprint. */
+    width: 100%;
+    height: 100%;
+    box-sizing: border-box;
     border: 1px solid #bbb;
     border-radius: 8px;
     background: linear-gradient(#fafafa, #ececec);
@@ -96,7 +101,6 @@
       inset 0 1px 0 #fff,
       0 1px 3px rgba(0, 0, 0, 0.12);
     padding: 0.6rem 0.9rem 0.8rem;
-    min-width: 9rem;
   }
   header {
     display: flex;
