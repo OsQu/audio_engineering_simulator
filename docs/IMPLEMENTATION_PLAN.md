@@ -397,11 +397,13 @@ crossing the main→audio boundary as sparse messages. This epic retired the hea
 
 ## Epic 4 — UI: Skeuomorphic Panels + Patch Cables
 
-**Progress:** **Story 4.1 ✅ done** (the engine→UI seam: a new `devices` crate, scene IR + catalog +
-`build_patch`, and `SceneEngine` — scene-driven, generically controlled, hot-swappable; verified live in
-the browser). **Story 4.2 🚧 in progress** (skeuomorphic device panels — descriptor → panel renderer +
-widget vocabulary, introducing Svelte 5; metering deferred to 4.5, see its note). 4.3–4.5 stay at Story
-level until picked up. The original 4-story sketch was reshaped into the 5-story arc below after the UI vision
+**Progress:** **Stories 4.1 ✅ and 4.2 ✅ done.** 4.1 — the engine→UI seam: a new `devices` crate, scene IR
++ catalog + `build_patch`, and `SceneEngine` (scene-driven, generically controlled, hot-swappable). 4.2 —
+the skeuomorphic panel system on a **Svelte 5** harness: a descriptor → panel renderer + widget vocabulary
+(knobs/faders/switches/jacks/screen/VU), front/back flip, a real `powered` control param, and a host-side
+monitor volume; metering (a `VuMeter` node + node→host readout lane) stays deferred to 4.5. **Next: Story
+4.3** (the spatial world — physical-space sim, placement, racks, reach). 4.3–4.5 stay at Story level until
+picked up. The original 4-story sketch was reshaped into the 5-story arc below after the UI vision
 grew from "device panels + cables" into a **game-like spatial studio/venue sim** (browsable gear catalog,
 racks and containers, freely placed in a pan/zoom world, multiple *spaces* with snakes between them,
 VST-grade skeuomorphic panels with front controls and back I/O). Per the detail-gradient convention
@@ -483,6 +485,38 @@ and the why are recorded.
   FOH are UI groupings over **one engine graph** (nodes carry a space tag); the engine never knows about
   rooms. A *snake* between spaces is a UI bundle of individual mono analog cables drawn as one — **true
   multichannel digital bundling stays Epic 5** (5.1/5.3); nothing in the engine changes for snakes here.
+- **The spatial sim is a data/constraint model with a 2-D presentation — it stays on the Svelte + DOM/SVG
+  stack; it is *not* a rendering problem.** Devices have real physical dimensions and live in containers
+  (rack / desk / room); placement is constrained (rackmount → rack U-slots, desktop gear → a desk
+  surface); the sim tracks the operator's position and what's within **reach** (zoom out for the overview,
+  but then you can't touch); back-panel access is **gated behind a physical action** (flip a unit, pull it
+  from the rack, roll the rack off the wall); bounds-checking is cheap **axis-aligned-rectangle (AABB)**
+  overlap because audio gear is boxes; switching rooms switches the interactable set. *Why the stack is
+  unchanged:* the novel, hard parts — the spatial model, placement legality, reach, view projection — are
+  **framework-agnostic data + math**, and the *presentation* is only tens-to-low-hundreds of rectangles in
+  a 2-D projection (≈260 nodes is the Epic-5 napkin ceiling), which DOM/SVG over the CSS-transform pan/zoom
+  surface handles comfortably. A WebGL/game-engine stack only earns its complexity for thousands of
+  animated sprites, a true 3-D perspective camera, or per-pixel shaders — **none of which this wants**
+  (explicitly "no fancy 3-D"). The Stack-1 decision's *isolated world layer* is the standing escape hatch:
+  swap that layer to a WebGL canvas later **only if** profiling at venue scale demands it — same
+  "multi-core only if profiling demands it" philosophy as the engine; don't pre-build it.
+  - **Model in 3-D, render in 2-D (the one discipline that matters).** Store a *single* coordinate truth
+    per object — position `(x, y, z)` + a footprint box + a facing — and render top/side/front views as
+    **projections** of it (each view just picks which two axes map to screen X/Y). Storing per-view 2-D
+    positions is the trap that drifts the views out of sync. The "flip to back" CSS 3-D transform from 4.2
+    is reused, but **gated** by a clearance state (the unit must be pulled out / the rack rolled off the
+    wall before its back is reachable).
+  - **Where the model lives — split by what it *is*.** *Placement, player position, reach, zoom/view
+    state, room membership* are UI state → the TS `ui` layer (the scene IR's reserved placement section;
+    engine-stays-UI-free, "spaces are a UI concept"). *Physical dimensions* (rack-U height, footprint) are
+    **content, not UI** — about as intrinsic as a device's impedance — so they belong on the **`devices`
+    catalog descriptor** (derived/authored alongside the rest of the device, native-testable, no drift),
+    **not** invented in TS. *Rejected:* dimensions as TS-only UI data (re-invents content the catalog owns,
+    risks drift); a single "spatial = UI" lump (conflates intrinsic gear facts with view state). The engine
+    gains **nothing** either way — no rooms, racks, or position.
+  - **The spatial logic is pure and rendering-free → unit-testable** (AABB overlap, placement legality,
+    reach queries, projection), fitting the project's "tests are the oracle" temperament; keep model and
+    renderer separate and the WebGL escape hatch stays open for free.
 - **Skeuomorphic = genuine interaction + recognizable layout, not photoreal textures.** Real
   knob/fader/meter/jack behavior and gear-like layout (the VST-mimics-analog feel); branding, photoreal
   skins, and onboarding polish are explicitly deferred (the project's deprioritize-polish non-goal). This
@@ -675,7 +709,7 @@ real-time host generalized from the pinned patch to a scene it builds, plays, sa
 - **Concepts captured** in `osku_rust_concepts.md`: serde / serde-wasm-bindgen; move-vs-heap & `Box` for
   unsized; references as borrowing pointers; non-capturing closures → `fn` pointers; block-vs-closure +
   `if let`/`Option::take`.
-#### Story 4.2 — Skeuomorphic device panels: controls → params, front/back, power — 🚧 **In progress**
+#### Story 4.2 — Skeuomorphic device panels: controls → params, front/back, power — ✅ **Done**
 
 *Goal:* the **descriptor → panel renderer** — the data-driven panel system every later device reuses —
 plus the skeuomorphic **widget vocabulary** (knobs, faders, switches, jacks, a screen, a VU), introducing
@@ -778,20 +812,70 @@ recognizable layout, not photoreal).
   buffer (peak/RMS over recent quanta — **no engine change**). *Done:* the ADSR screen tracks the synth
   knobs; the master VU moves with output level and rests at idle; verified in-browser by eye.
 
-*Validate:* descriptor-driven panels for `synth_voice` + `gain_stage` operate the live static engine
-(knobs/faders change the sound and persist to the scene); each panel **flips** front↔back to
+*Validate:* ✅ **met.** descriptor-driven panels for `synth_voice` + `gain_stage` operate the live static
+engine (knobs/faders change the sound and persist to the scene); each panel **flips** front↔back to
 descriptor-driven, correctly-styled (display-only) jacks; the synth **ADSR screen** tracks its knobs and the
 **master-output VU** moves with output; **power** is a real `powered` param (off ⇒ silence, de-clicked, no
 recompile); **Svelte 5** stands up the renderer on the untouched worklet/transport; the engine gains only
 the `powered` params (no probe/readout lane — deferred to 4.5) and stays UI-free; the full Rust gate
 (`cargo fmt --check && cargo lint && cargo test && cargo wasm && cargo docs`) plus `wasm-pack build` and the
 `web` `check`/`typecheck`/`build` pass; verified in-browser by ear and eye.
-- **Story 4.3 — The spatial world: spaces, racks, placement, catalog browsing.** The Svelte app shell +
-  the isolated world layer: pan/zoom; place and move devices and racks; open/close containers; multiple
-  **spaces** with switching; **browse the catalog and add/remove gear** — exercising the 4.1 recompile
-  path on add/remove. UI scene state stays in sync with the engine scene IR. *Open at pickup:* the world
-  layer's interface (the swap-to-WebGL-later boundary); rack/unit sizing model; how a space maps onto the
-  scene IR's placement fields; add/remove debouncing vs recompile cost.
+
+*Delivered:* the data-driven skeuomorphic panel system + the widget vocabulary every later device reuses,
+on a Svelte 5 harness, with two device panels operating the live engine and the rest rendered generically.
+- **Svelte 5 introduced** (the Epic-4 stack decision realized): `@sveltejs/vite-plugin-svelte` + runes, a
+  slim `index.html`/`main.ts` mount. Transport (engine/worklet bring-up, `send`, keyboard, Web MIDI,
+  latency/health formatting) extracted to `web/src/engine.ts`; `App.svelte` owns the reactive scene/UI
+  state. The worklet, scene-store, and engine bring-up were **repackaged, not rebuilt**.
+- **Descriptor → panel renderer** (`widgets/Panel.svelte`): laid out generically from a device's descriptor
+  — a control widget per param chosen by `kind`, plus a back face of I/O jacks; zero-param devices show
+  "no front-panel controls". **Widget vocabulary** (SVG + CSS, functional-not-photoreal): `Knob` (270°
+  rotary), `Fader`, `Switch` (LED power), `Jack` (color by connector `kind`, shape by carrier `domain`),
+  `Screen`, `Vu`, with a shared pointer-drag (`drag.ts`: vertical drag, Shift = fine, double-click = reset,
+  arrow-key nudge). Front/back is a **CSS 3-D flip** (grid-stack trick → no manual height sync), kept
+  self-contained so 4.3 can gate it behind a physical-clearance action.
+- **`powered` control param** on `SynthVoice` + `GainStage` (engine): a Switch-kind param `[0,1]` default
+  `1.0`, whose smoothed value gates the node's output (off ⇒ silence, de-clicked; never a recompile —
+  params-vs-structure). Default `1.0` is identity, so all prior analog tests held; catalog entries
+  (`synth_voice`/`gain_stage`/`channel_strip`) gained the switch. *Generic framework-level power deferred*
+  (per-node for now — known simplification, not a bug).
+- **Catalog ingress**: the worklet calls `wasm_bindgen.catalog()` (where the wasm instance lives) and ships
+  descriptors in its `ready` message; the page renders panels from them. `defaultScene` gained a unity
+  `gain_stage` (`synth → gain → ad → da → spk`) for a second controllable device.
+- **Metering deferred to 4.5 (as planned):** the master VU reads the **already-exposed output buffer** (a
+  throttled peak the worklet posts ~47×/s) — the host monitor level, *not* a simulated meter device; no
+  engine probe/readout lane added. The synth screen draws the ADSR contour from param *values*, not a tap.
+- **Two detours folded in:** (1) a **monitor volume** — a Web Audio `GainNode` between the worklet and
+  `destination`, **outside the simulation** (doesn't touch the modeled signal or the meter), defaulting to
+  25% and persisted under its own `localStorage` key (not the scene). (2) **`SynthVoice::LEVEL` range fixed**
+  to `0–1.5 V` (default `1.0`; was `0–100 V`, which left the usable range in the fader's bottom 1.5%); floor
+  kept at 0 so it still fades to silence. Both surfaced from the engine "runs hot" symptom.
+- **Bugs found & fixed:** Svelte 5 `$state` wraps the scene in a Proxy that `postMessage` can't
+  structured-clone (`DataCloneError`) — fixed with `$state.snapshot(patch)` at every worklet boundary
+  (`plainPatch()`). And a long Biome/Svelte tooling untangling: **`biome.json` is strict JSON (no comments)**
+  — comments silently broke config parsing → default rules linting `.svelte` and *corrupting* files on save;
+  resolved by a single comment-free **root** `biome.json` (the editor LSP loads the workspace-root config),
+  with `.svelte` excluded and owned by `svelte-check` + the Svelte extension (prettier via `.prettierrc`).
+- **Known simplifications (not bugs):** jacks are **display-only** (drag-to-connect → 4.4); the meter is the
+  host monitor level, not a voltage-native `VuMeter` node + node→host readout lane (→ 4.5); panel layout is
+  TS auto-layout from param/port `kind` (no descriptor layout fields); **physical dimensions are not yet on
+  the descriptor** (the spatial-sim content → 4.3, per the spatial-sim settled decision in this Epic).
+- **Story 4.3 — The spatial world: spaces, racks, placement, reach, catalog browsing.** The Svelte app
+  shell + the isolated world layer, now carrying a **physical-space simulation** (settled decision above):
+  a single 3-D-ish coordinate/footprint model rendered as **2-D top/side/front projections**, pan/zoom,
+  place and move devices and racks with **AABB bounds-checking** and **snap-to-rack-U**, open/close
+  containers (rack / desk / room), multiple **spaces** with switching (each switches the interactable
+  set), **operator position + reach** (zoom out for the overview but interaction disables beyond reach),
+  **back-panel access gated** behind a physical action (flip / pull-from-rack / roll-rack-off-wall, reusing
+  the 4.2 CSS flip), and **browse the catalog and add/remove gear** — exercising the 4.1 recompile path on
+  add/remove. Physical **dimensions ride the `devices` catalog descriptor** (content); placement / player /
+  view state lives in the TS `ui` layer and stays in sync with the engine scene IR. The spatial logic
+  (overlap, placement legality, reach, projection) is **pure and unit-tested**, rendering-free. *Open at
+  pickup:* the world layer's interface (the swap-to-WebGL-later boundary); the rack-U / desk-surface /
+  footprint sizing model and its descriptor fields; how a space + 3-D placement map onto the scene IR's
+  reserved placement section; the reach/zoom-gating rule; the clearance state-machine for back access;
+  add/remove debouncing vs recompile cost. *Scope guard:* this is the spatial-sim home — resist pulling
+  cables/snakes (4.4) or probes/meters (4.5) forward.
 - **Story 4.4 — Patch cables & snakes → live graph mutation.** Drag-to-connect between jacks with bezier
   cables; **snakes** as visual bundles of mono cables crossing spaces; connect/disconnect mutates the
   graph → recompile/**hot-swap live under sound**. The "patching feels natural" payoff and the
