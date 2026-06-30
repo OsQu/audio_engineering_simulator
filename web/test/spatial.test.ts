@@ -3,6 +3,7 @@ import {
   canPlaceInRack,
   fitsInRack,
   footprint,
+  nearestFreeSlot,
   project,
   RACK_UNIT_MM,
   RACK_WIDTH_MM,
@@ -77,5 +78,18 @@ describe("rack U-slot legality", () => {
     expect(canPlaceInRack(rack, { startSlot: 1, rackUnits: 1 }, existing)).toBe(false); // collides
     expect(canPlaceInRack(rack, { startSlot: 2, rackUnits: 2 }, existing)).toBe(true); // free
     expect(canPlaceInRack(rack, { startSlot: 7, rackUnits: 2 }, existing)).toBe(false); // out of bounds
+  });
+
+  it("nearestFreeSlot returns the desired slot when free, else the closest free one", () => {
+    const existing = [{ startSlot: 2, rackUnits: 2 }]; // occupies slots 2,3
+    expect(nearestFreeSlot(rack, existing, 1, 0)).toBe(0); // desired free
+    expect(nearestFreeSlot(rack, existing, 1, 2)).toBe(1); // desired taken → nearest free is 1
+    expect(nearestFreeSlot(rack, existing, 1, 3)).toBe(4); // desired taken → 4 is the closest free
+  });
+
+  it("nearestFreeSlot returns null when nothing fits", () => {
+    const full = [{ startSlot: 0, rackUnits: 8 }]; // whole 8U rack taken
+    expect(nearestFreeSlot(rack, full, 1, 0)).toBeNull();
+    expect(nearestFreeSlot(rack, [], 9, 0)).toBeNull(); // taller than the rack
   });
 });

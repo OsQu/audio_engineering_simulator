@@ -16,7 +16,16 @@
   } from "./engine";
   import type { Patch } from "./scene";
   import { defaultScene, loadScene, type Scene, saveScene, setSceneParam } from "./scene-store";
-  import { footprint, project, type Rect2, rectsOverlap } from "./spatial";
+  import type { Rack } from "./scene-store";
+  import {
+    footprint,
+    nearestFreeSlot,
+    project,
+    RACK_UNIT_MM,
+    RACK_WIDTH_MM,
+    type Rect2,
+    rectsOverlap,
+  } from "./spatial";
   import Panel from "./widgets/Panel.svelte";
   import Screen from "./widgets/Screen.svelte";
   import Vu from "./widgets/Vu.svelte";
@@ -80,41 +89,142 @@
   // The space currently shown. One space for now; switching between several lands in Story 4.3.6.
   const currentSpace = $derived(scene.ui.spaces[0]?.id ?? "");
 
-  // The front-elevation rect of one placed device, world mm — its placement projected through its
-  // catalog footprint. `null` if the device has no descriptor (catalog not ready) or no placement.
-  function deviceRect(deviceId: string, typeId: string): Rect2 | null {
+  const FRAME_MARGIN = 14; // mm of rack frame drawn around the U-slot region
+
+  const deviceById = (id: string) => scene.patch.devices.find((d) => d.id === id);
+  const rackById = (id: string) => scene.ui.racks.find((r) => r.id === id);
+  const isRack = (id: string) => rackById(id) !== undefined;
+
+  // How many U a device occupies — 0 if it isn't rackmount gear (so it never mounts in a rack).
+  function deviceUnits(typeId: string): number {
     const desc = descriptorFor(catalog, typeId);
-    const placement = scene.ui.placements[deviceId];
-    if (!desc || !placement) return null;
-    return project(placement.position, footprint(desc.formFactor), "front");
+    return desc && desc.formFactor.kind === "rackmount" ? desc.formFactor.rackUnits : 0;
   }
 
-  // The devices to render in the world: those placed in the current space, with their projected rect.
-  const placedItems = $derived(
-    scene.patch.devices
+  // A rack's U-slot region origin (lower-left), world mm — inset from the frame by the margin.
+  const slotOrigin = (rack: Rack) => ({ x: rack.position.x + FRAME_MARGIN, y: rack.position.y + FRAME_MARGIN });
+
+  // A rack's frame rect (the draggable box drawn behind its gear).
+  function rackRect(rack: Rack): Rect2 {
+    return {
+      x: rack.position.x,
+      y: rack.position.y,
+      width: RACK_WIDTH_MM + 2 * FRAME_MARGIN,
+      height: rack.slots * RACK_UNIT_MM + 2 * FRAME_MARGIN,
+    };
+  }
+
+  // A device's front-elevation rect — derived from its rack + U-slot when mounted, else from its
+  // free-standing position. `null` if it has no descriptor or is hidden inside a collapsed rack.
+  function deviceRect(deviceId: string, typeId: string): Rect2 | null {
+    const desc = descriptorFor(catalog, typeId);
+    const place = scene.ui.placements[deviceId];
+    if (!desc || !place) return null;
+    const size = footprint(desc.formFactor);
+    if (place.rack) {
+      const rack = rackById(place.rack.id);
+      if (!rack) return null;
+      const o = slotOrigin(rack);
+      return { x: o.x, y: o.y + place.rack.uSlot * RACK_UNIT_MM, width: size.width, height: size.height };
+    }
+    return project(place.position, size, "front");
+  }
+
+  // The items to render in the current space: rack frames first (behind), then devices (on top).
+  const placedItems = $derived([
+    ...scene.ui.racks
+      .filter((r) => r.space === currentSpace)
+      .map((r) => ({ id: r.id, rect: rackRect(r) })),
+    ...scene.patch.devices
       .filter((d) => scene.ui.placements[d.id]?.space === currentSpace)
       .map((d) => ({ id: d.id, rect: deviceRect(d.id, d.typeId) }))
       .filter((it): it is { id: string; rect: Rect2 } => it.rect !== null),
-  );
+  ]);
 
-  // Legality: a candidate spot for `id` is legal iff its footprint rect overlaps no other device's
-  // rect in the same space (free-standing AABB no-overlap; rack U-slots arrive in Story 4.3.5).
-  function canPlace(id: string, x: number, y: number): boolean {
-    const placement = scene.ui.placements[id];
-    const device = scene.patch.devices.find((d) => d.id === id);
-    if (!placement || !device) return false;
-    const desc = descriptorFor(catalog, device.typeId);
-    if (!desc) return false;
-    const candidate = project({ x, y, z: placement.position.z }, footprint(desc.formFactor), "front");
-    return !placedItems.some((other) => other.id !== id && rectsOverlap(candidate, other.rect));
+  // The occupied U-runs of a rack, excluding `excludeId` (the device being placed).
+  function rackOccupants(rackId: string, excludeId: string) {
+    const occ: { startSlot: number; rackUnits: number }[] = [];
+    for (const d of scene.patch.devices) {
+      if (d.id === excludeId) continue;
+      const place = scene.ui.placements[d.id];
+      if (place?.rack?.id === rackId) {
+        occ.push({ startSlot: place.rack.uSlot, rackUnits: deviceUnits(d.typeId) });
+      }
+    }
+    return occ;
   }
 
-  // Commit a legal drag into the scene (so it renders there and persists on save).
+  // If (x,y) lands over an open rack in this space, the nearest free start-slot a `units`-high device
+  // fits at — else null. The drag-snap target.
+  function rackSlotAt(
+    excludeId: string,
+    x: number,
+    y: number,
+    units: number,
+  ): { rackId: string; slot: number } | null {
+    for (const rack of scene.ui.racks) {
+      if (rack.space !== currentSpace) continue;
+      const o = slotOrigin(rack);
+      const within =
+        x >= o.x - FRAME_MARGIN &&
+        x <= o.x + RACK_WIDTH_MM + FRAME_MARGIN &&
+        y >= o.y &&
+        y <= o.y + rack.slots * RACK_UNIT_MM;
+      if (!within) continue;
+      const desired = Math.floor((y - o.y) / RACK_UNIT_MM);
+      const slot = nearestFreeSlot({ slots: rack.slots }, rackOccupants(rack.id, excludeId), units, desired);
+      if (slot !== null) return { rackId: rack.id, slot };
+    }
+    return null;
+  }
+
+  // Legality for live drag feedback + the commit gate. Racks reposition freely; a device is legal if
+  // it can mount in a rack at (x,y), or stands free without overlapping any other item.
+  function canPlace(id: string, x: number, y: number): boolean {
+    if (isRack(id)) return true;
+    const device = deviceById(id);
+    if (!device) return false;
+    const desc = descriptorFor(catalog, device.typeId);
+    if (!desc) return false;
+    const units = deviceUnits(device.typeId);
+    if (units > 0 && rackSlotAt(id, x, y, units)) return true;
+    const candidate = project({ x, y, z: 0 }, footprint(desc.formFactor), "front");
+    return !placedItems.some((it) => it.id !== id && rectsOverlap(candidate, it.rect));
+  }
+
+  // Commit a drag (only ever called for a legal spot): move a rack, or snap a device into a rack slot
+  // / set it free-standing.
   function moveTo(id: string, x: number, y: number): void {
-    const placement = scene.ui.placements[id];
-    if (!placement || !canPlace(id, x, y)) return;
-    placement.position.x = x;
-    placement.position.y = y;
+    const rack = rackById(id);
+    if (rack) {
+      rack.position.x = x;
+      rack.position.y = y;
+      return;
+    }
+    const device = deviceById(id);
+    const place = scene.ui.placements[id];
+    if (!device || !place) return;
+    const units = deviceUnits(device.typeId);
+    const hit = units > 0 ? rackSlotAt(id, x, y, units) : null;
+    if (hit) {
+      place.rack = { id: hit.rackId, uSlot: hit.slot };
+    } else {
+      place.rack = undefined;
+      place.position = { x, y, z: place.position.z };
+    }
+  }
+
+  // Clearance + flip (gated): a unit must be pulled out before its back is reachable.
+  function togglePulled(id: string): void {
+    const place = scene.ui.placements[id];
+    if (!place) return;
+    place.pulledOut = !place.pulledOut;
+    if (!place.pulledOut) place.facing = "front"; // pushing back in turns it front again
+  }
+  function toggleFlip(id: string): void {
+    const place = scene.ui.placements[id];
+    if (!place?.pulledOut) return; // gated behind clearance
+    place.facing = place.facing === "back" ? "front" : "back";
   }
 
   function seedParamValues(): void {
@@ -256,31 +366,64 @@
       </p>
 
       <p class="world-hint">
-        Drag the background to pan, scroll to zoom; drag a unit to move it (a red outline = an
-        illegal, overlapping spot — the move is rejected). Zoom in to operate a panel.
+        Drag the background to pan, scroll to zoom; drag a unit by its top bar to move it (snap into a
+        rack's free U-slot, or out onto the floor; red = an illegal spot). To see a unit's back,
+        <strong>pull it out</strong> first, then flip. Zoom in to operate a panel.
       </p>
       <WorldView items={placedItems} onMoveTo={moveTo} {canPlace}>
-        {#snippet item(deviceId)}
-          {@const device = scene.patch.devices.find((d) => d.id === deviceId)}
-          {@const desc = device ? descriptorFor(catalog, device.typeId) : undefined}
-          {#if device && desc}
-            <Panel
-              name={desc.name}
-              params={desc.params}
-              ports={desc.ports}
-              valueFor={(id) => paramValue(device.id, desc, id)}
-              onParam={(p, v) => onParamInput(device.id, p, v)}
-            >
-              {#if device.typeId === "synth_voice"}
-                <!-- Synth-specific screen: ADSR contour from params 1=attack, 2=decay, 3=sustain, 4=release. -->
-                <Screen
-                  attackMs={paramValue(device.id, desc, 1)}
-                  decayMs={paramValue(device.id, desc, 2)}
-                  sustain={paramValue(device.id, desc, 3)}
-                  releaseMs={paramValue(device.id, desc, 4)}
-                />
+        {#snippet controls(itemId)}
+          {#if !isRack(itemId)}
+            {@const place = scene.ui.placements[itemId]}
+            {#if place}
+              <button type="button" class="chip" onclick={() => togglePulled(itemId)}>
+                {place.pulledOut ? "push in" : "pull out"}
+              </button>
+              {#if place.pulledOut}
+                <button type="button" class="chip" onclick={() => toggleFlip(itemId)}>
+                  {place.facing === "back" ? "front" : "back"}
+                </button>
               {/if}
-            </Panel>
+            {/if}
+          {/if}
+        {/snippet}
+
+        {#snippet item(itemId)}
+          {#if isRack(itemId)}
+            {@const rack = rackById(itemId)}
+            {#if rack}
+              <div class="rack-frame">
+                <span class="rack-label">{rack.id} · {rack.slots}U</span>
+                <div class="slots">
+                  {#each Array.from({ length: rack.slots }, (_, i) => i) as i (i)}
+                    <div class="slot"></div>
+                  {/each}
+                </div>
+              </div>
+            {/if}
+          {:else}
+            {@const device = deviceById(itemId)}
+            {@const desc = device ? descriptorFor(catalog, device.typeId) : undefined}
+            {@const place = scene.ui.placements[itemId]}
+            {#if device && desc && place}
+              <Panel
+                name={desc.name}
+                params={desc.params}
+                ports={desc.ports}
+                flipped={place.facing === "back"}
+                valueFor={(id) => paramValue(device.id, desc, id)}
+                onParam={(p, v) => onParamInput(device.id, p, v)}
+              >
+                {#if device.typeId === "synth_voice"}
+                  <!-- Synth-specific screen: ADSR contour from params 1=attack, 2=decay, 3=sustain, 4=release. -->
+                  <Screen
+                    attackMs={paramValue(device.id, desc, 1)}
+                    decayMs={paramValue(device.id, desc, 2)}
+                    sustain={paramValue(device.id, desc, 3)}
+                    releaseMs={paramValue(device.id, desc, 4)}
+                  />
+                {/if}
+              </Panel>
+            {/if}
           {/if}
         {/snippet}
       </WorldView>
@@ -351,6 +494,54 @@
     font-size: 0.8rem;
     color: #777;
     margin: 0.5rem 0;
+  }
+  /* Small chrome buttons in a world item's top bar (rack collapse, device pull-out / flip). */
+  .chip {
+    font: inherit;
+    font-size: 9px;
+    line-height: 1;
+    padding: 1px 5px;
+    margin: 0 1px;
+    border: 1px solid #555;
+    border-radius: 3px;
+    background: #4a4d52;
+    color: #e0e0e0;
+    cursor: pointer;
+  }
+  .chip:hover {
+    background: #585c62;
+  }
+  /* A rack: a dark frame filling its world box, padded to inset the U-slot guide rows. */
+  .rack-frame {
+    width: 100%;
+    height: 100%;
+    box-sizing: border-box;
+    border: 2px solid #4a4d52;
+    border-radius: 6px;
+    background: #1b1d20;
+    padding: 14px; /* = FRAME_MARGIN, so guide rows align with mounted gear */
+    position: relative;
+  }
+  .rack-label {
+    position: absolute;
+    top: 2px;
+    left: 6px;
+    font-size: 8px;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    color: #777;
+  }
+  .slots {
+    display: flex;
+    flex-direction: column-reverse; /* slot 0 at the bottom, matching uSlot indexing */
+    height: 100%;
+  }
+  .slot {
+    flex: 1;
+    border-bottom: 1px dashed #3a3d42;
+  }
+  .slot:first-child {
+    border-bottom: none;
   }
   kbd {
     background: #f0f0f0;

@@ -107,3 +107,29 @@ export function canPlaceInRack(
 ): boolean {
   return fitsInRack(rack, occ) && !existing.some((e) => rackRunsOverlap(occ, e));
 }
+
+/** The free start-slot nearest `desired` where a `units`-high device fits in `rack` given the
+ *  `existing` occupants (exclude the device being placed), or `null` if nothing fits. Searches
+ *  outward from `desired` — the drag-snap target finder (Story 4.3.5). */
+export function nearestFreeSlot(
+  rack: RackSpec,
+  existing: RackOccupant[],
+  units: number,
+  desired: number,
+): number | null {
+  const maxStart = rack.slots - units;
+  if (units < 1 || maxStart < 0) return null;
+  const start = Math.max(0, Math.min(maxStart, Math.round(desired)));
+  for (let d = 0; d <= rack.slots; d++) {
+    for (const s of d === 0 ? [start] : [start - d, start + d]) {
+      if (
+        s >= 0 &&
+        s <= maxStart &&
+        canPlaceInRack(rack, { startSlot: s, rackUnits: units }, existing)
+      ) {
+        return s;
+      }
+    }
+  }
+  return null;
+}

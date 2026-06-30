@@ -1,9 +1,9 @@
 <script lang="ts">
   // A device's panel, laid out generically from its descriptor. The **front** carries one control
-  // widget per param (chosen by `kind`); the **back** carries the I/O jacks (inputs then outputs). A
-  // per-panel button flips between them with a CSS 3-D transform — self-contained here, so Story 4.3
-  // can later *gate* the flip behind a physical clearance action (pull-from-rack / roll-off-wall).
-  // Jacks are display-only; drag-to-connect patching is Story 4.4.
+  // widget per param (chosen by `kind`); the **back** carries the I/O jacks (inputs then outputs). The
+  // CSS 3-D flip between them is now **controlled** by the `flipped` prop — the world layer (Story
+  // 4.3.5) drives it and gates it behind a physical clearance action (pull-from-rack / roll-off-wall),
+  // so the panel no longer flips itself. Jacks are display-only; drag-to-connect patching is Story 4.4.
   import type { Snippet } from "svelte";
   import type { ParamDescriptor, PortDescriptor } from "../catalog";
   import Fader from "./Fader.svelte";
@@ -15,6 +15,8 @@
     name: string;
     params: ParamDescriptor[];
     ports: PortDescriptor[];
+    /** Whether the back panel faces the operator (controlled by the world layer, gated by clearance). */
+    flipped?: boolean;
     /** Current value for a device-local param id. */
     valueFor: (id: number) => number;
     /** Apply a new value to a param. */
@@ -22,9 +24,7 @@
     /** Optional per-device front-panel embellishment (e.g. the synth's ADSR screen). */
     children?: Snippet;
   }
-  let { name, params, ports, valueFor, onParam, children }: Props = $props();
-
-  let flipped = $state(false);
+  let { name, params, ports, flipped = false, valueFor, onParam, children }: Props = $props();
 
   const inputs = $derived(ports.filter((p) => p.direction === "input"));
   const outputs = $derived(ports.filter((p) => p.direction === "output"));
@@ -33,9 +33,6 @@
 <section class="panel">
   <header>
     <span class="name">{name}</span>
-    <button class="flip" type="button" onclick={() => (flipped = !flipped)}>
-      {flipped ? "front ▸" : "back ▸"}
-    </button>
   </header>
 
   <div class="flipper" class:flipped>
@@ -115,16 +112,6 @@
     letter-spacing: 0.04em;
     text-transform: uppercase;
     color: #555;
-  }
-  .flip {
-    font: inherit;
-    font-size: 0.65rem;
-    padding: 0.1rem 0.4rem;
-    border: 1px solid #bbb;
-    border-radius: 4px;
-    background: #f4f4f4;
-    color: #555;
-    cursor: pointer;
   }
 
   /* Flip card: both faces share one grid cell, so the flipper sizes to the taller face — no manual

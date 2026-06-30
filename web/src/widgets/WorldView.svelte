@@ -23,15 +23,18 @@
 
   interface Props {
     items: WorldItem[];
-    /** Renders one device's content (its panel) by id. */
+    /** Renders one item's content (a device panel or a rack frame) by id. */
     item: Snippet<[string]>;
+    /** Optional per-item chrome in the top bar beside the drag grip (e.g. a rack's collapse toggle, a
+     *  device's pull-out / flip controls). The world layer stays ignorant of what these mean. */
+    controls?: Snippet<[string]>;
     /** Commit a move — the item's new lower-left-front position, world mm. Only called for a legal
      *  spot; an illegal drop is ignored here and the item snaps back to its scene position. */
     onMoveTo: (id: string, x: number, y: number) => void;
     /** Legality predicate for live drag feedback + the commit gate: is `(x,y)` a legal spot for `id`? */
     canPlace?: (id: string, x: number, y: number) => boolean;
   }
-  let { items, item, onMoveTo, canPlace }: Props = $props();
+  let { items, item, controls, onMoveTo, canPlace }: Props = $props();
 
   // The room the surface spans, world mm. Generous so there's room to pan around; refined per-space later.
   const ROOM_WIDTH = 4000;
@@ -195,15 +198,20 @@
         class:illegal={drag?.id === it.id && !drag.legal}
         style="left: {p.x}px; bottom: {p.y}px; width: {it.rect.width}px; height: {it.rect.height}px;"
       >
-        <div
-          class="grip"
-          role="button"
-          tabindex="0"
-          aria-label="move {it.id}"
-          onpointerdown={(e) => startDeviceDrag(e, it)}
-          onkeydown={(e) => nudge(e, it)}
-        >
-          <span class="dots">⠿</span>
+        <div class="bar">
+          <div
+            class="grip"
+            role="button"
+            tabindex="0"
+            aria-label="move {it.id}"
+            onpointerdown={(e) => startDeviceDrag(e, it)}
+            onkeydown={(e) => nudge(e, it)}
+          >
+            <span class="dots">⠿</span>
+          </div>
+          {#if controls}
+            <div class="bar-controls">{@render controls(it.id)}</div>
+          {/if}
         </div>
         <div class="content">{@render item(it.id)}</div>
       </div>
@@ -258,16 +266,21 @@
     outline: 2px solid #d9534f;
     outline-offset: 1px;
   }
-  .grip {
+  .bar {
     flex: none;
-    height: 14px;
+    height: 16px;
     display: flex;
-    align-items: center;
-    justify-content: center;
+    align-items: stretch;
     background: #3a3d42;
     color: #9aa0a6;
     font-size: 10px;
     line-height: 1;
+  }
+  .grip {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
     cursor: grab;
     user-select: none;
   }
@@ -277,6 +290,11 @@
   }
   .device.dragging .grip {
     cursor: grabbing;
+  }
+  .bar-controls {
+    flex: none;
+    display: flex;
+    align-items: center;
   }
   .content {
     flex: 1;
