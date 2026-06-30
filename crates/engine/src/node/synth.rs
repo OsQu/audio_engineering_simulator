@@ -109,8 +109,11 @@ impl SynthVoice {
                 ParamDecl {
                     id: Self::LEVEL,
                     default: default_level,
+                    // A line-level instrument output: 0 V (silent) up to 1.5 V (hot), default 1 V; the
+                    // useful musical range is ~0.1–1.5 V. (Was 100 V — absurd for a line output and it
+                    // left the whole usable range in the bottom 1.5% of the fader.)
                     min: 0.0,
-                    max: 100.0,
+                    max: 1.5,
                     smooth_ms: 5.0,
                 },
                 // The envelope-time params snap (smooth_ms 0): smoothing a *time* is meaningless,
@@ -425,8 +428,8 @@ mod tests {
             sched.process_io(&mut out, &mut pq, &mut q);
             tone_amplitude(&out.as_slice()[block / 4..], 440.0, rate())
         }
-        let quiet = fundamental_at_level(0.5);
-        let loud = fundamental_at_level(2.0);
+        let quiet = fundamental_at_level(0.3);
+        let loud = fundamental_at_level(1.2);
         assert!(loud > quiet * 3.0, "4× the level ⇒ a much larger tone");
     }
 

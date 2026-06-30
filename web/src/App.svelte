@@ -17,6 +17,8 @@
   import type { Patch } from "./scene";
   import { defaultScene, loadScene, type Scene, saveScene, setSceneParam } from "./scene-store";
   import Panel from "./widgets/Panel.svelte";
+  import Screen from "./widgets/Screen.svelte";
+  import Vu from "./widgets/Vu.svelte";
 
   let status = $state("idle");
   let health = $state("");
@@ -25,6 +27,26 @@
   let ready = $state(false);
   let catalog = $state<DeviceDescriptor[]>([]);
   let send = $state<((msg: ControlMessage) => void) | null>(null);
+  // Master output peak (linear, ±1.0 = full scale), from the worklet's throttled level message.
+  let level = $state(0);
+
+  // Monitor (listening) volume — a host-side output gain *outside* the simulation, persisted on its
+  // own (a per-listener setting, not scene/simulation data). Defaults low so it doesn't blast.
+  const VOLUME_KEY = "aes.volume";
+  function loadVolume(): number {
+    const s = localStorage.getItem(VOLUME_KEY);
+    if (s === null) return 0.25;
+    const raw = Number(s);
+    return Number.isFinite(raw) ? Math.max(0, Math.min(1, raw)) : 0.25;
+  }
+  let volume = $state(loadVolume());
+  let setVolume = $state<((gain: number) => void) | null>(null);
+
+  function onVolume(v: number): void {
+    volume = v;
+    setVolume?.(v);
+    localStorage.setItem(VOLUME_KEY, String(v));
+  }
 
   // The page's authoritative scene: a saved one if present, else the default studio.
   let scene = $state<Scene>(loadScene() ?? defaultScene());
@@ -75,12 +97,17 @@
     if (started) return;
     started = true;
     try {
-      await startEngine(plainPatch(), {
-        onStatus: (m) => {
+      const control = await startEngine(
+        plainPatch(),
+        {
+          onStatus: (m) => {
           status = m;
         },
         onHealth: (h) => {
           health = healthSummary(h);
+        },
+        onLevel: (peak) => {
+          level = peak;
         },
         onReady: (r: ReadyMessage, sendFn) => {
           catalog = r.catalog;
@@ -107,7 +134,10 @@
             });
           }
         },
-      });
+        },
+        volume,
+      );
+      setVolume = control.setVolume;
     } catch (err) {
       status = `error: ${err}`;
       started = false;
@@ -160,6 +190,22 @@
 
   {#if ready}
     <section class="controls">
+      <div class="master">
+        <label class="volume">
+          <span>Volume</span>
+          <input
+            type="range"
+            min="0"
+            max="1"
+            step="0.01"
+            value={volume}
+            oninput={(e) => onVolume(Number(e.currentTarget.value))}
+          />
+          <span class="readout">{Math.round(volume * 100)}%</span>
+        </label>
+        <Vu {level} />
+      </div>
+
       <p>
         Play with the keyboard: <kbd>A</kbd> <kbd>W</kbd> <kbd>S</kbd> <kbd>E</kbd> <kbd>D</kbd>
         <kbd>F</kbd> <kbd>T</kbd> <kbd>G</kbd> <kbd>Y</kbd> <kbd>H</kbd> <kbd>U</kbd> <kbd>J</kbd>
@@ -176,7 +222,17 @@
               ports={desc.ports}
               valueFor={(id) => paramValue(device.id, desc, id)}
               onParam={(p, v) => onParamInput(device.id, p, v)}
-            />
+            >
+              {#if device.typeId === "synth_voice"}
+                <!-- Synth-specific screen: ADSR contour from params 1=attack, 2=decay, 3=sustain, 4=release. -->
+                <Screen
+                  attackMs={paramValue(device.id, desc, 1)}
+                  decayMs={paramValue(device.id, desc, 2)}
+                  sustain={paramValue(device.id, desc, 3)}
+                  releaseMs={paramValue(device.id, desc, 4)}
+                />
+              {/if}
+            </Panel>
           {/if}
         {/each}
       </div>
@@ -196,10 +252,31 @@
     font:
       15px/1.5 system-ui,
       sans-serif;
-    max-width: 40rem;
+    max-width: 52rem;
     margin: 3rem auto;
     padding: 0 1rem;
     color: #1a1a1a;
+  }
+  .master {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    margin: 0.5rem 0 1rem;
+  }
+  .volume {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    font-size: 0.8rem;
+    color: #444;
+  }
+  .volume input {
+    width: 12rem;
+  }
+  .volume .readout {
+    width: 3rem;
+    font-variant-numeric: tabular-nums;
+    color: #777;
   }
   code {
     background: #f0f0f0;

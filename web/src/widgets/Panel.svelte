@@ -4,6 +4,7 @@
   // per-panel button flips between them with a CSS 3-D transform — self-contained here, so Story 4.3
   // can later *gate* the flip behind a physical clearance action (pull-from-rack / roll-off-wall).
   // Jacks are display-only; drag-to-connect patching is Story 4.4.
+  import type { Snippet } from "svelte";
   import type { ParamDescriptor, PortDescriptor } from "../catalog";
   import Fader from "./Fader.svelte";
   import Jack from "./Jack.svelte";
@@ -18,8 +19,10 @@
     valueFor: (id: number) => number;
     /** Apply a new value to a param. */
     onParam: (p: ParamDescriptor, value: number) => void;
+    /** Optional per-device front-panel embellishment (e.g. the synth's ADSR screen). */
+    children?: Snippet;
   }
-  let { name, params, ports, valueFor, onParam }: Props = $props();
+  let { name, params, ports, valueFor, onParam, children }: Props = $props();
 
   let flipped = $state(false);
 
@@ -51,6 +54,9 @@
         </div>
       {:else}
         <p class="empty">no front-panel controls</p>
+      {/if}
+      {#if children}
+        <div class="screen-slot">{@render children()}</div>
       {/if}
     </div>
 
@@ -146,6 +152,9 @@
     color: #999;
     font-style: italic;
     margin: 0;
+  }
+  .screen-slot {
+    margin-top: 0.6rem;
   }
 
   .back {

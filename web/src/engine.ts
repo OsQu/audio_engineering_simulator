@@ -37,10 +37,25 @@ export type HealthMessage = {
   paramDrops: number;
 };
 
+/** The output peak (linear, ±1.0 = full scale) posted ~47×/s to drive the master VU meter. */
+export type LevelMessage = {
+  type: "level";
+  peak: number;
+};
+
+/** Handle returned by `startEngine` for host-side controls that sit *outside* the simulation. */
+export interface EngineControl {
+  /** Set the monitor (listening) volume: a Web Audio gain after the engine, before the speakers.
+   *  Purely how loud it is in your headphones — it does not touch the modeled signal or the meter. */
+  setVolume: (gain: number) => void;
+}
+
 /** Callbacks the host drives as the worklet reports back. */
 export interface EngineHandlers {
   onStatus: (message: string) => void;
   onHealth: (health: HealthMessage) => void;
+  /** Output peak for the master meter (linear, ±1.0 = full scale). */
+  onLevel: (peak: number) => void;
   /** Fired once the engine is live: hands back the catalog and the `send` channel. */
   onReady: (ready: ReadyMessage, send: (msg: ControlMessage) => void) => void;
 }
@@ -75,7 +90,11 @@ export function healthSummary(h: HealthMessage): string {
  * Resolves once the node is created (audio starts on `ready`); throws on setup failure so the caller
  * can surface it. The returned cleanup is unused today (the page lives for the session).
  */
-export async function startEngine(patch: Patch, handlers: EngineHandlers): Promise<void> {
+export async function startEngine(
+  patch: Patch,
+  handlers: EngineHandlers,
+  initialVolume: number,
+): Promise<EngineControl> {
   // Pin the context rate to the engine's host rate (48 kHz); the browser resamples to the device.
   // Without this pin every quantum is the wrong rate ⇒ wrong pitch + drift. latencyHint
   // "interactive" = the smallest output buffer (lowest latency); the single-threaded in-worklet
@@ -111,14 +130,28 @@ export async function startEngine(patch: Patch, handlers: EngineHandlers): Promi
       handlers.onReady(ready, send);
     } else if (d?.type === "health") {
       handlers.onHealth(d as HealthMessage);
+    } else if (d?.type === "level") {
+      handlers.onLevel((d as LevelMessage).peak);
     } else if (d?.type === "error") {
       handlers.onStatus(`worklet error: ${d.message}`);
       console.error("worklet error:", d.message, "\n", d.stack);
     }
   };
-  node.connect(audio.destination);
+  // A monitor-gain node **outside the simulation**: it scales the final output for comfortable
+  // listening (the engine blasts at full scale otherwise) without altering the modeled signal — so the
+  // VU meter, which reads the engine's output buffer in the worklet, still shows the true level.
+  const monitor = audio.createGain();
+  monitor.gain.value = Math.max(0, initialVolume);
+  node.connect(monitor);
+  monitor.connect(audio.destination);
   await audio.resume();
   handlers.onStatus("node created — initializing engine in worklet…");
+
+  return {
+    setVolume: (gain: number): void => {
+      monitor.gain.value = Math.max(0, gain);
+    },
+  };
 }
 
 // --- Keyboard: one octave of a piano over the QWERTY home rows ------------------------------------

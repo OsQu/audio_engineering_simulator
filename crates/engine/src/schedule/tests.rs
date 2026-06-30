@@ -1814,8 +1814,8 @@ mod playable_voice {
     #[test]
     fn a_swept_level_de_zippers_on_the_played_voice() {
         // The control-param de-zipper, end-to-end on the voice: hold a high note (so many periods
-        // resolve the ramp), then sweep LEVEL 1 → 4 V. The output's windowed RMS must climb
-        // *smoothly* to ≈4× — a raw write would jump the whole change in a single window.
+        // resolve the ramp), then sweep LEVEL 0.3 → 1.2 V (4×, within the 0–1.5 V range). The output's
+        // windowed RMS must climb *smoothly* to ≈4× — a raw write would jump it in a single window.
         let block = 8_192;
         let mut g = Graph::new();
         let voice = g.add(SynthVoice::new(Volts::new(1.0), Ohms::new(1.0)));
@@ -1824,7 +1824,7 @@ mod playable_voice {
         let ev = sched.event_input(voice, 0).expect("voice event input");
         let level = sched.param(voice, SynthVoice::LEVEL).expect("level param");
 
-        // Block 1: establish a sustained C7 (note 96 ≈ 2093 Hz) at the default 1 V.
+        // Block 1: establish a sustained C7 (note 96 ≈ 2093 Hz) at a low 0.3 V (settles within the block).
         let mut q = EventQueue::with_capacity(4);
         q.push(
             0,
@@ -1834,12 +1834,14 @@ mod playable_voice {
                 velocity: 100,
             },
         );
+        let mut pq0 = ParamQueue::with_capacity(1);
+        pq0.set(level, 0.3);
         let mut out = VoltageBuffer::zeros(block, analog_rate());
-        sched.process_with_events(&mut out, &mut q);
+        sched.process_io(&mut out, &mut pq0, &mut q);
 
-        // Block 2: aim LEVEL at 4 V and capture the glide (it ramps over the 5 ms smooth time).
+        // Block 2: aim LEVEL at 1.2 V and capture the glide (it ramps over the 5 ms smooth time).
         let mut pq = ParamQueue::with_capacity(1);
-        pq.set(level, 4.0);
+        pq.set(level, 1.2);
         sched.process_with_params(&mut out, &mut pq);
 
         // Window RMS over ~2 periods (note 96 period ≈ 183 samples). A smooth ramp spreads the

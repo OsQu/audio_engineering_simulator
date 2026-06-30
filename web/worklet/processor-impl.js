@@ -11,6 +11,11 @@
 // 48 kHz). Cheap and responsive; far below any rate where the postMessage itself would matter.
 const HEALTH_REPORT_EVERY = 96;
 
+// Post the output peak ~47×/second (every 8 quanta) to drive the master VU meter — smooth enough for
+// a moving level, still negligible postMessage traffic. The peak is the max |sample| since the last
+// report (the meter widget smooths the rest via a CSS transition).
+const LEVEL_REPORT_EVERY = 8;
+
 class SceneProcessor extends AudioWorkletProcessor {
   constructor(options) {
     super();
@@ -52,6 +57,7 @@ class SceneProcessor extends AudioWorkletProcessor {
       this.overruns = 0; // quanta whose render exceeded the budget (all-time)
       this.maxMs = 0; // worst single-quantum render time seen (all-time)
       this.quanta = 0; // quanta rendered, for the report throttle
+      this.levelPeak = 0; // max |sample| since the last level report, for the VU meter
 
       // Live control. The main thread posts generic, device-addressed messages; we forward
       // them onto the engine, which only enqueues (latest-wins target / timestamped event), applied by
@@ -125,6 +131,16 @@ class SceneProcessor extends AudioWorkletProcessor {
     const out = outputs[0];
     for (let ch = 0; ch < out.length; ch++) {
       out[ch].set(this.view);
+    }
+
+    // Track the output peak for the VU meter, posting it on a throttle (the widget smooths the decay).
+    for (let i = 0; i < this.view.length; i++) {
+      const a = Math.abs(this.view[i]);
+      if (a > this.levelPeak) this.levelPeak = a;
+    }
+    if (this.quanta % LEVEL_REPORT_EVERY === 0) {
+      this.port.postMessage({ type: "level", peak: this.levelPeak });
+      this.levelPeak = 0;
     }
 
     // Throttled health snapshot: the compute-budget side (overruns / worst render) plus the engine's
