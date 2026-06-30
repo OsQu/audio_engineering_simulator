@@ -12,11 +12,20 @@ export interface DeviceDescriptor {
   typeId: string;
   /** Human display name. */
   name: string;
+  /** Physical form factor + size — the device's intrinsic dimensions, for spatial placement. */
+  formFactor: FormFactor;
   /** Smoothed control params, in id order. */
   params: ParamDescriptor[];
   /** Ports (inputs then outputs); each id is scoped to its direction. */
   ports: PortDescriptor[];
 }
+
+/** A device's physical form factor and size (content, authored on the Rust catalog). Internally
+ *  tagged by `kind`, matching the Rust `#[serde(tag = "kind")]` enum. Rackmount gear occupies U-slots
+ *  in a rack; desktop gear has a free-standing footprint box (millimetres). */
+export type FormFactor =
+  | { kind: "rackmount"; rackUnits: number }
+  | { kind: "desktop"; widthMm: number; heightMm: number; depthMm: number };
 
 /** One control param: engine truth (id/min/max/default) + UI labels. */
 export interface ParamDescriptor {

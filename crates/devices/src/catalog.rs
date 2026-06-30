@@ -52,10 +52,31 @@ pub struct DeviceDescriptor {
     pub type_id: String,
     /// Human display name for the catalog/panel.
     pub name: String,
+    /// Physical form factor + size — the device's intrinsic dimensions, for spatial placement.
+    pub form_factor: FormFactor,
     /// The device's smoothed control params, in exposed-id order.
     pub params: Vec<ParamDescriptor>,
     /// The device's ports (exposed inputs then outputs), each id scoped to its direction.
     pub ports: Vec<PortDescriptor>,
+}
+
+/// A device's physical form factor and size — intrinsic **content** (as fixed as its impedance),
+/// authored per catalog entry and consumed by the UI's spatial world. It governs placement:
+/// rackmount gear occupies contiguous U-slots in a rack; desktop gear places freely on a surface.
+/// The UI derives the rendered footprint (and the 3-D box) from this; the engine never sees it.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub enum FormFactor {
+    /// 19"-rack gear: occupies `rack_units` contiguous U-slots (1U ≈ 44.45 mm tall, 482.6 mm wide).
+    #[serde(rename_all = "camelCase")]
+    Rackmount { rack_units: u32 },
+    /// Free-standing desktop/floor gear with an authored footprint box, in millimetres.
+    #[serde(rename_all = "camelCase")]
+    Desktop {
+        width_mm: f32,
+        height_mm: f32,
+        depth_mm: f32,
+    },
 }
 
 /// One control param: engine truth (`id`/`min`/`max`/`default`) + UI labels (`label`/`unit`/`kind`).
@@ -161,6 +182,8 @@ struct InternalEdge {
 struct CatalogEntry {
     type_id: &'static str,
     name: &'static str,
+    /// Physical form factor + size — intrinsic content, hand-authored like the labels.
+    form_factor: FormFactor,
     /// The internal node(s), in order; each builds one engine node with fixed config. Length 1 is the
     /// single-node case.
     nodes: &'static [fn() -> Box<dyn Node>],
@@ -192,6 +215,11 @@ const CATALOG: &[CatalogEntry] = &[
     CatalogEntry {
         type_id: "synth_voice",
         name: "Synth Voice",
+        form_factor: FormFactor::Desktop {
+            width_mm: 600.0,
+            height_mm: 90.0,
+            depth_mm: 300.0,
+        },
         nodes: &[|| Box::new(SynthVoice::new(Volts::new(1.0), Ohms::new(1.0)))],
         internal: &[],
         params: &[
@@ -238,6 +266,7 @@ const CATALOG: &[CatalogEntry] = &[
     CatalogEntry {
         type_id: "gain_stage",
         name: "Gain Stage",
+        form_factor: FormFactor::Rackmount { rack_units: 1 },
         nodes: &[|| {
             Box::new(GainStage::new(
                 1.0,
@@ -271,6 +300,7 @@ const CATALOG: &[CatalogEntry] = &[
     CatalogEntry {
         type_id: "three_band_eq",
         name: "3-Band EQ",
+        form_factor: FormFactor::Rackmount { rack_units: 1 },
         nodes: &[|| {
             Box::new(ThreeBandEq::new(
                 SampleRate::new(HOST_RATE_HZ),
@@ -296,6 +326,7 @@ const CATALOG: &[CatalogEntry] = &[
     CatalogEntry {
         type_id: "ad_converter",
         name: "AD Converter",
+        form_factor: FormFactor::Rackmount { rack_units: 1 },
         nodes: &[|| {
             Box::new(AdConverter::new(
                 SampleRate::new(HOST_RATE_HZ),
@@ -318,6 +349,7 @@ const CATALOG: &[CatalogEntry] = &[
     CatalogEntry {
         type_id: "da_converter",
         name: "DA Converter",
+        form_factor: FormFactor::Rackmount { rack_units: 1 },
         nodes: &[|| {
             Box::new(DaConverter::new(
                 SampleRate::new(HOST_RATE_HZ),
@@ -340,6 +372,11 @@ const CATALOG: &[CatalogEntry] = &[
     CatalogEntry {
         type_id: "speaker",
         name: "Speaker",
+        form_factor: FormFactor::Desktop {
+            width_mm: 250.0,
+            height_mm: 380.0,
+            depth_mm: 300.0,
+        },
         nodes: &[|| Box::new(Speaker::new(1.0, InputZ::new(Ohms::new(10_000.0))))],
         internal: &[],
         params: &[],
@@ -361,6 +398,7 @@ const CATALOG: &[CatalogEntry] = &[
     CatalogEntry {
         type_id: "channel_strip",
         name: "Channel Strip",
+        form_factor: FormFactor::Rackmount { rack_units: 2 },
         nodes: &[
             || {
                 Box::new(GainStage::new(
@@ -614,6 +652,7 @@ fn describe(entry: &CatalogEntry) -> DeviceDescriptor {
     DeviceDescriptor {
         type_id: entry.type_id.to_owned(),
         name: entry.name.to_owned(),
+        form_factor: entry.form_factor,
         params,
         ports,
     }
@@ -762,5 +801,42 @@ mod tests {
         }
         // camelCase field names are the wire contract (matches the TS mirror).
         assert!(json.contains("typeId"));
+    }
+
+    /// Every device carries a sane physical form factor (content for the spatial world): a rackmount
+    /// unit spans at least 1U; a desktop unit has a positive footprint box. Guards against a 0-U or
+    /// zero-size device that the placement model couldn't lay out.
+    #[test]
+    fn catalog_carries_sane_form_factors() {
+        for entry in CATALOG {
+            match entry.form_factor {
+                FormFactor::Rackmount { rack_units } => {
+                    assert!(rack_units >= 1, "{} rack_units", entry.type_id);
+                }
+                FormFactor::Desktop {
+                    width_mm,
+                    height_mm,
+                    depth_mm,
+                } => {
+                    assert!(
+                        width_mm > 0.0 && height_mm > 0.0 && depth_mm > 0.0,
+                        "{} desktop footprint",
+                        entry.type_id
+                    );
+                }
+            }
+        }
+    }
+
+    /// The form factor serializes in the camelCase, internally-tagged shape the TS `FormFactor` mirror
+    /// consumes: a `kind` discriminant plus camelCase variant fields. Pins the wire contract.
+    #[test]
+    fn form_factor_serializes_as_tagged_camel_case() {
+        let json = serde_json::to_string(&descriptors()).expect("descriptors serialize");
+        assert!(json.contains("formFactor"));
+        assert!(json.contains(r#""kind":"rackmount""#));
+        assert!(json.contains("rackUnits"));
+        assert!(json.contains(r#""kind":"desktop""#));
+        assert!(json.contains("widthMm"));
     }
 }
