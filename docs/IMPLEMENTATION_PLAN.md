@@ -401,9 +401,12 @@ crossing the main→audio boundary as sparse messages. This epic retired the hea
 + catalog + `build_patch`, and `SceneEngine` (scene-driven, generically controlled, hot-swappable). 4.2 —
 the skeuomorphic panel system on a **Svelte 5** harness: a descriptor → panel renderer + widget vocabulary
 (knobs/faders/switches/jacks/screen/VU), front/back flip, a real `powered` control param, and a host-side
-monitor volume; metering (a `VuMeter` node + node→host readout lane) stays deferred to 4.5. **Next: Story
-4.3** (the spatial world — physical-space sim, placement, racks, reach). 4.3–4.5 stay at Story level until
-picked up. The original 4-story sketch was reshaped into the 5-story arc below after the UI vision
+monitor volume; metering (a `VuMeter` node + node→host readout lane) stays deferred to 4.5. **Story 4.3 —
+🚧 In progress:** the spatial world, scoped at pickup to a **front-elevation pan/zoom** view with
+**real rack-U placement**, multiple **spaces**, and **catalog add/remove** (the recompile exercise);
+operator **reach** and **multi-view projections** are deferred (3-D coordinate truth is stored now so they
+stay cheap), landing instead in the new **Story 4.6** (top view + reach). 4.4–4.6 stay at Story level until
+picked up. The original 4-story sketch was reshaped into the now-6-story arc below after the UI vision
 grew from "device panels + cables" into a **game-like spatial studio/venue sim** (browsable gear catalog,
 racks and containers, freely placed in a pan/zoom world, multiple *spaces* with snakes between them,
 VST-grade skeuomorphic panels with front controls and back I/O). Per the detail-gradient convention
@@ -860,22 +863,115 @@ on a Svelte 5 harness, with two device panels operating the live engine and the 
   host monitor level, not a voltage-native `VuMeter` node + node→host readout lane (→ 4.5); panel layout is
   TS auto-layout from param/port `kind` (no descriptor layout fields); **physical dimensions are not yet on
   the descriptor** (the spatial-sim content → 4.3, per the spatial-sim settled decision in this Epic).
-- **Story 4.3 — The spatial world: spaces, racks, placement, reach, catalog browsing.** The Svelte app
-  shell + the isolated world layer, now carrying a **physical-space simulation** (settled decision above):
-  a single 3-D-ish coordinate/footprint model rendered as **2-D top/side/front projections**, pan/zoom,
-  place and move devices and racks with **AABB bounds-checking** and **snap-to-rack-U**, open/close
-  containers (rack / desk / room), multiple **spaces** with switching (each switches the interactable
-  set), **operator position + reach** (zoom out for the overview but interaction disables beyond reach),
-  **back-panel access gated** behind a physical action (flip / pull-from-rack / roll-rack-off-wall, reusing
-  the 4.2 CSS flip), and **browse the catalog and add/remove gear** — exercising the 4.1 recompile path on
-  add/remove. Physical **dimensions ride the `devices` catalog descriptor** (content); placement / player /
-  view state lives in the TS `ui` layer and stays in sync with the engine scene IR. The spatial logic
-  (overlap, placement legality, reach, projection) is **pure and unit-tested**, rendering-free. *Open at
-  pickup:* the world layer's interface (the swap-to-WebGL-later boundary); the rack-U / desk-surface /
-  footprint sizing model and its descriptor fields; how a space + 3-D placement map onto the scene IR's
-  reserved placement section; the reach/zoom-gating rule; the clearance state-machine for back access;
-  add/remove debouncing vs recompile cost. *Scope guard:* this is the spatial-sim home — resist pulling
-  cables/snakes (4.4) or probes/meters (4.5) forward.
+#### Story 4.3 — The spatial world: spaces, racks, placement, catalog browsing — 🚧 **In progress**
+
+*Goal:* turn the flat panel rack into a **game-like spatial studio** — the Svelte app shell + an isolated
+world layer where you pan/zoom across a **space** rendered as a **front rack-elevation**, place and move
+gear in **real rack-U slots** and on a desk, switch between multiple spaces, and **browse the catalog to
+add/remove gear** — the gesture that exercises the 4.1 recompile/hot-swap path live. Anchors to
+PROJECT_PLAN §7 (skeuomorphic panels as the primary paradigm) and §9 Stage 4 (build and operate a small
+studio through the UI). The novel parts — the spatial model, placement legality, projection — are
+**framework-agnostic data + math** (the epic's "spatial sim is a data/constraint model, not a rendering
+problem" decision); the engine learns nothing about rooms, racks, or position.
+
+*Watch out:*
+- **Engine + `patch` stay free of any spatial concept.** No rooms/racks/positions in the engine or the
+  runnable `Patch`. Placement, spaces, container membership, and clearance are **UI scene state** (the TS
+  `ui` section) only — "spaces are a UI concept."
+- **Model in 3-D, render in 2-D — never store per-view 2-D positions** (the drift trap). Store a single
+  coordinate truth per device (position `(x,y,z)` + facing; footprint comes from the descriptor) and
+  derive the front-elevation screen rect by **projection**. One view ships now; the projection stays pure
+  so top/side views are cheap later.
+- **Dimensions are content, not UI-invented.** A device's rack-U height / footprint lives on the
+  **`devices` catalog descriptor** (engine-adjacent, native-testable), mirrored into TS — *not* re-typed
+  in the UI layer where it would drift.
+- **Only structural edits recompile.** Add/remove device (and the connections it drags along) mutates the
+  `patch` → `loadPatch` hot-swap (the proven 4.1 path). Placement, move, flip, space-switch, and clearance
+  are **pure UI — no recompile.** Add/remove are discrete gestures, so swap on commit; no continuous
+  debounce is needed (resolves the sketch's "add/remove debouncing" open question).
+- **Keep the world renderer behind a thin interface** so a future swap to a WebGL canvas touches only that
+  layer (the standing escape hatch) — but **do not build WebGL**; DOM/SVG over a CSS-transform pan/zoom
+  surface is right for tens-to-low-hundreds of rectangles at studio scale.
+- **Skeuomorphic = genuine interaction + recognizable layout, not photoreal** (epic rule). Reuse the 4.2
+  `Panel`/`Knob`/`Fader`/`Switch`/`Jack` widgets; don't paint textures.
+- *Scope guard:* this is the spatial-sim home — resist pulling cables/snakes (4.4) or probes/meters (4.5)
+  forward, and resist the deferred reach/multi-view work below.
+
+*Design notes (settled at planning):*
+- **View model — store 3-D truth, render one view (front rack-elevation) now.** The full 3-D coordinate
+  truth is stored, but only the front-elevation projection is rendered this Story; the projection is a
+  **pure, unit-tested function** so adding top/side/front views later is cheap. *Rejected: multiple synced
+  projections now* — a second renderer + view-switching on top of placement + spaces + catalog overruns
+  one Story. Front elevation (over a top-down floor plan) because it reuses the 4.2 panel + flip directly
+  and is the most "studio rack" feel; a floor plan would turn panels into rectangles and need a separate
+  "operate" view.
+- **Reach deferred; clearance is a simple per-device boolean.** 4.3 ships placement + spaces + add/remove
+  + a **"pulled-out" clearance state** that gates back-panel access (the back-flip from 4.2 is lifted out
+  of `Panel` and gated on clearance — "pull the unit / roll the rack off the wall"). *Rejected: full
+  operator-position + reach-radius model now* — a whole interaction subsystem; it lands in a later Story
+  and the stored 3-D truth keeps it cheap. Clearance is a boolean, not a position/reach computation.
+- **Rack model — real rack-U slots.** A rackmount device carries a **U-height** (standardized 19" width);
+  a rack has **N U-slots**; placement legality is **slot occupancy** (a device's U-run must be free).
+  Desktop gear carries a **footprint box** and places freely on the desk surface with **AABB no-overlap**.
+  This is the unit-testable spatial core the epic decision calls for. *Rejected: free 2-D placement only*
+  — defers the most distinctive constraint.
+- **Where the model lives.** *Dimensions* → the Rust `DeviceDescriptor` (a `formFactor` + size:
+  rack-U height for rackmount, a footprint box for desktop), authored per `CatalogEntry`, mirrored in
+  `catalog.ts`. *Placement / spaces / clearance / view (pan-zoom) state* → the TS scene `ui` section. The
+  engine `patch` projection is unchanged.
+- **`SceneUi` is reshaped freely — no migration / back-compat.** localStorage is disposable (no real
+  scenes are stored anywhere), so the old `placements?: {x,y,space?}` stub is **replaced** by the 3-D
+  placement model (position + facing + container membership `{rack, uSlot}` | `{desk, pos}` + space id +
+  clearance/flip flags) and the `SCHEMA_VERSION`/`migrate` scaffold is dropped or reset — no vN→vN+1 step.
+- **World-layer interface.** A thin `WorldView` boundary fed by the **pure layout/projection model** and
+  emitting **placement intents** (move-to-slot, place-on-desk, switch-space), so the DOM/SVG renderer is
+  the only thing a future WebGL swap replaces. The spatial logic (projection, AABB, U-slot legality) is a
+  rendering-free module with its own Vitest tests — the "tests are the oracle" temperament applied to the UI.
+
+- **Task 4.3.1 — Device dimensions on the catalog.** Add `formFactor` + size fields to the Rust
+  `DeviceDescriptor` (rackmount → U-height; desktop → footprint box), authored per `CatalogEntry`, derived
+  where engine truth allows; mirror in `catalog.ts`. *Done/validate:* native test that every entry carries
+  a sane form factor + size and serializes camelCase (extends `catalog_serializes_with_expected_types`);
+  TS mirror compiles.
+- **Task 4.3.2 — The pure spatial model + logic (TS, unit-tested).** A rendering-free module: 3-D
+  coordinate + footprint types, the **front-elevation projection** (3-D → screen rect), **AABB overlap**,
+  and **rack U-slot occupancy + placement legality** (can a device of U-height H occupy rack R from slot
+  S?). The `web` project has **no test runner yet** — stand up **Vitest** first (a dev-dep install, *the
+  user runs* `npm install -D vitest`, plus a `test` script + a CI step mirroring `typecheck`/`check`).
+  *Done/validate:* Vitest unit tests on projection, AABB, and slot-legality (including illegal /
+  overlapping cases); the module imports no DOM/Svelte.
+- **Task 4.3.3 — Scene `ui` placement state + store.** Replace `SceneUi` with the 3-D placement model
+  (position + facing + container membership + space id + clearance/flip flags) and update `scene-store`
+  (default scene seeds placements; save/load persists; **no migration**). The engine `patch` projection
+  stays untouched. *Done/validate:* a scene round-trips placement through save/load; the worklet still
+  receives only `patch`; existing scene tests stay green.
+- **Task 4.3.4 — World layer + app shell (pan/zoom, one space, front elevation).** Replace the flat
+  `.rack` with a `WorldView` behind the thin interface: a CSS-transform **pan/zoom** surface rendering the
+  current space's gear from placement via the 4.3.2 projection, showing front panels (reuse `Panel`);
+  **drag a device** to a new placement, legality-checked. *Done/validate:* you can pan/zoom and move gear;
+  placement persists; illegal moves are rejected. Verified in-browser.
+- **Task 4.3.5 — Racks & containers + clearance-gated back access.** Render racks as **U-slot columns**;
+  place/move devices into rack slots and onto the desk; **open/close** (expand/collapse) a container; lift
+  the back-flip out of `Panel` and **gate it on a per-device clearance** ("pull out" / "roll off wall").
+  *Done/validate:* gear occupies real U-slots (overlaps rejected); a unit's back is reachable only after
+  the clearance action. Verified in-browser.
+- **Task 4.3.6 — Multiple spaces + switching.** Several spaces (e.g. live room / control room); each
+  device belongs to one; switching a space switches the rendered/interactable set. *Done/validate:*
+  create/switch spaces; gear appears only in its space; membership persists.
+- **Task 4.3.7 — Catalog browser + add/remove gear (the recompile exercise).** Browse the fetched catalog
+  descriptors; **add** a device (new id + default placement → mutate `patch.devices` → `loadPatch`) and
+  **remove** one (drop from `patch.devices`/`connections`/placement → `loadPatch`). *Done/validate:*
+  add/remove through the UI hot-swaps the engine **glitch-free under sound** with the health line clean —
+  the 4.1 recompile path proven on user-driven add/remove. Verified in-browser by ear.
+
+*Validate:* through the UI, in a pan/zoom **front-elevation** world: place and move gear in **real rack-U
+slots** and on a desk (illegal placements rejected); switch between **at least two spaces**; flip a unit to
+its back **only after** the clearance action; **browse the catalog and add/remove gear**, which hot-swaps
+the engine **glitch-free** (health clean) — proving the 4.1 recompile path on add/remove. The spatial logic
+(projection, AABB, U-slot legality) is unit-tested (Vitest); device dimensions are **catalog content** with
+native tests; the engine and `patch` stay free of any rooms/racks/positions; the full gate is green
+(`cargo fmt --check && cargo lint && cargo test && cargo wasm && cargo docs`, plus `wasm-pack build` and the
+`web` Biome/typecheck/build). Verified in-browser.
 - **Story 4.4 — Patch cables & snakes → live graph mutation.** Drag-to-connect between jacks with bezier
   cables; **snakes** as visual bundles of mono cables crossing spaces; connect/disconnect mutates the
   graph → recompile/**hot-swap live under sound**. The "patching feels natural" payoff and the
@@ -902,6 +998,18 @@ on a Svelte 5 harness, with two device panels operating the live engine and the 
     and drives its panel VU from the already-exposed **master-output buffer** (`out_ptr`/`out_len`, the
     host monitor level — an honest signal but *not* a simulated meter device); the 4.2 widget repoints onto
     a `VuMeter` node's readout when this lands.
+- **Story 4.6 — The spatial world, part 2: top-down view + operator reach.** The deferred half of the
+  spatial sim — 4.3 stored the full 3-D coordinate truth precisely so this stays cheap. Add a **top-down
+  floor-plan projection** of a space as a *second view over the same model* (the real test of "model in
+  3-D, render in 2-D as projections": a new projection, no new coordinate state), with **view switching**
+  (front elevation ↔ top); and an **operator position + reach** model — move around a space, zoom out for
+  the overview but interaction **disables beyond reach** (you can only touch what's within arm's length),
+  with back-panel access still gated by the 4.3 clearance action. The new pure spatial logic (the second
+  projection, reach queries) extends the 4.3 rendering-free module and stays Vitest-unit-tested. *Open at
+  pickup:* the top-view projection + its placement affordances (drag on the floor plan vs. in the rack);
+  the reach metric and the zoom→view-only gating rule; how operator position lives in the scene `ui`;
+  whether containers need a plan-view footprint distinct from their elevation. *Scope guard:* views +
+  reach only — no new devices, cables, or probes.
 
 *Validate (epic exit):* a small studio built, placed, patched across at least two spaces, played, and
 metered entirely through the UI; structural edits hot-swap glitch-free under sound; the UI touches only
