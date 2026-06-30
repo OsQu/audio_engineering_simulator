@@ -41,9 +41,10 @@ cargo fmt --check                 # formatting check (drop --check to apply)
 Full pre-push gate (mirrors CI):
 `cargo fmt --check && cargo lint && cargo test && cargo wasm && cargo docs`.
 
-Browser harness: `cd web && npm install && npm run wasm && npm run dev` (then open
-`http://localhost:5173/`). `npm run wasm` rebuilds the WASM artifact via `web/build-wasm.sh`
-(wraps `wasm-pack`); `npm run check` runs Biome; `npm run typecheck` runs `tsc`.
+Browser harness (the web project is **pnpm**-managed — `pnpm-lock.yaml`): `cd web && pnpm install &&
+pnpm run wasm && pnpm run dev` (then open `http://localhost:5173/`). `pnpm run wasm` rebuilds the WASM
+artifact via `web/build-wasm.sh` (wraps `wasm-pack`); `pnpm run check` runs Biome; `pnpm run typecheck`
+runs `svelte-check`; `pnpm run test` runs Vitest.
 
 ## 2. How we work (the task loop)
 
