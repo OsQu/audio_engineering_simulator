@@ -406,8 +406,10 @@ the **spatial world**: a front-elevation pan/zoom studio where gear lives at rea
 **rack U-slots** (drag-snap), moves between **rooms**, and is **added/removed from a catalog palette** (the
 4.1 hot-swap recompile path); pure Vitest-tested spatial logic + a thin world layer (WebGL escape hatch),
 engine untouched. Operator **reach** and **multi-view projections** were deferred to the new **Story 4.6**
-(3-D coordinate truth is stored now so they stay cheap). **Next: Story 4.4** (patch cables & snakes). 4.4–4.6
-stay at Story level until picked up. The original 4-story sketch was reshaped into the now-6-story arc below
+(3-D coordinate truth is stored now so they stay cheap). **Story 4.4 — patch cables & snakes — is now
+🚧 in progress** (drag-to-connect between back-panel jacks → `loadPatch` hot-swap; pickable cable types
+whose R·C colors the signal; cross-space connections via portal endpoints). 4.5–4.6 stay at Story level
+until picked up. The original 4-story sketch was reshaped into the now-6-story arc below
 after the UI vision
 grew from "device panels + cables" into a **game-like spatial studio/venue sim** (browsable gear catalog,
 racks and containers, freely placed in a pan/zoom world, multiple *spaces* with snakes between them,
@@ -1013,12 +1015,130 @@ Rust changed** beyond the catalog dimensions.
   pull-forward is a Story 4.6 top-view concern).
 - **Tooling:** stood up **Vitest** in `web/` (the project is pnpm-managed; `CLAUDE.md` corrected from npm).
   No web CI job exists yet, so `web` typecheck/Biome/test/build aren't gated on PRs — a candidate follow-up.
-- **Story 4.4 — Patch cables & snakes → live graph mutation.** Drag-to-connect between jacks with bezier
-  cables; **snakes** as visual bundles of mono cables crossing spaces; connect/disconnect mutates the
-  graph → recompile/**hot-swap live under sound**. The "patching feels natural" payoff and the
-  swap-under-load proof (re-measure the audio-thread compile cost at realistic graph size). *Open at
-  pickup:* cable hit-testing/routing visuals; legal-connection feedback (domain compatibility from the
-  descriptor, before compile rejects it); snake bundle/break UX.
+#### Story 4.4 — Patch cables & snakes → live graph mutation — 🚧 **In progress**
+
+*Goal:* make the studio **patchable** — drag a cable between two devices' back-panel jacks and the
+engine rewires live: connect/disconnect mutates `patch.connections` → the proven 4.1 `loadPatch`
+recompile/hot-swap, glitch-free under sound. A chosen **cable type** carries real R·C so loading loss
+and treble rolloff become audible (the physics payoff), and **cross-space connections** render as portal
+endpoints (the snakes MVP). Anchors to PROJECT_PLAN §4 (the Port/Device/Graph domain model surfaced as
+draggable jacks + cables), §7 (UI as a pure consumer — the engine learns nothing new), and §9 Stage 4
+(build and operate a small studio through the UI). This is the "patching feels natural" payoff and the
+**swap-under-load proof** — re-measure the audio-thread compile cost at realistic graph size.
+
+*Watch out:*
+- **The recompile/swap runs on the audio thread** (engine-in-worklet; a `Schedule` can't cross realms) —
+  connect/disconnect is the *same* 4.1 `loadPatch` path `addDevice`/`removeDevice` already use. Edits are
+  rare gestures, so the off-block compile is acceptable, but **re-measure** it at a realistic graph size;
+  a long compile delays the next `process()` ⇒ a glitch. Keep `compile` off the per-block path.
+- **Fan-in is illegal in the engine** — an input port accepts exactly **one** incoming edge (the engine
+  rejects "two edges into one input" at compile; fan-*out* from an output is fine and solves as parallel
+  loading). The UI must enforce this **before** compile (dropping onto an occupied input *replaces* its
+  connection), not let a mid-patch `compile` fail.
+- **Cables only affect analog edges.** The engine's cable one-pole + loading divider ride **analog**
+  edges only; a digital/event route ignores any `CableSpec`. So offer cable physics on **analog↔analog**
+  connections only — a "cable" on a digital link would be a lie (no rolloff there).
+- **Don't re-derive the cable physics in TS** (epic rule: engine stays the home of volts-and-converters
+  realism). The rolloff/loss is the engine's *already-tested* concern (Epic 1.2 `Cable`/`OnePole`/
+  `divider_gain`); 4.4 only authors realistic R·C **content** and wires it onto the edge.
+- **Engine + `patch` gain nothing structural.** Connections already live in the `Patch` IR and
+  `build_patch` already remaps them, bakes cables, validates domains, and rejects cycles. No `engine`
+  crate change; the only Rust touch is the **cable catalog content** in `devices`.
+- **Keep the world layer thin.** Cables are parent-owned and drawn through a surface-space overlay; the
+  `WorldView` still knows only about positioned boxes + pointer mechanics (no "cable"/"patch" concept) —
+  the WebGL escape hatch stays intact.
+- *Scope guard:* this is the cabling story — resist pulling probes/meters (4.5) or the top-view / reach
+  work (4.6) forward; snakes stay at the **portal-endpoint MVP**, not a full bundle-routing subsystem.
+
+*Design notes (settled at planning):*
+- **Patching UX — per-device flip, no new view.** Jacks live on the **back** panel (4.2), reachable only
+  when a device is **pulled-out + flipped** (the 4.3 clearance gate). Since `facing` is per-device, two
+  backs can face the operator at once, so you patch by pulling out + flipping both endpoints and dragging
+  jack→jack. *Rejected: a room-wide "rear view" toggle* (flip every unit to its back at once) — more
+  realistic ("walk behind the rack") and easier to patch, but it's effectively a second projection that
+  overlaps Story 4.6's view-switching; defer it there if the per-device flow proves fiddly. *Rejected:
+  front-panel patch points* — abandons the back-panel realism settled in 4.2. **Known simplification (not
+  a bug):** a cable to a device whose back isn't currently shown (front-facing / pushed-in) anchors to its
+  chassis edge rather than a precise jack, so the connection is never visually lost.
+- **Cross-space connections = portal endpoints (snakes MVP).** Only one space renders at a time, so a
+  connection whose endpoints sit in different rooms **cannot** draw as a continuous bezier; it renders as a
+  labeled stub (`→ Live Room`) at each end. A **"snake"** is a UI label bundling several such cross-space
+  mono cables — the engine sees **plain mono connections**; portals + bundles are UI-only. *Rejected:
+  full snake create/break/expand routing UX* (largest scope for one story); *rejected: same-space cables
+  only* (the epic exit needs patching across ≥2 spaces). Satisfies the exit without a second simultaneous
+  view.
+- **Pickable cable types now; cable catalog is Rust `devices` content.** A connection carries a chosen
+  cable → `CableSpec { resistance_ohms, capacitance_farads }` (the field already on `Connection`), so the
+  engine's loading divider + treble rolloff become audible. The **cable catalog** (named presets:
+  connector kind + R·C, optionally length-scaled) lives in the **`devices` crate** with a native hand-calc
+  oracle and is exposed to the UI alongside the device catalog. *Why Rust, not TS presets:* R·C is
+  physical **content** as intrinsic as a device's impedance — authoring it in TS re-invents content the
+  content layer owns and risks drift (the exact rationale 4.3 used for device dimensions). *Rejected:
+  ideal wires only* — leaves the cable-physics payoff on the table, which the engine already supports for
+  free.
+- **Endpoints are DOM-measured; legality + geometry are a pure module.** Jack screen positions come from
+  the panel's **flexbox** layout, so cable endpoints are discovered by DOM measurement
+  (`getBoundingClientRect` → world-mm via the `WorldView` transform), **not** computed analytically. The
+  new pure `connections.ts` (peer to `spatial.ts`, rendering-free, **Vitest-tested**) owns the parts that
+  *can* be pure: the **legality predicate** (output→input, same carrier domain, fan-in rejected, no
+  self-loop, cable only on analog) and the **bezier geometry given two endpoints** + point-near-curve
+  **hit-testing** (for click-to-delete). Endpoint discovery is the DOM-coupled part, isolated in Svelte —
+  the "tests are the oracle for the UI" temperament applied where it fits.
+- **Legality feedback is pre-compile; cycles fall back to `BuildError`.** Direction, domain, and fan-in
+  are all in the descriptor / scene, so the UI shows live green/red feedback **before** `loadPatch`. A
+  cycle (the one illegality the descriptor can't see locally) is caught by `compile` → surfaces as the
+  legible `BuildError` on the status line and the cable **snaps back** — no broken patch, no audio-thread
+  panic.
+
+- **Task 4.4.1 — Cable catalog (content) + UI exposure + hand-calc oracle.** A `CABLES` table in `devices`
+  of named cable presets (`type_id`, label, connector `kind`, series R + shunt C; the seam for
+  length-scaling noted but a fixed nominal length is fine), exposed to the UI alongside the device catalog
+  (an extra field on the `ready` handshake / a small bridge), mirrored in a TS `CableType`. *Done/validate:*
+  a **hand-calc oracle** (a `devices` or `harness` test) that a specific preset's R·C, built into a patch,
+  yields the hand-computed HF rolloff + level loss (calc in a comment), and a native test that every preset
+  has sane R·C and serializes camelCase; TS mirror compiles.
+- **Task 4.4.2 — Pure `connections.ts` module (TS, Vitest).** A rendering-free module: the
+  **legality predicate** (output→input; same carrier `domain`; reject fan-in into an already-driven input;
+  reject self-loop; cable allowed only on analog↔analog), the **bezier path** given two endpoint points
+  (a natural hanging-cable curve), and **hit-testing** (point-near-bezier, for click-to-delete).
+  *Done/validate:* Vitest unit tests on legality (incl. wrong-direction, domain-mismatch, fan-in, self-loop
+  cases), bezier control-point math, and hit-test hits/misses; the module imports no DOM/Svelte.
+- **Task 4.4.3 — Cable overlay + jack world-positions + render existing connections.** Extend `WorldView`
+  with a thin surface-space **`overlay` snippet** so the parent draws cables in world coordinates; make
+  `Jack` report its world position (DOM-measured through the pan/zoom transform); render the current
+  scene's `patch.connections` as beziers between the back-panel jacks of pulled-out/flipped devices (a
+  front/pushed-in endpoint anchors to the chassis edge). *Done/validate:* the default scene's connections
+  draw as cables that stay aligned through pan/zoom and device moves; verified in-browser.
+- **Task 4.4.4 — Drag-to-connect + disconnect → hot-swap.** Pointer-down on a jack starts a rubber-band
+  cable; live **green/red legality feedback** via 4.4.2; a legal drop commits `patch.connections` →
+  `hotSwap()` (the 4.1 path); **click a cable to delete** → hot-swap; dropping on an occupied input
+  **replaces** its connection; a cycle/`BuildError` surfaces on the status line and the cable snaps back.
+  **Re-measure the audio-thread compile cost** at a realistic graph size (the swap-under-load proof).
+  *Done/validate:* connect/disconnect through the UI hot-swaps the engine **glitch-free under sound** with
+  the health line clean; illegal drops are rejected with feedback. Verified in-browser by ear.
+- **Task 4.4.5 — Cable-type picker + audible physics.** On an analog connect, attach a cable from the
+  4.4.1 catalog (sensible default), changeable by clicking the cable; digital/event connections stay ideal
+  (no picker). The cable's R·C rides the edge through `build_patch`. *Done/validate:* picking a
+  longer/lossier cable **audibly** rolls off treble / drops level (matching the 4.4.1 oracle's direction),
+  the choice persists in the scene, and digital links show no cable affordance. Verified in-browser by ear.
+- **Task 4.4.6 — Cross-space connections via portal endpoints (snakes MVP).** A connection whose endpoints
+  are in different spaces renders as a labeled **portal stub** (`→ Live Room`) at each end instead of a
+  continuous cable; a basic **snake** label bundles several such cross-space cables. The engine sees plain
+  mono connections throughout. *Done/validate:* a device in room A patched to one in room B hot-swaps and
+  sounds; the connection shows as portals in each room and survives save/load; verified in-browser.
+
+*Validate:* through the UI, in the pan/zoom front-elevation world: **drag-to-connect** between two
+pulled-out/flipped devices' back-panel jacks wires the engine live via `loadPatch`, and **clicking a
+cable** disconnects it — both **glitch-free under sound** with the health line clean; **illegal drops**
+(wrong direction, domain mismatch, fan-in into an occupied input, self-loop) are rejected with live
+green/red feedback, and a cycle surfaces as a legible error with the cable snapping back; a **chosen cable
+type** audibly colors an analog signal (R·C loss/rolloff, **hand-calc-tested** in `devices`/`harness`)
+while digital links stay ideal; a **cross-space** connection renders as **portal endpoints** in each room
+and hot-swaps; the pure `connections.ts` (legality, bezier, hit-test) is **Vitest-tested**; the `engine`
+crate and the runnable `patch` gain nothing (cables ride the existing `Connection.cable` + `loadPatch`).
+Full gate green (`cargo fmt --check && cargo lint && cargo test && cargo wasm && cargo docs`, plus the
+`web` Vitest/Biome/typecheck/build). Verified in-browser by ear.
+
 - **Story 4.5 — Visualization: meters, scope, spectrum, analog-domain readouts.** A new engine/bindings
   **probe** surface — per-node/port sample taps (meters, scope), an FFT path (spectrum), and the
   distinctive **analog-domain readouts** (per-edge loading loss, clipping/headroom, noise floor, dBu/dBFS
