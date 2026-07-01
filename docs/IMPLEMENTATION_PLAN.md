@@ -1019,9 +1019,12 @@ Rust changed** beyond the catalog dimensions.
 
 *Goal:* make the studio **patchable** — drag a cable between two devices' back-panel jacks and the
 engine rewires live: connect/disconnect mutates `patch.connections` → the proven 4.1 `loadPatch`
-recompile/hot-swap, glitch-free under sound. A chosen **cable type** carries real R·C so loading loss
-and treble rolloff become audible (the physics payoff), and **cross-space connections** render as portal
-endpoints (the snakes MVP). Anchors to PROJECT_PLAN §4 (the Port/Device/Graph domain model surfaced as
+recompile/hot-swap, glitch-free under sound. A chosen **cable type** carries real R·C so the modeled
+loading loss + treble rolloff are physically correct — **verified numerically** (per §9, cable loss is a
+hand-calc oracle, not an ear test); with realistic cables into realistic impedances the degradation is
+**inaudible by design**, which is the point (a good signal chain doesn't degrade audibly even though the
+system models it). And **cross-space connections** render as portal endpoints (the snakes MVP). Anchors
+to PROJECT_PLAN §4 (the Port/Device/Graph domain model surfaced as
 draggable jacks + cables), §7 (UI as a pure consumer — the engine learns nothing new), and §9 Stage 4
 (build and operate a small studio through the UI). This is the "patching feels natural" payoff and the
 **swap-under-load proof** — re-measure the audio-thread compile cost at realistic graph size.
@@ -1076,6 +1079,18 @@ draggable jacks + cables), §7 (UI as a pure consumer — the engine learns noth
   content layer owns and risks drift (the exact rationale 4.3 used for device dimensions). *Rejected:
   ideal wires only* — leaves the cable-physics payoff on the table, which the engine already supports for
   free.
+- **The cable effect is modeled-but-inaudible here, and that is correct — not a shortfall.** Cable rolloff
+  needs a **high-impedance source** to be audible (`f_c = 1/(2π·R_thev·C)`, `R_thev = (Zout+R_cable) ∥ Zin`
+  — dominated by the smaller side). Every source in the current catalog is low-Z (synth 1 Ω, gain/DA
+  150 Ω), so with realistic R·C the corner sits far above 20 kHz and the series-R level drop is negligible:
+  a clean chain **does not degrade audibly even though the system models it faithfully**. This *is* the
+  design intent, and it matches §9 ("cable loss… can't be heard reliably, so [it's] asserted numerically").
+  So 4.4 validates the physics by **hand-calc oracle** (numeric), the chosen cable **rides the edge
+  correctly**, and the effect becomes **visible** when 4.5's analog-domain readouts land and **audible**
+  when **Epic 5** adds high-Z instrument sources (a passive DI / guitar-level device). No by-ear gate in
+  4.4. *Rejected: exaggerated (unrealistic) cable C to force audibility* — dishonest, against the
+  realism ethos; *rejected: adding a high-Z source now* — a device-catalog change beyond this cabling
+  story, and Epic 5's natural home.
 - **Endpoints are DOM-measured; legality + geometry are a pure module.** Jack screen positions come from
   the panel's **flexbox** layout, so cable endpoints are discovered by DOM measurement
   (`getBoundingClientRect` → world-mm via the `WorldView` transform), **not** computed analytically. The
@@ -1094,9 +1109,11 @@ draggable jacks + cables), §7 (UI as a pure consumer — the engine learns noth
   of named cable presets (`type_id`, label, connector `kind`, series R + shunt C; the seam for
   length-scaling noted but a fixed nominal length is fine), exposed to the UI alongside the device catalog
   (an extra field on the `ready` handshake / a small bridge), mirrored in a TS `CableType`. *Done/validate:*
-  a **hand-calc oracle** (a `devices` or `harness` test) that a specific preset's R·C, built into a patch,
-  yields the hand-computed HF rolloff + level loss (calc in a comment), and a native test that every preset
-  has sane R·C and serializes camelCase; TS mirror compiles.
+  a **hand-calc oracle** (a `devices`/`harness` test, at the `Cable`/electrical level like the engine's own
+  cable tests): a specific preset's R·C into a **representative high-Z source** yields the hand-computed
+  corner `f_c` + divider loss (calc in a comment), **and** the same preset into the catalog's low-Z synth
+  source puts `f_c` far above 20 kHz (the modeled-but-inaudible intent, also hand-checked); plus a native
+  test that every preset has sane R·C and serializes camelCase; TS mirror compiles.
 - **Task 4.4.2 — Pure `connections.ts` module (TS, Vitest).** A rendering-free module: the
   **legality predicate** (output→input; same carrier `domain`; reject fan-in into an already-driven input;
   reject self-loop; cable allowed only on analog↔analog), the **bezier path** given two endpoint points
@@ -1116,11 +1133,14 @@ draggable jacks + cables), §7 (UI as a pure consumer — the engine learns noth
   **Re-measure the audio-thread compile cost** at a realistic graph size (the swap-under-load proof).
   *Done/validate:* connect/disconnect through the UI hot-swaps the engine **glitch-free under sound** with
   the health line clean; illegal drops are rejected with feedback. Verified in-browser by ear.
-- **Task 4.4.5 — Cable-type picker + audible physics.** On an analog connect, attach a cable from the
+- **Task 4.4.5 — Cable-type picker + edge wiring.** On an analog connect, attach a cable from the
   4.4.1 catalog (sensible default), changeable by clicking the cable; digital/event connections stay ideal
-  (no picker). The cable's R·C rides the edge through `build_patch`. *Done/validate:* picking a
-  longer/lossier cable **audibly** rolls off treble / drops level (matching the 4.4.1 oracle's direction),
-  the choice persists in the scene, and digital links show no cable affordance. Verified in-browser by ear.
+  (no picker). The cable's R·C rides the edge through `build_patch`. *Done/validate:* the chosen cable
+  **rides the edge** (its R·C reaches the compiled schedule — asserted via the 4.4.1 oracle direction, not
+  by ear: realistic cables into the catalog's low-Z sources are inaudible **by design**, §9), the choice
+  **persists** in the scene across save/load, and digital links show **no cable affordance**. The audible
+  payoff waits on Epic 5's high-Z sources / 4.5's readouts. Verified in-browser (picker + persistence,
+  glitch-free swap).
 - **Task 4.4.6 — Cross-space connections via portal endpoints (snakes MVP).** A connection whose endpoints
   are in different spaces renders as a labeled **portal stub** (`→ Live Room`) at each end instead of a
   continuous cable; a basic **snake** label bundles several such cross-space cables. The engine sees plain
@@ -1132,8 +1152,9 @@ pulled-out/flipped devices' back-panel jacks wires the engine live via `loadPatc
 cable** disconnects it — both **glitch-free under sound** with the health line clean; **illegal drops**
 (wrong direction, domain mismatch, fan-in into an occupied input, self-loop) are rejected with live
 green/red feedback, and a cycle surfaces as a legible error with the cable snapping back; a **chosen cable
-type** audibly colors an analog signal (R·C loss/rolloff, **hand-calc-tested** in `devices`/`harness`)
-while digital links stay ideal; a **cross-space** connection renders as **portal endpoints** in each room
+type** rides the analog edge with correct R·C (**hand-calc-tested** in `devices`/`harness`; inaudible by
+design into the current low-Z sources per §9 — the audible payoff is Epic 5) while digital links stay
+ideal; a **cross-space** connection renders as **portal endpoints** in each room
 and hot-swaps; the pure `connections.ts` (legality, bezier, hit-test) is **Vitest-tested**; the `engine`
 crate and the runnable `patch` gain nothing (cables ride the existing `Connection.cable` + `loadPatch`).
 Full gate green (`cargo fmt --check && cargo lint && cargo test && cargo wasm && cargo docs`, plus the
