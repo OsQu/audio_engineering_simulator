@@ -14,7 +14,7 @@
 //! controlled **generically by device id**, and **hot-swapped** to a new scene at a block boundary.
 
 use capture::Capture;
-use devices::{BuildError, BuiltScene, Patch, build_patch, descriptors};
+use devices::{BuildError, BuiltScene, Patch, build_patch, cable_types, descriptors};
 use engine::{
     AnalogRate, EventMessage, EventQueue, ParamHandle, ParamQueue, SampleRate, VoltageBuffer,
 };
@@ -32,6 +32,18 @@ use wasm_bindgen::prelude::*;
 #[wasm_bindgen]
 pub fn catalog() -> Result<JsValue, JsValue> {
     serde_wasm_bindgen::to_value(&descriptors()).map_err(Into::into)
+}
+
+/// The cable catalog as a structured JS value — the realistic cable presets the UI offers when wiring
+/// an analog connection (Story 4.4). Pure marshalling over [`devices::cable_types`]; the R·C content
+/// lives in `devices`. Cold path (UI startup), like [`catalog`].
+///
+/// # Errors
+/// Returns the serializer error as a `JsValue` if serialization fails (it does not in practice — the
+/// cable types are plain data).
+#[wasm_bindgen]
+pub fn cable_catalog() -> Result<JsValue, JsValue> {
+    serde_wasm_bindgen::to_value(&cable_types()).map_err(Into::into)
 }
 
 /// Deserialize a runnable [`Patch`] from the structured JS object the UI posts to the worklet.

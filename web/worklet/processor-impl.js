@@ -42,6 +42,10 @@ class SceneProcessor extends AudioWorkletProcessor {
       // to the page in `ready` — the main thread has no wasm instance of its own to call it on.
       if (typeof wasm_bindgen.catalog !== "function") throw new Error("catalog missing from glue");
       const catalog = wasm_bindgen.catalog();
+      // The cable catalog (realistic R·C presets) ships alongside the device catalog — same reason:
+      // the wasm instance lives here, and the UI's cable picker (Story 4.4) needs the presets.
+      const cables =
+        typeof wasm_bindgen.cable_catalog === "function" ? wasm_bindgen.cable_catalog() : [];
       // Build the engine from the scene's patch. Throws (Result→exception) on a bad patch — caught below.
       this.engine = new wasm_bindgen.SceneEngine(patch);
       this.len = this.engine.out_len(); // host samples per quantum (= 128 = the render quantum)
@@ -97,6 +101,7 @@ class SceneProcessor extends AudioWorkletProcessor {
         len: this.len,
         signalPathLatencyMs: this.engine.signal_path_latency_ms,
         catalog,
+        cables,
       });
     } catch (err) {
       this.port.postMessage({

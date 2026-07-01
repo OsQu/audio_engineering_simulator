@@ -62,6 +62,27 @@ export type PortDomain = "analog" | "digital" | "events";
 /** Connector kind, for jack styling and connection-legality hints (UI-only; engine validates by domain). */
 export type PortKind = "mic" | "line" | "instrument" | "speaker" | "digital" | "midi";
 
+/** A cable type the UI offers when wiring an analog connection — a realistic R·C preset (physical
+ *  content authored on the Rust side, `crates/devices/src/cables.rs`) plus a connector kind for styling.
+ *  Fetched via the wasm `cable_catalog()` export. The chosen R·C rides the connection as a `CableSpec`;
+ *  the engine's loading loss + treble rolloff emerge from it. Realistic cables into today's low-Z sources
+ *  are inaudible by design (the effect is a numeric oracle; audible payoff arrives with Epic 5's high-Z
+ *  sources). Field names are camelCase, matching the Rust `#[serde(rename_all = "camelCase")]`. */
+export interface CableType {
+  /** Stable catalog id — what a cable picker selects. */
+  typeId: string;
+  /** Human display name (e.g. "Instrument Cable (6 m)"). */
+  label: string;
+  /** Connector kind, for cable/jack styling. */
+  kind: PortKind;
+  /** Nominal length in metres the R·C was authored at (display + length-scaling seam). */
+  lengthM: number;
+  /** Series resistance, ohms (the loading-divider term). */
+  resistanceOhms: number;
+  /** Shunt capacitance, farads (forms the treble-rolloff one-pole). */
+  capacitanceFarads: number;
+}
+
 /** The descriptor for a `typeId`, or `undefined` if the catalog has no such type. */
 export function descriptorFor(
   catalog: DeviceDescriptor[],

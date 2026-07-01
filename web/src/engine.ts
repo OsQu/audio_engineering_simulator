@@ -8,7 +8,7 @@
 // is generic, by device id: `send` posts param/note/loadPatch messages the worklet maps onto the
 // engine. Keyboard + Web MIDI are wired here onto the same `send`.
 
-import type { DeviceDescriptor } from "./catalog";
+import type { CableType, DeviceDescriptor } from "./catalog";
 import type { Patch } from "./scene";
 
 /** The messages the worklet maps onto SceneEngine, all addressed by device id. */
@@ -18,12 +18,13 @@ export type ControlMessage =
   | { type: "noteOff"; device: string; note: number }
   | { type: "loadPatch"; patch: Patch };
 
-/** The worklet's ready handshake: engine geometry + group delay + the fetched device catalog. */
+/** The worklet's ready handshake: engine geometry + group delay + the fetched device & cable catalogs. */
 export type ReadyMessage = {
   type: "ready";
   len: number;
   signalPathLatencyMs: number;
   catalog: DeviceDescriptor[];
+  cables: CableType[];
 };
 
 /** The throttled real-time-health snapshot (compute-budget overruns + engine queue drops). */

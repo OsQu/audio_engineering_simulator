@@ -12,10 +12,12 @@
 //! serialize); the `JsValue` bridge stays in `wasm-bindings`.
 
 mod build;
+mod cables;
 mod catalog;
 mod scene;
 
 pub use build::{BuildError, BuiltScene, build_patch};
+pub use cables::{CableType, cable_types};
 pub use catalog::{
     BuiltDevice, DeviceDescriptor, ParamDescriptor, ParamKind, PortDescriptor, PortDirection,
     PortDomain, PortKind, descriptors, instantiate,
