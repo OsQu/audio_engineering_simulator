@@ -1,3 +1,21 @@
+<script module lang="ts">
+  /** A point in the overlay's surface-local pixel space (y increases downward — SVG convention). */
+  export interface SurfacePoint {
+    x: number;
+    y: number;
+  }
+
+  /** Coordinate converters the world layer exposes (to its `overlay` snippet, and to the parent via
+   *  `bind:api`) so cables can be placed/measured in the surface's own space without touching the
+   *  pan/zoom transform or the room height. Surface-local coords are pan/zoom-invariant.
+   *  - `worldToSurface`: world mm (x right, y **up** from the floor) → surface-local (y **down** from top).
+   *  - `clientToSurface`: a viewport client point (e.g. a measured DOM rect) → surface-local. */
+  export interface WorldApi {
+    worldToSurface: (worldX: number, worldY: number) => SurfacePoint;
+    clientToSurface: (clientX: number, clientY: number) => SurfacePoint;
+  }
+</script>
+
 <script lang="ts">
   // The isolated **world layer**: a pan/zoom surface that lays out devices in one space's front
   // elevation. This is the *thin interface* the rest of the UI talks to (the standing WebGL escape
@@ -35,8 +53,16 @@
     canPlace?: (id: string, x: number, y: number) => boolean;
     /** When this changes (e.g. the shown space switches), the camera re-frames the new content. */
     fitKey?: string;
+    /** Optional content drawn in the surface's own coordinate space, on top of the gear (e.g. patch
+     *  cables). Handed a {@link WorldApi} so the parent can place things without touching the transform.
+     *  The world layer stays ignorant of what this is — the standing WebGL escape hatch. */
+    overlay?: Snippet<[WorldApi]>;
+    /** Bound out to the parent so it can convert coordinates outside the overlay snippet (e.g. to
+     *  DOM-measure jack positions into surface space). `undefined` until the surface mounts. */
+    api?: WorldApi;
   }
-  let { items, item, controls, onMoveTo, canPlace, fitKey }: Props = $props();
+  let { items, item, controls, onMoveTo, canPlace, fitKey, overlay, api = $bindable() }: Props =
+    $props();
 
   // The room the surface spans, world mm. Generous so there's room to pan around; refined per-space later.
   const ROOM_WIDTH = 4000;
@@ -53,7 +79,29 @@
 
   // The viewport element (measured for fit-to-content) and whether the user has taken over the camera.
   let viewport = $state<HTMLDivElement>();
+  // The transformed surface element — its client rect is the origin for client↔surface conversion.
+  let surface = $state<HTMLDivElement>();
   let userAdjusted = $state(false);
+
+  // Surface-local coords are what the overlay draws in: the surface is `ROOM_WIDTH × ROOM_HEIGHT` and
+  // carries the pan/zoom transform, so points here are invariant to pan/zoom. World mm is y-up from the
+  // floor; the surface (like SVG) is y-down from the top, so `worldToSurface` flips y by ROOM_HEIGHT.
+  const worldToSurface = (worldX: number, worldY: number): SurfacePoint => ({
+    x: worldX,
+    y: ROOM_HEIGHT - worldY,
+  });
+  // A viewport client point → surface-local: subtract the (post-transform) surface origin and divide out
+  // the zoom. transform-origin is top-left, so the surface's client top-left is surface-local (0,0).
+  const clientToSurface = (clientX: number, clientY: number): SurfacePoint => {
+    const r = surface?.getBoundingClientRect();
+    if (!r) return { x: 0, y: 0 };
+    return { x: (clientX - r.left) / zoom, y: (clientY - r.top) / zoom };
+  };
+  const worldApi: WorldApi = { worldToSurface, clientToSurface };
+  // Expose the converters to the parent (for jack measurement outside the overlay snippet).
+  $effect(() => {
+    api = worldApi;
+  });
 
   // Active device drag (world mm + whether the current spot is legal), or null.
   let drag = $state<{ id: string; x: number; y: number; legal: boolean } | null>(null);
@@ -189,6 +237,7 @@
 <div class="viewport" bind:this={viewport} onwheel={onWheel}>
   <div
     class="surface"
+    bind:this={surface}
     style="width: {ROOM_WIDTH}px; height: {ROOM_HEIGHT}px;
            transform: translate({panX}px, {panY}px) scale({zoom});"
   >
@@ -228,6 +277,20 @@
         <div class="content">{@render item(it.id)}</div>
       </div>
     {/each}
+
+    {#if overlay}
+      <!-- Overlay in surface-local space (SVG y-down), on top of the gear. pointer-events:none so it
+           never blocks panning/dragging; individual elements can opt back in (e.g. a clickable cable). -->
+      <svg
+        class="overlay"
+        width={ROOM_WIDTH}
+        height={ROOM_HEIGHT}
+        viewBox="0 0 {ROOM_WIDTH} {ROOM_HEIGHT}"
+        aria-hidden="true"
+      >
+        {@render overlay(worldApi)}
+      </svg>
+    {/if}
   </div>
 </div>
 
@@ -252,6 +315,15 @@
     position: absolute;
     inset: 0;
     cursor: grab;
+  }
+  /* Cable overlay: covers the surface, above the gear; transparent to pointers by default. */
+  .overlay {
+    position: absolute;
+    top: 0;
+    left: 0;
+    overflow: visible;
+    pointer-events: none;
+    z-index: 5;
   }
   .floor {
     position: absolute;
@@ -312,5 +384,8 @@
     flex: 1;
     min-height: 0;
     overflow: hidden;
+    /* A size container so a device panel can scale its internals to the chassis box (a 1U rack unit is
+       a thin strip; fixed rem content would overflow it). Panel/Jack use `cqh`/`cqw` against this. */
+    container-type: size;
   }
 </style>

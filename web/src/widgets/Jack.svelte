@@ -5,27 +5,32 @@
   import type { PortDescriptor } from "../catalog";
 
   interface Props {
+    /** Owning device instance id — with the port, tags the connector so the cable layer can locate it. */
+    device: string;
     port: PortDescriptor;
   }
-  let { port }: Props = $props();
+  let { device, port }: Props = $props();
 </script>
 
 <div class="jack" data-kind={port.kind} data-domain={port.domain} title={`${port.kind} · ${port.domain}`}>
-  <span class="connector"></span>
+  <!-- `data-jack` = "device:direction:portId" — the cable overlay measures this element's centre. -->
+  <span class="connector" data-jack={`${device}:${port.direction}:${port.id}`}></span>
   <span class="label">{port.label}</span>
 </div>
 
 <style>
+  /* Sizes scale with the chassis (`cqh` against the `.content` size container) but cap at the original
+     rem, so a thin 1U rack unit shrinks its jacks to fit while larger devices look unchanged. */
   .jack {
     display: flex;
     flex-direction: column;
     align-items: center;
-    width: 3.5rem;
-    gap: 0.2rem;
+    gap: clamp(1px, 3cqh, 0.2rem);
+    min-width: 0;
   }
   .connector {
-    width: 1.5rem;
-    height: 1.5rem;
+    width: clamp(6px, 34cqh, 1.5rem);
+    height: clamp(6px, 34cqh, 1.5rem);
     border-radius: 50%;
     background: radial-gradient(circle at 50% 35%, #444, #1a1a1a);
     border: 2px solid #0a0a0a;
@@ -55,9 +60,10 @@
     --ring: #9b6cd6;
   }
   .label {
-    font-size: 0.65rem;
+    font-size: clamp(4px, 15cqh, 0.65rem);
     color: #555;
     text-align: center;
     line-height: 1.1;
+    white-space: nowrap;
   }
 </style>

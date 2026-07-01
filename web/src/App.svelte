@@ -14,7 +14,8 @@
     wireKeyboard,
     wireMidi,
   } from "./engine";
-  import type { Patch } from "./scene";
+  import { cablePathData } from "./connections";
+  import type { Connection, Patch, PortRef } from "./scene";
   import { defaultScene, loadScene, type Scene, saveScene, setSceneParam } from "./scene-store";
   import type { Rack } from "./scene-store";
   import {
@@ -30,6 +31,7 @@
   import Screen from "./widgets/Screen.svelte";
   import Vu from "./widgets/Vu.svelte";
   import WorldView from "./widgets/WorldView.svelte";
+  import type { WorldApi } from "./widgets/WorldView.svelte";
 
   let status = $state("idle");
   let health = $state("");
@@ -40,6 +42,9 @@
   let send = $state<((msg: ControlMessage) => void) | null>(null);
   // Master output peak (linear, ±1.0 = full scale), from the worklet's throttled level message.
   let level = $state(0);
+  // The world layer's coordinate converters, bound out of WorldView so we can measure jack DOM positions
+  // into surface space for precise cable anchoring. Undefined until the world surface mounts.
+  let worldApi = $state<WorldApi | undefined>();
 
   // Monitor (listening) volume — a host-side output gain *outside* the simulation, persisted on its
   // own (a per-listener setting, not scene/simulation data). Defaults low so it doesn't blast.
@@ -143,6 +148,83 @@
       .map((d) => ({ id: d.id, rect: deviceRect(d.id, d.typeId) }))
       .filter((it): it is { id: string; rect: Rect2 } => it.rect !== null),
   ]);
+
+  // --- Patch cables --------------------------------------------------------------------------------
+  // A stable key for a connection (its two endpoints), for the {#each} in the cable overlay.
+  const connKey = (c: Connection): string =>
+    `${c.from.device}:${c.from.port}->${c.to.device}:${c.to.port}`;
+
+  // Measured jack-connector centres in surface space, keyed "device:direction:port" (from each jack's
+  // `data-jack` attribute). Populated by measureJacks after layout; lets a cable anchor at the real
+  // socket when a device's back is shown, falling back to the chassis edge otherwise.
+  let jackAnchors = $state<Record<string, { x: number; y: number }>>({});
+
+  const jackKey = (device: string, direction: "input" | "output", port: number): string =>
+    `${device}:${direction}:${port}`;
+
+  // Measure every rendered jack's centre into surface-local space (pan/zoom-invariant, because
+  // clientToSurface divides out the transform). Cheap — a handful of getBoundingClientRect — and only
+  // re-run on layout changes (below), not per frame.
+  function measureJacks(): void {
+    if (!worldApi) return;
+    const next: Record<string, { x: number; y: number }> = {};
+    for (const el of document.querySelectorAll<HTMLElement>("[data-jack]")) {
+      const key = el.dataset.jack;
+      if (!key) continue;
+      const r = el.getBoundingClientRect();
+      if (r.width === 0 && r.height === 0) continue; // not laid out / hidden
+      next[key] = worldApi.clientToSurface(r.left + r.width / 2, r.top + r.height / 2);
+    }
+    jackAnchors = next;
+  }
+
+  // Re-measure when layout-affecting state changes (placement / flip / space / catalog / api ready).
+  // Pan/zoom needn't trigger it — surface-local coords are invariant. Measure after paint, and again
+  // once the 0.45s flip transition has settled (so a just-flipped back reports its final jack positions).
+  $effect(() => {
+    void ready;
+    void currentSpace;
+    void catalog.length;
+    void worldApi;
+    JSON.stringify(scene.ui.placements);
+    JSON.stringify(scene.patch.connections);
+    const raf = requestAnimationFrame(measureJacks);
+    const settle = setTimeout(measureJacks, 480);
+    return () => {
+      cancelAnimationFrame(raf);
+      clearTimeout(settle);
+    };
+  });
+
+  // The surface-local anchor for one end of a cable. When the device's **back** is shown, anchor at the
+  // measured socket centre; otherwise (front-facing, or not yet measured) fall back to the chassis edge
+  // (output → right, input → left, spread by port index). `null` when the device isn't in the shown
+  // space — a cross-space end is drawn as a portal (Story 4.4.6), not a continuous cable.
+  function cableAnchor(
+    ref: PortRef,
+    direction: "input" | "output",
+    api: WorldApi,
+  ): { x: number; y: number } | null {
+    const device = deviceById(ref.device);
+    const place = scene.ui.placements[ref.device];
+    if (!device || !place || place.space !== currentSpace) return null;
+    if (place.facing === "back") {
+      const jack = jackAnchors[jackKey(ref.device, direction, ref.port)];
+      if (jack) return jack; // precise: the real socket on the shown back panel
+    }
+    const desc = descriptorFor(catalog, device.typeId);
+    const rect = deviceRect(ref.device, device.typeId);
+    if (!desc || !rect) return null;
+    const ports = desc.ports.filter((p) => p.direction === direction);
+    const idx = Math.max(
+      0,
+      ports.findIndex((p) => p.id === ref.port),
+    );
+    const frac = (idx + 1) / (ports.length + 1); // 0..1 down from the top
+    const wx = direction === "output" ? rect.x + rect.width : rect.x;
+    const wy = rect.y + rect.height * (1 - frac); // world y-up; port 0 nearest the top
+    return api.worldToSurface(wx, wy);
+  }
 
   // The occupied U-runs of a rack, excluding `excludeId` (the device being placed).
   function rackOccupants(rackId: string, excludeId: string) {
@@ -482,7 +564,18 @@
         <strong>pull it out</strong> first, then flip. Send a unit or rack to another room with its
         space selector. Zoom in to operate a panel.
       </p>
-      <WorldView items={placedItems} onMoveTo={moveTo} {canPlace} fitKey={currentSpace}>
+      <WorldView items={placedItems} onMoveTo={moveTo} {canPlace} fitKey={currentSpace} bind:api={worldApi}>
+        {#snippet overlay(api)}
+          <!-- Patch cables: one bezier per connection whose ends are both in the shown space. -->
+          {#each scene.patch.connections as c (connKey(c))}
+            {@const a = cableAnchor(c.from, "output", api)}
+            {@const b = cableAnchor(c.to, "input", api)}
+            {#if a && b}
+              <path class="cable" d={cablePathData(a, b)} />
+            {/if}
+          {/each}
+        {/snippet}
+
         {#snippet controls(itemId)}
           {#if isRack(itemId)}
             {@const rack = rackById(itemId)}
@@ -559,6 +652,7 @@
             {@const place = scene.ui.placements[itemId]}
             {#if device && desc && place}
               <Panel
+                device={device.id}
                 name={desc.name}
                 params={desc.params}
                 ports={desc.ports}
@@ -712,6 +806,14 @@
     font-size: 0.8rem;
     color: #777;
     margin: 0.5rem 0;
+  }
+  /* A patch cable drawn in the world overlay (surface mm; stroke scales with zoom). */
+  .cable {
+    fill: none;
+    stroke: #d98c3c;
+    stroke-width: 6;
+    stroke-linecap: round;
+    opacity: 0.9;
   }
   /* Small chrome buttons in a world item's top bar (rack collapse, device pull-out / flip). */
   .chip {
