@@ -143,7 +143,7 @@
   const placedItems = $derived([
     ...scene.ui.racks
       .filter((r) => r.space === currentSpace)
-      .map((r) => ({ id: r.id, rect: rackRect(r) })),
+      .map((r) => ({ id: r.id, rect: rackRect(r), background: true })),
     ...scene.patch.devices
       .filter((d) => scene.ui.placements[d.id]?.space === currentSpace)
       .map((d) => ({ id: d.id, rect: deviceRect(d.id, d.typeId) }))

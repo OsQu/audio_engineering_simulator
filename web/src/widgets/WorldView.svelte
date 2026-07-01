@@ -37,6 +37,9 @@
     id: string;
     /** Front-elevation rect in world millimetres (`y` = bottom edge). */
     rect: Rect2;
+    /** Background furniture (e.g. a rack frame): drawn **below** the cable underlay, so cables between
+     *  its contained gear stay visible. Foreground items (devices) draw above the underlay. */
+    background?: boolean;
   }
 
   interface Props {
@@ -281,6 +284,7 @@
       {@const p = shown(it)}
       <div
         class="device"
+        class:background={it.background}
         class:dragging={drag?.id === it.id}
         class:illegal={drag?.id === it.id && !drag.legal}
         style="left: {p.x}px; bottom: {p.y}px; width: {it.rect.width}px; height: {it.rect.height}px;"
@@ -351,14 +355,15 @@
     pointer-events: none;
     z-index: 5;
   }
-  /* Behind-the-gear cable layer: below the device panels (z-index 1), above the backdrop. */
+  /* Behind-the-gear cable layer: above background furniture (racks, z-index 0) so cables between rack
+     gear show, but below device panels (z-index 2) so they still tuck behind a front-facing unit. */
   .underlay {
     position: absolute;
     top: 0;
     left: 0;
     overflow: visible;
     pointer-events: none;
-    z-index: 0;
+    z-index: 1;
   }
   .floor {
     position: absolute;
@@ -375,7 +380,11 @@
     overflow: hidden;
     box-shadow: 0 2px 6px rgba(0, 0, 0, 0.4);
     border-radius: 6px;
-    z-index: 1;
+    z-index: 2; /* device panels sit above the cable underlay (z-index 1) */
+  }
+  /* Background furniture (racks): below the cable underlay, so cables between rack gear stay visible. */
+  .device.background {
+    z-index: 0;
   }
   .device.dragging {
     z-index: 10;
