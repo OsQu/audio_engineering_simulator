@@ -12,7 +12,7 @@ import type { Patch } from "./scene";
 import type { Vec3 } from "./spatial";
 
 /** Current save-format version. A saved scene at any other version is discarded (no migration). */
-export const SCHEMA_VERSION = 4;
+export const SCHEMA_VERSION = 5;
 
 /** A space (room) in the studio — a UI grouping over the one engine graph (the engine never knows
  *  about rooms). Multiple spaces + switching arrive in Story 4.3.6; the default scene has one. */
@@ -36,7 +36,7 @@ export interface Rack {
   slots: number;
 }
 
-/** Which panel faces the operator. Flipping to "back" is gated behind `Placement.pulledOut`. */
+/** Which panel faces the operator — the device can be flipped front↔back directly. */
 export type DeviceFacing = "front" | "back";
 
 /** One device's placement in the spatial world. The **single 3-D coordinate truth** (Story 4.3.2's
@@ -49,10 +49,8 @@ export interface Placement {
   position: Vec3;
   /** If mounted: which rack + bottom U-slot. Absent ⇒ free-standing at `position`. */
   rack?: { id: string; uSlot: number };
-  /** Which panel faces the operator. Flipping to "back" requires `pulledOut` first. */
+  /** Which panel faces the operator (front or back). */
   facing: DeviceFacing;
-  /** Clearance: pulled out of the rack / rolled off the wall, so the back panel is reachable. */
-  pulledOut: boolean;
 }
 
 /** UI-only scene data — never sent to the engine. The spatial world: spaces, racks, and where each
@@ -79,18 +77,16 @@ function free(x: number): Placement {
     space: DEFAULT_SPACE.id,
     position: { x, y: 0, z: 0 },
     facing: "front",
-    pulledOut: false,
   };
 }
 
-/** A rack-mounted placement at `uSlot` of `rackId` (its free `position` is where it lands if pulled out). */
+/** A rack-mounted placement at `uSlot` of `rackId` (its free `position` is where it stands if unmounted). */
 function mounted(rackId: string, uSlot: number, freeX: number): Placement {
   return {
     space: DEFAULT_SPACE.id,
     position: { x: freeX, y: 0, z: 0 },
     rack: { id: rackId, uSlot },
     facing: "front",
-    pulledOut: false,
   };
 }
 

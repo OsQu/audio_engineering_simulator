@@ -422,16 +422,10 @@
     }
   }
 
-  // Clearance + flip (gated): a unit must be pulled out before its back is reachable.
-  function togglePulled(id: string): void {
-    const place = scene.ui.placements[id];
-    if (!place) return;
-    place.pulledOut = !place.pulledOut;
-    if (!place.pulledOut) place.facing = "front"; // pushing back in turns it front again
-  }
+  // Flip a unit front↔back to reach its rear I/O (no clearance step — flipping is direct).
   function toggleFlip(id: string): void {
     const place = scene.ui.placements[id];
-    if (!place?.pulledOut) return; // gated behind clearance
+    if (!place) return;
     place.facing = place.facing === "back" ? "front" : "back";
   }
 
@@ -488,7 +482,6 @@
       space: currentSpace,
       position: { x: rightX + 60, y: 0, z: 0 },
       facing: "front",
-      pulledOut: false,
     };
     hotSwap();
   }
@@ -726,14 +719,9 @@
           {:else}
             {@const place = scene.ui.placements[itemId]}
             {#if place}
-              <button type="button" class="chip" onclick={() => togglePulled(itemId)}>
-                {place.pulledOut ? "push in" : "pull out"}
+              <button type="button" class="chip" onclick={() => toggleFlip(itemId)}>
+                {place.facing === "back" ? "front" : "back"}
               </button>
-              {#if place.pulledOut}
-                <button type="button" class="chip" onclick={() => toggleFlip(itemId)}>
-                  {place.facing === "back" ? "front" : "back"}
-                </button>
-              {/if}
               {#if !place.rack}
                 <!-- Mounted gear follows its rack's space, so the selector only shows when free-standing. -->
                 <select
@@ -966,7 +954,7 @@
   .cable.illegal {
     stroke: #d9534f;
   }
-  /* Small chrome buttons in a world item's top bar (rack collapse, device pull-out / flip). */
+  /* Small chrome buttons in a world item's top bar (device flip, space selector, remove). */
   .chip {
     font: inherit;
     font-size: 9px;

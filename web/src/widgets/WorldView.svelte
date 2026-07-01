@@ -43,8 +43,8 @@
     items: WorldItem[];
     /** Renders one item's content (a device panel or a rack frame) by id. */
     item: Snippet<[string]>;
-    /** Optional per-item chrome in the top bar beside the drag grip (e.g. a rack's collapse toggle, a
-     *  device's pull-out / flip controls). The world layer stays ignorant of what these mean. */
+    /** Optional per-item chrome in the top bar beside the drag grip (e.g. a device's flip / space /
+     *  remove controls). The world layer stays ignorant of what these mean. */
     controls?: Snippet<[string]>;
     /** Commit a move — the item's new lower-left-front position, world mm. Only called for a legal
      *  spot; an illegal drop is ignored here and the item snaps back to its scene position. */

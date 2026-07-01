@@ -1,9 +1,9 @@
 <script lang="ts">
   // A device's panel, laid out generically from its descriptor. The **front** carries one control
   // widget per param (chosen by `kind`); the **back** carries the I/O jacks (inputs then outputs). The
-  // CSS 3-D flip between them is now **controlled** by the `flipped` prop — the world layer (Story
-  // 4.3.5) drives it and gates it behind a physical clearance action (pull-from-rack / roll-off-wall),
-  // so the panel no longer flips itself. Jacks are display-only; drag-to-connect patching is Story 4.4.
+  // CSS 3-D flip between them is **controlled** by the `flipped` prop — the world layer drives it (a
+  // direct front↔back toggle), so the panel no longer flips itself. Jacks are drag-to-connect patch
+  // points (Story 4.4).
   import type { Snippet } from "svelte";
   import type { ParamDescriptor, PortDescriptor } from "../catalog";
   import Fader from "./Fader.svelte";
