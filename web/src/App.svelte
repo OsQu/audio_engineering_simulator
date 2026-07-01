@@ -213,19 +213,28 @@
       const jack = jackAnchors[jackKey(ref.device, direction, ref.port)];
       if (jack) return jack; // precise: the real socket on the shown back panel
     }
-    const desc = descriptorFor(catalog, device.typeId);
     const rect = deviceRect(ref.device, device.typeId);
-    if (!desc || !rect) return null;
-    const ports = desc.ports.filter((p) => p.direction === direction);
-    const idx = Math.max(
-      0,
-      ports.findIndex((p) => p.id === ref.port),
-    );
-    const frac = (idx + 1) / (ports.length + 1); // 0..1 down from the top
-    const wx = direction === "output" ? rect.x + rect.width : rect.x;
-    const wy = rect.y + rect.height * (1 - frac); // world y-up; port 0 nearest the top
+    if (!rect) return null;
+    // Front-facing (or not yet measured): the sockets sit centred on the back panel, so estimate near
+    // the chassis centre — nudged toward the signal-flow direction (output right, input left) so the
+    // cable emerges toward its neighbour. This end is drawn *behind* the device (hidden), so a rough
+    // estimate is enough; it just needs to look plausible where it tucks under the edges.
+    const wx = rect.x + rect.width * (direction === "output" ? 0.62 : 0.38);
+    const wy = rect.y + rect.height * 0.45;
     return api.worldToSurface(wx, wy);
   }
+
+  // Is this device currently showing its back (sockets visible) in the shown space?
+  const isBackFacing = (deviceId: string): boolean => {
+    const place = scene.ui.placements[deviceId];
+    return place !== undefined && place.space === currentSpace && place.facing === "back";
+  };
+
+  // A cable is drawn in FRONT of the gear when either end shows its back — so you see it plug into the
+  // visible socket. Otherwise it's drawn BEHIND (tucked behind the front-facing panels), which is the
+  // clean look when the gear is faced front.
+  const cableInFront = (c: Connection): boolean =>
+    isBackFacing(c.from.device) || isBackFacing(c.to.device);
 
   // --- Drag-to-connect ------------------------------------------------------------------------------
   // An in-progress cable drag from a source jack: the fixed source end, the moving free end (surface
@@ -660,34 +669,45 @@
         <strong>pull it out</strong> first, then flip. Send a unit or rack to another room with its
         space selector. Zoom in to operate a panel.
       </p>
-      <WorldView items={placedItems} onMoveTo={moveTo} {canPlace} fitKey={currentSpace} bind:api={worldApi}>
-        {#snippet overlay(api)}
-          <!-- Patch cables: one bezier per connection whose ends are both in the shown space. The wide
-               transparent hit-path makes the cable clickable to disconnect; during a drag its pointer
-               events are disabled so `elementFromPoint` can see the jack beneath it. -->
-          {#each scene.patch.connections as c (connKey(c))}
-            {@const a = cableAnchor(c.from, "output", api)}
-            {@const b = cableAnchor(c.to, "input", api)}
-            {#if a && b}
-              {@const d = cablePathData(a, b)}
-              <path
-                class="cable-hit"
-                {d}
-                role="button"
-                tabindex="-1"
-                aria-label={`disconnect ${connKey(c)}`}
-                style:pointer-events={dragCable ? "none" : "stroke"}
-                onclick={() => disconnect(c)}
-                onkeydown={(e) => {
-                  if (e.key === "Enter" || e.key === " ") disconnect(c);
-                }}
-              ></path>
-              <path class="cable" {d} />
-            {/if}
-          {/each}
+      <!-- One patch cable: its bezier plus a wide transparent hit-path for click-to-disconnect (its
+           pointer events go off during a drag so `elementFromPoint` can see the jack beneath). Shared by
+           the behind/front layers below. -->
+      {#snippet oneCable(c: Connection, api: WorldApi)}
+        {@const a = cableAnchor(c.from, "output", api)}
+        {@const b = cableAnchor(c.to, "input", api)}
+        {#if a && b}
+          {@const d = cablePathData(a, b)}
+          <path
+            class="cable-hit"
+            {d}
+            role="button"
+            tabindex="-1"
+            aria-label={`disconnect ${connKey(c)}`}
+            style:pointer-events={dragCable ? "none" : "stroke"}
+            onclick={() => disconnect(c)}
+            onkeydown={(e) => {
+              if (e.key === "Enter" || e.key === " ") disconnect(c);
+            }}
+          ></path>
+          <path class="cable" {d} />
+        {/if}
+      {/snippet}
 
-          <!-- The rubber-band while dragging a new cable: green over a legal target, red over an
-               illegal one, neutral in open space. -->
+      <WorldView items={placedItems} onMoveTo={moveTo} {canPlace} fitKey={currentSpace} bind:api={worldApi}>
+        {#snippet underlay(api)}
+          <!-- Cables tucked behind the gear: both ends face front, so the cable hides behind the panels
+               and only shows where it emerges between units. -->
+          {#each scene.patch.connections.filter((c) => !cableInFront(c)) as c (connKey(c))}
+            {@render oneCable(c, api)}
+          {/each}
+        {/snippet}
+
+        {#snippet overlay(api)}
+          <!-- Cables in front of the gear: an end shows its back, so you see it plug into the socket.
+               Plus the drag rubber-band (always in front while patching). -->
+          {#each scene.patch.connections.filter((c) => cableInFront(c)) as c (connKey(c))}
+            {@render oneCable(c, api)}
+          {/each}
           {#if dragCable}
             <path
               class="cable dragging"

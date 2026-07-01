@@ -57,12 +57,24 @@
      *  cables). Handed a {@link WorldApi} so the parent can place things without touching the transform.
      *  The world layer stays ignorant of what this is — the standing WebGL escape hatch. */
     overlay?: Snippet<[WorldApi]>;
+    /** Like `overlay`, but drawn **behind** the gear (below the device panels) — e.g. cables that should
+     *  tuck behind a front-facing unit. Same {@link WorldApi}, same coordinate space. */
+    underlay?: Snippet<[WorldApi]>;
     /** Bound out to the parent so it can convert coordinates outside the overlay snippet (e.g. to
      *  DOM-measure jack positions into surface space). `undefined` until the surface mounts. */
     api?: WorldApi;
   }
-  let { items, item, controls, onMoveTo, canPlace, fitKey, overlay, api = $bindable() }: Props =
-    $props();
+  let {
+    items,
+    item,
+    controls,
+    onMoveTo,
+    canPlace,
+    fitKey,
+    overlay,
+    underlay,
+    api = $bindable(),
+  }: Props = $props();
 
   // The room the surface spans, world mm. Generous so there's room to pan around; refined per-space later.
   const ROOM_WIDTH = 4000;
@@ -251,6 +263,20 @@
       <div class="floor"></div>
     </div>
 
+    {#if underlay}
+      <!-- Behind-the-gear layer (below the device panels): cables that should tuck behind a
+           front-facing unit. Same surface-local space as the overlay. -->
+      <svg
+        class="underlay"
+        width={ROOM_WIDTH}
+        height={ROOM_HEIGHT}
+        viewBox="0 0 {ROOM_WIDTH} {ROOM_HEIGHT}"
+        aria-hidden="true"
+      >
+        {@render underlay(worldApi)}
+      </svg>
+    {/if}
+
     {#each items as it (it.id)}
       {@const p = shown(it)}
       <div
@@ -324,6 +350,15 @@
     overflow: visible;
     pointer-events: none;
     z-index: 5;
+  }
+  /* Behind-the-gear cable layer: below the device panels (z-index 1), above the backdrop. */
+  .underlay {
+    position: absolute;
+    top: 0;
+    left: 0;
+    overflow: visible;
+    pointer-events: none;
+    z-index: 0;
   }
   .floor {
     position: absolute;
