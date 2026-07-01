@@ -40,6 +40,32 @@ function refIs(ref: PortRef, device: string, port: number): boolean {
   return ref.device === device && ref.port === port;
 }
 
+/** Would adding an edge from `fromDevice` (output side) to `toDevice` (input side) create a cycle in
+ *  the device graph? True iff `toDevice` can already reach `fromDevice` via existing connections
+ *  (each connection is a `from.device → to.device` edge) — adding the edge would then close a loop,
+ *  which the engine rejects at compile. Pure DFS reachability, so it's testable and lets the UI reject
+ *  a feedback loop *before* compile instead of committing a bad patch and handling an async error. */
+export function wouldCreateCycle(
+  fromDevice: string,
+  toDevice: string,
+  existing: Connection[],
+): boolean {
+  if (fromDevice === toDevice) return true;
+  const seen = new Set<string>();
+  const stack = [toDevice];
+  while (stack.length > 0) {
+    const cur = stack.pop();
+    if (cur === undefined) break;
+    if (cur === fromDevice) return true;
+    if (seen.has(cur)) continue;
+    seen.add(cur);
+    for (const c of existing) {
+      if (c.from.device === cur) stack.push(c.to.device);
+    }
+  }
+  return false;
+}
+
 /** Evaluate a prospective drag between two jacks against the engine's connection rules, given the
  *  patch's `existing` connections. Order-independent — pass the two endpoints in either order. */
 export function evaluateConnection(
@@ -68,6 +94,11 @@ export function evaluateConnection(
   // A device feeding its own input is a self-cycle.
   if (out.device === inp.device) {
     return { ok: false, reason: "can't patch a device to itself" };
+  }
+
+  // A longer feedback loop (the input's device can already reach the output's device).
+  if (wouldCreateCycle(out.device, inp.device, existing)) {
+    return { ok: false, reason: "would create a feedback loop" };
   }
 
   // Exact duplicate — this cable already exists.

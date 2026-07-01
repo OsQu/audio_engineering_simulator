@@ -14,7 +14,8 @@
     wireKeyboard,
     wireMidi,
   } from "./engine";
-  import { cablePathData } from "./connections";
+  import { cablePathData, evaluateConnection } from "./connections";
+  import type { ConnectVerdict, Endpoint } from "./connections";
   import type { Connection, Patch, PortRef } from "./scene";
   import { defaultScene, loadScene, type Scene, saveScene, setSceneParam } from "./scene-store";
   import type { Rack } from "./scene-store";
@@ -224,6 +225,99 @@
     const wx = direction === "output" ? rect.x + rect.width : rect.x;
     const wy = rect.y + rect.height * (1 - frac); // world y-up; port 0 nearest the top
     return api.worldToSurface(wx, wy);
+  }
+
+  // --- Drag-to-connect ------------------------------------------------------------------------------
+  // An in-progress cable drag from a source jack: the fixed source end, the moving free end (surface
+  // coords), and — when hovering a candidate jack — the verdict so we can colour the cable + commit.
+  let dragCable = $state<{
+    source: Endpoint;
+    srcPoint: { x: number; y: number };
+    free: { x: number; y: number };
+    over: boolean;
+    legal: boolean;
+    verdict: ConnectVerdict | null;
+  } | null>(null);
+
+  const jackKeyOf = (e: Endpoint): string => jackKey(e.device, e.direction, e.port);
+
+  // Resolve a `data-jack` value ("device:direction:port") to a full Endpoint (with the port's domain
+  // from the descriptor), or null if it doesn't name a real port.
+  function endpointFromJackKey(key: string): Endpoint | null {
+    const [device, direction, portStr] = key.split(":");
+    if (!device || (direction !== "input" && direction !== "output")) return null;
+    const port = Number(portStr);
+    const dev = deviceById(device);
+    const desc = dev ? descriptorFor(catalog, dev.typeId) : undefined;
+    const pd = desc?.ports.find((p) => p.direction === direction && p.id === port);
+    if (!pd) return null;
+    return { device, port, direction, domain: pd.domain };
+  }
+
+  // Pointer-down on a jack connector starts a cable drag. (Only reachable on a shown back panel; a
+  // front-facing device's back is rotated away and non-interactive.)
+  function onCablePointerDown(e: PointerEvent): void {
+    if (!worldApi) return;
+    const el = (e.target as HTMLElement | null)?.closest<HTMLElement>("[data-jack]");
+    const key = el?.dataset.jack;
+    if (!key) return;
+    const source = endpointFromJackKey(key);
+    const srcPoint = jackAnchors[key];
+    if (!source || !srcPoint) return;
+    e.preventDefault();
+    dragCable = { source, srcPoint, free: srcPoint, over: false, legal: false, verdict: null };
+  }
+
+  // While dragging: track the free end, and if it's over another jack, evaluate legality (snapping the
+  // cable end to that jack for a magnetic feel).
+  function onCablePointerMove(e: PointerEvent): void {
+    if (!dragCable || !worldApi) return;
+    const cursor = worldApi.clientToSurface(e.clientX, e.clientY);
+    const el = document
+      .elementFromPoint(e.clientX, e.clientY)
+      ?.closest<HTMLElement>("[data-jack]");
+    const key = el?.dataset.jack;
+    if (key && key !== jackKeyOf(dragCable.source)) {
+      const target = endpointFromJackKey(key);
+      if (target) {
+        const verdict = evaluateConnection(dragCable.source, target, scene.patch.connections);
+        dragCable = {
+          ...dragCable,
+          free: jackAnchors[key] ?? cursor,
+          over: true,
+          legal: verdict.ok,
+          verdict,
+        };
+        return;
+      }
+    }
+    dragCable = { ...dragCable, free: cursor, over: false, legal: false, verdict: null };
+  }
+
+  // Release: commit a legal connection, else drop the drag (the rubber-band vanishes).
+  function onCablePointerUp(): void {
+    if (dragCable?.verdict?.ok) commitCable(dragCable.verdict);
+    dragCable = null;
+  }
+
+  // Apply a legal verdict to the patch and hot-swap: drop the replaced edge (fan-in is illegal, so a
+  // new cable into an occupied input replaces its source), add the new one, rebuild the engine.
+  function commitCable(v: ConnectVerdict): void {
+    if (!v.ok) return;
+    let conns = scene.patch.connections;
+    if (v.replaces) {
+      const rk = connKey(v.replaces);
+      conns = conns.filter((c) => connKey(c) !== rk);
+    }
+    scene.patch.connections = [...conns, v.connection];
+    hotSwap();
+  }
+
+  // Remove a cable (click-to-disconnect) and hot-swap. Anything it fed now reads silence.
+  function disconnect(c: Connection): void {
+    const k = connKey(c);
+    scene.patch.connections = scene.patch.connections.filter((x) => connKey(x) !== k);
+    hotSwap();
   }
 
   // The occupied U-runs of a rack, excluding `excludeId` (the device being placed).
@@ -490,6 +584,15 @@
   }
 </script>
 
+<!-- Cable-drag pointer tracking: a jack press starts a cable; move/up run globally so the drag keeps
+     working past the jack. WorldView's own pan/device-drag handlers stay inert (no jack ⇒ no cable drag,
+     and no device drag/pan is active during a cable drag). -->
+<svelte:window
+  onpointerdown={onCablePointerDown}
+  onpointermove={onCablePointerMove}
+  onpointerup={onCablePointerUp}
+/>
+
 <main>
   <h1>Scene-driven engine — Svelte harness</h1>
   <p>
@@ -566,14 +669,40 @@
       </p>
       <WorldView items={placedItems} onMoveTo={moveTo} {canPlace} fitKey={currentSpace} bind:api={worldApi}>
         {#snippet overlay(api)}
-          <!-- Patch cables: one bezier per connection whose ends are both in the shown space. -->
+          <!-- Patch cables: one bezier per connection whose ends are both in the shown space. The wide
+               transparent hit-path makes the cable clickable to disconnect; during a drag its pointer
+               events are disabled so `elementFromPoint` can see the jack beneath it. -->
           {#each scene.patch.connections as c (connKey(c))}
             {@const a = cableAnchor(c.from, "output", api)}
             {@const b = cableAnchor(c.to, "input", api)}
             {#if a && b}
-              <path class="cable" d={cablePathData(a, b)} />
+              {@const d = cablePathData(a, b)}
+              <path
+                class="cable-hit"
+                {d}
+                role="button"
+                tabindex="-1"
+                aria-label={`disconnect ${connKey(c)}`}
+                style:pointer-events={dragCable ? "none" : "stroke"}
+                onclick={() => disconnect(c)}
+                onkeydown={(e) => {
+                  if (e.key === "Enter" || e.key === " ") disconnect(c);
+                }}
+              ></path>
+              <path class="cable" {d} />
             {/if}
           {/each}
+
+          <!-- The rubber-band while dragging a new cable: green over a legal target, red over an
+               illegal one, neutral in open space. -->
+          {#if dragCable}
+            <path
+              class="cable dragging"
+              class:legal={dragCable.over && dragCable.legal}
+              class:illegal={dragCable.over && !dragCable.legal}
+              d={cablePathData(dragCable.srcPoint, dragCable.free)}
+            />
+          {/if}
         {/snippet}
 
         {#snippet controls(itemId)}
@@ -814,6 +943,28 @@
     stroke-width: 6;
     stroke-linecap: round;
     opacity: 0.9;
+    pointer-events: none;
+  }
+  /* Wide invisible hit target so a thin cable is easy to click to disconnect. `tabindex=-1` keeps it
+     out of the tab order, so suppressing the click-focus outline (its rectangular path bounding box)
+     costs no keyboard accessibility. */
+  .cable-hit {
+    fill: none;
+    stroke: transparent;
+    stroke-width: 14;
+    cursor: pointer;
+    outline: none;
+  }
+  /* The rubber-band while dragging a new cable. */
+  .cable.dragging {
+    stroke-dasharray: 12 9;
+    opacity: 0.85;
+  }
+  .cable.legal {
+    stroke: #4caf50;
+  }
+  .cable.illegal {
+    stroke: #d9534f;
   }
   /* Small chrome buttons in a world item's top bar (rack collapse, device pull-out / flip). */
   .chip {

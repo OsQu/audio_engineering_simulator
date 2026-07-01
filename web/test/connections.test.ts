@@ -7,6 +7,7 @@ import {
   distanceToCable,
   evaluateConnection,
   isPointNearCable,
+  wouldCreateCycle,
 } from "../src/connections";
 import type { Connection } from "../src/scene";
 
@@ -110,6 +111,29 @@ describe("evaluateConnection — legality", () => {
     const v = evaluateConnection(out("synth"), inp("strip", 1), existing);
     expect(v.ok).toBe(true);
     if (v.ok) expect(v.replaces).toBeNull();
+  });
+});
+
+describe("wouldCreateCycle / feedback-loop rejection", () => {
+  // A → B → C already wired.
+  const chain = [conn("a", 0, "b", 0), conn("b", 0, "c", 0)];
+
+  it("detects a loop closing the chain (C → A)", () => {
+    expect(wouldCreateCycle("c", "a", chain)).toBe(true);
+  });
+
+  it("allows an edge that doesn't close a loop (A → C is a forward skip)", () => {
+    expect(wouldCreateCycle("a", "c", chain)).toBe(false);
+  });
+
+  it("treats a self edge as a cycle", () => {
+    expect(wouldCreateCycle("a", "a", [])).toBe(true);
+  });
+
+  it("evaluateConnection rejects a drag that would feed back (C.out → A.in)", () => {
+    const v = evaluateConnection(out("c"), inp("a"), chain);
+    expect(v.ok).toBe(false);
+    if (!v.ok) expect(v.reason).toMatch(/loop/);
   });
 });
 
