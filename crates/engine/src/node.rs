@@ -34,6 +34,7 @@ mod source;
 mod speaker;
 mod sum;
 mod synth;
+mod vu_meter;
 
 pub use ad::AdConverter;
 pub use balanced::{BalancedDriver, BalancedReceiver};
@@ -48,6 +49,7 @@ pub use source::TestSource;
 pub use speaker::Speaker;
 pub use sum::PassiveSum;
 pub use synth::SynthVoice;
+pub use vu_meter::VuMeter;
 
 use crate::param::{ParamDecl, Params};
 use crate::port::{InputPort, OutputPort};
