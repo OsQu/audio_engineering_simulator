@@ -4,7 +4,7 @@
   // **from the fetched device catalog** (not hardcoded ids) — a generic stepping stone; the
   // skeuomorphic panel widgets land in Story 4.2.3. Generic by device id throughout.
 
-  import type { DeviceDescriptor, ParamDescriptor } from "./catalog";
+  import type { CableType, DeviceDescriptor, ParamDescriptor, PortDomain } from "./catalog";
   import { descriptorFor, isPlayable } from "./catalog";
   import {
     type ControlMessage,
@@ -14,7 +14,7 @@
     wireKeyboard,
     wireMidi,
   } from "./engine";
-  import { cablePathData, evaluateConnection } from "./connections";
+  import { cablePathData, cableSpec, cableTypeIdFor, evaluateConnection } from "./connections";
   import type { ConnectVerdict, Endpoint } from "./connections";
   import type { Connection, Patch, PortRef } from "./scene";
   import { defaultScene, loadScene, type Scene, saveScene, setSceneParam } from "./scene-store";
@@ -40,6 +40,8 @@
   let started = $state(false);
   let ready = $state(false);
   let catalog = $state<DeviceDescriptor[]>([]);
+  // Cable presets the picker offers for analog connections (fetched with the device catalog).
+  let cables = $state<CableType[]>([]);
   let send = $state<((msg: ControlMessage) => void) | null>(null);
   // Master output peak (linear, ±1.0 = full scale), from the worklet's throttled level message.
   let level = $state(0);
@@ -309,8 +311,16 @@
     dragCable = null;
   }
 
+  // The carrier domain of a connection (from its output port), or null if unknown.
+  function connectionDomain(c: Connection): PortDomain | null {
+    const dev = deviceById(c.from.device);
+    const desc = dev ? descriptorFor(catalog, dev.typeId) : undefined;
+    return desc?.ports.find((p) => p.direction === "output" && p.id === c.from.port)?.domain ?? null;
+  }
+
   // Apply a legal verdict to the patch and hot-swap: drop the replaced edge (fan-in is illegal, so a
-  // new cable into an occupied input replaces its source), add the new one, rebuild the engine.
+  // new cable into an occupied input replaces its source), add the new one, rebuild the engine. A fresh
+  // **analog** connection gets a transparent default cable (the first preset); digital/event stay ideal.
   function commitCable(v: ConnectVerdict): void {
     if (!v.ok) return;
     let conns = scene.patch.connections;
@@ -318,14 +328,36 @@
       const rk = connKey(v.replaces);
       conns = conns.filter((c) => connKey(c) !== rk);
     }
-    scene.patch.connections = [...conns, v.connection];
+    const conn: Connection = { from: v.connection.from, to: v.connection.to };
+    if (connectionDomain(conn) === "analog" && cables[0]) conn.cable = cableSpec(cables[0]);
+    scene.patch.connections = [...conns, conn];
     hotSwap();
   }
 
-  // Remove a cable (click-to-disconnect) and hot-swap. Anything it fed now reads silence.
+  // Remove a cable (from the inspector) and hot-swap. Anything it fed now reads silence.
   function disconnect(c: Connection): void {
     const k = connKey(c);
     scene.patch.connections = scene.patch.connections.filter((x) => connKey(x) !== k);
+    if (selectedCableKey === k) selectedCableKey = null;
+    hotSwap();
+  }
+
+  // --- Cable inspector (select a cable to change its type / disconnect it) --------------------------
+  let selectedCableKey = $state<string | null>(null);
+  // The selected connection, or null (also null once it's been disconnected).
+  const selectedConn = $derived(
+    scene.patch.connections.find((c) => connKey(c) === selectedCableKey) ?? null,
+  );
+
+  // Set (or clear, `""` ⇒ ideal wire) the cable type on a connection, then hot-swap — the cable's R·C
+  // is baked into the edge at compile, so changing it rebuilds the engine.
+  function setCableType(c: Connection, typeId: string): void {
+    const idx = scene.patch.connections.findIndex((x) => connKey(x) === connKey(c));
+    if (idx < 0) return;
+    const preset = typeId ? cables.find((ct) => ct.typeId === typeId) : undefined;
+    const updated: Connection = { from: { ...c.from }, to: { ...c.to } };
+    if (preset) updated.cable = cableSpec(preset);
+    scene.patch.connections[idx] = updated;
     hotSwap();
   }
 
@@ -541,6 +573,7 @@
         },
         onReady: (r: ReadyMessage, sendFn) => {
           catalog = r.catalog;
+          cables = r.cables;
           send = sendFn;
           ready = true;
           seedParamValues();
@@ -682,14 +715,14 @@
             {d}
             role="button"
             tabindex="-1"
-            aria-label={`disconnect ${connKey(c)}`}
+            aria-label={`select cable ${connKey(c)}`}
             style:pointer-events={dragCable ? "none" : "stroke"}
-            onclick={() => disconnect(c)}
+            onclick={() => (selectedCableKey = connKey(c))}
             onkeydown={(e) => {
-              if (e.key === "Enter" || e.key === " ") disconnect(c);
+              if (e.key === "Enter" || e.key === " ") selectedCableKey = connKey(c);
             }}
           ></path>
-          <path class="cable" {d} />
+          <path class="cable" class:selected={connKey(c) === selectedCableKey} {d} />
         {/if}
       {/snippet}
 
@@ -811,6 +844,36 @@
           {/if}
         {/snippet}
       </WorldView>
+
+      {#if selectedConn}
+        <!-- Cable inspector: click a cable to select it, then change its type or disconnect it. Only
+             analog links carry a cable (R·C); digital/event links are always ideal. -->
+        <div class="cable-inspector">
+          <span class="ci-label">
+            Cable <strong>{selectedConn.from.device}</strong> → <strong>{selectedConn.to.device}</strong>
+          </span>
+          {#if connectionDomain(selectedConn) === "analog"}
+            <label class="ci-type">
+              Type
+              <select
+                value={cableTypeIdFor(cables, selectedConn.cable)}
+                onchange={(e) => selectedConn && setCableType(selectedConn, e.currentTarget.value)}
+              >
+                <option value="">Ideal wire</option>
+                {#each cables as ct (ct.typeId)}
+                  <option value={ct.typeId}>{ct.label}</option>
+                {/each}
+              </select>
+            </label>
+          {:else}
+            <span class="ci-ideal">digital link — ideal (no cable)</span>
+          {/if}
+          <button type="button" onclick={() => selectedConn && disconnect(selectedConn)}>
+            Disconnect
+          </button>
+          <button type="button" class="ci-close" onclick={() => (selectedCableKey = null)}>Close</button>
+        </div>
+      {/if}
 
       <p class="midi">{midiStatus}</p>
       <p class="scene-buttons">
@@ -973,6 +1036,44 @@
   }
   .cable.illegal {
     stroke: #d9534f;
+  }
+  /* The currently-selected cable (its inspector is open). */
+  .cable.selected {
+    stroke: #f4a94a;
+    stroke-width: 9;
+    opacity: 1;
+  }
+  /* Cable inspector strip (shown when a cable is selected). */
+  .cable-inspector {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 0.6rem;
+    margin: 0.5rem 0;
+    padding: 0.4rem 0.75rem;
+    background: #2a2d31;
+    color: #e0e0e0;
+    border-radius: 6px;
+    font-size: 0.8rem;
+  }
+  .cable-inspector .ci-type,
+  .cable-inspector .ci-ideal {
+    display: flex;
+    align-items: center;
+    gap: 0.35rem;
+    color: #b8bcc2;
+  }
+  .cable-inspector select {
+    font: inherit;
+    font-size: 0.75rem;
+  }
+  .cable-inspector button {
+    font: inherit;
+    font-size: 0.72rem;
+    padding: 0.2rem 0.7rem;
+  }
+  .cable-inspector .ci-close {
+    margin-left: auto;
   }
   /* Small chrome buttons in a world item's top bar (device flip, space selector, remove). */
   .chip {

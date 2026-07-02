@@ -13,8 +13,8 @@
 //      click-to-delete). Coordinate-agnostic: it operates in the overlay's 2-D pixel space with **y
 //      increasing downward** (SVG/screen convention), so a cable **sags downward** (+y).
 
-import type { PortDirection, PortDomain } from "./catalog";
-import type { Connection, PortRef } from "./scene";
+import type { CableType, PortDirection, PortDomain } from "./catalog";
+import type { CableSpec, Connection, PortRef } from "./scene";
 
 /** One end of a prospective connection: a device's port plus the engine truth that governs legality. */
 export interface Endpoint {
@@ -126,6 +126,24 @@ export function evaluateConnection(
  *  the engine ignores a `CableSpec` on a digital/event route, so the UI offers cables on analog only. */
 export function cableAllowed(domain: PortDomain): boolean {
   return domain === "analog";
+}
+
+/** The R·C spec a `Connection` carries for a cable preset (the subset the engine reads). */
+export function cableSpec(ct: CableType): CableSpec {
+  return { resistanceOhms: ct.resistanceOhms, capacitanceFarads: ct.capacitanceFarads };
+}
+
+/** The catalog type id whose R·C matches `spec`, or `""` when there is no cable (ideal wire) or the spec
+ *  matches no preset. The inverse of {@link cableSpec}, so the picker can show a connection's current
+ *  cable type from the R·C the patch stores (the CableSpec is the single source of truth — no extra id
+ *  field on the IR). */
+export function cableTypeIdFor(cables: CableType[], spec: CableSpec | undefined): string {
+  if (!spec) return "";
+  const match = cables.find(
+    (c) =>
+      c.resistanceOhms === spec.resistanceOhms && c.capacitanceFarads === spec.capacitanceFarads,
+  );
+  return match?.typeId ?? "";
 }
 
 // --- Cable geometry (2-D pixel space, y-down) ------------------------------------------------------

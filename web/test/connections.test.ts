@@ -1,9 +1,12 @@
 import { describe, expect, it } from "vitest";
+import type { CableType } from "../src/catalog";
 import type { Endpoint } from "../src/connections";
 import {
   cableAllowed,
   cableControlPoints,
   cablePathData,
+  cableSpec,
+  cableTypeIdFor,
   distanceToCable,
   evaluateConnection,
   isPointNearCable,
@@ -142,6 +145,40 @@ describe("cableAllowed", () => {
     expect(cableAllowed("analog")).toBe(true);
     expect(cableAllowed("digital")).toBe(false);
     expect(cableAllowed("events")).toBe(false);
+  });
+});
+
+describe("cable spec ↔ type-id round-trip", () => {
+  const cables: CableType[] = [
+    {
+      typeId: "patch_short",
+      label: "Patch",
+      kind: "line",
+      lengthM: 0.5,
+      resistanceOhms: 0.05,
+      capacitanceFarads: 5e-11,
+    },
+    {
+      typeId: "instrument_6m",
+      label: "Instr 6m",
+      kind: "instrument",
+      lengthM: 6,
+      resistanceOhms: 0.3,
+      capacitanceFarads: 6e-10,
+    },
+  ];
+
+  it("cableSpec extracts just the R·C the engine reads", () => {
+    expect(cableSpec(cables[1])).toEqual({ resistanceOhms: 0.3, capacitanceFarads: 6e-10 });
+  });
+
+  it("cableTypeIdFor recovers the preset id from a stored spec", () => {
+    expect(cableTypeIdFor(cables, cableSpec(cables[1]))).toBe("instrument_6m");
+  });
+
+  it("returns '' for no cable (ideal) or an unmatched custom spec", () => {
+    expect(cableTypeIdFor(cables, undefined)).toBe("");
+    expect(cableTypeIdFor(cables, { resistanceOhms: 999, capacitanceFarads: 1 })).toBe("");
   });
 });
 
