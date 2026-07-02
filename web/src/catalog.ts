@@ -32,7 +32,7 @@ export type FormFactor =
 
 /** One control param: engine truth (id/min/max/default) + UI labels. */
 export interface ParamDescriptor {
-  /** Device-local param id — what a scene's `ParamSetting` addresses. */
+  /** Exposed param id — its position in the device's exposed param list, what a scene's `ParamSetting` addresses. */
   id: number;
   label: string;
   /** Unit string for the readout ("V", "ms", "" for unitless). */

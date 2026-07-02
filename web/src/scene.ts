@@ -24,9 +24,9 @@ export interface DeviceInstance {
   params?: ParamSetting[];
 }
 
-/** A value for one of a device's smoothed control params, by device-local param id. */
+/** A value for one of a device's smoothed control params, by exposed param id (its position in the exposed list). */
 export interface ParamSetting {
-  /** Device-local param id (the engine `ParamId`'s value). */
+  /** Exposed param id — its position in the device's exposed param list (matches `ParamDescriptor.id`). */
   id: number;
   /** Target value; clamped to the param's declared range when applied. */
   value: number;

@@ -725,12 +725,17 @@ pub fn descriptors() -> Vec<DeviceDescriptor> {
 fn describe(entry: &CatalogEntry) -> DeviceDescriptor {
     let face = expand(entry);
 
+    // Params, exposed (position) order — the id is the position, matching how the host addresses a
+    // param (`BuiltScene::param(device, id)` indexes the exposed handle vec), not the node-local
+    // `ParamId`. For a multi-node device the two differ: `channel_strip`'s stages both expose
+    // `ParamId` 0/1, so node-local ids would collide at `[0,1,0,1]` and misaddress the second stage.
     let params = face
         .params
         .iter()
         .zip(entry.params)
-        .map(|(p, ui)| ParamDescriptor {
-            id: p.id.0,
+        .enumerate()
+        .map(|(i, (p, ui))| ParamDescriptor {
+            id: i as u32,
             label: ui.label.to_owned(),
             unit: ui.unit.to_owned(),
             kind: ui.kind,
@@ -829,17 +834,18 @@ mod tests {
         }
     }
 
-    /// Each descriptor carries the node's real param ids/ranges/defaults (bit-exact, derived not
-    /// retyped) and the node's real port domains — so the UI can never show a stale range or wire a
-    /// wrong-domain port.
+    /// Each descriptor carries the exposed param id (its **position** in the exposed face — what the
+    /// host addresses, matching ports/readouts, *not* the node-local `ParamId`) plus the node's real
+    /// ranges/defaults (bit-exact, derived not retyped) and real port domains — so the UI can never
+    /// misaddress a param, show a stale range, or wire a wrong-domain port.
     #[test]
     fn descriptors_carry_engine_truth() {
         for entry in CATALOG {
             let face = expand(entry);
             let desc = describe(entry);
 
-            for (pd, ep) in desc.params.iter().zip(&face.params) {
-                assert_eq!(pd.id, ep.id.0, "{} param id", entry.type_id);
+            for (i, (pd, ep)) in desc.params.iter().zip(&face.params).enumerate() {
+                assert_eq!(pd.id, i as u32, "{} param id", entry.type_id);
                 // Bit-exact: derived from the decl, not hand-retyped, so identity holds.
                 assert_eq!(pd.min.to_bits(), ep.min.to_bits(), "{} min", entry.type_id);
                 assert_eq!(pd.max.to_bits(), ep.max.to_bits(), "{} max", entry.type_id);
@@ -866,6 +872,26 @@ mod tests {
                 );
             }
         }
+    }
+
+    /// A multi-node device's descriptor param ids are the **exposed positions** (`0..n`), not the
+    /// node-local `ParamId`s — which would collide. The two-stage `channel_strip` exposes both stages'
+    /// gain (`ParamId(0)`) + power (`ParamId(1)`); node-local ids would be `[0,1,0,1]`, misaddressing
+    /// the second stage (`BuiltScene::param` indexes positionally) and colliding as UI keys. The
+    /// descriptor must instead expose `[0,1,2,3]`.
+    #[test]
+    fn multi_node_descriptor_param_ids_are_exposed_positions() {
+        let strip = descriptors()
+            .into_iter()
+            .find(|d| d.type_id == "channel_strip")
+            .expect("channel_strip is in the catalog");
+
+        let ids: Vec<u32> = strip.params.iter().map(|p| p.id).collect();
+        assert_eq!(
+            ids,
+            vec![0, 1, 2, 3],
+            "exposed positions, not node-local ids"
+        );
     }
 
     /// The chassis seam: a multi-node device expands into several nodes wired by its internal edge,

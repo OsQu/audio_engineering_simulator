@@ -52,12 +52,14 @@ pub struct DeviceInstance {
     pub params: Vec<ParamSetting>,
 }
 
-/// A value for one of a device's smoothed control params, addressed by the device-local param id
-/// (the index in the node's `params()` declaration list — the engine's `ParamId`).
+/// A value for one of a device's smoothed control params, addressed by the exposed param id — its
+/// position in the device's exposed param list (what `BuiltScene::param` indexes), *not* the
+/// node-local `ParamId`. For a single-node device the two coincide; for a multi-node device they
+/// differ (each stage's `ParamId`s restart at 0, but the exposed positions run 0..n across stages).
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ParamSetting {
-    /// Device-local param id (the engine `ParamId`'s value).
+    /// Exposed param id — its position in the device's exposed param list (matches `ParamDescriptor.id`).
     pub id: u32,
     /// Target value; clamped to the param's declared range when applied.
     pub value: f32,
