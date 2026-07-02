@@ -32,36 +32,41 @@
     width: clamp(6px, 34cqh, 1.5rem);
     height: clamp(6px, 34cqh, 1.5rem);
     border-radius: 50%;
-    background: radial-gradient(circle at 50% 35%, #444, #1a1a1a);
-    border: 2px solid #0a0a0a;
-    box-shadow: inset 0 0 0 3px var(--ring, #888);
+    /* Recessed barrel + a signal-coloured ring (the "what plugs in here" at a glance). */
+    background: radial-gradient(circle at 50% 32%, var(--ae-jack-top), var(--ae-jack-bot));
+    border: 2px solid var(--ae-jack-edge);
+    box-shadow:
+      inset 0 0 0 3px var(--ring, var(--ae-signal-line)),
+      0 1px 2px rgba(0, 0, 0, 0.6);
   }
   /* Digital carriers read as squared connectors (e.g. coax/optical/AES housings). */
   .jack[data-domain="digital"] .connector {
-    border-radius: 4px;
+    border-radius: var(--ae-radius-control);
   }
-  /* Connector colour by kind — the at-a-glance "what plugs in here". */
+  /* Ring colour by connector kind, straight from the signal palette. */
   .jack[data-kind="mic"] .connector {
-    --ring: #4a90d9;
+    --ring: var(--ae-signal-mic);
   }
   .jack[data-kind="line"] .connector {
-    --ring: #9aa0a6;
+    --ring: var(--ae-signal-line);
   }
   .jack[data-kind="instrument"] .connector {
-    --ring: #e08a3c;
+    --ring: var(--ae-signal-instrument);
   }
   .jack[data-kind="speaker"] .connector {
-    --ring: #d6453c;
+    --ring: var(--ae-signal-speaker);
   }
   .jack[data-kind="digital"] .connector {
-    --ring: #3aa0a0;
+    --ring: var(--ae-signal-digital);
   }
   .jack[data-kind="midi"] .connector {
-    --ring: #9b6cd6;
+    --ring: var(--ae-signal-midi);
   }
   .label {
+    font-family: var(--ae-font-ui);
     font-size: clamp(4px, 15cqh, 0.65rem);
-    color: #555;
+    letter-spacing: var(--ae-label-spacing);
+    color: var(--ae-text-muted);
     text-align: center;
     line-height: 1.1;
     white-space: nowrap;

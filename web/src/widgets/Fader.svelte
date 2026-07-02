@@ -38,51 +38,94 @@
     ondblclick={() => onChange(param.default)}
     onkeydown={onKey}
   >
-    <div class="cap" style={`bottom: calc(${pct}% - 7px)`}></div>
+    <div class="cap" style={`bottom: ${pct}%`}></div>
   </div>
   <span class="label">{param.label}</span>
   <span class="value">{formatParam(param, value)}</span>
 </div>
 
 <style>
+  /* Sizes scale with the chassis height (cqh, against the WorldView `.content` size container), capped
+     at their natural rem, so a normal panel is unchanged while a thin 1U unit shrinks the fader to fit. */
   .fader {
     display: flex;
     flex-direction: column;
     align-items: center;
-    width: 4.5rem;
-    gap: 0.15rem;
+    width: min(4.5rem, 92cqh);
+    gap: min(0.15rem, 2cqh);
   }
   .track {
     position: relative;
-    width: 0.5rem;
-    height: 7.5rem;
-    background: #d8d8d8;
-    border-radius: 3px;
+    width: min(0.9rem, 12cqh);
+    height: min(7.5rem, 68cqh);
+    border-radius: 8px;
+    /* Recessed metal slot with a dark centre index groove. */
+    background: linear-gradient(
+      to right,
+      var(--ae-fader-slot-edge),
+      var(--ae-fader-slot-mid) 50%,
+      var(--ae-fader-slot-edge)
+    );
+    box-shadow: inset 0 0 4px #000;
     cursor: ns-resize;
     touch-action: none;
     outline: none;
   }
+  .track::before {
+    content: "";
+    position: absolute;
+    left: 50%;
+    top: 8%;
+    bottom: 8%;
+    width: 2px;
+    transform: translateX(-50%);
+    background: #000;
+    border-radius: 2px;
+  }
   .track:focus-visible {
-    box-shadow: 0 0 0 2px #4a90d9;
+    box-shadow:
+      inset 0 0 4px #000,
+      0 0 0 2px var(--ae-signal-mic-lit);
   }
   .cap {
     position: absolute;
     left: 50%;
-    transform: translateX(-50%);
-    width: 1.6rem;
-    height: 14px;
-    background: #2b2b2b;
-    border: 1px solid #111;
+    /* `bottom` is set inline from value→%; the transform keeps the cap centred on that point at any size. */
+    transform: translate(-50%, 50%);
+    width: min(2.2rem, 30cqh);
+    height: min(1.1rem, 15cqh);
     border-radius: 3px;
+    background: linear-gradient(to bottom, var(--ae-fader-cap-top), var(--ae-fader-cap-bot));
+    box-shadow:
+      var(--ae-shadow-control),
+      var(--ae-bevel-top);
+    border: 1px solid #000;
+  }
+  .cap::after {
+    /* the white throw index line across the cap */
+    content: "";
+    position: absolute;
+    left: 12%;
+    right: 12%;
+    top: 50%;
+    height: 2px;
+    background: var(--ae-fader-index);
+    transform: translateY(-50%);
+    box-shadow: 0 0 4px rgba(255, 255, 255, 0.4);
   }
   .label {
-    font-size: 0.7rem;
-    color: #444;
+    font-family: var(--ae-font-ui);
+    font-weight: var(--ae-label-weight);
+    font-size: min(var(--ae-label-size), 17cqh);
+    letter-spacing: var(--ae-label-spacing);
+    text-transform: uppercase;
+    color: var(--ae-faceplate-ink, var(--ae-text-strong));
     text-align: center;
   }
   .value {
-    font-size: 0.7rem;
+    font-family: var(--ae-font-ui);
+    font-size: min(var(--ae-value-size), 17cqh);
     font-variant-numeric: tabular-nums;
-    color: #777;
+    color: var(--ae-faceplate-ink-muted, var(--ae-text-muted));
   }
 </style>

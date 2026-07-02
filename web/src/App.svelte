@@ -4,7 +4,7 @@
   // **from the fetched device catalog** (not hardcoded ids) — a generic stepping stone; the
   // skeuomorphic panel widgets land in Story 4.2.3. Generic by device id throughout.
 
-  import type { CableType, DeviceDescriptor, ParamDescriptor, PortDomain } from "./catalog";
+  import type { CableType, DeviceDescriptor, ParamDescriptor, PortDomain, PortKind } from "./catalog";
   import { descriptorFor, isPlayable } from "./catalog";
   import {
     type ControlMessage,
@@ -335,6 +335,14 @@
     const dev = deviceById(c.from.device);
     const desc = dev ? descriptorFor(catalog, dev.typeId) : undefined;
     return desc?.ports.find((p) => p.direction === "output" && p.id === c.from.port)?.domain ?? null;
+  }
+
+  // The connector kind of a connection (from its output port) — picks the cable's colour from the signal
+  // palette. Falls back to "line" (neutral grey) when the port can't be resolved.
+  function connectionKind(c: Connection): PortKind {
+    const dev = deviceById(c.from.device);
+    const desc = dev ? descriptorFor(catalog, dev.typeId) : undefined;
+    return desc?.ports.find((p) => p.direction === "output" && p.id === c.from.port)?.kind ?? "line";
   }
 
   // Apply a legal verdict to the patch and hot-swap: drop the replaced edge (fan-in is illegal, so a
@@ -730,6 +738,17 @@
         {@const b = cableAnchor(c.to, "input", api)}
         {#if a && b}
           {@const d = cablePathHalves(a, b)[side === "from" ? 0 : 1]}
+          {@const kind = connectionKind(c)}
+          <!-- Three stacked strokes for depth: a dark drop-shadow, the signal-coloured core, and a thin
+               lit highlight. Colour comes from the connector kind (the signal palette). -->
+          <path class="cable-shadow" {d} />
+          <path
+            class="cable-core"
+            data-signal={kind}
+            class:selected={connKey(c) === selectedCableKey}
+            {d}
+          />
+          <path class="cable-highlight" data-signal={kind} {d} />
           <path
             class="cable-hit"
             {d}
@@ -742,7 +761,6 @@
               if (e.key === "Enter" || e.key === " ") selectedCableKey = connKey(c);
             }}
           ></path>
-          <path class="cable" class:selected={connKey(c) === selectedCableKey} {d} />
         {/if}
       {/snippet}
 
@@ -1105,6 +1123,63 @@
     cursor: pointer;
     outline: none;
   }
+  /* A settled patch lead: three stacked strokes (shadow / signal core / lit highlight), coloured by the
+     connection's connector kind. Widths come from the cable tokens. */
+  .cable-shadow,
+  .cable-core,
+  .cable-highlight {
+    fill: none;
+    stroke-linecap: round;
+    pointer-events: none;
+  }
+  .cable-shadow {
+    stroke: var(--ae-cable-shadow);
+    stroke-width: var(--ae-cable-shadow-w);
+    opacity: 0.5;
+  }
+  .cable-core {
+    stroke: var(--ae-signal-line);
+    stroke-width: var(--ae-cable-core-w);
+  }
+  .cable-highlight {
+    stroke: var(--ae-signal-line-lit);
+    stroke-width: var(--ae-cable-highlight-w);
+    opacity: 0.6;
+  }
+  .cable-core[data-signal="mic"] {
+    stroke: var(--ae-signal-mic);
+  }
+  .cable-core[data-signal="instrument"] {
+    stroke: var(--ae-signal-instrument);
+  }
+  .cable-core[data-signal="speaker"] {
+    stroke: var(--ae-signal-speaker);
+  }
+  .cable-core[data-signal="digital"] {
+    stroke: var(--ae-signal-digital);
+  }
+  .cable-core[data-signal="midi"] {
+    stroke: var(--ae-signal-midi);
+  }
+  .cable-highlight[data-signal="mic"] {
+    stroke: var(--ae-signal-mic-lit);
+  }
+  .cable-highlight[data-signal="instrument"] {
+    stroke: var(--ae-signal-instrument-lit);
+  }
+  .cable-highlight[data-signal="speaker"] {
+    stroke: var(--ae-signal-speaker-lit);
+  }
+  .cable-highlight[data-signal="digital"] {
+    stroke: var(--ae-signal-digital-lit);
+  }
+  .cable-highlight[data-signal="midi"] {
+    stroke: var(--ae-signal-midi-lit);
+  }
+  /* Selected lead: fatten the core so the inspector target reads clearly. */
+  .cable-core.selected {
+    stroke-width: calc(var(--ae-cable-core-w) + 3px);
+  }
   /* The rubber-band while dragging a new cable. */
   .cable.dragging {
     stroke-dasharray: 12 9;
@@ -1192,20 +1267,50 @@
     width: 100%;
     height: 100%;
     box-sizing: border-box;
-    border: 2px solid #4a4d52;
-    border-radius: 6px;
-    background: #1b1d20;
+    border: 1px solid var(--ae-line-hard);
+    border-radius: 9px;
+    background: linear-gradient(var(--ae-rack-shell-1), var(--ae-rack-shell-2));
+    box-shadow:
+      var(--ae-shadow-rack),
+      inset 0 1px 0 rgba(255, 255, 255, 0.05);
     padding: 14px; /* = FRAME_MARGIN, so guide rows align with mounted gear */
     position: relative;
   }
+  /* Warm top-light wash — the room light hitting the top of the cabinet. */
+  .rack-frame::before {
+    content: "";
+    position: absolute;
+    top: 0;
+    left: 14%;
+    right: 14%;
+    height: 70px;
+    background: radial-gradient(closest-side at 50% 0, var(--ae-rack-glow), transparent);
+    pointer-events: none;
+    border-radius: 9px;
+  }
+  /* Perforated mounting rails: two columns of punched holes down the left/right margins. */
+  .rack-frame::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    border-radius: 9px;
+    background:
+      radial-gradient(circle at 7px 15px, var(--ae-rack-hole) 1.8px, transparent 2.4px) 0 0 / 100% 30px
+        repeat-y,
+      radial-gradient(circle at calc(100% - 7px) 15px, var(--ae-rack-hole) 1.8px, transparent 2.4px) 0 0 /
+        100% 30px repeat-y;
+  }
   .rack-label {
     position: absolute;
-    top: 2px;
-    left: 6px;
+    top: 3px;
+    left: 16px;
+    z-index: 1;
+    font-family: var(--ae-font-ui);
     font-size: 8px;
-    letter-spacing: 0.05em;
+    letter-spacing: var(--ae-legend-spacing);
     text-transform: uppercase;
-    color: #777;
+    color: var(--ae-text-muted);
   }
   .slots {
     display: flex;
@@ -1214,7 +1319,7 @@
   }
   .slot {
     flex: 1;
-    border-bottom: 1px dashed #3a3d42;
+    border-bottom: 1px dashed var(--ae-line-panel);
   }
   .slot:first-child {
     border-bottom: none;
