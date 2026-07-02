@@ -23,7 +23,9 @@
     elevationToWorld,
     footprint,
     nearestFreeSlot,
+    nearestWall,
     orientedSize,
+    project,
     RACK_DEPTH_MM,
     RACK_UNIT_MM,
     RACK_WIDTH_MM,
@@ -182,26 +184,55 @@
     return wallProjection(place.position, orientedSize(size, place.wall), place.wall, room);
   }
 
-  // The items to render in the current space: rack frames first (behind), then devices (on top).
-  // `z` interleaves items with the single cable layer (z 2): racks at the bottom, a device showing its
-  // back *below* the cables (they plug into its visible sockets), one facing front *above* them (cables
-  // tuck behind its panel). This is what makes a continuous cable occlude correctly per device.
-  const placedItems = $derived([
-    ...scene.ui.racks
-      .filter((r) => r.space === currentSpace && r.wall === currentWall)
-      .map((r) => ({ id: r.id, rect: rackRect(r), background: true, z: 0 })),
-    ...scene.patch.devices
-      .filter((d) => {
-        const p = scene.ui.placements[d.id];
-        return p?.space === currentSpace && p.wall === currentWall;
-      })
-      .map((d) => ({
-        id: d.id,
-        rect: deviceRect(d.id, d.typeId),
-        z: scene.ui.placements[d.id]?.facing === "back" ? 1 : 3,
-      }))
-      .filter((it): it is { id: string; rect: Rect2; z: number } => it.rect !== null),
-  ]);
+  type PlacedItem = { id: string; rect: Rect2; background?: boolean; z: number };
+
+  // A device/rack's **top-down floor footprint** (world x/z), for the plan view. Uses the wall-oriented
+  // box so a side-wall unit sits the right way round; racks show as one box (mounted gear is hidden).
+  const rackFloorRect = (rack: Rack): Rect2 =>
+    project(rack.position, orientedSize(rackFrameSize(rack), rack.wall), "top");
+  function deviceFloorRect(deviceId: string, typeId: string): Rect2 | null {
+    const desc = descriptorFor(catalog, typeId);
+    const place = scene.ui.placements[deviceId];
+    if (!desc || !place) return null;
+    return project(place.position, orientedSize(footprint(desc.formFactor), place.wall), "top");
+  }
+
+  // The items to render. In a **wall elevation**: rack frames (behind) then that wall's devices (on top),
+  // with `z` interleaving them with the cable layer (z 2) by facing so a continuous cable occludes right.
+  // In the **top-down plan**: the whole room's racks + free-standing gear as floor footprints (mounted
+  // gear is hidden inside its rack; cables aren't drawn — there are no visible jacks from above).
+  const placedItems = $derived.by((): PlacedItem[] => {
+    if (currentView === "top") {
+      return [
+        ...scene.ui.racks
+          .filter((r) => r.space === currentSpace)
+          .map((r): PlacedItem => ({ id: r.id, rect: rackFloorRect(r), background: true, z: 0 })),
+        ...scene.patch.devices
+          .filter((d) => {
+            const p = scene.ui.placements[d.id];
+            return p?.space === currentSpace && !p.rack; // mounted gear lives inside its rack box
+          })
+          .map((d) => ({ id: d.id, rect: deviceFloorRect(d.id, d.typeId), z: 3 }))
+          .filter((it): it is PlacedItem => it.rect !== null),
+      ];
+    }
+    return [
+      ...scene.ui.racks
+        .filter((r) => r.space === currentSpace && r.wall === currentWall)
+        .map((r): PlacedItem => ({ id: r.id, rect: rackRect(r), background: true, z: 0 })),
+      ...scene.patch.devices
+        .filter((d) => {
+          const p = scene.ui.placements[d.id];
+          return p?.space === currentSpace && p.wall === currentWall;
+        })
+        .map((d) => ({
+          id: d.id,
+          rect: deviceRect(d.id, d.typeId),
+          z: scene.ui.placements[d.id]?.facing === "back" ? 1 : 3,
+        }))
+        .filter((it): it is PlacedItem => it.rect !== null),
+    ];
+  });
 
   // --- Patch cables --------------------------------------------------------------------------------
   // A stable key for a connection (its two endpoints), for the {#each} in the cable overlay.
@@ -567,11 +598,12 @@
     return null;
   }
 
-  // Legality for live drag feedback + the commit gate, in the shown wall's elevation. Racks reposition
-  // freely; a device is legal if it can mount in a rack at `(x,y)`, or stands free without overlapping
-  // any other item. The candidate's elevation width is always the panel width (a unit faces the room).
+  // Legality for live drag feedback + the commit gate. In the **top-down plan** any floor spot is legal
+  // (free layout — overlaps are the operator's business). In a **wall elevation** racks reposition freely
+  // and a device is legal if it can mount in a rack at `(x,y)` or stands free without overlapping another
+  // item (its elevation width is always the panel width, since a unit faces the room).
   function canPlace(id: string, x: number, y: number): boolean {
-    if (isRack(id)) return true;
+    if (currentView === "top" || isRack(id)) return true;
     const device = deviceById(id);
     if (!device) return false;
     const desc = descriptorFor(catalog, device.typeId);
@@ -583,11 +615,14 @@
     return !placedItems.some((it) => it.id !== id && rectsOverlap(candidate, it.rect));
   }
 
-  // Commit a drag (only ever called for a legal spot), in the shown wall's elevation: move a rack, or
-  // snap a device into a rack slot / set it free-standing. Elevation `(x,y)` is mapped back to the world
-  // 3-D truth via `elevationToWorld` (so mirrored/rotated walls land where the cursor is).
+  // Commit a drag (only ever called for a legal spot). Routes by view: the top-down plan repositions on
+  // the floor, the wall elevations map back through `elevationToWorld`.
   function moveTo(id: string, x: number, y: number): void {
-    if (!currentWall) return; // dragging only happens in a wall elevation
+    if (currentView === "top") {
+      moveToTop(id, x, y);
+      return;
+    }
+    if (!currentWall) return;
     const rack = rackById(id);
     if (rack) {
       rack.position = elevationToWorld(rack.position, rackFrameSize(rack), rack.wall, room, x, y);
@@ -611,6 +646,37 @@
       place.rack = undefined;
       place.position = elevationToWorld(place.position, size, place.wall, room, x, y);
     }
+  }
+
+  // Commit a floor-plan drag: `(x,y)` is `(world x, world z)`. Reposition on the floor and **re-tag the
+  // wall** the item now sits against (its box centre decides), so it appears in that wall's elevation. A
+  // rack's mounted gear follows its wall.
+  function moveToTop(id: string, x: number, y: number): void {
+    const rack = rackById(id);
+    if (rack) {
+      rack.position = { x, y: rack.position.y, z: y };
+      const s = orientedSize(rackFrameSize(rack), rack.wall);
+      const w = nearestWall({ x: x + s.width / 2, z: y + s.depth / 2 }, room);
+      if (w !== rack.wall) {
+        rack.wall = w;
+        for (const d of scene.patch.devices) {
+          const pl = scene.ui.placements[d.id];
+          if (pl?.rack?.id === rack.id) pl.wall = w; // mounted gear follows its rack's wall
+        }
+      }
+      return;
+    }
+    const device = deviceById(id);
+    const place = scene.ui.placements[id];
+    if (!device || !place) return;
+    const desc = descriptorFor(catalog, device.typeId);
+    const s = orientedSize(
+      desc ? footprint(desc.formFactor) : { width: 0, height: 0, depth: 0 },
+      place.wall,
+    );
+    place.rack = undefined;
+    place.position = { x, y: place.position.y, z: y };
+    place.wall = nearestWall({ x: x + s.width / 2, z: y + s.depth / 2 }, room);
   }
 
   // Spaces (rooms). Switching shows only that space's gear; membership persists in the scene.
@@ -853,8 +919,8 @@
         <button type="button" class="space-tab add" onclick={addSpace}>+ space</button>
       </div>
 
-      <!-- Wall-view switcher: turn to face each wall of the room (top-down floor plan → Story 4.6.4). -->
-      <div class="views" role="group" aria-label="wall view">
+      <!-- View switcher: turn to face each wall of the room, or look down on the top-down floor plan. -->
+      <div class="views" role="group" aria-label="view">
         {#each ["front", "right", "back", "left"] as const as w (w)}
           <button
             type="button"
@@ -865,6 +931,14 @@
             {WALL_LABELS[w]}
           </button>
         {/each}
+        <button
+          type="button"
+          class="view-tab top"
+          class:active={currentView === "top"}
+          onclick={() => (currentView = "top")}
+        >
+          Top
+        </button>
       </div>
 
       <div class="palette">
@@ -1020,6 +1094,18 @@
               </text>
             </g>
           {/if}
+          <!-- Top-down floor plan: the room outline + which wall is which edge (front = far, back = near). -->
+          {#if currentView === "top"}
+            {@const bl = api.worldToSurface(0, 0)}
+            {@const tr = api.worldToSurface(room.width, room.depth)}
+            <g class="room-plan">
+              <rect x={bl.x} y={tr.y} width={tr.x - bl.x} height={bl.y - tr.y} />
+              <text class="plan-wall" x={(bl.x + tr.x) / 2} y={tr.y + 40} text-anchor="middle">Front</text>
+              <text class="plan-wall" x={(bl.x + tr.x) / 2} y={bl.y - 18} text-anchor="middle">Back</text>
+              <text class="plan-wall" x={bl.x + 24} y={(bl.y + tr.y) / 2} text-anchor="start">Left</text>
+              <text class="plan-wall" x={tr.x - 24} y={(bl.y + tr.y) / 2} text-anchor="end">Right</text>
+            </g>
+          {/if}
           <!-- On top of everything: cross-view portal stubs and the drag rubber-band while patching. -->
           {#each scene.patch.connections.filter(oneInView) as c (connKey(c))}
             {@render onePortal(c, api)}
@@ -1070,9 +1156,12 @@
           {:else}
             {@const place = scene.ui.placements[itemId]}
             {#if place}
-              <button type="button" class="chip" onclick={() => toggleFlip(itemId)}>
-                {place.facing === "back" ? "front" : "back"}
-              </button>
+              {#if currentView !== "top"}
+                <!-- Flip is a wall-elevation affordance (no panel is shown in the top-down plan). -->
+                <button type="button" class="chip" onclick={() => toggleFlip(itemId)}>
+                  {place.facing === "back" ? "front" : "back"}
+                </button>
+              {/if}
               {#if !place.rack}
                 <!-- Mounted gear follows its rack's space, so the selector only shows when free-standing. -->
                 <select
@@ -1102,7 +1191,15 @@
         {/snippet}
 
         {#snippet item(itemId)}
-          {#if isRack(itemId)}
+          {#if currentView === "top"}
+            <!-- Top-down plan: a labelled floor footprint (no panel — you can't see a face from above). -->
+            {@const rack = rackById(itemId)}
+            {@const device = deviceById(itemId)}
+            {@const desc = device ? descriptorFor(catalog, device.typeId) : undefined}
+            <div class="plan-tile" class:rack={!!rack}>
+              <span>{rack ? `${rack.id} · ${rack.slots}U` : (desc?.name ?? itemId)}</span>
+            </div>
+          {:else if isRack(itemId)}
             {@const rack = rackById(itemId)}
             {#if rack}
               <div class="rack-frame">
@@ -1331,6 +1428,48 @@
   .view-tab.active {
     background: var(--ae-bg-chip);
     color: var(--ae-text-primary);
+  }
+  /* The Top tab is set off from the four walls (a different kind of view). */
+  .view-tab.top {
+    border-left-width: 2px;
+  }
+  /* Top-down plan tile — a labelled floor footprint (no panel). */
+  .plan-tile {
+    width: 100%;
+    height: 100%;
+    box-sizing: border-box;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+    padding: 2px;
+    border: 1px solid var(--ae-line-hard);
+    border-radius: 4px;
+    background: var(--ae-bg-chip);
+    color: var(--ae-text-strong);
+    font-size: 11px;
+    line-height: 1.1;
+    overflow: hidden;
+  }
+  .plan-tile.rack {
+    background: linear-gradient(var(--ae-rack-shell-1), var(--ae-rack-shell-2));
+    color: var(--ae-text-muted);
+    border-color: var(--ae-line-hard);
+    letter-spacing: var(--ae-legend-spacing);
+    text-transform: uppercase;
+  }
+  /* Room outline + wall labels drawn over the floor plan. */
+  .room-plan rect {
+    fill: none;
+    stroke: var(--ae-line-panel);
+    stroke-width: 3;
+    stroke-dasharray: 10 8;
+  }
+  .plan-wall {
+    fill: var(--ae-text-muted);
+    font-size: 34px;
+    letter-spacing: var(--ae-legend-spacing);
+    text-transform: uppercase;
   }
   .space-tab {
     font: inherit;

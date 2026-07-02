@@ -5,6 +5,7 @@ import {
   fitsInRack,
   footprint,
   nearestFreeSlot,
+  nearestWall,
   orientedSize,
   project,
   RACK_UNIT_MM,
@@ -150,6 +151,16 @@ describe("elevationToWorld", () => {
     // front/back drags leave z alone; left/right drags leave x alone.
     expect(elevationToWorld({ x: 1, y: 0, z: 777 }, size, "front", room, 100, 0).z).toBe(777);
     expect(elevationToWorld({ x: 888, y: 0, z: 1 }, size, "left", room, 100, 0).x).toBe(888);
+  });
+});
+
+describe("nearestWall", () => {
+  const room: Room = { width: 4000, depth: 3000, height: 1400 };
+  it("picks the wall whose edge the point is closest to", () => {
+    expect(nearestWall({ x: 100, z: 1500 }, room)).toBe("left"); // 100 from x=0
+    expect(nearestWall({ x: 3950, z: 1500 }, room)).toBe("right"); // 50 from x=4000
+    expect(nearestWall({ x: 2000, z: 100 }, room)).toBe("back"); // 100 from z=0
+    expect(nearestWall({ x: 2000, z: 2900 }, room)).toBe("front"); // 100 from z=3000
   });
 });
 

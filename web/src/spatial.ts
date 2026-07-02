@@ -156,6 +156,20 @@ export function elevationToWorld(
   }
 }
 
+/** Which wall a floor point is nearest — used to re-tag a device's `wall` when it's dragged across the
+ *  top-down floor plan (Story 4.6.4). Compares the point's distance to each of the four wall edges. */
+export function nearestWall(center: { x: number; z: number }, room: Room): Wall {
+  const dLeft = center.x;
+  const dRight = room.width - center.x;
+  const dBack = center.z;
+  const dFront = room.depth - center.z;
+  const min = Math.min(dLeft, dRight, dBack, dFront);
+  if (min === dLeft) return "left";
+  if (min === dRight) return "right";
+  if (min === dBack) return "back";
+  return "front";
+}
+
 /** Do two axis-aligned rectangles overlap? Touching edges (zero overlap area) do not count. */
 export function rectsOverlap(a: Rect2, b: Rect2): boolean {
   return a.x < b.x + b.width && b.x < a.x + a.width && a.y < b.y + b.height && b.y < a.y + a.height;
