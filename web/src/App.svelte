@@ -302,8 +302,38 @@
     if (!p) return "?";
     return p.space !== currentSpace ? spaceName(p.space) : WALL_LABELS[p.wall];
   }
-  // How far a portal stub extends from its jack, in surface mm.
+  // How far a portal stub extends from its jack by default, in surface mm.
   const PORTAL_LEN = 180;
+
+  // A portal chip is identified per connection + which end is in view (each end shows its own chip in
+  // its own wall/room, so they move independently).
+  const portalKey = (c: Connection, fromIn: boolean): string => `${connKey(c)}|${fromIn ? "from" : "to"}`;
+  // A portal's offset from its jack anchor: the operator's dragged value, else the default stub placement
+  // (out toward the signal-flow direction, dropped a little below the jack).
+  function portalOffset(c: Connection, fromIn: boolean): { dx: number; dy: number } {
+    return scene.ui.portals?.[portalKey(c, fromIn)] ?? { dx: fromIn ? PORTAL_LEN : -PORTAL_LEN, dy: 36 };
+  }
+
+  // Dragging a portal chip: its key + the (fixed) jack anchor it hangs off + the world converters. The
+  // offset is recomputed live as cursor − anchor and stored in the scene, so it persists on save.
+  let portalDrag: { key: string; anchor: { x: number; y: number }; api: WorldApi } | null = null;
+  function startPortalDrag(e: PointerEvent, key: string, anchor: { x: number; y: number }, api: WorldApi): void {
+    e.preventDefault();
+    e.stopPropagation(); // don't let the window cable/pan handlers see this press
+    (e.currentTarget as Element).setPointerCapture(e.pointerId);
+    portalDrag = { key, anchor, api };
+  }
+  function onPortalDragMove(e: PointerEvent): void {
+    if (!portalDrag) return;
+    const s = portalDrag.api.clientToSurface(e.clientX, e.clientY);
+    scene.ui.portals ??= {};
+    scene.ui.portals[portalDrag.key] = { dx: s.x - portalDrag.anchor.x, dy: s.y - portalDrag.anchor.y };
+  }
+  function onPortalDragEnd(e: PointerEvent): void {
+    if (!portalDrag) return;
+    (e.currentTarget as Element).releasePointerCapture?.(e.pointerId);
+    portalDrag = null;
+  }
 
   // --- Patching (drag or click-to-pick) -------------------------------------------------------------
   // An in-progress patch from a source jack: the source end + its anchor, the moving free end (surface
@@ -918,7 +948,8 @@
         {@const otherLabel = otherEndLabel(fromIn ? c.to.device : c.from.device)}
         {@const a = cableAnchor(ref, dir, api)}
         {#if a}
-          {@const p = { x: a.x + (fromIn ? PORTAL_LEN : -PORTAL_LEN), y: a.y + 36 }}
+          {@const off = portalOffset(c, fromIn)}
+          {@const p = { x: a.x + off.dx, y: a.y + off.dy }}
           {@const d = cablePathData(a, p)}
           <path
             class="cable-hit"
@@ -933,7 +964,19 @@
             }}
           ></path>
           <path class="cable portal" class:selected={connKey(c) === selectedCableKey} {d} />
-          <circle class="portal-dot" cx={p.x} cy={p.y} r="16" />
+          <!-- The dot is a drag handle: drag it to move the portal chip out of the way (offset persists). -->
+          <circle
+            class="portal-dot"
+            cx={p.x}
+            cy={p.y}
+            r="16"
+            role="button"
+            tabindex="-1"
+            aria-label={`move portal ${connKey(c)}`}
+            onpointerdown={(e) => startPortalDrag(e, portalKey(c, fromIn), a, api)}
+            onpointermove={onPortalDragMove}
+            onpointerup={onPortalDragEnd}
+          ></circle>
           <text
             class="portal-label"
             x={fromIn ? p.x + 26 : p.x - 26}
@@ -1482,6 +1525,12 @@
     fill: #d98c3c;
     stroke: #1b1d20;
     stroke-width: 3;
+    /* The overlay is pointer-transparent by default; the dot opts back in so it can be grabbed + dragged. */
+    pointer-events: all;
+    cursor: grab;
+  }
+  .portal-dot:active {
+    cursor: grabbing;
   }
   .portal-label {
     fill: #e0e0e0;

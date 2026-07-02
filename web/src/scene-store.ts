@@ -12,9 +12,9 @@ import type { Patch } from "./scene";
 import type { Room, Vec3, Wall } from "./spatial";
 
 /** Current save-format version. A saved scene at any other version is discarded (no migration). Bumped
- *  to 7 when a space became a rectangular room with four walls (Story 4.6): spaces gained a `room` and
- *  placements/racks a `wall` tag, so a stale v6 save doesn't lack them. */
-export const SCHEMA_VERSION = 7;
+ *  to 8 when cross-view cables gained draggable portal chips (Story 4.6): the UI now stores a per-portal
+ *  offset, so a stale v7 save doesn't lack the `portals` map. */
+export const SCHEMA_VERSION = 8;
 
 /** A space (room) in the studio — a UI grouping over the one engine graph (the engine never knows
  *  about rooms). A space is a **rectangular room**: gear stands against one of four walls, each an
@@ -64,12 +64,22 @@ export interface Placement {
   facing: DeviceFacing;
 }
 
-/** UI-only scene data — never sent to the engine. The spatial world: spaces, racks, and where each
- *  device sits. Placement keys are device instance ids (matching a patch `DeviceInstance.id`). */
+/** A manual offset (surface mm) for a cross-view cable's portal chip from its jack anchor — lets the
+ *  operator drag a portal out of the way. Keyed per connection + end (see `portalKey` in the app). */
+export interface PortalOffset {
+  dx: number;
+  dy: number;
+}
+
+/** UI-only scene data — never sent to the engine. The spatial world: spaces, racks, where each device
+ *  sits, and any moved portal chips. Placement keys are device instance ids (matching a patch
+ *  `DeviceInstance.id`); `portals` keys are `${connectionKey}|${end}`. */
 export interface SceneUi {
   spaces: Space[];
   racks: Rack[];
   placements: Record<string, Placement>;
+  /** Manual portal-chip offsets; absent entries fall back to the default placement. */
+  portals: Record<string, PortalOffset>;
 }
 
 /** A whole scene: a version stamp, UI-only spatial data, and the runnable patch. The unit we save/load. */
@@ -174,6 +184,7 @@ export function defaultScene(): Scene {
         da: mounted("rack-1", 4, "back", rackX, 0),
         spk: free("front", 2800, frontZ),
       },
+      portals: {},
     },
     patch,
   };
