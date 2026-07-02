@@ -238,6 +238,18 @@
   const cableInFront = (c: Connection): boolean =>
     isBackFacing(c.from.device) || isBackFacing(c.to.device);
 
+  // Is a device placed in the currently-shown space?
+  const inSpace = (deviceId: string): boolean =>
+    scene.ui.placements[deviceId]?.space === currentSpace;
+  // A cable with both ends here draws as a full cable; exactly one end here → a portal stub to the other
+  // room (snakes MVP); neither end here → not shown in this view. The engine sees a plain mono
+  // connection either way — spaces and portals are UI-only.
+  const bothInSpace = (c: Connection): boolean => inSpace(c.from.device) && inSpace(c.to.device);
+  const oneInSpace = (c: Connection): boolean => inSpace(c.from.device) !== inSpace(c.to.device);
+  const spaceName = (id: string): string => scene.ui.spaces.find((s) => s.id === id)?.name ?? id;
+  // How far a portal stub extends from its jack, in surface mm.
+  const PORTAL_LEN = 180;
+
   // --- Drag-to-connect ------------------------------------------------------------------------------
   // An in-progress cable drag from a source jack: the fixed source end, the moving free end (surface
   // coords), and — when hovering a candidate jack — the verdict so we can colour the cable + commit.
@@ -726,20 +738,61 @@
         {/if}
       {/snippet}
 
+      <!-- A cross-space connection: only one end is in this room, so instead of a continuous cable we
+           draw a short stub from that end to a labelled portal chip pointing at the other room (the
+           snakes MVP). The engine still sees a plain mono connection. -->
+      {#snippet onePortal(c: Connection, api: WorldApi)}
+        {@const fromIn = inSpace(c.from.device)}
+        {@const ref = fromIn ? c.from : c.to}
+        {@const dir = fromIn ? "output" : "input"}
+        {@const otherSpace = (fromIn ? scene.ui.placements[c.to.device] : scene.ui.placements[c.from.device])?.space ?? ""}
+        {@const a = cableAnchor(ref, dir, api)}
+        {#if a}
+          {@const p = { x: a.x + (fromIn ? PORTAL_LEN : -PORTAL_LEN), y: a.y + 36 }}
+          {@const d = cablePathData(a, p)}
+          <path
+            class="cable-hit"
+            {d}
+            role="button"
+            tabindex="-1"
+            aria-label={`select cable ${connKey(c)}`}
+            style:pointer-events={dragCable ? "none" : "stroke"}
+            onclick={() => (selectedCableKey = connKey(c))}
+            onkeydown={(e) => {
+              if (e.key === "Enter" || e.key === " ") selectedCableKey = connKey(c);
+            }}
+          ></path>
+          <path class="cable portal" class:selected={connKey(c) === selectedCableKey} {d} />
+          <circle class="portal-dot" cx={p.x} cy={p.y} r="16" />
+          <text
+            class="portal-label"
+            x={fromIn ? p.x + 26 : p.x - 26}
+            y={p.y}
+            text-anchor={fromIn ? "start" : "end"}
+            dominant-baseline="middle"
+          >
+            {fromIn ? `→ ${spaceName(otherSpace)}` : `${spaceName(otherSpace)} →`}
+          </text>
+        {/if}
+      {/snippet}
+
       <WorldView items={placedItems} onMoveTo={moveTo} {canPlace} fitKey={currentSpace} bind:api={worldApi}>
         {#snippet underlay(api)}
-          <!-- Cables tucked behind the gear: both ends face front, so the cable hides behind the panels
-               and only shows where it emerges between units. -->
-          {#each scene.patch.connections.filter((c) => !cableInFront(c)) as c (connKey(c))}
+          <!-- Same-space cables tucked behind the gear: both ends face front, so the cable hides behind
+               the panels and only shows where it emerges between units. -->
+          {#each scene.patch.connections.filter((c) => bothInSpace(c) && !cableInFront(c)) as c (connKey(c))}
             {@render oneCable(c, api)}
           {/each}
         {/snippet}
 
         {#snippet overlay(api)}
-          <!-- Cables in front of the gear: an end shows its back, so you see it plug into the socket.
-               Plus the drag rubber-band (always in front while patching). -->
-          {#each scene.patch.connections.filter((c) => cableInFront(c)) as c (connKey(c))}
+          <!-- Same-space cables in front (an end shows its back, so you see it plug into the socket),
+               cross-space portal stubs, plus the drag rubber-band (always in front while patching). -->
+          {#each scene.patch.connections.filter((c) => bothInSpace(c) && cableInFront(c)) as c (connKey(c))}
             {@render oneCable(c, api)}
+          {/each}
+          {#each scene.patch.connections.filter(oneInSpace) as c (connKey(c))}
+            {@render onePortal(c, api)}
           {/each}
           {#if dragCable}
             <path
@@ -1042,6 +1095,23 @@
     stroke: #f4a94a;
     stroke-width: 9;
     opacity: 1;
+  }
+  /* A cross-space portal stub + its chip and room label. */
+  .cable.portal {
+    stroke-dasharray: 4 10;
+  }
+  .portal-dot {
+    fill: #d98c3c;
+    stroke: #1b1d20;
+    stroke-width: 3;
+  }
+  .portal-label {
+    fill: #e0e0e0;
+    font-size: 34px;
+    font-weight: 600;
+    paint-order: stroke;
+    stroke: #1b1d20;
+    stroke-width: 5;
   }
   /* Cable inspector strip (shown when a cable is selected). */
   .cable-inspector {
