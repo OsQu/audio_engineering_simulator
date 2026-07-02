@@ -20,7 +20,6 @@
   import { defaultScene, loadScene, type Scene, saveScene, setSceneParam } from "./scene-store";
   import {
     deviceById,
-    deviceRect,
     GRID_MM,
     isRack,
     type LayoutCtx,
@@ -29,6 +28,9 @@
     rackById,
     type ViewCtx,
   } from "./projection";
+  import * as cableView from "./cable-view";
+  import { measureJacks as measureJacksDom } from "./jack-anchors";
+  import * as params from "./params";
   import * as patching from "./patching";
   import type { JackHit, PatchState } from "./patching";
   import * as placement from "./placement";
@@ -105,13 +107,11 @@
       return desc ? isPlayable(desc) : false;
     }),
   );
-  const key = (device: string, paramId: number): string => `${device}:${paramId}`;
+  const key = params.key;
 
-  // The current value of a device-local param: the live override if any, else the descriptor default.
-  function paramValue(deviceId: string, desc: DeviceDescriptor, id: number): number {
-    const v = paramValues[key(deviceId, id)];
-    return v !== undefined ? v : (desc.params.find((p) => p.id === id)?.default ?? 0);
-  }
+  // The current value of a device-local param (live override else descriptor default), bound to the map.
+  const paramValue = (deviceId: string, desc: DeviceDescriptor, id: number): number =>
+    params.paramValue(paramValues, deviceId, desc, id);
 
   // A plain (non-proxied) deep copy of the patch for crossing to the worklet: `$state` wraps the
   // scene in a reactive Proxy, which `postMessage` cannot structured-clone (DataCloneError).
@@ -155,24 +155,11 @@
   // socket when a device's back is shown, falling back to the chassis edge otherwise.
   let jackAnchors = $state<Record<string, { x: number; y: number }>>({});
 
-  const jackKey = (device: string, direction: "input" | "output", port: number): string =>
-    `${device}:${direction}:${port}`;
-
-  // Measure every rendered jack's centre into surface-local space (pan/zoom-invariant, because
-  // clientToSurface divides out the transform). Cheap — a handful of getBoundingClientRect — and only
-  // re-run on layout changes (below), not per frame.
-  function measureJacks(): void {
-    if (!worldApi) return;
-    const next: Record<string, { x: number; y: number }> = {};
-    for (const el of document.querySelectorAll<HTMLElement>("[data-jack]")) {
-      const key = el.dataset.jack;
-      if (!key) continue;
-      const r = el.getBoundingClientRect();
-      if (r.width === 0 && r.height === 0) continue; // not laid out / hidden
-      next[key] = worldApi.clientToSurface(r.left + r.width / 2, r.top + r.height / 2);
-    }
-    jackAnchors = next;
-  }
+  // Re-measure jack anchors into surface space (the DOM work lives in jack-anchors.ts); the $effect
+  // below schedules it on layout changes.
+  const measureJacks = (): void => {
+    if (worldApi) jackAnchors = measureJacksDom(worldApi);
+  };
 
   // Re-measure when layout-affecting state changes (placement / flip / space / catalog / api ready).
   // Pan/zoom needn't trigger it — surface-local coords are invariant. Measure after paint, and again
@@ -193,68 +180,26 @@
     };
   });
 
-  // The surface-local anchor for one end of a cable. When the device's **back** is shown, anchor at the
-  // measured socket centre; otherwise (front-facing, or not yet measured) fall back to the chassis edge
-  // (output → right, input → left, spread by port index). `null` when the device isn't in the shown
-  // space — a cross-space end is drawn as a portal (Story 4.4.6), not a continuous cable.
-  function cableAnchor(
+  // Cable end anchor + view-membership helpers are pure cable-view fns, prebound here to the layout ctx,
+  // the measured jack anchors, and (for cableAnchor) the world api.
+  const cableAnchor = (
     ref: PortRef,
     direction: "input" | "output",
     api: WorldApi,
-  ): { x: number; y: number } | null {
-    const device = deviceById(scene, ref.device);
-    const place = scene.ui.placements[ref.device];
-    if (!device || !place || !inView(ref.device)) return null;
-    if (place.facing === "back") {
-      const jack = jackAnchors[jackKey(ref.device, direction, ref.port)];
-      if (jack) return jack; // precise: the real socket on the shown back panel
-    }
-    const rect = deviceRect(layout(), ref.device, device.typeId);
-    if (!rect) return null;
-    // Front-facing (or not yet measured): the sockets sit centred on the back panel, so estimate near
-    // the chassis centre — nudged toward the signal-flow direction (output right, input left) so the
-    // cable emerges toward its neighbour. This end is drawn *behind* the device (hidden), so a rough
-    // estimate is enough; it just needs to look plausible where it tucks under the edges.
-    const wx = rect.x + rect.width * (direction === "output" ? 0.62 : 0.38);
-    const wy = rect.y + rect.height * 0.45;
-    return api.worldToSurface(wx, wy);
-  }
+  ): { x: number; y: number } | null => cableView.cableAnchor(layout(), jackAnchors, ref, direction, api);
 
   // Cable occlusion is handled by z-order, not by the cable: a single continuous lead is drawn in the
   // cable layer (z 2), and each device sits above or below it by facing (see placedItems' `z`) — a
   // back-facing device (visible sockets) below, a front-facing one above. So a cable plugs into a visible
   // back socket yet tucks behind a front panel, with no split. (Sockets are back-mounted today.)
 
-  // Is a device visible in the current view — i.e. in the shown space *and* against the shown wall? Only
-  // one wall of one space renders at a time, so this is the "same view" test the cable renderer keys on.
-  const inView = (deviceId: string): boolean => {
-    const p = scene.ui.placements[deviceId];
-    return p?.space === currentSpace && p.wall === currentWall;
-  };
-  // A cable with both ends in view draws as a full lead; exactly one end here → a portal stub toward the
-  // other view (the 4.4 mechanism, generalized from "other room" to "other wall/room"); neither end here
-  // → not shown. The engine sees a plain mono connection either way — walls/spaces/portals are UI-only.
-  const bothInView = (c: Connection): boolean => inView(c.from.device) && inView(c.to.device);
-  const oneInView = (c: Connection): boolean => inView(c.from.device) !== inView(c.to.device);
-  const spaceName = (id: string): string => scene.ui.spaces.find((s) => s.id === id)?.name ?? id;
-  // A short label for where a cable's off-view end lives: the room name if it's in another space, else
-  // the wall name (a different wall of this same room).
-  function otherEndLabel(deviceId: string): string {
-    const p = scene.ui.placements[deviceId];
-    if (!p) return "?";
-    return p.space !== currentSpace ? spaceName(p.space) : WALL_LABELS[p.wall];
-  }
-  // How far a portal stub extends from its jack by default, in surface mm.
-  const PORTAL_LEN = 180;
-
-  // A portal chip is identified per connection + which end is in view (each end shows its own chip in
-  // its own wall/room, so they move independently).
-  const portalKey = (c: Connection, fromIn: boolean): string => `${connKey(c)}|${fromIn ? "from" : "to"}`;
-  // A portal's offset from its jack anchor: the operator's dragged value, else the default stub placement
-  // (out toward the signal-flow direction, dropped a little below the jack).
-  function portalOffset(c: Connection, fromIn: boolean): { dx: number; dy: number } {
-    return scene.ui.portals?.[portalKey(c, fromIn)] ?? { dx: fromIn ? PORTAL_LEN : -PORTAL_LEN, dy: 36 };
-  }
+  const inView = (id: string): boolean => cableView.inView(layout(), id);
+  const bothInView = (c: Connection): boolean => cableView.bothInView(layout(), c);
+  const oneInView = (c: Connection): boolean => cableView.oneInView(layout(), c);
+  const otherEndLabel = (id: string): string => cableView.otherEndLabel(layout(), WALL_LABELS, id);
+  const portalKey = cableView.portalKey;
+  const portalOffset = (c: Connection, fromIn: boolean): { dx: number; dy: number } =>
+    cableView.portalOffset(scene, c, fromIn);
 
   // Dragging a portal chip: its key + the (fixed) jack anchor it hangs off + the world converters. The
   // offset is recomputed live as cursor − anchor and stored in the scene, so it persists on save.
@@ -408,35 +353,12 @@
     sceneOps.moveRackToSpace(scene, id, spaceId);
   const toggleFlip = (id: string): void => sceneOps.toggleFlip(scene, id);
 
-  function seedParamValues(): void {
-    const values: Record<string, number> = {};
-    for (const device of scene.patch.devices) {
-      const desc = descriptorFor(catalog, device.typeId);
-      if (!desc) continue;
-      for (const p of desc.params) {
-        const saved = device.params?.find((s) => s.id === p.id)?.value;
-        values[key(device.id, p.id)] = saved ?? p.default;
-      }
-    }
-    paramValues = values;
-  }
-
+  // A knob move touches all three param lanes at once — the live map (UI), the scene (for save), and the
+  // engine (live) — so keep them in sync in this one visible place; they mustn't drift apart.
   function onParamInput(device: string, p: ParamDescriptor, value: number): void {
     paramValues[key(device, p.id)] = value;
-    setSceneParam(scene, device, p.id, value); // keep the scene in sync for save
+    setSceneParam(scene, device, p.id, value);
     send?.({ type: "param", device, paramId: p.id, value });
-  }
-
-  // Push every device's current param values to the engine — after a (re)build the host re-applies the
-  // scene's control values over the queue (they'd glide from the node defaults otherwise).
-  function pushParams(sendFn: (msg: ControlMessage) => void): void {
-    for (const device of scene.patch.devices) {
-      const desc = descriptorFor(catalog, device.typeId);
-      if (!desc) continue;
-      for (const p of desc.params) {
-        sendFn({ type: "param", device: device.id, paramId: p.id, value: paramValue(device.id, desc, p.id) });
-      }
-    }
   }
 
   // A structural edit → rebuild the engine from the new patch (compile + ScheduleSlot hot-swap, in the
@@ -445,8 +367,8 @@
   function hotSwap(): void {
     if (!send) return;
     send({ type: "loadPatch", patch: plainPatch() });
-    seedParamValues();
-    pushParams(send);
+    paramValues = params.seedParamValues(scene, catalog);
+    params.pushParams(send, scene, catalog, paramValues);
   }
 
   // Add gear (rebuilds the engine) / a rack (UI furniture, no rebuild); remove either. Thin wrappers
@@ -490,8 +412,8 @@
           losses = r.losses;
           send = sendFn;
           ready = true;
-          seedParamValues();
-          pushParams(sendFn); // match the engine to the scene from the first interaction
+          paramValues = params.seedParamValues(scene, catalog);
+          params.pushParams(sendFn, scene, catalog, paramValues); // match the engine to the scene from the start
           if (synthDevice) {
             wireKeyboard(sendFn, synthDevice.id);
             wireMidi(sendFn, synthDevice.id, (m) => {
@@ -522,7 +444,7 @@
     }
     scene = loaded;
     currentSpace = loaded.ui.spaces[0]?.id ?? "";
-    seedParamValues();
+    paramValues = params.seedParamValues(scene, catalog);
     send?.({ type: "loadPatch", patch: plainPatch() }); // hot-swap the engine to the saved scene
     status = "scene loaded";
   }
