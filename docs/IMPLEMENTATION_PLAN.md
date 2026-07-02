@@ -410,9 +410,11 @@ engine untouched. Operator **reach** and **multi-view projections** were deferre
 drag-to-connect between back-panel jacks → `loadPatch` hot-swap, client-side legality (incl. feedback-cycle
 rejection), a cable inspector with pickable cable types (R·C rides the edge, inaudible by design → Epic 5),
 behind/front cable layering, and cross-space **portal** endpoints; engine untouched beyond the `devices`
-cable catalog. **Next: Story 4.5** (visualization: meters/scope/spectrum + analog-domain readouts). 4.5–4.6
-stay at Story level until picked up. The original 4-story sketch was reshaped into the now-6-story arc below
-after the UI vision
+cable catalog. **Story 4.5 🚧 in progress** — visualization: the node→host scalar readout lane, a `VuMeter`
+(analog VU/dBu) + digital dBFS meter, and static analog-domain readouts (per-connection loading loss). The
+raw-sample **scope + spectrum FFT** were split out into a new **Story 4.7** at 4.5 pickup (waveform probes
+are a distinct mechanism from the scalar lane). 4.6–4.7 stay at Story level until picked up. The original
+4-story sketch was reshaped into the now-7-story arc below after the UI vision
 grew from "device panels + cables" into a **game-like spatial studio/venue sim** (browsable gear catalog,
 racks and containers, freely placed in a pan/zoom world, multiple _spaces_ with snakes between them,
 VST-grade skeuomorphic panels with front controls and back I/O). Per the detail-gradient convention
@@ -1232,26 +1234,125 @@ the engine rewires via the proven 4.1 `loadPatch` hot-swap; the only new Rust is
   **snake bundle** is minimal (per-cable stubs sharing a room label); the cable effect is **inaudible by
   design** with today's low-Z sources.
 
-- **Story 4.5 — Visualization: meters, scope, spectrum, analog-domain readouts.** A new engine/bindings
-  **probe** surface — per-node/port sample taps (meters, scope), an FFT path (spectrum), and the
-  distinctive **analog-domain readouts** (per-edge loading loss, clipping/headroom, noise floor, dBu/dBFS
-  levels, phantom presence) read from compiled edge gains + runtime peak/clip detection. Rendered as
-  device **screens** and as **global tools** — the pedagogical payoff (gain-staging across the AD/DA
-  boundary made visible). _Open at pickup:_ the raw-sample-tap probe shape (zero-copy ring taps like
-  `out_ptr`?) for scope/spectrum; FFT in engine vs JS; which readouts are device-embedded vs global; tap
-  cost on the hot path.
-  - **Settled (4.2 planning) — a meter is a node, not a getter on every node; metering splits into two
-    pieces.** _(1) The measurement_ lives in a **meter node** (e.g. a voltage-native `VuMeter`: bridging
-    `InputZ`, ~300 ms quasi-RMS ballistics, analog-world calibration `0 VU ≙ +4 dBu ≙ 1.228 V RMS`) that
-    taps volts and computes a **scalar reading** in-engine — emergent from the voltage model, never a flag
-    bolted onto other nodes. _(2) The exposure_ is a genuinely **new node→host scalar readout
-    side-channel** — the engine has host→node (params) and routed (events) lanes but **nothing node→host
-    today**; this lane carries a node's per-block scalar(s) out to the UI. These two land **here in 4.5**.
-    A meter's scalar readout is **distinct from (and lighter than) the raw per-sample taps** a scope /
-    spectrum need — design the scalar lane first; rings are for waveform probes. **4.2 deferred this lane**
-    and drives its panel VU from the already-exposed **master-output buffer** (`out_ptr`/`out_len`, the
-    host monitor level — an honest signal but _not_ a simulated meter device); the 4.2 widget repoints onto
-    a `VuMeter` node's readout when this lands.
+#### Story 4.5 — Visualization: meters + analog-domain readouts (the node→host lane) — 🚧 **In progress**
+
+_Goal:_ the distinctive **visualization payoff** — *gain-staging across the AD/DA boundary made visible* —
+on the proven engine. It delivers the genuinely-new **node→host scalar readout lane** (the engine's third
+control lane: it has host→node params and routed events, but **nothing node→host** today), a voltage-native
+**`VuMeter`** node (analog VU/dBu) and a **digital dBFS meter** node sharing that lane, and the **static
+analog-domain readout** of **per-connection loading loss** read off the compiled edge gains. Rendered as
+device **meter screens**, in the 4.4 **cable inspector** (per-cable dB loss), and as a **global levels
+panel**. Anchors to PROJECT_PLAN §4 (Port/Device model surfaced as readings) and §7 (UI as a pure consumer),
+and to the Epic-4 "metering = a node + a readout lane" decision settled at 4.2 planning. **Scope + spectrum
+FFT are Story 4.7**, not this Story (waveform probes are a different mechanism — see below).
+
+_Watch out:_
+
+- **The readout snapshot runs on the audio thread.** The schedule snapshots each node's readings **once per
+  block** (not per sample) after the step loop — so `Node::read_readouts` must be **zero-alloc, panic-free,
+  total** (it writes into a pre-sized slice). The meters' ballistics run *inside* `process` per sample —
+  same hot-path discipline (denormal-flush the one-pole state).
+- **Single-threaded in-worklet, so no lock-free ring.** The readout store is engine-owned and read after the
+  block completes, exactly like params/events are SPSC-shaped but exercised single-threaded (Epic-3 model).
+  **Do not** build a cross-thread SAB ring for readouts — it's the same deferred retrofit as the event ring,
+  justified only if a Worker execution model ever lands.
+- **Measurement is a node; it must emerge from the volts.** Never bolt a reading getter onto `GainStage` /
+  `AdConverter` / the speaker — the meter is its **own inserted node** computing a scalar from the signal it
+  taps. The **one** honest exception is **loading loss**, which is an *edge* property, not a node: source it
+  from the **baked `EdgeTransform.gain`** the schedule already computed (never recompute it in `devices`).
+- **Meters must be signal-transparent.** `VuMeter` / the digital meter are **inline passthrough** (high-Z
+  bridge, near-unity), so inserting one anywhere in a chain doesn't change the sound (assert it). They add no
+  randomness (determinism preserved).
+- **Loading loss reads the *baked* gain**, which already accounts for fan-out parallel loading — don't
+  reconstruct it from a single branch's divider.
+- _Scope guard:_ **no raw per-sample ring taps, scope, or spectrum FFT** (→ Story 4.7); **no phantom-presence
+  readout** until a condenser-mic *device* is cataloged (Epic 5 — nothing in the default catalog supplies
+  phantom to read); **no clip readout bolted onto `GainStage`** (headroom is UI math from the meter's peak;
+  the honest hard-clip indicator is the **digital meter at 0 dBFS**). Master-output VU stays UI chrome.
+
+_Design notes (settled at planning):_
+
+- **The readout lane is getter-based; `Node::process` is unchanged.** A node declares `readouts() ->
+  &[ReadoutDecl]` (mirroring `params()`), computes its reading into its own state during `process`, and the
+  schedule pulls it via a new defaulted `read_readouts(&self, out: &mut [f32])` in a one-pass snapshot after
+  the step loop. The schedule owns a flat `readout_store: Vec<f32>` contiguous by node
+  (`readout_base`/`readout_count`), resolved by `Schedule::readout(node, id) -> ReadoutHandle` — the exact
+  mirror of the param store. _Rejected:_ adding a `readouts: &mut [f32]` 4th argument to `process` — the
+  clean symmetry with `Params`, but it ripples through **every** `Node` impl and test helper for a feature
+  only meter/probe nodes use; the getter keeps the change to the two meter nodes.
+- **A meter is a node (settled 4.2), split into measurement + exposure.** _(1)_ `VuMeter` — voltage-native,
+  bridging `InputZ`, ~300 ms quasi-RMS ballistics, calibrated `0 VU ≙ +4 dBu ≙ 1.228 V RMS`; a **digital
+  meter** — peak/RMS **dBFS** on a `SampleBuffer` (via the existing `level.rs` helpers). _(2)_ both surface
+  their scalar(s) through the new lane. Two nodes (not one) so the **across-converter** story is complete —
+  read dBu on the analog side of the AD and dBFS on the digital side; the second node is cheap since the
+  lane, handle resolution, catalog `readouts` metadata, and meter screen are shared.
+- **Meters are inline passthrough**, insertable at any point in a chain. _Rejected:_ a sink (input-only)
+  meter — simpler node, but it can't sit mid-chain (only hang off a fan-out), which is the common "meter this
+  point" gesture.
+- **The master-output VU stays UI chrome.** It keeps reading the already-exposed `out_ptr` buffer (the host
+  monitor level — an honest signal, throttled ~47×/s). A placeable `VuMeter` **device** is the real
+  node-readout meter. _Rejected:_ forcing a `VuMeter` into the default scene to back the master VU — it
+  conflates "the monitor level" (host chrome, outside the sim) with "a meter device in the signal path."
+- **Static loading loss comes from the schedule's baked edge gains.** The schedule exposes its per-analog-edge
+  gain; `build_patch` correlates each scene `Connection` to its graph edge and `BuiltScene` answers
+  `connection_loading_loss(i) -> Option<f32>` in dB (`20·log₁₀(gain)`). _Rejected:_ recomputing loss in
+  `devices` from the endpoints' impedances — duplicates the compile-time local solve and gets **fan-out
+  parallel loading wrong** (a branch's loss depends on its siblings).
+- **Readings reach the page as a throttled `readouts` postMessage snapshot** (like the existing `level`
+  message), keyed by device id through the live `BuiltScene` maps, so it survives a hot-swap; static
+  connection losses ride the `ready`/post-swap handshake (like the catalog). _Rejected for now:_ a zero-copy
+  `Float32Array` view over the readout store — readouts are tiny and low-rate, and a zero-copy view needs its
+  offset map rebuilt on every swap; adopt it only if the snapshot cost ever bites (measure-driven, like SIMD).
+- **Scope + spectrum are Story 4.7 (reshaped at pickup).** The sketch bundled them into 4.5; a **scalar
+  readout** (a few numbers per block) and a **raw-sample waveform probe** (a high-rate zero-copy ring, plus
+  an FFT) are genuinely different mechanisms, and the 4.2 note already said "design the scalar lane first;
+  rings are for waveform probes." Splitting keeps 4.5 to one coherent week and lets the ring/FFT be designed
+  on its own terms.
+
+- **Task 4.5.1 — The node→host readout lane (engine core).** New `readout.rs` (`ReadoutId` / `ReadoutDecl` /
+  `ReadoutHandle`, mirroring `param.rs`); `Node::readouts()` + `read_readouts()` defaulted no-ops; the
+  schedule builds the readout store at compile and snapshots it each block (one pass, zero-alloc, panic-free);
+  `Schedule::readout(node, id)`. Exercised with an in-tree test node emitting a known scalar. _Done:_ the test
+  node's reading resolves and appears in the store after a block; the `no_alloc` counting-allocator test stays
+  green; `read_readouts` is total over out-of-range handles.
+- **Task 4.5.2 — `VuMeter` node (analog, inline passthrough).** `node/vu_meter.rs`: analog in→out high-Z
+  bridge, near-unity passthrough; VU (300 ms quasi-RMS one-pole, coeff baked in `prepare`) + peak-dBu
+  readouts. _Done (hand-calc oracle):_ a **1.228 V RMS** sine settles to **0 VU** (calc in a comment:
+  +4 dBu = 0.775·10^(4/20) V RMS, with the sine average↔RMS form-factor folded into the calibration);
+  passthrough is signal-transparent into a high-Z load (asserted); the reading reaches the store.
+- **Task 4.5.3 — Digital dBFS meter node.** `node/*` digital meter: `SampleBuffer` in→out passthrough; peak +
+  RMS **dBFS** via `level.rs`. _Done (hand-calc oracle):_ a **0.5-full-scale** sine reads **−6.02 dBFS** peak
+  (`20·log₁₀(0.5)`, calc in a comment); passthrough copies samples exactly.
+- **Task 4.5.4 — Static loading-loss surface (engine + build).** Expose the baked per-analog-edge gains from
+  `Schedule`; `build_patch` correlates scene connections → graph edges; `BuiltScene::connection_loading_loss`
+  in dB. _Done (hand-calc oracle):_ `z_out = 150 Ω` into `z_in = 10 kΩ`, no cable → **−0.129 dB**
+  (`20·log₁₀(10000/10150)`, calc in a comment); adding a cable's series R increases the loss as computed.
+- **Task 4.5.5 — Catalog: meter devices + readout descriptors.** Add `vu_meter` + digital-meter `CATALOG`
+  entries; extend `DeviceDescriptor` with a `readouts` list (engine-truth ids/count derived from the node,
+  labels/units hand-authored), and extend `catalog_aligns_with_exposed_face` + `descriptors_carry_engine_truth`
+  to readouts; mirror in TS `catalog.ts`. _Done:_ descriptors carry the meters' readout ids + labels; the
+  alignment tests cover readouts; native + wasm serialization pass.
+- **Task 4.5.6 — `SceneEngine` + worklet: readout snapshot + losses.** `BuiltScene` resolves `(device,
+  readout id) → ReadoutHandle`; `SceneEngine` exposes a readout snapshot keyed by device id and a
+  connection-loss accessor; the worklet posts a throttled `readouts` message and ships losses in
+  `ready`/post-swap; `engine.ts` gains the message types + handlers. _Done:_ a native `SceneEngine` test — a
+  scene with a `VuMeter`, after a note, reports a non-idle reading addressed by `(device, id)`, and losses
+  resolve; in-browser the readings update live and survive a hot-swap.
+- **Task 4.5.7 — UI: meter screens, cable-inspector loss, global levels panel.** Drive a device meter screen
+  (reuse the `Vu` widget / a meter `Screen`) from the live readouts; add per-cable loading-loss dB to the 4.4
+  cable inspector; a global "signal path / levels" panel reading across the AD/DA boundary; add the meters to
+  `defaultScene`. Pure display/formatting logic is Vitest-tested. _Done:_ in-browser the meters move with the
+  signal, the cable inspector shows each cable's dB loss, and the global panel shows dBu→dBFS across the
+  converter; the master-output VU is unchanged (chrome); the `web` `check`/`typecheck`/`build` + Vitest pass.
+
+_Validate:_ a `VuMeter` and a digital dBFS meter, placed in a scene through the UI, show **live** readings
+via the new node→host lane (VU/dBu on the analog side of the AD, dBFS on the digital side — gain-staging
+across the boundary made visible); the cable inspector shows each analog connection's **loading loss** in dB
+and the global panel lists levels/losses along the chain; meters are **signal-transparent** (inserting one
+doesn't change the sound) and the readout snapshot survives a hot-swap; the engine gains **only** the readout
+lane + two meter nodes and stays UI-free; the full Rust gate (`cargo fmt --check && cargo lint && cargo test
+&& cargo wasm && cargo docs`) plus `wasm-pack build` and the `web` `check`/`typecheck`/`build` pass; verified
+in-browser by eye.
 - **Story 4.6 — The spatial world, part 2: top-down view + operator reach.** The deferred half of the
   spatial sim — 4.3 stored the full 3-D coordinate truth precisely so this stays cheap. Add a **top-down
   floor-plan projection** of a space as a _second view over the same model_ (the real test of "model in
@@ -1264,6 +1365,15 @@ the engine rewires via the proven 4.1 `loadPatch` hot-swap; the only new Rust is
   the reach metric and the zoom→view-only gating rule; how operator position lives in the scene `ui`;
   whether containers need a plan-view footprint distinct from their elevation. _Scope guard:_ views +
   reach only — no new devices, cables, or probes. Also make the devices snap to grid for easier placement
+- **Story 4.7 — Visualization, part 2: scope + spectrum (waveform probes).** Split out of Story 4.5 at its
+  pickup: the **raw per-sample tap** surface a scope and spectrum need — a distinct mechanism from 4.5's
+  scalar readout lane. A **zero-copy sample ring** (à la `out_ptr`, tapping a node/port's block), a **scope**
+  rendering the waveform on a device screen / global tool, and an **FFT spectrum**. Builds on the 4.5 probe
+  addressing (`(device, probe id)` through `BuiltScene`) and the meter-screen UI. _Open at pickup:_ the ring
+  shape + who owns it (engine-owned buffer vs. exposed pool lane); **FFT in the engine vs. JS** (a JS FFT
+  keeps the engine lean; an engine FFT keeps the DSP in one place — measure); tap cost on the hot path;
+  which probes are device-embedded vs. global. _Scope guard:_ waveform probes only — the scalar meters +
+  analog-domain readouts are 4.5.
 
 _Validate (epic exit):_ a small studio built, placed, patched across at least two spaces, played, and
 metered entirely through the UI; structural edits hot-swap glitch-free under sound; the UI touches only
