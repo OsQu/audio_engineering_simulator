@@ -60,17 +60,20 @@
 </div>
 
 <style>
+  /* Sizes scale with the chassis height (cqh, against the WorldView `.content` size container) but are
+     capped at their natural rem, so a normal/desktop panel is unchanged while a thin 1U rack unit
+     shrinks the knob to fit instead of clipping. min() also means no container ⇒ the rem cap wins. */
   .knob {
     display: flex;
     flex-direction: column;
     align-items: center;
-    gap: 5px;
-    width: 4.5rem;
+    gap: min(5px, 4cqh);
+    width: min(4.5rem, 92cqh);
   }
   .dial {
     position: relative;
-    width: 3.25rem;
-    height: 3.25rem;
+    width: min(3.25rem, 56cqh);
+    height: min(3.25rem, 56cqh);
     cursor: ns-resize;
     touch-action: none;
     outline: none;
@@ -151,18 +154,20 @@
   .label {
     font-family: var(--ae-font-ui);
     font-weight: var(--ae-label-weight);
-    font-size: var(--ae-label-size);
+    font-size: min(var(--ae-label-size), 17cqh);
     letter-spacing: var(--ae-label-spacing);
     text-transform: uppercase;
-    color: var(--ae-text-strong);
+    /* On a device faceplate the engraved ink is set by the panel finish; standalone
+       (no faceplate) it falls back to the light UI text so it reads on the dark room. */
+    color: var(--ae-faceplate-ink, var(--ae-text-strong));
     text-align: center;
     line-height: 1.15;
   }
   .value {
     font-family: var(--ae-font-ui);
     font-weight: 500;
-    font-size: var(--ae-value-size);
-    color: var(--ae-text-muted);
+    font-size: min(var(--ae-value-size), 17cqh);
+    color: var(--ae-faceplate-ink-muted, var(--ae-text-muted));
     font-variant-numeric: tabular-nums;
   }
 </style>

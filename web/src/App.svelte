@@ -232,11 +232,12 @@
     return place !== undefined && place.space === currentSpace && place.facing === "back";
   };
 
-  // A cable is drawn in FRONT of the gear when either end shows its back — so you see it plug into the
-  // visible socket. Otherwise it's drawn BEHIND (tucked behind the front-facing panels), which is the
-  // clean look when the gear is faced front.
+  // A cable is drawn in FRONT of the gear only when BOTH ends show their backs — then both sockets are
+  // visible and the whole lead reads as plugged in on top. If *either* end faces front, the cable tucks
+  // BEHIND the panels instead, so it disappears behind that front-facing unit (a cable must never paint
+  // over a device's front face) — the clean look, and correct for a mixed-facing pair.
   const cableInFront = (c: Connection): boolean =>
-    isBackFacing(c.from.device) || isBackFacing(c.to.device);
+    isBackFacing(c.from.device) && isBackFacing(c.to.device);
 
   // Is a device placed in the currently-shown space?
   const inSpace = (deviceId: string): boolean =>
@@ -778,16 +779,16 @@
 
       <WorldView items={placedItems} onMoveTo={moveTo} {canPlace} fitKey={currentSpace} bind:api={worldApi}>
         {#snippet underlay(api)}
-          <!-- Same-space cables tucked behind the gear: both ends face front, so the cable hides behind
-               the panels and only shows where it emerges between units. -->
+          <!-- Same-space cables with at least one front-facing end: they tuck behind the panels so they
+               never cover a front face, showing only where they emerge between units. -->
           {#each scene.patch.connections.filter((c) => bothInSpace(c) && !cableInFront(c)) as c (connKey(c))}
             {@render oneCable(c, api)}
           {/each}
         {/snippet}
 
         {#snippet overlay(api)}
-          <!-- Same-space cables in front (an end shows its back, so you see it plug into the socket),
-               cross-space portal stubs, plus the drag rubber-band (always in front while patching). -->
+          <!-- Same-space cables with BOTH ends back-facing (both sockets visible, so the whole lead reads
+               as plugged in on top), cross-space portal stubs, plus the drag rubber-band while patching. -->
           {#each scene.patch.connections.filter((c) => bothInSpace(c) && cableInFront(c)) as c (connKey(c))}
             {@render oneCable(c, api)}
           {/each}
@@ -876,6 +877,7 @@
             {#if device && desc && place}
               <Panel
                 device={device.id}
+                typeId={device.typeId}
                 name={desc.name}
                 params={desc.params}
                 ports={desc.ports}

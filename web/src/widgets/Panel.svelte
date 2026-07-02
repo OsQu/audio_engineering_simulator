@@ -6,6 +6,7 @@
   // points (Story 4.4).
   import type { Snippet } from "svelte";
   import type { ParamDescriptor, PortDescriptor } from "../catalog";
+  import { capFor, skinFor } from "../skin";
   import Fader from "./Fader.svelte";
   import Jack from "./Jack.svelte";
   import Knob from "./Knob.svelte";
@@ -14,6 +15,8 @@
   interface Props {
     /** Device instance id — tags the jacks so the cable layer can locate them (Story 4.4). */
     device: string;
+    /** Catalog device-type id — selects the visual skin (faceplate finish + cap finish). */
+    typeId: string;
     name: string;
     params: ParamDescriptor[];
     ports: PortDescriptor[];
@@ -26,14 +29,15 @@
     /** Optional per-device front-panel embellishment (e.g. the synth's ADSR screen). */
     children?: Snippet;
   }
-  let { device, name, params, ports, flipped = false, valueFor, onParam, children }: Props =
+  let { device, typeId, name, params, ports, flipped = false, valueFor, onParam, children }: Props =
     $props();
 
+  const skin = $derived(skinFor(typeId));
   const inputs = $derived(ports.filter((p) => p.direction === "input"));
   const outputs = $derived(ports.filter((p) => p.direction === "output"));
 </script>
 
-<section class="panel">
+<section class="panel" data-finish={skin.finish}>
   <!-- Device name floats in the top-left corner (out of layout flow) so it never steals height from a
        thin 1U chassis. A proper skin / label design comes later. -->
   <span class="name">{name}</span>
@@ -48,7 +52,12 @@
             {:else if p.kind === "switch"}
               <Switch param={p} value={valueFor(p.id)} onChange={(v) => onParam(p, v)} />
             {:else}
-              <Knob param={p} value={valueFor(p.id)} onChange={(v) => onParam(p, v)} />
+              <Knob
+                param={p}
+                value={valueFor(p.id)}
+                onChange={(v) => onParam(p, v)}
+                cap={capFor(skin, p.id)}
+              />
             {/if}
           {/each}
         </div>
@@ -96,12 +105,14 @@
     width: 100%;
     height: 100%;
     box-sizing: border-box;
-    border: 1px solid #bbb;
+    border: 1px solid var(--ae-line-hard);
     border-radius: 8px;
-    background: linear-gradient(#fafafa, #ececec);
+    /* Dark chassis; the faceplate finish lives on the front face (below), so the
+       panel's own background reads as the thin bezel around the faceplate. */
+    background: var(--ae-bg-panel-2);
     box-shadow:
-      inset 0 1px 0 #fff,
-      0 1px 3px rgba(0, 0, 0, 0.12);
+      var(--ae-bevel-top),
+      var(--ae-shadow-card);
     padding: clamp(2px, 6cqh, 0.6rem) clamp(3px, 2cqw, 0.9rem);
     display: flex;
     flex-direction: column;
@@ -114,16 +125,22 @@
     top: clamp(1px, 3cqh, 0.45rem);
     left: clamp(2px, 2cqw, 0.7rem);
     z-index: 2;
+    font-family: var(--ae-font-display);
     font-size: clamp(5px, 22cqh, 0.8rem);
-    font-weight: 600;
-    letter-spacing: 0.04em;
+    font-weight: 700;
+    letter-spacing: var(--ae-legend-spacing);
     text-transform: uppercase;
-    color: #555;
+    /* Engraved ink; the color tracks the faceplate finish (dark ink on the light
+       grey face, light ink on slate/black). The name floats over the front face. */
+    color: var(--ae-text-primary);
     pointer-events: none;
     white-space: nowrap;
     max-width: 92%;
     overflow: hidden;
     text-overflow: ellipsis;
+  }
+  .panel[data-finish="grey"] .name {
+    color: #26261f;
   }
 
   /* Flip card: both faces share one grid cell, so the flipper sizes to the taller face — no manual
@@ -151,6 +168,48 @@
     transform: rotateY(180deg);
   }
 
+  /* Front faceplate: one 165° finish gradient + a subtle lit-top / shaded-bottom bevel. Each finish
+     also sets --ae-faceplate-ink / -muted; control labels (Knob, …) read those, so their engraved
+     text automatically contrasts with the face — dark ink on the light grey face, light on slate/black.
+     Custom properties pierce Svelte's style scoping, so descendants inherit them across components. */
+  .front {
+    padding: clamp(3px, 3cqh, 0.5rem);
+    border-radius: var(--ae-radius-panel);
+    box-shadow:
+      inset 0 1px 0 rgba(255, 255, 255, 0.25),
+      inset 0 -3px 7px rgba(0, 0, 0, 0.18);
+  }
+  .panel[data-finish="grey"] .front {
+    background: linear-gradient(
+      165deg,
+      var(--ae-finish-grey-1),
+      var(--ae-finish-grey-2) 55%,
+      var(--ae-finish-grey-3)
+    );
+    --ae-faceplate-ink: #26261f;
+    --ae-faceplate-ink-muted: #55554a;
+  }
+  .panel[data-finish="slate"] .front {
+    background: linear-gradient(
+      165deg,
+      var(--ae-finish-slate-1),
+      var(--ae-finish-slate-2) 55%,
+      var(--ae-finish-slate-3)
+    );
+    --ae-faceplate-ink: var(--ae-text-primary);
+    --ae-faceplate-ink-muted: var(--ae-text-secondary);
+  }
+  .panel[data-finish="black"] .front {
+    background: linear-gradient(
+      165deg,
+      var(--ae-finish-black-1),
+      var(--ae-finish-black-2) 55%,
+      var(--ae-finish-black-3)
+    );
+    --ae-faceplate-ink: var(--ae-text-primary);
+    --ae-faceplate-ink-muted: var(--ae-text-secondary);
+  }
+
   .controls {
     display: flex;
     flex-wrap: wrap;
@@ -159,7 +218,7 @@
   }
   .empty {
     font-size: clamp(5px, 20cqh, 0.75rem);
-    color: #999;
+    color: var(--ae-faceplate-ink-muted, var(--ae-text-muted));
     font-style: italic;
     margin: 0;
   }
@@ -168,7 +227,8 @@
   }
 
   .back {
-    background: #e4e4e4;
+    /* Rear panel: dark sheet metal, distinct from the finished front face. */
+    background: linear-gradient(var(--ae-bg-panel), var(--ae-bg-panel-2));
     border-radius: 5px;
     padding: clamp(2px, 4cqh, 0.5rem);
   }
@@ -193,10 +253,11 @@
   }
   .group-label {
     flex: none;
+    font-family: var(--ae-font-ui);
     font-size: clamp(4px, 16cqh, 0.6rem);
     text-transform: uppercase;
-    letter-spacing: 0.05em;
-    color: #888;
+    letter-spacing: var(--ae-label-spacing);
+    color: var(--ae-text-muted);
   }
   .row {
     display: flex;

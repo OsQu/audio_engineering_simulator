@@ -29,7 +29,8 @@
   //
   // Interaction is split so it never conflicts: **panning** lives on a `.backdrop` *sibling* of the
   // devices (a device press can't bubble to a sibling, so operating a control never pans), and
-  // **dragging** lives on each device's `.grip` handle (so turning a knob never moves the device).
+  // **dragging** lives on the whole device body — a pointerdown that doesn't land on a control, jack,
+  // or the corner chrome (see onDevicePointerDown) grabs the unit, so turning a knob never moves it.
   import type { Snippet } from "svelte";
   import type { Rect2 } from "../spatial";
 
@@ -133,6 +134,23 @@
     userAdjusted = true;
     grab = { px: e.clientX, py: e.clientY, worldX: it.rect.x, worldY: it.rect.y };
     drag = { id: it.id, x: it.rect.x, y: it.rect.y, legal: true };
+  }
+
+  // The whole device body is the drag surface, but elements that own their own pointer gesture —
+  // controls (knob/fader = slider, switch = button), patch jacks, and the corner chrome buttons —
+  // must not start a move. A pointerdown landing on any of these is left alone.
+  const DRAG_EXCLUDE = 'button, input, select, textarea, a, [role="slider"], [role="switch"], [data-jack]';
+
+  function onDevicePointerDown(e: PointerEvent, it: WorldItem): void {
+    if ((e.target as HTMLElement | null)?.closest(DRAG_EXCLUDE)) return;
+    startDeviceDrag(e, it);
+  }
+
+  // Keyboard nudge fires only when the device box itself is focused — arrow keys bubbling up from a
+  // focused control (which handles its own value change) must not also move the device.
+  function onDeviceKey(e: KeyboardEvent, it: WorldItem): void {
+    if (e.target !== e.currentTarget) return;
+    nudge(e, it);
   }
 
   function nudge(e: KeyboardEvent, it: WorldItem): void {
@@ -282,29 +300,25 @@
 
     {#each items as it (it.id)}
       {@const p = shown(it)}
+      <!-- The whole device body is the drag surface (grab anywhere to move); controls / jacks / the
+           corner chrome opt out in onDevicePointerDown, so operating them never moves the unit. -->
       <div
         class="device"
         class:background={it.background}
         class:dragging={drag?.id === it.id}
         class:illegal={drag?.id === it.id && !drag.legal}
         style="left: {p.x}px; bottom: {p.y}px; width: {it.rect.width}px; height: {it.rect.height}px;"
+        role="button"
+        tabindex="0"
+        aria-label="{it.id} — drag to move"
+        onpointerdown={(e) => onDevicePointerDown(e, it)}
+        onkeydown={(e) => onDeviceKey(e, it)}
       >
-        <div class="bar">
-          <div
-            class="grip"
-            role="button"
-            tabindex="0"
-            aria-label="move {it.id}"
-            onpointerdown={(e) => startDeviceDrag(e, it)}
-            onkeydown={(e) => nudge(e, it)}
-          >
-            <span class="dots">⠿</span>
-          </div>
-          {#if controls}
-            <div class="bar-controls">{@render controls(it.id)}</div>
-          {/if}
-        </div>
         <div class="content">{@render item(it.id)}</div>
+        {#if controls}
+          <!-- Chrome (flip / space / remove) floats in the top-right corner, out of the drag surface. -->
+          <div class="corner">{@render controls(it.id)}</div>
+        {/if}
       </div>
     {/each}
 
@@ -381,6 +395,7 @@
     box-shadow: 0 2px 6px rgba(0, 0, 0, 0.4);
     border-radius: 6px;
     z-index: 2; /* device panels sit above the cable underlay (z-index 1) */
+    cursor: grab; /* the body is the drag surface; controls override with their own cursor */
   }
   /* Background furniture (racks): below the cable underlay, so cables between rack gear stay visible. */
   .device.background {
@@ -389,40 +404,26 @@
   .device.dragging {
     z-index: 10;
     box-shadow: 0 6px 18px rgba(0, 0, 0, 0.55);
+    cursor: grabbing;
   }
   .device.illegal {
     outline: 2px solid #d9534f;
     outline-offset: 1px;
   }
-  .bar {
-    flex: none;
-    height: 16px;
-    display: flex;
-    align-items: stretch;
-    background: #3a3d42;
-    color: #9aa0a6;
-    font-size: 10px;
-    line-height: 1;
+  .device:focus-visible {
+    outline: 2px solid var(--ae-signal-mic-lit);
+    outline-offset: 1px;
   }
-  .grip {
-    flex: 1;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    cursor: grab;
-    user-select: none;
-  }
-  .grip:focus-visible {
-    outline: 2px solid #6ab0f3;
-    outline-offset: -2px;
-  }
-  .device.dragging .grip {
-    cursor: grabbing;
-  }
-  .bar-controls {
-    flex: none;
+  /* Chrome (flip / space / remove) floats in the device's top-right corner — above the faceplate and
+     outside the drag surface (its buttons/select opt out of the body drag in onDevicePointerDown). */
+  .corner {
+    position: absolute;
+    top: 3px;
+    right: 3px;
+    z-index: 4;
     display: flex;
     align-items: center;
+    gap: 3px;
   }
   .content {
     flex: 1;
