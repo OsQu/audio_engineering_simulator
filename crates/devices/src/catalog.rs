@@ -33,8 +33,9 @@
 //! nodes' smoothed `params()` are user-facing. Field names are camelCase on the JS side.
 
 use engine::{
-    AdConverter, BitDepth, DaConverter, Domain, EqBand, GainStage, Graph, InputZ, Node, NodeId,
-    Ohms, ParamId, SampleRate, Speaker, SynthVoice, ThreeBandEq, Volts,
+    AdConverter, BitDepth, DaConverter, DigitalMeter, Domain, EqBand, GainStage, Graph, InputZ,
+    Node, NodeId, Ohms, ParamId, ReadoutId, SampleRate, Speaker, SynthVoice, ThreeBandEq, Volts,
+    VuMeter,
 };
 use serde::Serialize;
 
@@ -58,6 +59,9 @@ pub struct DeviceDescriptor {
     pub params: Vec<ParamDescriptor>,
     /// The device's ports (exposed inputs then outputs), each id scoped to its direction.
     pub ports: Vec<PortDescriptor>,
+    /// The device's scalar readouts (meter values the host reads back), in exposed-id order. Empty
+    /// for a device that measures nothing.
+    pub readouts: Vec<ReadoutDescriptor>,
 }
 
 /// A device's physical form factor and size — intrinsic **content** (as fixed as its impedance),
@@ -114,6 +118,20 @@ pub struct PortDescriptor {
     pub domain: PortDomain,
     /// Connector kind for the UI (mic/line/instrument/speaker/digital/MIDI jack styling).
     pub kind: PortKind,
+}
+
+/// One scalar readout a device exposes for the host to display (a meter value read back over the
+/// node→host lane). Engine truth is the `id` (its position in the device's exposed readout list);
+/// `label`/`unit` are hand-authored UI.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReadoutDescriptor {
+    /// Device-level readout id — its index in the exposed readout list, what the host reads back.
+    pub id: u32,
+    /// Display label (e.g. "VU", "Peak").
+    pub label: String,
+    /// Unit string for the reading (e.g. "VU", "dBu", "dBFS").
+    pub unit: String,
 }
 
 /// Suggested control widget for a param.
@@ -195,6 +213,9 @@ struct CatalogEntry {
     inputs: &'static [PortUi],
     /// One per *exposed* output port (open outputs, in node order).
     outputs: &'static [PortUi],
+    /// One per *exposed* readout (all node readouts, concatenated in node order). Empty for a device
+    /// that measures nothing.
+    readouts: &'static [ReadoutUi],
 }
 
 struct ParamUi {
@@ -206,6 +227,11 @@ struct ParamUi {
 struct PortUi {
     label: &'static str,
     kind: PortKind,
+}
+
+struct ReadoutUi {
+    label: &'static str,
+    unit: &'static str,
 }
 
 /// The device catalog: every type the UI can place, builders + descriptor together. Each entry's
@@ -262,6 +288,7 @@ const CATALOG: &[CatalogEntry] = &[
             label: "Out",
             kind: PortKind::Instrument,
         }],
+        readouts: &[],
     },
     CatalogEntry {
         type_id: "gain_stage",
@@ -296,6 +323,7 @@ const CATALOG: &[CatalogEntry] = &[
             label: "Out",
             kind: PortKind::Line,
         }],
+        readouts: &[],
     },
     CatalogEntry {
         type_id: "three_band_eq",
@@ -322,6 +350,7 @@ const CATALOG: &[CatalogEntry] = &[
             label: "Out",
             kind: PortKind::Digital,
         }],
+        readouts: &[],
     },
     CatalogEntry {
         type_id: "ad_converter",
@@ -345,6 +374,7 @@ const CATALOG: &[CatalogEntry] = &[
             label: "Digital Out",
             kind: PortKind::Digital,
         }],
+        readouts: &[],
     },
     CatalogEntry {
         type_id: "da_converter",
@@ -368,6 +398,7 @@ const CATALOG: &[CatalogEntry] = &[
             label: "Analog Out",
             kind: PortKind::Line,
         }],
+        readouts: &[],
     },
     CatalogEntry {
         type_id: "speaker",
@@ -388,6 +419,7 @@ const CATALOG: &[CatalogEntry] = &[
             label: "Tap",
             kind: PortKind::Speaker,
         }],
+        readouts: &[],
     },
     // The minimal **multi-node** device, proving the chassis seam: two analog gain stages in series
     // (input gain → output gain) behind one logical device. The internal edge hides stage 0's output
@@ -455,6 +487,69 @@ const CATALOG: &[CatalogEntry] = &[
             label: "Out",
             kind: PortKind::Line,
         }],
+        readouts: &[],
+    },
+    // A voltage-native VU meter — bridging inline analog meter (unity passthrough). Its two readouts
+    // ride the node→host lane: the ballistic VU reading and the block peak in dBu. The analog half of
+    // "gain-staging across the AD/DA boundary made visible".
+    CatalogEntry {
+        type_id: "vu_meter",
+        name: "VU Meter",
+        form_factor: FormFactor::Rackmount { rack_units: 1 },
+        nodes: &[|| Box::new(VuMeter::new())],
+        internal: &[],
+        params: &[],
+        inputs: &[PortUi {
+            label: "In",
+            kind: PortKind::Line,
+        }],
+        outputs: &[PortUi {
+            label: "Thru",
+            kind: PortKind::Line,
+        }],
+        readouts: &[
+            ReadoutUi {
+                label: "VU",
+                unit: "VU",
+            },
+            ReadoutUi {
+                label: "Peak",
+                unit: "dBu",
+            },
+        ],
+    },
+    // A digital level meter — inline passthrough on a digital channel, reporting peak and RMS in
+    // dBFS. Placed after the AD, it's the digital half of the across-converter gain-staging story.
+    CatalogEntry {
+        type_id: "digital_meter",
+        name: "Digital Meter",
+        form_factor: FormFactor::Rackmount { rack_units: 1 },
+        nodes: &[|| {
+            Box::new(DigitalMeter::new(
+                SampleRate::new(HOST_RATE_HZ),
+                BitDepth::new(BITS),
+            ))
+        }],
+        internal: &[],
+        params: &[],
+        inputs: &[PortUi {
+            label: "In",
+            kind: PortKind::Digital,
+        }],
+        outputs: &[PortUi {
+            label: "Thru",
+            kind: PortKind::Digital,
+        }],
+        readouts: &[
+            ReadoutUi {
+                label: "Peak",
+                unit: "dBFS",
+            },
+            ReadoutUi {
+                label: "RMS",
+                unit: "dBFS",
+            },
+        ],
     },
 ];
 
@@ -475,6 +570,9 @@ pub struct BuiltDevice {
     pub outputs: Vec<(NodeId, usize)>,
     /// Device param id → `(node, node ParamId)`.
     pub params: Vec<(NodeId, ParamId)>,
+    /// Device readout id → `(node, node ReadoutId)`, in exposed (position) order — the node→host
+    /// mirror of `params`, resolved to `ReadoutHandle`s via `Schedule::readout(node, id)`.
+    pub readouts: Vec<(NodeId, ReadoutId)>,
 }
 
 /// One exposed input/output port of a device, resolved against the built nodes: which internal node
@@ -495,13 +593,22 @@ struct ExposedParam {
     default: f32,
 }
 
-/// A device's built nodes plus its exposed face (open ports + all params), node-index-based. Shared
-/// by [`instantiate`] (maps node indices → `NodeId`) and [`describe`] (reads domains + UI labels).
+/// One exposed readout: which internal node + `ReadoutId` it is (no range — a readout is a plain
+/// scalar output).
+struct ExposedReadout {
+    node: usize,
+    id: ReadoutId,
+}
+
+/// A device's built nodes plus its exposed face (open ports + all params + all readouts),
+/// node-index-based. Shared by [`instantiate`] (maps node indices → `NodeId`) and [`describe`]
+/// (reads domains + UI labels).
 struct Expansion {
     nodes: Vec<Box<dyn Node>>,
     inputs: Vec<ExposedPort>,
     outputs: Vec<ExposedPort>,
     params: Vec<ExposedParam>,
+    readouts: Vec<ExposedReadout>,
 }
 
 /// The catalog entry for `type_id`, or `None` if unknown.
@@ -517,6 +624,7 @@ fn expand(entry: &CatalogEntry) -> Expansion {
     let mut inputs = Vec::new();
     let mut outputs = Vec::new();
     let mut params = Vec::new();
+    let mut readouts = Vec::new();
 
     for (ni, node) in nodes.iter().enumerate() {
         for (port, face) in node.inputs().iter().enumerate() {
@@ -554,6 +662,12 @@ fn expand(entry: &CatalogEntry) -> Expansion {
                 default: decl.default,
             });
         }
+        for decl in node.readouts() {
+            readouts.push(ExposedReadout {
+                node: ni,
+                id: decl.id,
+            });
+        }
     }
 
     Expansion {
@@ -561,6 +675,7 @@ fn expand(entry: &CatalogEntry) -> Expansion {
         inputs,
         outputs,
         params,
+        readouts,
     }
 }
 
@@ -576,6 +691,7 @@ pub fn instantiate(type_id: &str, g: &mut Graph) -> Option<BuiltDevice> {
         inputs,
         outputs,
         params,
+        readouts,
     } = expand(entry);
 
     let node_ids: Vec<NodeId> = nodes.into_iter().map(|node| g.add_boxed(node)).collect();
@@ -592,6 +708,7 @@ pub fn instantiate(type_id: &str, g: &mut Graph) -> Option<BuiltDevice> {
         inputs: inputs.iter().map(|p| (node_ids[p.node], p.port)).collect(),
         outputs: outputs.iter().map(|p| (node_ids[p.node], p.port)).collect(),
         params: params.iter().map(|p| (node_ids[p.node], p.id)).collect(),
+        readouts: readouts.iter().map(|r| (node_ids[r.node], r.id)).collect(),
         nodes: node_ids,
     })
 }
@@ -649,12 +766,27 @@ fn describe(entry: &CatalogEntry) -> DeviceDescriptor {
         });
     let ports = inputs.chain(outputs).collect();
 
+    // Readouts, exposed (position) order — the id is the position, matching how the host addresses a
+    // reading (`BuiltScene::readout(device, id)`), not the node-local `ReadoutId`.
+    let readouts = face
+        .readouts
+        .iter()
+        .zip(entry.readouts)
+        .enumerate()
+        .map(|(i, (_, ui))| ReadoutDescriptor {
+            id: i as u32,
+            label: ui.label.to_owned(),
+            unit: ui.unit.to_owned(),
+        })
+        .collect();
+
     DeviceDescriptor {
         type_id: entry.type_id.to_owned(),
         name: entry.name.to_owned(),
         form_factor: entry.form_factor,
         params,
         ports,
+        readouts,
     }
 }
 
@@ -686,6 +818,12 @@ mod tests {
                 entry.outputs.len(),
                 face.outputs.len(),
                 "{} outputs",
+                entry.type_id
+            );
+            assert_eq!(
+                entry.readouts.len(),
+                face.readouts.len(),
+                "{} readouts",
                 entry.type_id
             );
         }
@@ -796,11 +934,61 @@ mod tests {
             "da_converter",
             "speaker",
             "channel_strip",
+            "vu_meter",
+            "digital_meter",
         ] {
             assert!(json.contains(type_id), "catalog missing {type_id}");
         }
         // camelCase field names are the wire contract (matches the TS mirror).
         assert!(json.contains("typeId"));
+        assert!(json.contains("readouts"));
+    }
+
+    /// The meter devices expose their node readouts as descriptors: the VU meter's VU + peak, the
+    /// digital meter's peak + RMS, ids in exposed (position) order — the surface the UI meters read.
+    #[test]
+    fn meter_devices_expose_their_readouts() {
+        let all = descriptors();
+        let vu = all
+            .iter()
+            .find(|d| d.type_id == "vu_meter")
+            .expect("vu_meter");
+        assert_eq!(vu.readouts.len(), 2);
+        assert_eq!(vu.readouts[0].id, 0);
+        assert_eq!(vu.readouts[0].label, "VU");
+        assert_eq!(vu.readouts[1].id, 1);
+        assert_eq!(vu.readouts[1].unit, "dBu");
+        // The VU meter measures, so it exposes no control params.
+        assert!(vu.params.is_empty());
+
+        let dig = all
+            .iter()
+            .find(|d| d.type_id == "digital_meter")
+            .expect("digital_meter");
+        assert_eq!(dig.readouts.len(), 2);
+        assert_eq!(dig.readouts[1].label, "RMS");
+        assert_eq!(dig.readouts[1].unit, "dBFS");
+
+        // A non-meter device exposes no readouts.
+        let spk = all
+            .iter()
+            .find(|d| d.type_id == "speaker")
+            .expect("speaker");
+        assert!(spk.readouts.is_empty());
+    }
+
+    /// The chassis seam maps readouts to concrete `(NodeId, ReadoutId)`, in exposed order — the map
+    /// `build_patch` resolves to `ReadoutHandle`s. A single-node meter's two readouts map to its one
+    /// node with node-local ids 0 and 1.
+    #[test]
+    fn meter_readouts_map_to_nodes() {
+        let mut g = Graph::new();
+        let vu = instantiate("vu_meter", &mut g).expect("vu_meter is in the catalog");
+        assert_eq!(vu.nodes.len(), 1);
+        assert_eq!(
+            vu.readouts,
+            vec![(vu.nodes[0], ReadoutId(0)), (vu.nodes[0], ReadoutId(1))]
+        );
     }
 
     /// Every device carries a sane physical form factor (content for the spatial world): a rackmount

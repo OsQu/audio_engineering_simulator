@@ -18,6 +18,9 @@ export interface DeviceDescriptor {
   params: ParamDescriptor[];
   /** Ports (inputs then outputs); each id is scoped to its direction. */
   ports: PortDescriptor[];
+  /** Scalar readouts (meter values read back over the node→host lane), in id order. Empty for a
+   *  device that measures nothing. */
+  readouts: ReadoutDescriptor[];
 }
 
 /** A device's physical form factor and size (content, authored on the Rust catalog). Internally
@@ -48,6 +51,16 @@ export interface PortDescriptor {
   direction: PortDirection;
   domain: PortDomain;
   kind: PortKind;
+}
+
+/** One scalar readout: engine truth (id) + UI label/unit. The host reads its live value back by
+ *  `(deviceId, id)` and shows it on a meter. */
+export interface ReadoutDescriptor {
+  /** Device-local readout id — its position in the exposed readout list. */
+  id: number;
+  label: string;
+  /** Unit string for the reading ("VU", "dBu", "dBFS"). */
+  unit: string;
 }
 
 /** Suggested control widget. */
