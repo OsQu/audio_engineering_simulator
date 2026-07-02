@@ -21,7 +21,6 @@
   import {
     deviceById,
     deviceRect,
-    deviceUnits,
     FRAME_MARGIN,
     GRID_MM,
     isRack,
@@ -29,24 +28,16 @@
     type PlacedItem,
     placedItemsFor,
     rackById,
-    rackFrameSize,
-    rackRect,
     type ViewCtx,
   } from "./projection";
+  import * as placement from "./placement";
   import {
-    elevationToWorld,
     footprint,
-    nearestFreeSlot,
-    nearestWall,
-    orientedSize,
     RACK_DEPTH_MM,
     RACK_UNIT_MM,
     RACK_WIDTH_MM,
-    type Rect2,
-    rectsOverlap,
     type Room,
     type Size3,
-    type Vec3,
     type Wall,
   } from "./spatial";
   import Panel from "./widgets/Panel.svelte";
@@ -495,124 +486,11 @@
   }
 
   // The occupied U-runs of a rack, excluding `excludeId` (the device being placed).
-  function rackOccupants(rackId: string, excludeId: string) {
-    const occ: { startSlot: number; rackUnits: number }[] = [];
-    for (const d of scene.patch.devices) {
-      if (d.id === excludeId) continue;
-      const place = scene.ui.placements[d.id];
-      if (place?.rack?.id === rackId) {
-        occ.push({ startSlot: place.rack.uSlot, rackUnits: deviceUnits(catalog, d.typeId) });
-      }
-    }
-    return occ;
-  }
-
-  // If elevation `(x,y)` lands over an open rack on the shown wall, the nearest free start-slot a
-  // `units`-high device fits at — else null. The drag-snap target. `(x,y)` are elevation coords (the
-  // rack is compared via its projected frame), so this works identically on every wall.
-  function rackSlotAt(
-    excludeId: string,
-    x: number,
-    y: number,
-    units: number,
-  ): { rackId: string; slot: number } | null {
-    for (const rack of scene.ui.racks) {
-      if (rack.space !== currentSpace || rack.wall !== currentWall) continue;
-      const frame = rackRect(view(), rack);
-      const slotOy = frame.y + FRAME_MARGIN;
-      const within =
-        x >= frame.x &&
-        x <= frame.x + frame.width &&
-        y >= slotOy &&
-        y <= slotOy + rack.slots * RACK_UNIT_MM;
-      if (!within) continue;
-      const desired = Math.floor((y - slotOy) / RACK_UNIT_MM);
-      const slot = nearestFreeSlot({ slots: rack.slots }, rackOccupants(rack.id, excludeId), units, desired);
-      if (slot !== null) return { rackId: rack.id, slot };
-    }
-    return null;
-  }
-
-  // Legality for live drag feedback + the commit gate. In the **top-down plan** any floor spot is legal
-  // (free layout — overlaps are the operator's business). In a **wall elevation** racks reposition freely
-  // and a device is legal if it can mount in a rack at `(x,y)` or stands free without overlapping another
-  // item (its elevation width is always the panel width, since a unit faces the room).
-  function canPlace(id: string, x: number, y: number): boolean {
-    if (currentView === "top" || isRack(scene, id)) return true;
-    const device = deviceById(scene, id);
-    if (!device) return false;
-    const desc = descriptorFor(catalog, device.typeId);
-    if (!desc) return false;
-    const units = deviceUnits(catalog, device.typeId);
-    if (units > 0 && rackSlotAt(id, x, y, units)) return true;
-    const size = footprint(desc.formFactor);
-    const candidate: Rect2 = { x, y, width: size.width, height: size.height };
-    return !placedItems.some((it) => it.id !== id && rectsOverlap(candidate, it.rect));
-  }
-
-  // Commit a drag (only ever called for a legal spot). Routes by view: the top-down plan repositions on
-  // the floor, the wall elevations map back through `elevationToWorld`.
-  function moveTo(id: string, x: number, y: number): void {
-    if (currentView === "top") {
-      moveToTop(id, x, y);
-      return;
-    }
-    if (!currentWall) return;
-    const rack = rackById(scene, id);
-    if (rack) {
-      rack.position = elevationToWorld(rack.position, rackFrameSize(rack), rack.wall, room, x, y);
-      return;
-    }
-    const device = deviceById(scene, id);
-    const place = scene.ui.placements[id];
-    if (!device || !place) return;
-    const units = deviceUnits(catalog, device.typeId);
-    const hit = units > 0 ? rackSlotAt(id, x, y, units) : null;
-    if (hit) {
-      const rack = rackById(scene, hit.rackId);
-      place.rack = { id: hit.rackId, uSlot: hit.slot };
-      if (rack) {
-        place.space = rack.space; // a mounted device lives in its rack's space…
-        place.wall = rack.wall; // …and against its rack's wall
-      }
-    } else {
-      const desc = descriptorFor(catalog, device.typeId);
-      const size = desc ? footprint(desc.formFactor) : { width: 0, height: 0, depth: 0 };
-      place.rack = undefined;
-      place.position = elevationToWorld(place.position, size, place.wall, room, x, y);
-    }
-  }
-
-  // Commit a floor-plan drag: `(x,y)` is `(world x, world z)`. Reposition on the floor and **re-tag the
-  // wall** the item now sits against (its box centre decides), so it appears in that wall's elevation. A
-  // rack's mounted gear follows its wall.
-  function moveToTop(id: string, x: number, y: number): void {
-    const rack = rackById(scene, id);
-    if (rack) {
-      rack.position = { x, y: rack.position.y, z: y };
-      const s = orientedSize(rackFrameSize(rack), rack.wall);
-      const w = nearestWall({ x: x + s.width / 2, z: y + s.depth / 2 }, room);
-      if (w !== rack.wall) {
-        rack.wall = w;
-        for (const d of scene.patch.devices) {
-          const pl = scene.ui.placements[d.id];
-          if (pl?.rack?.id === rack.id) pl.wall = w; // mounted gear follows its rack's wall
-        }
-      }
-      return;
-    }
-    const device = deviceById(scene, id);
-    const place = scene.ui.placements[id];
-    if (!device || !place) return;
-    const desc = descriptorFor(catalog, device.typeId);
-    const s = orientedSize(
-      desc ? footprint(desc.formFactor) : { width: 0, height: 0, depth: 0 },
-      place.wall,
-    );
-    place.rack = undefined;
-    place.position = { x, y: place.position.y, z: y };
-    place.wall = nearestWall({ x: x + s.width / 2, z: y + s.depth / 2 }, room);
-  }
+  // Thin adapters over placement.ts, handed to the world layer as the drag legality + commit hooks.
+  // Both build the layout ctx inline (so reads stay reactive) and pass the already-derived placedItems.
+  const canPlace = (id: string, x: number, y: number): boolean =>
+    placement.canPlace(layout(), placedItems, id, x, y);
+  const moveTo = (id: string, x: number, y: number): void => placement.moveTo(layout(), id, x, y);
 
   // Spaces (rooms). Switching shows only that space's gear; membership persists in the scene.
   function addSpace(): void {
@@ -689,22 +567,6 @@
     pushParams(send);
   }
 
-  // A world placement for new gear spawned against the wall currently in view, at elevation-x `elevX`
-  // (its perpendicular-to-wall axis sits it flush to that wall). Mapped back through `elevationToWorld`
-  // so it appears at `elevX` on any wall, mirrored ones included. Falls back to the front wall in the
-  // top view.
-  function wallSpawn(size: Size3, elevX: number): { wall: Wall; position: Vec3 } {
-    const wall = currentWall ?? "front";
-    const FLUSH = 400; // nominal depth of the against-the-wall zone, world mm
-    const seed: Vec3 =
-      wall === "front"
-        ? { x: 0, y: 0, z: room.depth - FLUSH }
-        : wall === "right"
-          ? { x: room.width - FLUSH, y: 0, z: 0 }
-          : { x: 0, y: 0, z: 0 }; // back / left sit against the origin walls
-    return { wall, position: elevationToWorld(seed, size, wall, room, elevX, 0) };
-  }
-
   // Add gear from the catalog: a new instance placed free-standing on the wall in view (just past the
   // existing gear), then a hot-swap. Its ports read silence until patched (Story 4.4).
   function addDevice(typeId: string): void {
@@ -714,7 +576,7 @@
     const id = `${typeId}-${n}`;
     const desc = descriptorFor(catalog, typeId);
     const size = desc ? footprint(desc.formFactor) : { width: 0, height: 0, depth: 0 };
-    const { wall, position } = wallSpawn(size, rightX + 60);
+    const { wall, position } = placement.wallSpawn(view(), size, rightX + 60);
     scene.patch.devices.push({ id, typeId });
     scene.ui.placements[id] = { space: currentSpace, wall, position, facing: "front" };
     hotSwap();
@@ -744,7 +606,7 @@
       height: slots * RACK_UNIT_MM + 2 * FRAME_MARGIN,
       depth: RACK_DEPTH_MM,
     };
-    const { wall, position } = wallSpawn(frameSize, rightX + 60);
+    const { wall, position } = placement.wallSpawn(view(), frameSize, rightX + 60);
     scene.ui.racks.push({ id: `rack-${n}`, space: currentSpace, wall, position, slots });
   }
   function removeRack(id: string): void {
