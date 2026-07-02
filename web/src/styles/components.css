@@ -1,0 +1,676 @@
+/* ============================================================================
+ * Audio Engineer Simulator — Component Style Recipes
+ * ----------------------------------------------------------------------------
+ * Reusable, documented CSS for the core gear "looks", built entirely on the
+ * tokens in tokens.css. These are a RE-SKIN: they keep your existing widget
+ * prop contracts (param/value/onChange, port, flipped, …) and only change the
+ * visuals, with a few small structural additions (a metal collar layer, a VU
+ * face, an LED ladder) noted per component.
+ *
+ * NOTE (this repo): we do NOT import this file globally. It is the reference we
+ * copy recipe blocks FROM into each widget's own scoped <style> during the
+ * Phase B re-skin (Story 4.2). The --ae-* tokens live globally on :root (see
+ * tokens.css), so the copied blocks resolve their vars for free.
+ *
+ * Requires tokens.css to be loaded on an ancestor (for the --ae-* vars).
+ * ============================================================================ */
+
+/* ============================================================================
+ * KNOB                                  (maps to widgets/Knob.svelte)
+ * ----------------------------------------------------------------------------
+ * Your current Knob is one <svg> with .ring / .cap / .notch. To get the
+ * hybrid-skeuomorphic look, nest three layers inside a positioned box instead:
+ *
+ *   <div class="ae-knob">
+ *     <div class="ae-knob__dial">
+ *       <div class="ae-knob__collar"></div>             // brushed metal ring
+ *       <div class="ae-knob__cap" data-cap="dark"></div>// the turnable cap
+ *       <svg class="ae-knob__face" viewBox="0 0 100 100"> // ticks + pointer
+ *         …11 tick <line>s at -135deg..135deg…
+ *         <line class="ae-knob__pointer" x1=50 y1=50 x2=50 y2=25
+ *               transform="rotate({angle} 50 50)"/>
+ *       </svg>
+ *     </div>
+ *     <span class="ae-knob__label">{param.label}</span>
+ *     <span class="ae-knob__value">{formatParam(param,value)}</span>
+ *   </div>
+ *
+ * `angle` is your existing $derived: -135 + ((value-min)/(max-min))*270.
+ * Pick a cap finish per param with data-cap="dark|chrome|red|blue|cream".
+ * ========================================================================== */
+.ae-knob {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 5px;
+}
+.ae-knob__dial {
+  position: relative;
+  width: 64px; /* override per device; everything inside is %-based */
+  height: 64px;
+  cursor: ns-resize;
+  touch-action: none;
+}
+.ae-knob__collar {
+  position: absolute;
+  inset: 13%;
+  border-radius: 50%;
+  background: radial-gradient(
+    circle at 50% 30%,
+    var(--ae-metal-collar-1),
+    var(--ae-metal-collar-2) 48%,
+    var(--ae-metal-collar-3) 78%,
+    var(--ae-metal-collar-4) 100%
+  );
+  box-shadow:
+    var(--ae-shadow-knob),
+    inset 0 1px 1px rgba(255, 255, 255, 0.6),
+    inset 0 -2px 3px rgba(0, 0, 0, 0.4);
+}
+.ae-knob__cap {
+  position: absolute;
+  inset: 28%;
+  border-radius: 50%;
+  /* default = dark cap; override via [data-cap] below */
+  background: radial-gradient(
+    circle at 50% 28%,
+    var(--ae-cap-dark-top),
+    var(--ae-cap-dark-bot) 74%
+  );
+  box-shadow:
+    inset 0 2px 3px rgba(255, 255, 255, 0.18),
+    inset 0 -3px 5px rgba(0, 0, 0, 0.55),
+    0 1px 2px rgba(0, 0, 0, 0.4);
+}
+.ae-knob__cap[data-cap="chrome"] {
+  background: radial-gradient(
+    circle at 50% 28%,
+    var(--ae-cap-chrome-top),
+    var(--ae-cap-chrome-bot) 74%
+  );
+}
+.ae-knob__cap[data-cap="red"] {
+  background: radial-gradient(circle at 50% 28%, var(--ae-cap-red-top), var(--ae-cap-red-bot) 74%);
+}
+.ae-knob__cap[data-cap="blue"] {
+  background: radial-gradient(
+    circle at 50% 28%,
+    var(--ae-cap-blue-top),
+    var(--ae-cap-blue-bot) 74%
+  );
+}
+.ae-knob__cap[data-cap="cream"] {
+  background: radial-gradient(
+    circle at 50% 28%,
+    var(--ae-cap-cream-top),
+    var(--ae-cap-cream-bot) 74%
+  );
+}
+
+.ae-knob__face {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+}
+.ae-knob__face line {
+  stroke: var(--ae-knob-tick);
+  stroke-width: 1.6;
+  stroke-linecap: round;
+}
+.ae-knob__pointer {
+  stroke: var(--ae-cap-dark-pointer);
+  stroke-width: 3.4;
+  stroke-linecap: round;
+}
+.ae-knob__cap[data-cap="chrome"] ~ .ae-knob__face .ae-knob__pointer,
+.ae-knob__cap[data-cap="cream"] ~ .ae-knob__face .ae-knob__pointer {
+  stroke: var(--ae-cap-chrome-pointer);
+}
+.ae-knob__cap[data-cap="red"] ~ .ae-knob__face .ae-knob__pointer,
+.ae-knob__cap[data-cap="blue"] ~ .ae-knob__face .ae-knob__pointer {
+  stroke: #ffffff;
+}
+
+.ae-knob__dial:focus-visible {
+  outline: none;
+}
+.ae-knob__dial:focus-visible .ae-knob__collar {
+  box-shadow:
+    var(--ae-shadow-knob),
+    0 0 0 2px var(--ae-signal-mic-lit);
+}
+
+.ae-knob__label {
+  font-family: var(--ae-font-ui);
+  font-weight: var(--ae-label-weight);
+  font-size: var(--ae-label-size);
+  letter-spacing: var(--ae-label-spacing);
+  text-transform: uppercase;
+  color: #cfd3d8;
+  text-align: center;
+  line-height: 1.15;
+}
+.ae-knob__value {
+  font-family: var(--ae-font-ui);
+  font-weight: 500;
+  font-size: var(--ae-value-size);
+  color: #8a9aa6;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ============================================================================
+ * FADER                                 (maps to widgets/Fader.svelte)
+ * ----------------------------------------------------------------------------
+ *   <div class="ae-fader">
+ *     <div class="ae-fader__track">
+ *       <div class="ae-fader__cap" style="top:{100-pct}%"></div>  // pct from value
+ *     </div>
+ *   </div>
+ * Position the cap from your value→% mapping (same math as the knob angle).
+ * Add data-master to the cap for the red master cap.
+ * ========================================================================== */
+.ae-fader {
+  display: flex;
+  align-items: center;
+  gap: var(--ae-space-4);
+}
+.ae-fader__track {
+  position: relative;
+  width: 16px;
+  height: 120px;
+  border-radius: 8px;
+  background: linear-gradient(
+    90deg,
+    var(--ae-fader-slot-edge),
+    var(--ae-fader-slot-mid) 50%,
+    var(--ae-fader-slot-edge)
+  );
+  box-shadow: inset 0 0 4px #000;
+}
+.ae-fader__track::before {
+  /* the center index slot */
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 8px;
+  bottom: 8px;
+  width: 2px;
+  transform: translateX(-50%);
+  background: #000;
+  border-radius: 2px;
+}
+.ae-fader__cap {
+  position: absolute;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: 38px;
+  height: 22px;
+  border-radius: 3px;
+  background: linear-gradient(to bottom, var(--ae-fader-cap-top), var(--ae-fader-cap-bot));
+  box-shadow: var(--ae-shadow-control), var(--ae-bevel-top);
+  border: 1px solid #000;
+  cursor: ns-resize;
+}
+.ae-fader__cap::after {
+  /* the throw index line */
+  content: "";
+  position: absolute;
+  left: 4px;
+  right: 4px;
+  top: 50%;
+  height: 2px;
+  background: var(--ae-fader-index);
+  transform: translateY(-50%);
+  box-shadow: 0 0 4px rgba(255, 255, 255, 0.4);
+}
+.ae-fader__cap[data-master] {
+  background: linear-gradient(
+    to bottom,
+    var(--ae-fader-cap-master-top),
+    var(--ae-fader-cap-master-bot)
+  );
+}
+
+/* ============================================================================
+ * JACK / CONNECTOR                       (maps to widgets/Jack.svelte)
+ * ----------------------------------------------------------------------------
+ *   <div class="ae-jack" data-signal="mic" data-digital?></div>
+ * Round = analog/MIDI, square (data-digital) = digital. The ring color comes
+ * from data-signal; add .is-live for the connected halo.
+ * ========================================================================== */
+.ae-jack {
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  background: radial-gradient(circle at 50% 32%, var(--ae-jack-top), var(--ae-jack-bot));
+  border: 2px solid var(--ae-jack-edge);
+  box-shadow:
+    inset 0 0 0 3px var(--ae-signal-line),
+    0 1px 2px rgba(0, 0, 0, 0.6);
+}
+.ae-jack[data-digital] {
+  border-radius: var(--ae-radius-control);
+}
+.ae-jack[data-signal="mic"] {
+  box-shadow:
+    inset 0 0 0 3px var(--ae-signal-mic),
+    0 1px 2px rgba(0, 0, 0, 0.6);
+}
+.ae-jack[data-signal="line"] {
+  box-shadow:
+    inset 0 0 0 3px var(--ae-signal-line),
+    0 1px 2px rgba(0, 0, 0, 0.6);
+}
+.ae-jack[data-signal="instrument"] {
+  box-shadow:
+    inset 0 0 0 3px var(--ae-signal-instrument),
+    0 1px 2px rgba(0, 0, 0, 0.6);
+}
+.ae-jack[data-signal="speaker"] {
+  box-shadow:
+    inset 0 0 0 3px var(--ae-signal-speaker),
+    0 1px 2px rgba(0, 0, 0, 0.6);
+}
+.ae-jack[data-signal="digital"] {
+  box-shadow:
+    inset 0 0 0 3px var(--ae-signal-digital),
+    0 1px 2px rgba(0, 0, 0, 0.6);
+}
+.ae-jack[data-signal="midi"] {
+  box-shadow:
+    inset 0 0 0 3px var(--ae-signal-midi),
+    0 1px 2px rgba(0, 0, 0, 0.6);
+}
+/* connected: add the signal glow. Pair each .is-live with its data-signal. */
+.ae-jack.is-live[data-signal="mic"] {
+  box-shadow:
+    inset 0 0 0 3px var(--ae-signal-mic),
+    0 0 10px var(--ae-signal-mic-glow);
+}
+.ae-jack.is-live[data-signal="digital"] {
+  box-shadow:
+    inset 0 0 0 3px var(--ae-signal-digital),
+    0 0 10px var(--ae-signal-digital-glow);
+}
+.ae-jack.is-live[data-signal="speaker"] {
+  box-shadow:
+    inset 0 0 0 3px var(--ae-signal-speaker),
+    0 0 10px var(--ae-signal-speaker-glow);
+}
+
+/* ============================================================================
+ * LED  (indicator lamp — power, signal, clip, phantom)
+ * ----------------------------------------------------------------------------
+ *   <span class="ae-led" data-led="green"></span>   // green|amber|red
+ *   <span class="ae-led" data-led="green" data-off></span>
+ * Add .is-pulsing for a slow breathe (uses the keyframes at the bottom).
+ * ========================================================================== */
+.ae-led {
+  display: inline-block;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--ae-led-neutral-off);
+  box-shadow: var(--ae-bevel-press);
+}
+.ae-led[data-led="green"] {
+  background: radial-gradient(circle at 40% 35%, var(--ae-led-green-lit), var(--ae-led-green));
+  box-shadow:
+    0 0 10px var(--ae-led-green-glow),
+    inset 0 0 2px rgba(255, 255, 255, 0.7);
+}
+.ae-led[data-led="amber"] {
+  background: radial-gradient(circle at 40% 35%, var(--ae-led-amber-lit), var(--ae-led-amber));
+  box-shadow:
+    0 0 10px var(--ae-led-amber-glow),
+    inset 0 0 2px rgba(255, 255, 255, 0.6);
+}
+.ae-led[data-led="red"] {
+  background: radial-gradient(circle at 40% 35%, var(--ae-led-red-lit), var(--ae-led-red));
+  box-shadow:
+    0 0 10px var(--ae-led-red-glow),
+    inset 0 0 2px rgba(255, 255, 255, 0.6);
+}
+.ae-led[data-led="green"][data-off] {
+  background: var(--ae-led-green-off);
+  box-shadow: var(--ae-bevel-press);
+}
+.ae-led[data-led="amber"][data-off],
+.ae-led[data-led="red"][data-off] {
+  background: var(--ae-led-red-off);
+  box-shadow: var(--ae-bevel-press);
+}
+.ae-led.is-pulsing {
+  animation: ae-led-pulse 1.6s ease-in-out infinite;
+}
+
+/* LED ladder (gain-reduction / level meter — a row of small rects).
+ *   <div class="ae-ladder">
+ *     <i data-led="green"></i> … <i data-led="amber"></i> <i data-off></i> …
+ *   </div>
+ * Drive lit/off from your value in markup. */
+.ae-ladder {
+  display: flex;
+  gap: var(--ae-space-1);
+  align-items: flex-end;
+}
+.ae-ladder > i {
+  width: 9px;
+  height: 11px;
+  border-radius: 1px;
+  background: var(--ae-led-neutral-off);
+  box-shadow: var(--ae-bevel-press);
+}
+.ae-ladder > i[data-led="green"] {
+  background: radial-gradient(circle at 50% 35%, var(--ae-led-green-lit), var(--ae-led-green));
+  box-shadow: 0 0 6px var(--ae-led-green-glow);
+}
+.ae-ladder > i[data-led="amber"] {
+  background: radial-gradient(circle at 50% 35%, var(--ae-led-amber-lit), var(--ae-led-amber));
+  box-shadow: 0 0 6px var(--ae-led-amber-glow);
+}
+.ae-ladder > i[data-led="red"] {
+  background: radial-gradient(circle at 50% 35%, var(--ae-led-red-lit), var(--ae-led-red));
+  box-shadow: 0 0 6px var(--ae-led-red-glow);
+}
+
+/* ============================================================================
+ * VU METER                              (maps to widgets/Vu.svelte)
+ * ----------------------------------------------------------------------------
+ * Wrap your <svg> meter in a bezel; draw the cream face + arc + needle with the
+ * VU tokens. The needle angle comes from your level reading; pivot at the
+ * bottom-center of the viewBox.
+ *
+ *   <div class="ae-vu">
+ *     <svg class="ae-vu__face" viewBox="0 0 150 92"> … arc, ticks, needle … </svg>
+ *   </div>
+ * Suggested SVG: face rect uses fill via .ae-vu__face; arc stroke=var ink;
+ * over-0 segment stroke=var red; needle stroke=var needle; pivot fill=var pivot.
+ * ========================================================================== */
+.ae-vu {
+  display: inline-block;
+  padding: 7px;
+  border-radius: var(--ae-radius-panel);
+  background: linear-gradient(to bottom, var(--ae-vu-bezel-1), var(--ae-vu-bezel-2));
+  box-shadow:
+    0 2px 5px rgba(0, 0, 0, 0.6),
+    inset 0 0 0 1px #000;
+}
+.ae-vu__face {
+  display: block;
+  border-radius: 3px;
+  background: linear-gradient(to bottom, var(--ae-vu-face-top), var(--ae-vu-face-bot));
+}
+/* Use these as SVG presentation values (or set as attributes in markup):
+ *   scale arc / ticks / text : var(--ae-vu-ink)
+ *   over-0 red zone           : var(--ae-vu-red)
+ *   needle                    : var(--ae-vu-needle)
+ *   pivot cap                 : var(--ae-vu-pivot)                       */
+
+/* ============================================================================
+ * PANEL FINISHES                        (maps to widgets/Panel.svelte .front)
+ * ----------------------------------------------------------------------------
+ * Replace Panel's flat light background with a finish. The faceplate is one
+ * gradient; flanking rack ears use the matching --*-ear color.
+ *   <section class="ae-panel" data-finish="grey">
+ *     <div class="ae-panel__ear"></div>
+ *     <div class="ae-panel__face"> …controls… </div>
+ *     <div class="ae-panel__ear ae-panel__ear--r"></div>
+ *   </section>
+ * ========================================================================== */
+.ae-panel {
+  display: flex;
+  align-items: stretch;
+  border-radius: var(--ae-radius-panel);
+  overflow: hidden;
+  box-shadow:
+    var(--ae-shadow-card),
+    0 1px 0 rgba(255, 255, 255, 0.06);
+}
+.ae-panel__face {
+  flex: 1;
+  padding: 22px 30px;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.4),
+    inset 0 -3px 7px rgba(0, 0, 0, 0.18);
+}
+.ae-panel__ear {
+  width: 30px;
+}
+.ae-panel[data-finish="grey"] .ae-panel__face {
+  background: linear-gradient(
+    165deg,
+    var(--ae-finish-grey-1),
+    var(--ae-finish-grey-2) 55%,
+    var(--ae-finish-grey-3)
+  );
+}
+.ae-panel[data-finish="slate"] .ae-panel__face {
+  background: linear-gradient(
+    165deg,
+    var(--ae-finish-slate-1),
+    var(--ae-finish-slate-2) 55%,
+    var(--ae-finish-slate-3)
+  );
+}
+.ae-panel[data-finish="black"] .ae-panel__face {
+  background: linear-gradient(
+    165deg,
+    var(--ae-finish-black-1),
+    var(--ae-finish-black-2) 55%,
+    var(--ae-finish-black-3)
+  );
+}
+.ae-panel[data-finish="grey"] .ae-panel__ear {
+  background: linear-gradient(90deg, var(--ae-finish-grey-ear), var(--ae-finish-grey-2));
+}
+.ae-panel[data-finish="slate"] .ae-panel__ear {
+  background: linear-gradient(90deg, var(--ae-finish-slate-ear), var(--ae-finish-slate-2));
+}
+.ae-panel[data-finish="black"] .ae-panel__ear {
+  background: linear-gradient(90deg, var(--ae-finish-black-ear), var(--ae-finish-black-2));
+}
+
+/* Engraved label / legend type for use on faceplates */
+.ae-engrave {
+  font-family: var(--ae-font-ui);
+  font-weight: 700;
+  letter-spacing: var(--ae-legend-spacing);
+  text-transform: uppercase;
+}
+
+/* ============================================================================
+ * RACK CHASSIS & HARDWARE               (maps to widgets/WorldView.svelte rack)
+ * ----------------------------------------------------------------------------
+ *   <div class="ae-rack">
+ *     <div class="ae-rack__rail"></div>
+ *     <div class="ae-rack__bay"> …mounted units… </div>
+ *     <div class="ae-rack__rail"></div>
+ *   </div>
+ * Mounting ears on a unit: <span class="ae-screw"></span> in the ear strip.
+ * Filler: <div class="ae-rack__blank"></div> for a vented blank U.
+ * ========================================================================== */
+.ae-rack {
+  position: relative;
+  background: linear-gradient(to bottom, var(--ae-rack-shell-1), var(--ae-rack-shell-2));
+  border: 1px solid var(--ae-line-hard);
+  border-radius: 9px;
+  padding: 15px;
+  box-shadow:
+    var(--ae-shadow-rack),
+    inset 0 1px 0 rgba(255, 255, 255, 0.05);
+  display: flex;
+  gap: 9px;
+}
+.ae-rack::before {
+  /* warm top-light wash */
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 14%;
+  right: 14%;
+  height: 70px;
+  background: radial-gradient(closest-side at 50% 0, var(--ae-rack-glow), transparent);
+  pointer-events: none;
+  border-radius: 9px;
+}
+.ae-rack__rail {
+  width: 18px;
+  border-radius: 3px;
+  background-color: var(--ae-rack-rail);
+  background-image: radial-gradient(circle at 50% 15px, var(--ae-rack-hole) 2.4px, transparent 3px);
+  background-size: 100% 30px;
+  box-shadow: inset 0 0 5px #000;
+}
+.ae-rack__bay {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+.ae-rack__blank {
+  height: 30px;
+  border-radius: 4px;
+  background: linear-gradient(#1e2024, #14161a);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: var(--ae-bevel-top);
+}
+.ae-rack__blank::before {
+  content: "";
+  width: 160px;
+  height: 9px;
+  border-radius: 2px;
+  background: repeating-linear-gradient(
+    90deg,
+    var(--ae-rack-vent-dark) 0 4px,
+    var(--ae-rack-vent-lite) 4px 7px
+  );
+  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.6);
+}
+/* Chrome rack screw (in a unit's mounting ear) */
+.ae-screw {
+  position: relative;
+  display: inline-block;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: radial-gradient(
+    circle at 38% 32%,
+    var(--ae-rack-screw-1),
+    var(--ae-rack-screw-2) 55%,
+    var(--ae-rack-screw-3)
+  );
+  box-shadow:
+    0 1px 2px rgba(0, 0, 0, 0.6),
+    inset 0 -2px 3px rgba(0, 0, 0, 0.35);
+}
+.ae-screw::before {
+  /* slot */
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 13px;
+  height: 2.4px;
+  background: #3a3d42;
+  border-radius: 2px;
+  transform: translate(-50%, -50%);
+}
+
+/* ============================================================================
+ * CABLE                                 (patch leads — SVG <path> recipe)
+ * ----------------------------------------------------------------------------
+ * A cable is THREE stacked <path>s sharing the same `d`, drawn in this order:
+ *   1. shadow underlay : stroke var(--ae-cable-shadow),  width --ae-cable-shadow-w,  opacity .5
+ *   2. signal core     : stroke var(--ae-signal-{kind}), width --ae-cable-core-w
+ *   3. lit highlight   : stroke var(--ae-signal-{kind}-lit), width --ae-cable-highlight-w, opacity .6
+ * all with stroke-linecap:round, fill:none.
+ *
+ * The `d` is a cubic bezier from jack A to jack B whose control points droop by
+ * --ae-cable-sag so the lead hangs under gravity:
+ *   const sag = 90;
+ *   const cp1 = `${ax + (bx-ax)*0.25} ${Math.max(ay,by) + sag}`;
+ *   const cp2 = `${ax + (bx-ax)*0.75} ${Math.max(ay,by) + sag}`;
+ *   d = `M${ax} ${ay} C ${cp1}, ${cp2}, ${bx} ${by}`;
+ *
+ * The classes below let you do it declaratively if you prefer set CSS over
+ * per-path attributes; otherwise just set stroke/width inline from the tokens.
+ * ========================================================================== */
+.ae-cable {
+  fill: none;
+  stroke-linecap: round;
+}
+.ae-cable--shadow {
+  stroke: var(--ae-cable-shadow);
+  stroke-width: var(--ae-cable-shadow-w);
+  opacity: 0.5;
+}
+.ae-cable--core {
+  stroke-width: var(--ae-cable-core-w);
+}
+.ae-cable--highlight {
+  stroke-width: var(--ae-cable-highlight-w);
+  opacity: 0.6;
+}
+.ae-cable--core[data-signal="mic"] {
+  stroke: var(--ae-signal-mic);
+}
+.ae-cable--core[data-signal="line"] {
+  stroke: var(--ae-signal-line);
+}
+.ae-cable--core[data-signal="instrument"] {
+  stroke: var(--ae-signal-instrument);
+}
+.ae-cable--core[data-signal="speaker"] {
+  stroke: var(--ae-signal-speaker);
+}
+.ae-cable--core[data-signal="digital"] {
+  stroke: var(--ae-signal-digital);
+}
+.ae-cable--core[data-signal="midi"] {
+  stroke: var(--ae-signal-midi);
+}
+.ae-cable--highlight[data-signal="mic"] {
+  stroke: var(--ae-signal-mic-lit);
+}
+.ae-cable--highlight[data-signal="line"] {
+  stroke: var(--ae-signal-line-lit);
+}
+.ae-cable--highlight[data-signal="instrument"] {
+  stroke: var(--ae-signal-instrument-lit);
+}
+.ae-cable--highlight[data-signal="speaker"] {
+  stroke: var(--ae-signal-speaker-lit);
+}
+.ae-cable--highlight[data-signal="digital"] {
+  stroke: var(--ae-signal-digital-lit);
+}
+.ae-cable--highlight[data-signal="midi"] {
+  stroke: var(--ae-signal-midi-lit);
+}
+
+/* ============================================================================
+ * KEYFRAMES
+ * ========================================================================== */
+@keyframes ae-led-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.62;
+  }
+}
+@keyframes ae-vu-sway {
+  0%,
+  100% {
+    transform: rotate(-2deg);
+  }
+  50% {
+    transform: rotate(3deg);
+  }
+}
