@@ -1353,6 +1353,47 @@ doesn't change the sound) and the readout snapshot survives a hot-swap; the engi
 lane + two meter nodes and stays UI-free; the full Rust gate (`cargo fmt --check && cargo lint && cargo test
 && cargo wasm && cargo docs`) plus `wasm-pack build` and the `web` `check`/`typecheck`/`build` pass; verified
 in-browser by eye.
+
+_Delivered:_ the node→host **readout lane** (the engine's third control lane) with two voltage-native meter
+nodes, a static **loading-loss** annotation off the compiled edges, surfaced as device meter screens, a
+cable-inspector loss line, and a global levels panel. The engine gained only the readout lane, the two meter
+nodes, and an `edge_gain` readback; it stays serde-free and UI-free. Scope + spectrum (waveform probes) were
+split out to **Story 4.7** at pickup.
+
+- **Readout lane (engine core).** New `readout.rs` — `ReadoutId` / `ReadoutDecl` / `ReadoutHandle`, mirroring
+  `param.rs`. `Node` gained defaulted `readouts()` + `read_readouts(&self, &mut [f32])`; **`process()` is
+  unchanged** (getter-based, chosen over a 4th `process` arg to avoid rippling every node). `Schedule` owns a
+  flat `readout_store` contiguous by node, snapshotted **once per block after the step loop** (zero-alloc,
+  panic-free — the `no_alloc` guard stays green), resolved by `readout(node, id)` / read by
+  `readout_value(handle)`, both total over stale handles.
+- **`VuMeter` node** (analog, inline passthrough: 1 MΩ bridge, 150 Ω out, unity). VU (quasi-RMS one-pole,
+  τ≈65 ms ⇒ ~300 ms to 99 %, baked in `prepare`) + peak-dBu readouts. Calibrated `0 VU ≙ +4 dBu ≙ 1.228 V
+  RMS` via the sine form factor `2√2/π`. **Oracles:** a 1.228 V RMS sine ⇒ 0 VU; its peak ⇒ +7.01 dBu.
+- **`DigitalMeter` node** (digital, inline passthrough). Per-block peak + RMS **dBFS** (the block is the
+  ~21 ms integration window — no ballistic state), full scale = 0 dBFS. **Oracle:** a 0.5-FS sine ⇒ −6.02 dBFS
+  peak / −9.03 dBFS RMS.
+- **Static loading loss** = the §5.3 impedance divider, read back — *not* a live meter (settled with Oskari
+  during the task). `Schedule` records the baked per-edge divider gain (`edge_gain`, fan-out-aware; `None` for
+  digital/event edges); `build_patch` correlates each scene connection to its graph edge; `BuiltScene::
+  connection_loading_loss(i)` returns `20·log10(gain)` dB. Kept **out** of the readout lane, so the measured
+  path stays pure. **Oracle:** `da(150 Ω)→spk(10 kΩ)` ⇒ −0.129 dB; a 1 kΩ cable deepens it to −0.946 dB.
+- **Catalog + resolution.** `vu_meter` + `digital_meter` entries; `DeviceDescriptor` gained a `readouts` list
+  (engine-truth id + authored label/unit) and `BuiltDevice` a readout map; `BuiltScene::readout(device, id)` +
+  `readout_snapshot()`; `SceneEngine::readouts()` / `connection_losses()` (JS values). TS `catalog.ts` mirrored.
+- **Transport.** The worklet posts a throttled `readouts` message (~47×/s, keyed by device id so it survives a
+  hot-swap) and ships the static `losses` in `ready` **and once after each swap** (a `lossesDirty` flag) — not
+  per frame, as designed. `engine.ts` gained the message types + **optional** `onReadouts`/`onLosses` handlers.
+  _Scalar snapshot over `postMessage`_ (a zero-copy readout view stays deferred — measure-driven).
+- **UI.** New `Meter.svelte` (unit-aware bar: VU / dBu / dBFS scales); `Panel` renders a meter screen for a
+  device with readouts; the **cable inspector** shows the analog connection's loading loss (labelled as the
+  impedance divider, not a meter); a global **“Signal path — levels & losses”** panel lists every meter's live
+  readings and each analog connection's loss. The **default scene** became `synth → gain → VU → AD → digital
+  meter → DA → speaker` (so dBu↔dBFS across the converter shows out of the box); `SCHEMA_VERSION` 5→6.
+- **Known simplifications (not bugs):** loading loss is the **resistive divider only** — cable rolloff and
+  coupled interference emerge via the meters, not this number; the master-output VU stays **host-monitor
+  chrome** (`out_ptr`), distinct from the placeable `VuMeter` device; the readouts snapshot is re-serialized per
+  throttle tick (tiny — a handful of scalars); a **phantom-presence** readout is deferred to Epic 5 (no
+  condenser-mic device is cataloged yet to attach it to).
 - **Story 4.6 — The spatial world, part 2: top-down view + operator reach.** The deferred half of the
   spatial sim — 4.3 stored the full 3-D coordinate truth precisely so this stays cheap. Add a **top-down
   floor-plan projection** of a space as a _second view over the same model_ (the real test of "model in
