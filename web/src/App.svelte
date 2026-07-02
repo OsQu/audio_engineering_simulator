@@ -305,9 +305,12 @@
   // How far a portal stub extends from its jack, in surface mm.
   const PORTAL_LEN = 180;
 
-  // --- Drag-to-connect ------------------------------------------------------------------------------
-  // An in-progress cable drag from a source jack: the fixed source end, the moving free end (surface
+  // --- Patching (drag or click-to-pick) -------------------------------------------------------------
+  // An in-progress patch from a source jack: the source end + its anchor, the moving free end (surface
   // coords), and — when hovering a candidate jack — the verdict so we can colour the cable + commit.
+  // `mode` is "drag" while the pointer is held (same-view patching), or "pending" after a *click* — a
+  // held cable that survives a wall/room switch, so you can complete a **cross-view** patch by clicking
+  // the source jack, turning to the other wall/room, and clicking the destination jack.
   let dragCable = $state<{
     source: Endpoint;
     srcPoint: { x: number; y: number };
@@ -315,7 +318,17 @@
     over: boolean;
     legal: boolean;
     verdict: ConnectVerdict | null;
+    mode: "drag" | "pending";
   } | null>(null);
+  // Pointer-down bookkeeping to tell a click (→ pending pick) from a drag (moved past a small threshold).
+  let cableDown = { x: 0, y: 0, moved: false };
+
+  // The display name of the pending patch's source device (for the "patching from…" banner).
+  const pendingSourceName = $derived.by((): string | null => {
+    if (dragCable?.mode !== "pending") return null;
+    const dev = deviceById(dragCable.source.device);
+    return (dev && descriptorFor(catalog, dev.typeId)?.name) || dragCable.source.device;
+  });
 
   const jackKeyOf = (e: Endpoint): string => jackKey(e.device, e.direction, e.port);
 
@@ -332,25 +345,53 @@
     return { device, port, direction, domain: pd.domain };
   }
 
-  // Pointer-down on a jack connector starts a cable drag. (Only reachable on a shown back panel; a
-  // front-facing device's back is rotated away and non-interactive.)
+  // Pointer-down on a jack connector. Normally starts a drag (only reachable on a shown back panel; a
+  // front-facing device's back is rotated away and non-interactive). While a **pending** cable is held,
+  // this is the *second* click: complete onto a legal destination jack, cancel by re-clicking the source
+  // jack, and otherwise stay pending (so panning / rearranging / an illegal jack don't lose the patch).
   function onCablePointerDown(e: PointerEvent): void {
     if (!worldApi) return;
     const el = (e.target as HTMLElement | null)?.closest<HTMLElement>("[data-jack]");
     const key = el?.dataset.jack;
+
+    if (dragCable?.mode === "pending") {
+      if (!key) return; // empty space — keep the pending pick
+      if (key === jackKeyOf(dragCable.source)) {
+        dragCable = null; // re-clicking the source cancels
+        return;
+      }
+      const target = endpointFromJackKey(key);
+      if (target) {
+        const verdict = evaluateConnection(dragCable.source, target, scene.patch.connections);
+        if (verdict.ok) {
+          commitCable(verdict);
+          dragCable = null;
+        }
+      }
+      return; // illegal jack: stay pending (hover already showed it red)
+    }
+
     if (!key) return;
     const source = endpointFromJackKey(key);
     const srcPoint = jackAnchors[key];
     if (!source || !srcPoint) return;
     e.preventDefault();
-    dragCable = { source, srcPoint, free: srcPoint, over: false, legal: false, verdict: null };
+    cableDown = { x: e.clientX, y: e.clientY, moved: false };
+    dragCable = { source, srcPoint, free: srcPoint, over: false, legal: false, verdict: null, mode: "drag" };
   }
 
-  // While dragging: track the free end, and if it's over another jack, evaluate legality (snapping the
-  // cable end to that jack for a magnetic feel).
+  // While dragging or holding a pending cable: track the free end, re-derive the source anchor if it's in
+  // view, and if the cursor is over another jack, evaluate legality (snapping the end to it for a magnetic
+  // feel). Fires with no button pressed too, so a pending cable tracks the cursor between clicks.
   function onCablePointerMove(e: PointerEvent): void {
     if (!dragCable || !worldApi) return;
+    if (dragCable.mode === "drag" && !cableDown.moved) {
+      if (Math.hypot(e.clientX - cableDown.x, e.clientY - cableDown.y) > 4) cableDown.moved = true;
+    }
     const cursor = worldApi.clientToSurface(e.clientX, e.clientY);
+    // Live source anchor: if the source is (still/again) in view, use its measured jack; else keep the
+    // pick-time point (it's off-view — the lead is drawn as a floating end, not a line to nowhere).
+    const srcPoint = jackAnchors[jackKeyOf(dragCable.source)] ?? dragCable.srcPoint;
     const el = document
       .elementFromPoint(e.clientX, e.clientY)
       ?.closest<HTMLElement>("[data-jack]");
@@ -361,6 +402,7 @@
         const verdict = evaluateConnection(dragCable.source, target, scene.patch.connections);
         dragCable = {
           ...dragCable,
+          srcPoint,
           free: jackAnchors[key] ?? cursor,
           over: true,
           legal: verdict.ok,
@@ -369,13 +411,27 @@
         return;
       }
     }
-    dragCable = { ...dragCable, free: cursor, over: false, legal: false, verdict: null };
+    dragCable = { ...dragCable, srcPoint, free: cursor, over: false, legal: false, verdict: null };
   }
 
-  // Release: commit a legal connection, else drop the drag (the rubber-band vanishes).
+  // Release. A drag over a legal jack commits; a drag that never moved (a click) is promoted to a
+  // **pending** pick that survives a view switch; a real drag released over nothing is cancelled. A
+  // pending cable is completed on the next pointer-*down*, so pointer-up does nothing for it.
   function onCablePointerUp(): void {
-    if (dragCable?.verdict?.ok) commitCable(dragCable.verdict);
-    dragCable = null;
+    if (!dragCable || dragCable.mode !== "drag") return;
+    if (dragCable.verdict?.ok) {
+      commitCable(dragCable.verdict);
+      dragCable = null;
+    } else if (!cableDown.moved) {
+      dragCable = { ...dragCable, mode: "pending", over: false, legal: false, verdict: null };
+    } else {
+      dragCable = null;
+    }
+  }
+
+  // Esc cancels an in-progress patch (drag or pending).
+  function onCableKey(e: KeyboardEvent): void {
+    if (e.key === "Escape" && dragCable) dragCable = null;
   }
 
   // The carrier domain of a connection (from its output port), or null if unknown.
@@ -746,6 +802,7 @@
   onpointerdown={onCablePointerDown}
   onpointermove={onCablePointerMove}
   onpointerup={onCablePointerUp}
+  onkeydown={onCableKey}
 />
 
 <main>
@@ -925,12 +982,27 @@
             {@render onePortal(c, api)}
           {/each}
           {#if dragCable}
-            <path
-              class="cable dragging"
-              class:legal={dragCable.over && dragCable.legal}
-              class:illegal={dragCable.over && !dragCable.legal}
-              d={cablePathData(dragCable.srcPoint, dragCable.free)}
-            />
+            {#if dragCable.mode === "drag" || inView(dragCable.source.device)}
+              <!-- Source visible: draw the rubber-band from its jack to the cursor. -->
+              <path
+                class="cable dragging"
+                class:pending={dragCable.mode === "pending"}
+                class:legal={dragCable.over && dragCable.legal}
+                class:illegal={dragCable.over && !dragCable.legal}
+                d={cablePathData(dragCable.srcPoint, dragCable.free)}
+              />
+            {:else}
+              <!-- Pending across a view switch: the source is off-view, so just track a floating end
+                   (the banner names where it came from; hovering a jack colours it legal/illegal). -->
+              <circle
+                class="pending-end"
+                class:legal={dragCable.over && dragCable.legal}
+                class:illegal={dragCable.over && !dragCable.legal}
+                cx={dragCable.free.x}
+                cy={dragCable.free.y}
+                r="12"
+              />
+            {/if}
           {/if}
         {/snippet}
 
@@ -1030,6 +1102,15 @@
           {/if}
         {/snippet}
       </WorldView>
+
+      {#if pendingSourceName}
+        <!-- Cross-view patch in progress: a cable end is held from a click on a source jack. Turn to
+             another wall/room and click a destination jack to complete (Esc / Cancel to drop it). -->
+        <div class="patch-banner">
+          Patching from <strong>{pendingSourceName}</strong> — click a destination jack
+          <button type="button" onclick={() => (dragCable = null)}>Cancel</button>
+        </div>
+      {/if}
 
       {#if selectedConn}
         <!-- Cable inspector: click a cable to select it, then change its type or disconnect it. Only
@@ -1354,6 +1435,23 @@
   .cable.illegal {
     stroke: #d9534f;
   }
+  /* A pending (clicked-and-held) cable lead — a lighter dash so it reads as "held", not being dragged. */
+  .cable.pending {
+    opacity: 0.6;
+  }
+  /* The floating end of a pending cable when its source is on another wall/room (no line to draw). */
+  .pending-end {
+    fill: #d98c3c;
+    stroke: #1b1d20;
+    stroke-width: 3;
+    opacity: 0.9;
+  }
+  .pending-end.legal {
+    fill: #4caf50;
+  }
+  .pending-end.illegal {
+    fill: #d9534f;
+  }
   /* The currently-selected cable (its inspector is open). */
   .cable.selected {
     stroke: #f4a94a;
@@ -1392,6 +1490,29 @@
     paint-order: stroke;
     stroke: #1b1d20;
     stroke-width: 5;
+  }
+  /* Cross-view patch banner — floats top-centre while a cable end is held (clicked from a source jack). */
+  .patch-banner {
+    position: absolute;
+    left: 50%;
+    top: 1rem;
+    transform: translateX(-50%);
+    z-index: 6;
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    padding: 0.4rem 0.75rem;
+    background: var(--ae-bg-panel);
+    color: var(--ae-text-strong);
+    border: 1px solid var(--ae-signal-line-lit);
+    border-radius: var(--ae-radius-panel);
+    box-shadow: var(--ae-shadow-card);
+    font-size: 0.8rem;
+  }
+  .patch-banner button {
+    font: inherit;
+    font-size: 0.72rem;
+    padding: 0.2rem 0.7rem;
   }
   /* Cable inspector strip (shown when a cable is selected). */
   /* Floats over the stage (bottom-centre) rather than taking layout space, so the world stays full. */
