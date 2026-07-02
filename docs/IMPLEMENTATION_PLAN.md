@@ -414,7 +414,10 @@ cable catalog. 4.5 ✅ — **visualization**: the node→host scalar readout lan
 digital dBFS meter, and a static per-connection loading-loss annotation, surfaced as device meter screens, a
 cable-inspector loss line, and a global levels panel; the raw-sample **scope + spectrum FFT** were split out
 into a new **Story 4.7** at 4.5 pickup (waveform probes are a distinct mechanism from the scalar lane).
-**Next: Story 4.6** (top-down view + operator reach). 4.6–4.7 stay at Story level until picked up. The original
+**Story 4.6 🚧 in progress** — reshaped at pickup into **room walls + multi-view + zoom-gated reach**: a
+space becomes a rectangular room whose four wall-elevations you turn between, plus a top-down floor plan;
+the sketch's *operator avatar* was dropped in favour of a **zoom gate** (rearrange vs. operate). **4.7**
+stays at Story level until picked up. The original
 4-story sketch was reshaped into the now-7-story arc below after the UI vision
 grew from "device panels + cables" into a **game-like spatial studio/venue sim** (browsable gear catalog,
 racks and containers, freely placed in a pan/zoom world, multiple _spaces_ with snakes between them,
@@ -1395,18 +1398,119 @@ split out to **Story 4.7** at pickup.
   chrome** (`out_ptr`), distinct from the placeable `VuMeter` device; the readouts snapshot is re-serialized per
   throttle tick (tiny — a handful of scalars); a **phantom-presence** readout is deferred to Epic 5 (no
   condenser-mic device is cataloged yet to attach it to).
-- **Story 4.6 — The spatial world, part 2: top-down view + operator reach.** The deferred half of the
-  spatial sim — 4.3 stored the full 3-D coordinate truth precisely so this stays cheap. Add a **top-down
-  floor-plan projection** of a space as a _second view over the same model_ (the real test of "model in
-  3-D, render in 2-D as projections": a new projection, no new coordinate state), with **view switching**
-  (front elevation ↔ top); and an **operator position + reach** model — move around a space, zoom out for
-  the overview but interaction **disables beyond reach** (you can only touch what's within arm's length),
-  with back-panel access still gated by the 4.3 clearance action. The new pure spatial logic (the second
-  projection, reach queries) extends the 4.3 rendering-free module and stays Vitest-unit-tested. _Open at
-  pickup:_ the top-view projection + its placement affordances (drag on the floor plan vs. in the rack);
-  the reach metric and the zoom→view-only gating rule; how operator position lives in the scene `ui`;
-  whether containers need a plan-view footprint distinct from their elevation. _Scope guard:_ views +
-  reach only — no new devices, cables, or probes. Also make the devices snap to grid for easier placement
+#### Story 4.6 — The spatial world, part 2: room walls, multi-view & zoom-gated reach — 🚧 **In progress**
+
+_Goal:_ finish the spatial sim (PROJECT_PLAN §5 "model in 3-D, render in 2-D"; §9 Stage 4 "build and
+operate a small studio through the UI"). A space becomes a **rectangular room with four walls**: you
+**turn between wall-elevation views** (front — with a window to the live room; back — where the racks
+live; the shorter left/right sides) and a **top-down floor plan** of the same room, arranging gear across
+the walls (grid-snapped) from above. Then a **zoom gate** within a wall view separates **rearranging**
+from **operating**: zoom out and you can still drag gear around, but knobs, patching, and flip lock until
+you zoom back in. All of it is UI/scene-`ui` state — the engine and runnable `patch` gain **nothing** (the
+epic's "spaces are a UI concept" decision). This is the deferred half of 4.3, kept cheap because 4.3
+stored the full 3-D coordinate truth already.
+
+_Watch out:_
+
+- **Engine + `patch` gain nothing.** Rooms, walls, views, and the zoom gate are all TS/scene-`ui`; the
+  worklet still receives only the `patch` projection (no rooms/walls/positions). **No Rust change** — if a
+  task wants one, something is being modelled in the wrong layer.
+- **Single coordinate truth — never per-view 2-D positions.** A placement keeps its one `(x,y,z)` truth +
+  a `wall` tag; each wall view is a **projection** of it (the trap 4.3 called out). Storing a separate 2-D
+  position per wall is the drift bug.
+- **The "4.3 clearance gate" does not exist in the landed code.** 4.3's notes describe a `pulledOut`
+  clearance step, but the shipped `Placement` is `{space, position, rack?, facing}` and `toggleFlip` is
+  direct. So do **not** lean on a clearance gate — the **zoom gate** is what now guards operating (flip
+  included).
+- **Keep the world layer thin.** `WorldView` still knows only positioned boxes + pointer mechanics; wall /
+  top projection, view switching, portal stubs, and the operate/rearrange gate live in the **parent** —
+  the WebGL escape hatch stays intact.
+- **Cross-view cables can't draw as one lead.** Only one wall of one space renders at a time, so a cable
+  whose endpoints aren't both in the current view must reuse the **4.4 portal stub** (generalized from
+  "not in this space" to "not in this view").
+- **Default-scene UX.** The studio must be usable out of the box — the starting wall shows real gear (not
+  the empty window wall) at a zoom where controls are operable; don't spawn it zoomed-out-locked.
+- _Scope guard:_ **views + zoom-gate + grid-snap only.** No operator avatar, no new devices/cables/probes,
+  the window stays **decorative**, and cross-space audio stays the existing 4.4 portal-cable mechanism.
+
+_Design notes (settled at planning):_
+
+- **Reshaped at pickup — no operator avatar.** The sketch's "operator position + reach" became a
+  **zoom-threshold gate** within a wall view (no avatar, no floor position, no walk). Below the threshold
+  you **rearrange** (drag gear); at/above it you **operate** (knobs/faders/switches, patching, flip).
+  _Rejected: an operator entity with a floor position + reach radius_ — a whole interaction subsystem
+  (walk, per-item distance gating, movement affordances) heavier than the payoff; the zoom gate delivers
+  "you can only touch what you've stepped up to" from camera state we already have. (Confirmed with Oskari:
+  "zoom-threshold, no operator"; "disable operate, allow layout".)
+- **A space is a rectangular room with four walls.** A `Space` gains authored `width × depth (× height)`;
+  the four walls (front/back/left/right) fall out of the rectangle — left/right are **shorter** when
+  depth < width, as they should be. Each wall is an **elevation view** you turn between; a **top-down floor
+  plan** shows the whole room. `wallProjection(pos, size, wall, room)` maps the 3-D truth to a wall
+  elevation (front/back → `(x,y)`; left/right → `(z,y)`; back/right **mirrored** so left/right read
+  correctly when you turn around); `project(…, "top")` (already shipped + tested in 4.3) maps the floor plan.
+- **Wall = explicit tag, not derived.** Each `Placement`/`Rack` carries `wall`; the wall view renders gear
+  tagged there. _Rejected: deriving the wall from the floor position_ (nearest wall) — ambiguous for
+  centre-room gear, couples "which view" to exact coordinates, and is harder to test.
+- **Wall elevation reuses the 4.2/4.3 detail machinery; top view is layout-only.** In a wall view gear
+  renders as full **panels** (knobs/jacks/patching) and racks as **U-slot columns** — the current
+  front-elevation code, generalized to the current wall. In **top view** gear renders as **labelled
+  footprint boxes** (a rack is one box; its mounted gear is hidden **inside** — you can't see U-slots from
+  above), no panels/cables, drag-to-rearrange + grid-snap. This is the "top = layout, front = detail" split.
+- **Cross-view cables → portal stubs (reuse 4.4).** A cable whose endpoints aren't both in the current
+  view draws as a labelled stub, exactly like the 4.4 cross-space portal — the visibility test generalizes
+  from "same space" to "same space **and** same wall."
+- **The window is decorative.** Drawn on the front wall as room detail; space switching stays on the
+  existing tabs. _Rejected: window-as-functional-portal_ (route cross-space cables through it) — integration
+  scope beyond a views story. _Rejected: front + back walls only_ — all four generalize cheaply once the
+  model + top view exist (chosen: **all four**).
+- **View state is ephemeral; room/wall data persists.** The current wall/top view is App state (default
+  front), like `currentSpace`; room dims + per-placement `wall` are scene `ui`. `SCHEMA_VERSION` bumps
+  6→7; **no migration** (localStorage is disposable — the default scene is redefined as a proper room).
+- **Grid snap** on free placement (both views) via a pure `snapToGrid` helper; rack mounting keeps its
+  existing U-slot snapping.
+
+- **Task 4.6.1 — Pure spatial extensions: wall projection + grid snap (TS, Vitest).** Add a `Wall` type
+  (`front|back|left|right`) + a room-dims type; `wallProjection(pos, size, wall, room)` → an elevation
+  `Rect2` (y-up), mirroring back/right; `snapToGrid(v, step)`. Reuse the shipped `project(…, "top")` for the
+  floor plan. _Done/validate:_ Vitest hand-calc cases for each wall (incl. a mirrored back/right box and a
+  left/right unit projected on the **depth** axis) + grid-snap edges; the module imports no DOM/Svelte.
+- **Task 4.6.2 — Scene `ui`: rooms + wall tags + store (SCHEMA 6→7, no migration).** `Space` gains
+  `width/depth/height`; `Placement` and `Rack` gain `wall`. Redefine `defaultScene` as one rectangular
+  Control Room — the 8U rack against the **back** wall, synth + speaker along the **front** (which carries
+  the decorative window) — and bump `SCHEMA_VERSION`. _Done/validate:_ a scene round-trips rooms + wall
+  tags through save/load; a stale version is discarded; the worklet still receives only `patch`; the
+  updated `scene-store` tests are green.
+- **Task 4.6.3 — Wall-aware elevations + view switching (generalize the front view to four walls).**
+  `deviceRect`/`rackRect`/`placedItems` become wall-aware (filter to the current wall, project via
+  `wallProjection`); a **view switcher** turns between front/back/left/right; the decorative window draws
+  on the front wall; cross-view cables render as **portal stubs** (the 4.4 mechanism, "not in this view").
+  _Done/validate:_ you turn between all four walls; gear appears on its tagged wall; within-wall patching
+  works; a cross-wall cable shows as a labelled stub. Verified in-browser.
+- **Task 4.6.4 — Top-down floor plan + arrange + grid-snap.** Add **top** to the switcher: render the room
+  rectangle + every device/rack as a **labelled footprint box** (via `project top`), panels/cables hidden,
+  a rack a single box with its mounted gear hidden; **drag to rearrange** on the floor (updating `x`/`z`
+  and **re-tagging the wall** when dragged against a different wall), grid-snapped. Reuse `WorldView` with a
+  top-mode `item` snippet. _Done/validate:_ top view shows the whole room; rearranging racks/gear
+  (grid-snapped) reflects in the wall views; a wall re-tag on drag takes effect. Verified in-browser.
+- **Task 4.6.5 — Zoom-gated reach: operate vs. rearrange.** In wall elevations, a **zoom threshold**:
+  below it, controls / jacks / flip are **locked** (pointer-events off + dimmed) but **drag-to-rearrange
+  still works**; at/above it, full interaction, with a small "zoom in to operate" hint. `WorldView`
+  exposes its zoom (or a `canOperate` flag); the parent passes a `locked` state into `Panel` and disables
+  flip + patching. _Done/validate:_ zoomed out you can rearrange but can't turn a knob, patch, or flip;
+  zooming in restores operation; top view (layout-only) is unaffected. Verified in-browser.
+
+_Natural cut line:_ Tasks 4.6.1–4.6.4 are **Part A** (rooms/walls/views); Task 4.6.5 is **Part B** (the
+zoom gate) — the deferrable tail if the Story runs long, mirroring how 4.5 split its scope off to 4.7.
+
+_Validate:_ turn between all four wall-elevations of a rectangular room + a top-down floor plan of the
+same room; the rack sits on the **back** wall and the synth/speaker + window on the **front**; arranging
+gear in top view (**grid-snapped**) reflects across the wall views; within-wall patching works and
+cross-view cables show as **portal stubs**; zooming out in a wall view **locks operating** (knobs /
+patching / flip) while still allowing **rearrange**, and zooming in restores it. The pure spatial logic
+(wall projection, grid snap) is **Vitest-unit-tested**; the scene round-trips rooms + wall tags
+(`SCHEMA_VERSION` 6→7, no migration); the **engine and `patch` gain nothing**. Full gate green
+(`cargo fmt --check && cargo lint && cargo test && cargo wasm && cargo docs`) plus `web`
+Vitest/Biome/typecheck/build.
 - **Story 4.7 — Visualization, part 2: scope + spectrum (waveform probes).** Split out of Story 4.5 at its
   pickup: the **raw per-sample tap** surface a scope and spectrum need — a distinct mechanism from 4.5's
   scalar readout lane. A **zero-copy sample ring** (à la `out_ptr`, tapping a node/port's block), a **scope**
