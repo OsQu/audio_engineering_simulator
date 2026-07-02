@@ -14,8 +14,8 @@
     wireKeyboard,
     wireMidi,
   } from "./engine";
-  import { cablePathData, cableTypeIdFor, evaluateConnection } from "./connections";
-  import type { ConnectVerdict, Endpoint } from "./connections";
+  import { cablePathData, cableTypeIdFor } from "./connections";
+  import type { ConnectVerdict } from "./connections";
   import type { Connection, Patch, PortRef } from "./scene";
   import { defaultScene, loadScene, type Scene, saveScene, setSceneParam } from "./scene-store";
   import {
@@ -29,6 +29,8 @@
     rackById,
     type ViewCtx,
   } from "./projection";
+  import * as patching from "./patching";
+  import type { JackHit, PatchState } from "./patching";
   import * as placement from "./placement";
   import * as sceneOps from "./scene-ops";
   import { type Room, type Wall } from "./spatial";
@@ -281,15 +283,7 @@
   // `mode` is "drag" while the pointer is held (same-view patching), or "pending" after a *click* — a
   // held cable that survives a wall/room switch, so you can complete a **cross-view** patch by clicking
   // the source jack, turning to the other wall/room, and clicking the destination jack.
-  let dragCable = $state<{
-    source: Endpoint;
-    srcPoint: { x: number; y: number };
-    free: { x: number; y: number };
-    over: boolean;
-    legal: boolean;
-    verdict: ConnectVerdict | null;
-    mode: "drag" | "pending";
-  } | null>(null);
+  let dragCable = $state<PatchState>(null);
   // Pointer-down bookkeeping to tell a click (→ pending pick) from a drag (moved past a small threshold).
   let cableDown = { x: 0, y: 0, moved: false };
 
@@ -300,47 +294,32 @@
     return (dev && descriptorFor(catalog, dev.typeId)?.name) || dragCable.source.device;
   });
 
-  const jackKeyOf = (e: Endpoint): string => jackKey(e.device, e.direction, e.port);
+  // Resolve a `data-jack` key into the JackHit the pure transitions need (endpoint + measured anchor),
+  // or null if it doesn't name a real, resolvable port.
+  const jackHitOf = (key: string | undefined | null): JackHit | null => {
+    if (!key) return null;
+    const endpoint = patching.endpointFromJackKey(scene, catalog, key);
+    return endpoint ? { key, endpoint, anchor: jackAnchors[key] ?? null } : null;
+  };
+  const patchDeps = () => ({ connections: scene.patch.connections });
 
-  // Resolve a `data-jack` value ("device:direction:port") to a full Endpoint (with the port's domain
-  // from the descriptor), or null if it doesn't name a real port.
-  function endpointFromJackKey(key: string): Endpoint | null {
-    const [device, direction, portStr] = key.split(":");
-    if (!device || (direction !== "input" && direction !== "output")) return null;
-    const port = Number(portStr);
-    const dev = deviceById(scene, device);
-    const desc = dev ? descriptorFor(catalog, dev.typeId) : undefined;
-    const pd = desc?.ports.find((p) => p.direction === direction && p.id === port);
-    if (!pd) return null;
-    return { device, port, direction, domain: pd.domain };
-  }
-
-  // Pointer-down on a jack connector. Normally starts a drag (only reachable on a shown back panel; a
-  // front-facing device's back is rotated away and non-interactive). While a **pending** cable is held,
-  // this begins the *second* interaction — we only record the press point here and resolve it on
-  // pointer-up (see `onCablePointerUp`), so a click can be told apart from a pan (a press-and-drag).
+  // The patching handlers are thin adapters: they read the DOM into a JackHit + surface coords, keep the
+  // click-vs-drag threshold bookkeeping, call the pure transition, assign its state, and on a returned
+  // `commit` verdict commit the cable (which hot-swaps). See patching.ts for the transition semantics.
   function onCablePointerDown(e: PointerEvent): void {
     if (!worldApi) return;
-    const el = (e.target as HTMLElement | null)?.closest<HTMLElement>("[data-jack]");
-    const key = el?.dataset.jack;
-
+    // A pending cable's second press: only record the point; onCablePointerUp resolves click-vs-pan.
     if (dragCable?.mode === "pending") {
       cableDown = { x: e.clientX, y: e.clientY, moved: false };
       return;
     }
-
-    if (!key) return;
-    const source = endpointFromJackKey(key);
-    const srcPoint = jackAnchors[key];
-    if (!source || !srcPoint) return;
+    const hit = jackHitOf((e.target as HTMLElement | null)?.closest<HTMLElement>("[data-jack]")?.dataset.jack);
+    if (!hit || !hit.anchor) return; // only a measured jack can start a drag
     e.preventDefault();
     cableDown = { x: e.clientX, y: e.clientY, moved: false };
-    dragCable = { source, srcPoint, free: srcPoint, over: false, legal: false, verdict: null, mode: "drag" };
+    dragCable = patching.pointerDown(dragCable, hit).state;
   }
 
-  // While dragging or holding a pending cable: track the free end, re-derive the source anchor if it's in
-  // view, and if the cursor is over another jack, evaluate legality (snapping the end to it for a magnetic
-  // feel). Fires with no button pressed too, so a pending cable tracks the cursor between clicks.
   function onCablePointerMove(e: PointerEvent): void {
     if (!dragCable || !worldApi) return;
     // Track whether the active press has moved past the click threshold — but only while a button is
@@ -349,67 +328,28 @@
       if (Math.hypot(e.clientX - cableDown.x, e.clientY - cableDown.y) > 4) cableDown.moved = true;
     }
     const cursor = worldApi.clientToSurface(e.clientX, e.clientY);
-    // Live source anchor: if the source is (still/again) in view, use its measured jack; else keep the
-    // pick-time point (it's off-view — the lead is drawn as a floating end, not a line to nowhere).
-    const srcPoint = jackAnchors[jackKeyOf(dragCable.source)] ?? dragCable.srcPoint;
-    const el = document
-      .elementFromPoint(e.clientX, e.clientY)
-      ?.closest<HTMLElement>("[data-jack]");
-    const key = el?.dataset.jack;
-    if (key && key !== jackKeyOf(dragCable.source)) {
-      const target = endpointFromJackKey(key);
-      if (target) {
-        const verdict = evaluateConnection(dragCable.source, target, scene.patch.connections);
-        dragCable = {
-          ...dragCable,
-          srcPoint,
-          free: jackAnchors[key] ?? cursor,
-          over: true,
-          legal: verdict.ok,
-          verdict,
-        };
-        return;
-      }
-    }
-    dragCable = { ...dragCable, srcPoint, free: cursor, over: false, legal: false, verdict: null };
+    const srcAnchor = jackAnchors[patching.jackKeyOf(dragCable.source)] ?? null;
+    const hit = jackHitOf(
+      document.elementFromPoint(e.clientX, e.clientY)?.closest<HTMLElement>("[data-jack]")?.dataset.jack,
+    );
+    dragCable = patching.pointerMove(dragCable, hit, cursor, srcAnchor, patchDeps());
   }
 
-  // Release. Two cases, keyed on the cable's mode:
-  //  - **drag** (dragging out from the source jack): a release over a legal jack commits; a press that
-  //    never moved (a click) is promoted to a **pending** pick that survives a view switch; a real drag
-  //    released over nothing is cancelled.
-  //  - **pending** (a held cable): resolve the second interaction. A press-and-drag over empty space is a
-  //    pan, so leave the pick untouched. A *click* resolves it — complete onto a legal destination jack,
-  //    and cancel the patch on anything else (empty space, an illegal jack, or the source jack).
   function onCablePointerUp(e: PointerEvent): void {
     if (!dragCable) return;
-
-    if (dragCable.mode === "drag") {
-      if (dragCable.verdict?.ok) {
-        commitCable(dragCable.verdict);
-        dragCable = null;
-      } else if (!cableDown.moved) {
-        dragCable = { ...dragCable, mode: "pending", over: false, legal: false, verdict: null };
-      } else {
-        dragCable = null;
-      }
-      return;
-    }
-
-    if (cableDown.moved) return; // a pan — keep the pending pick
-    const el = document.elementFromPoint(e.clientX, e.clientY)?.closest<HTMLElement>("[data-jack]");
-    const key = el?.dataset.jack;
-    const target = key && key !== jackKeyOf(dragCable.source) ? endpointFromJackKey(key) : null;
-    if (target) {
-      const verdict = evaluateConnection(dragCable.source, target, scene.patch.connections);
-      if (verdict.ok) commitCable(verdict);
-    }
-    dragCable = null;
+    // The pending second-click needs the jack under the release point; drag-release uses the last verdict.
+    const hit =
+      dragCable.mode === "pending" && !cableDown.moved
+        ? jackHitOf(document.elementFromPoint(e.clientX, e.clientY)?.closest<HTMLElement>("[data-jack]")?.dataset.jack)
+        : null;
+    const res = patching.pointerUp(dragCable, hit, !cableDown.moved, patchDeps());
+    if (res.commit) commitCable(res.commit);
+    dragCable = res.state;
   }
 
   // Esc cancels an in-progress patch (drag or pending).
   function onCableKey(e: KeyboardEvent): void {
-    if (e.key === "Escape" && dragCable) dragCable = null;
+    if (e.key === "Escape" && dragCable) dragCable = patching.cancel();
   }
 
   // Connection introspection + edits are pure scene-ops; App wraps them to bind scene/catalog/cables
