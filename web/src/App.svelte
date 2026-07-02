@@ -14,13 +14,7 @@
     wireKeyboard,
     wireMidi,
   } from "./engine";
-  import {
-    cablePathData,
-    cablePathHalves,
-    cableSpec,
-    cableTypeIdFor,
-    evaluateConnection,
-  } from "./connections";
+  import { cablePathData, cableSpec, cableTypeIdFor, evaluateConnection } from "./connections";
   import type { ConnectVerdict, Endpoint } from "./connections";
   import type { Connection, Patch, PortRef } from "./scene";
   import { defaultScene, loadScene, type Scene, saveScene, setSceneParam } from "./scene-store";
@@ -148,14 +142,21 @@
   }
 
   // The items to render in the current space: rack frames first (behind), then devices (on top).
+  // `z` interleaves items with the single cable layer (z 2): racks at the bottom, a device showing its
+  // back *below* the cables (they plug into its visible sockets), one facing front *above* them (cables
+  // tuck behind its panel). This is what makes a continuous cable occlude correctly per device.
   const placedItems = $derived([
     ...scene.ui.racks
       .filter((r) => r.space === currentSpace)
-      .map((r) => ({ id: r.id, rect: rackRect(r), background: true })),
+      .map((r) => ({ id: r.id, rect: rackRect(r), background: true, z: 0 })),
     ...scene.patch.devices
       .filter((d) => scene.ui.placements[d.id]?.space === currentSpace)
-      .map((d) => ({ id: d.id, rect: deviceRect(d.id, d.typeId) }))
-      .filter((it): it is { id: string; rect: Rect2 } => it.rect !== null),
+      .map((d) => ({
+        id: d.id,
+        rect: deviceRect(d.id, d.typeId),
+        z: scene.ui.placements[d.id]?.facing === "back" ? 1 : 3,
+      }))
+      .filter((it): it is { id: string; rect: Rect2; z: number } => it.rect !== null),
   ]);
 
   // --- Patch cables --------------------------------------------------------------------------------
@@ -232,18 +233,10 @@
     return api.worldToSurface(wx, wy);
   }
 
-  // Is this device currently showing its back (sockets visible) in the shown space?
-  const isBackFacing = (deviceId: string): boolean => {
-    const place = scene.ui.placements[deviceId];
-    return place !== undefined && place.space === currentSpace && place.facing === "back";
-  };
-
-  // Cable z-order is decided PER END, not per whole cable: the half nearest an end is drawn in FRONT of
-  // that device when its socket is visible (the device shows its back), and BEHIND it otherwise (the
-  // device faces front, so the cable tucks behind its panel). So a mixed pair reads correctly — plugged
-  // into the visible back socket at one end, disappearing behind the front panel at the other. The two
-  // halves meet at the sag midpoint in the empty gap between units, so the seam is invisible.
-  // (Sockets are back-mounted today, so "socket visible" == back-facing; see cableAnchor.)
+  // Cable occlusion is handled by z-order, not by the cable: a single continuous lead is drawn in the
+  // cable layer (z 2), and each device sits above or below it by facing (see placedItems' `z`) — a
+  // back-facing device (visible sockets) below, a front-facing one above. So a cable plugs into a visible
+  // back socket yet tucks behind a front panel, with no split. (Sockets are back-mounted today.)
 
   // Is a device placed in the currently-shown space?
   const inSpace = (deviceId: string): boolean =>
@@ -729,18 +722,16 @@
         <strong>pull it out</strong> first, then flip. Send a unit or rack to another room with its
         space selector. Zoom in to operate a panel.
       </p>
-      <!-- One HALF of a patch cable (from-end or to-end), plus a wide transparent hit-path for
+      <!-- One patch cable: three stacked strokes for depth (dark drop-shadow, signal-coloured core, thin
+           lit highlight — colour from the connector kind), plus a wide transparent hit-path for
            click-to-disconnect (its pointer events go off during a drag so `elementFromPoint` can see the
-           jack beneath). Each half is drawn in the layer matching its own end's facing (see below), so
-           the hit-path of a tucked half sits behind the panel and never blocks its front controls. -->
-      {#snippet cableHalf(c: Connection, api: WorldApi, side: "from" | "to")}
+           jack beneath). Drawn once, in the single cable layer; the devices' `z` handle the occlusion. -->
+      {#snippet oneCable(c: Connection, api: WorldApi)}
         {@const a = cableAnchor(c.from, "output", api)}
         {@const b = cableAnchor(c.to, "input", api)}
         {#if a && b}
-          {@const d = cablePathHalves(a, b)[side === "from" ? 0 : 1]}
+          {@const d = cablePathData(a, b)}
           {@const kind = connectionKind(c)}
-          <!-- Three stacked strokes for depth: a dark drop-shadow, the signal-coloured core, and a thin
-               lit highlight. Colour comes from the connector kind (the signal palette). -->
           <path class="cable-shadow" {d} />
           <path
             class="cable-core"
@@ -803,22 +794,16 @@
       {/snippet}
 
       <WorldView items={placedItems} onMoveTo={moveTo} {canPlace} fitKey={currentSpace} bind:api={worldApi}>
-        {#snippet underlay(api)}
-          <!-- Behind the panels: the half of each same-space cable whose end faces FRONT — so it tucks
-               behind that unit and only shows where it emerges toward its neighbour. -->
+        {#snippet cables(api)}
+          <!-- Every same-space cable, drawn once as a continuous lead. The devices' z (set in
+               placedItems by facing) decides which panels each cable passes in front of vs behind. -->
           {#each scene.patch.connections.filter(bothInSpace) as c (connKey(c))}
-            {#if !isBackFacing(c.from.device)}{@render cableHalf(c, api, "from")}{/if}
-            {#if !isBackFacing(c.to.device)}{@render cableHalf(c, api, "to")}{/if}
+            {@render oneCable(c, api)}
           {/each}
         {/snippet}
 
         {#snippet overlay(api)}
-          <!-- In front of the panels: the half of each same-space cable whose end shows its BACK — so you
-               see it plug into the visible socket. Plus cross-space portal stubs and the drag rubber-band. -->
-          {#each scene.patch.connections.filter(bothInSpace) as c (connKey(c))}
-            {#if isBackFacing(c.from.device)}{@render cableHalf(c, api, "from")}{/if}
-            {#if isBackFacing(c.to.device)}{@render cableHalf(c, api, "to")}{/if}
-          {/each}
+          <!-- On top of everything: cross-space portal stubs and the drag rubber-band while patching. -->
           {#each scene.patch.connections.filter(oneInSpace) as c (connKey(c))}
             {@render onePortal(c, api)}
           {/each}

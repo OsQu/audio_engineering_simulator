@@ -38,9 +38,13 @@
     id: string;
     /** Front-elevation rect in world millimetres (`y` = bottom edge). */
     rect: Rect2;
-    /** Background furniture (e.g. a rack frame): drawn **below** the cable underlay, so cables between
-     *  its contained gear stay visible. Foreground items (devices) draw above the underlay. */
+    /** Background furniture (e.g. a rack frame). A styling hook; stacking is set via `z`. */
     background?: boolean;
+    /** Stacking order (CSS z-index). The parent sets it per item to interleave items with the single
+     *  cable layer (z 2): a device showing its **back** sits *below* the cables (they plug into its
+     *  visible sockets), one facing **front** sits *above* them (cables tuck behind its panel). A rack
+     *  frame sits at the bottom. Defaults to 2. */
+    z?: number;
   }
 
   interface Props {
@@ -61,9 +65,10 @@
      *  cables). Handed a {@link WorldApi} so the parent can place things without touching the transform.
      *  The world layer stays ignorant of what this is — the standing WebGL escape hatch. */
     overlay?: Snippet<[WorldApi]>;
-    /** Like `overlay`, but drawn **behind** the gear (below the device panels) — e.g. cables that should
-     *  tuck behind a front-facing unit. Same {@link WorldApi}, same coordinate space. */
-    underlay?: Snippet<[WorldApi]>;
+    /** Like `overlay`, but drawn at the CABLE layer (z 2) — between back-facing and front-facing device
+     *  panels — e.g. the patch cables. Each item's `z` decides whether it sits in front of or behind
+     *  these, so a single continuous cable is occluded correctly per device. Same coordinate space. */
+    cables?: Snippet<[WorldApi]>;
     /** Bound out to the parent so it can convert coordinates outside the overlay snippet (e.g. to
      *  DOM-measure jack positions into surface space). `undefined` until the surface mounts. */
     api?: WorldApi;
@@ -76,7 +81,7 @@
     canPlace,
     fitKey,
     overlay,
-    underlay,
+    cables,
     api = $bindable(),
   }: Props = $props();
 
@@ -284,17 +289,17 @@
       <div class="floor"></div>
     </div>
 
-    {#if underlay}
-      <!-- Behind-the-gear layer (below the device panels): cables that should tuck behind a
-           front-facing unit. Same surface-local space as the overlay. -->
+    {#if cables}
+      <!-- Cable layer (z 2): sits between back-facing device panels (below) and front-facing ones
+           (above), so one continuous cable plugs into a visible back socket yet tucks behind a front. -->
       <svg
-        class="underlay"
+        class="cables"
         width={ROOM_WIDTH}
         height={ROOM_HEIGHT}
         viewBox="0 0 {ROOM_WIDTH} {ROOM_HEIGHT}"
         aria-hidden="true"
       >
-        {@render underlay(worldApi)}
+        {@render cables(worldApi)}
       </svg>
     {/if}
 
@@ -307,7 +312,8 @@
         class:background={it.background}
         class:dragging={drag?.id === it.id}
         class:illegal={drag?.id === it.id && !drag.legal}
-        style="left: {p.x}px; bottom: {p.y}px; width: {it.rect.width}px; height: {it.rect.height}px;"
+        style="left: {p.x}px; bottom: {p.y}px; width: {it.rect.width}px; height: {it.rect.height}px;
+               z-index: {drag?.id === it.id ? 10 : (it.z ?? 2)};"
         role="button"
         tabindex="0"
         aria-label="{it.id} — drag to move"
@@ -369,15 +375,16 @@
     pointer-events: none;
     z-index: 5;
   }
-  /* Behind-the-gear cable layer: above background furniture (racks, z-index 0) so cables between rack
-     gear show, but below device panels (z-index 2) so they still tuck behind a front-facing unit. */
-  .underlay {
+  /* Cable layer: fixed at z 2. Items sort around it by facing (back-facing < 2 < front-facing), so a
+     single continuous cable is drawn in front of the panels it plugs into and behind the ones it tucks
+     under — see WorldItem.z. */
+  .cables {
     position: absolute;
     top: 0;
     left: 0;
     overflow: visible;
     pointer-events: none;
-    z-index: 1;
+    z-index: 2;
   }
   .floor {
     position: absolute;
@@ -394,15 +401,11 @@
     overflow: hidden;
     box-shadow: 0 2px 6px rgba(0, 0, 0, 0.4);
     border-radius: 6px;
-    z-index: 2; /* device panels sit above the cable underlay (z-index 1) */
+    /* z-index is set inline per item (WorldItem.z) so panels interleave with the cable layer by facing;
+       a dragged item is lifted above everything. */
     cursor: grab; /* the body is the drag surface; controls override with their own cursor */
   }
-  /* Background furniture (racks): below the cable underlay, so cables between rack gear stay visible. */
-  .device.background {
-    z-index: 0;
-  }
   .device.dragging {
-    z-index: 10;
     box-shadow: 0 6px 18px rgba(0, 0, 0, 0.55);
     cursor: grabbing;
   }

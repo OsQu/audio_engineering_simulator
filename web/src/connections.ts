@@ -180,24 +180,6 @@ export function cablePathData(p0: Point, p3: Point): string {
   return `M ${a.x} ${a.y} C ${c1.x} ${c1.y} ${c2.x} ${c2.y} ${b.x} ${b.y}`;
 }
 
-/** Split the cable curve at its midpoint into two cubic halves (`[fromHalf, toHalf]` as SVG `d`
- *  strings) via de Casteljau at t=0.5. Each half can then be drawn in a different z-layer so a cable
- *  can pass *in front of* a back-facing panel (visible socket) yet *behind* a front-facing one. The
- *  seam is the lowest sag point — in the empty gap between units — so the two halves read as one lead. */
-export function cablePathHalves(p0: Point, p3: Point): [string, string] {
-  const [a, c1, c2, b] = cableControlPoints(p0, p3);
-  const mid2 = (u: Point, v: Point): Point => ({ x: (u.x + v.x) / 2, y: (u.y + v.y) / 2 });
-  const m = mid2(c1, c2);
-  const a1 = mid2(a, c1);
-  const b2 = mid2(c2, b);
-  const a2 = mid2(a1, m);
-  const b1 = mid2(m, b2);
-  const mid = mid2(a2, b1); // the split point (curve value at t=0.5)
-  const path = (q0: Point, q1: Point, q2: Point, q3: Point): string =>
-    `M ${q0.x} ${q0.y} C ${q1.x} ${q1.y} ${q2.x} ${q2.y} ${q3.x} ${q3.y}`;
-  return [path(a, a1, a2, mid), path(mid, b1, b2, b)];
-}
-
 /** A point on the cubic bezier at parameter `t ∈ [0, 1]` (Bernstein form). */
 function cubicAt(p0: Point, c1: Point, c2: Point, p3: Point, t: number): Point {
   const u = 1 - t;
