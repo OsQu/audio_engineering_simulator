@@ -11,8 +11,9 @@
 import type { Patch } from "./scene";
 import type { Vec3 } from "./spatial";
 
-/** Current save-format version. A saved scene at any other version is discarded (no migration). */
-export const SCHEMA_VERSION = 5;
+/** Current save-format version. A saved scene at any other version is discarded (no migration). Bumped
+ *  to 6 when the default scene gained the VU + digital meters, so a stale save doesn't hide them. */
+export const SCHEMA_VERSION = 6;
 
 /** A space (room) in the studio — a UI grouping over the one engine graph (the engine never knows
  *  about rooms). Multiple spaces + switching arrive in Story 4.3.6; the default scene has one. */
@@ -90,23 +91,29 @@ function mounted(rackId: string, uSlot: number, freeX: number): Placement {
   };
 }
 
-/** The default studio: the chain `synth → gain → AD → DA → speaker`, tapped at the speaker. The synth
- * and speaker (desktop gear) stand on the floor; the rackmount gain/AD/DA mount in an 8U rack between
- * them. The gain stage is unity (a passthrough). The `typeId`s match the `devices` catalog; device
- * ids are what control messages address. */
+/** The default studio: the chain `synth → gain → VU → AD → digital meter → DA → speaker`, tapped at
+ * the speaker. The two meters sit either side of the AD so gain-staging across the converter is
+ * visible out of the box: the VU reads the analog level in dBu, the digital meter the same signal in
+ * dBFS. The synth and speaker (desktop gear) stand on the floor; the rackmount gain/VU/AD/meter/DA
+ * mount in an 8U rack between them. The gain stage and meters are unity passthroughs. The `typeId`s
+ * match the `devices` catalog; device ids are what control messages address. */
 export function defaultScene(): Scene {
   const patch: Patch = {
     devices: [
       { id: "synth", typeId: "synth_voice" },
       { id: "gain", typeId: "gain_stage" },
+      { id: "vu", typeId: "vu_meter" },
       { id: "ad", typeId: "ad_converter" },
+      { id: "dig", typeId: "digital_meter" },
       { id: "da", typeId: "da_converter" },
       { id: "spk", typeId: "speaker" },
     ],
     connections: [
       { from: { device: "synth", port: 0 }, to: { device: "gain", port: 0 } },
-      { from: { device: "gain", port: 0 }, to: { device: "ad", port: 0 } },
-      { from: { device: "ad", port: 0 }, to: { device: "da", port: 0 } },
+      { from: { device: "gain", port: 0 }, to: { device: "vu", port: 0 } },
+      { from: { device: "vu", port: 0 }, to: { device: "ad", port: 0 } },
+      { from: { device: "ad", port: 0 }, to: { device: "dig", port: 0 } },
+      { from: { device: "dig", port: 0 }, to: { device: "da", port: 0 } },
       { from: { device: "da", port: 0 }, to: { device: "spk", port: 0 } },
     ],
     output: { device: "spk", port: 0 },
@@ -123,8 +130,10 @@ export function defaultScene(): Scene {
       placements: {
         synth: free(0),
         gain: mounted("rack-1", 0, rackX),
-        ad: mounted("rack-1", 1, rackX),
-        da: mounted("rack-1", 2, rackX),
+        vu: mounted("rack-1", 1, rackX),
+        ad: mounted("rack-1", 2, rackX),
+        dig: mounted("rack-1", 3, rackX),
+        da: mounted("rack-1", 4, rackX),
         spk: free(1500),
       },
     },

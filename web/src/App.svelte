@@ -45,6 +45,16 @@
   let send = $state<((msg: ControlMessage) => void) | null>(null);
   // Master output peak (linear, ±1.0 = full scale), from the worklet's throttled level message.
   let level = $state(0);
+  // Live device meter readings from the node→host lane, keyed by device id (values in readout-id
+  // order). Updated ~47×/s from the worklet's `readouts` message.
+  let readings = $state<Record<string, number[]>>({});
+  // Static per-connection loading loss in dB (or null for digital/event connections), by connection
+  // index (matching scene.patch.connections order). Seeded on `ready`, refreshed after each hot-swap.
+  let losses = $state<(number | null)[]>([]);
+  // A device's current reading for a readout id, or the meter floor if none has arrived yet.
+  const readingFor = (device: string, id: number): number => readings[device]?.[id] ?? -120;
+  // Format a reading: off-scale (near the floor) shows a dash.
+  const fmtReading = (v: number): string => (v <= -55 ? "—" : v.toFixed(1));
   // The world layer's coordinate converters, bound out of WorldView so we can measure jack DOM positions
   // into surface space for precise cable anchoring. Undefined until the world surface mounts.
   let worldApi = $state<WorldApi | undefined>();
@@ -360,6 +370,12 @@
   const selectedConn = $derived(
     scene.patch.connections.find((c) => connKey(c) === selectedCableKey) ?? null,
   );
+  // The selected connection's loading loss in dB (from the static per-connection losses), or null for
+  // a digital link / before the losses have arrived.
+  const selectedLoss = $derived.by((): number | null => {
+    const i = scene.patch.connections.findIndex((c) => connKey(c) === selectedCableKey);
+    return i >= 0 ? (losses[i] ?? null) : null;
+  });
 
   // Set (or clear, `""` ⇒ ideal wire) the cable type on a connection, then hot-swap — the cable's R·C
   // is baked into the edge at compile, so changing it rebuilds the engine.
@@ -583,9 +599,16 @@
         onLevel: (peak) => {
           level = peak;
         },
+        onReadouts: (r) => {
+          readings = Object.fromEntries(r);
+        },
+        onLosses: (l) => {
+          losses = l;
+        },
         onReady: (r: ReadyMessage, sendFn) => {
           catalog = r.catalog;
           cables = r.cables;
+          losses = r.losses;
           send = sendFn;
           ready = true;
           seedParamValues();
@@ -879,8 +902,10 @@
                 name={desc.name}
                 params={desc.params}
                 ports={desc.ports}
+                readouts={desc.readouts}
                 flipped={place.facing === "back"}
                 valueFor={(id) => paramValue(device.id, desc, id)}
+                readingFor={(id) => readingFor(device.id, id)}
                 onParam={(p, v) => onParamInput(device.id, p, v)}
               >
                 {#if device.typeId === "synth_voice"}
@@ -918,6 +943,11 @@
                 {/each}
               </select>
             </label>
+            <!-- Static impedance loading loss (the §5.3 divider), not a live meter — how far the loaded
+                 input sits below the source's open-circuit voltage. -->
+            <span class="ci-loss">
+              loading {selectedLoss !== null ? `${selectedLoss.toFixed(2)} dB` : "—"}
+            </span>
           {:else}
             <span class="ci-ideal">digital link — ideal (no cable)</span>
           {/if}
@@ -927,6 +957,41 @@
           <button type="button" class="ci-close" onclick={() => (selectedCableKey = null)}>Close</button>
         </div>
       {/if}
+
+      <!-- Global levels & losses: gain-staging across the chain in one place — every meter device's
+           live readings, and each analog connection's static loading loss (the §5.3 divider). -->
+      <details class="levels">
+        <summary>Signal path — levels &amp; losses</summary>
+        <div class="levels-body">
+          <ul class="meter-list">
+            {#each scene.patch.devices as d (d.id)}
+              {@const desc = descriptorFor(catalog, d.typeId)}
+              {#if desc && desc.readouts.length > 0}
+                <li>
+                  <span class="dev">{desc.name}</span>
+                  {#each desc.readouts as r (r.id)}
+                    <span class="reading">
+                      {r.label} <strong>{fmtReading(readingFor(d.id, r.id))}</strong>
+                      {r.unit}
+                    </span>
+                  {/each}
+                </li>
+              {/if}
+            {/each}
+          </ul>
+          <ul class="loss-list">
+            {#each scene.patch.connections as c, i (connKey(c))}
+              {@const loss = losses[i]}
+              {#if loss !== undefined && loss !== null}
+                <li>
+                  {c.from.device} → {c.to.device}
+                  <strong>{loss.toFixed(2)} dB</strong> loading
+                </li>
+              {/if}
+            {/each}
+          </ul>
+        </div>
+      </details>
 
       <p class="midi">{midiStatus}</p>
       <p class="scene-buttons">
@@ -1142,8 +1207,49 @@
     font-size: 0.72rem;
     padding: 0.2rem 0.7rem;
   }
+  .cable-inspector .ci-loss {
+    color: #8fd0a0;
+    font-variant-numeric: tabular-nums;
+  }
   .cable-inspector .ci-close {
     margin-left: auto;
+  }
+  /* Global levels & losses panel — live meter readings + static connection losses. */
+  .levels {
+    margin: 0.6rem 0;
+    font-size: 0.8rem;
+    color: #444;
+  }
+  .levels summary {
+    cursor: pointer;
+    color: #666;
+  }
+  .levels-body {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 1rem 2rem;
+    margin-top: 0.4rem;
+  }
+  .levels ul {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+  }
+  .levels li {
+    padding: 0.1rem 0;
+    font-variant-numeric: tabular-nums;
+  }
+  .levels .dev {
+    display: inline-block;
+    min-width: 7rem;
+    color: #666;
+  }
+  .levels .reading {
+    margin-right: 0.8rem;
+    color: #555;
+  }
+  .levels .loss-list li {
+    color: #777;
   }
   /* Small chrome buttons in a world item's top bar (device flip, space selector, remove). */
   .chip {

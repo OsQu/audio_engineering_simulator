@@ -5,10 +5,11 @@
   // direct front↔back toggle), so the panel no longer flips itself. Jacks are drag-to-connect patch
   // points (Story 4.4).
   import type { Snippet } from "svelte";
-  import type { ParamDescriptor, PortDescriptor } from "../catalog";
+  import type { ParamDescriptor, PortDescriptor, ReadoutDescriptor } from "../catalog";
   import Fader from "./Fader.svelte";
   import Jack from "./Jack.svelte";
   import Knob from "./Knob.svelte";
+  import Meter from "./Meter.svelte";
   import Switch from "./Switch.svelte";
 
   interface Props {
@@ -17,17 +18,31 @@
     name: string;
     params: ParamDescriptor[];
     ports: PortDescriptor[];
+    /** Scalar readouts the device meters (node→host lane); empty for a non-metering device. */
+    readouts?: ReadoutDescriptor[];
     /** Whether the back panel faces the operator (controlled by the world layer, gated by clearance). */
     flipped?: boolean;
     /** Current value for a device-local param id. */
     valueFor: (id: number) => number;
+    /** Current live reading for a device-local readout id (from the node→host lane). */
+    readingFor?: (id: number) => number;
     /** Apply a new value to a param. */
     onParam: (p: ParamDescriptor, value: number) => void;
     /** Optional per-device front-panel embellishment (e.g. the synth's ADSR screen). */
     children?: Snippet;
   }
-  let { device, name, params, ports, flipped = false, valueFor, onParam, children }: Props =
-    $props();
+  let {
+    device,
+    name,
+    params,
+    ports,
+    readouts = [],
+    flipped = false,
+    valueFor,
+    readingFor,
+    onParam,
+    children,
+  }: Props = $props();
 
   const inputs = $derived(ports.filter((p) => p.direction === "input"));
   const outputs = $derived(ports.filter((p) => p.direction === "output"));
@@ -52,8 +67,16 @@
             {/if}
           {/each}
         </div>
-      {:else}
+      {:else if readouts.length === 0}
         <p class="empty">no front-panel controls</p>
+      {/if}
+      {#if readouts.length > 0}
+        <!-- Meter screen: one bar per readout, driven live by the node→host lane (Story 4.5). -->
+        <div class="meters">
+          {#each readouts as r (r.id)}
+            <Meter label={r.label} unit={r.unit} value={readingFor?.(r.id) ?? -120} />
+          {/each}
+        </div>
       {/if}
       {#if children}
         <div class="screen-slot">{@render children()}</div>
@@ -165,6 +188,12 @@
   }
   .screen-slot {
     margin-top: 0.6rem;
+  }
+  .meters {
+    display: flex;
+    flex-direction: column;
+    gap: 0.3rem;
+    margin-top: 0.2rem;
   }
 
   .back {
