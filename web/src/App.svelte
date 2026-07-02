@@ -14,14 +14,13 @@
     wireKeyboard,
     wireMidi,
   } from "./engine";
-  import { cablePathData, cableSpec, cableTypeIdFor, evaluateConnection } from "./connections";
+  import { cablePathData, cableTypeIdFor, evaluateConnection } from "./connections";
   import type { ConnectVerdict, Endpoint } from "./connections";
   import type { Connection, Patch, PortRef } from "./scene";
-  import { defaultScene, loadScene, newSpace, type Scene, saveScene, setSceneParam } from "./scene-store";
+  import { defaultScene, loadScene, type Scene, saveScene, setSceneParam } from "./scene-store";
   import {
     deviceById,
     deviceRect,
-    FRAME_MARGIN,
     GRID_MM,
     isRack,
     type LayoutCtx,
@@ -31,15 +30,8 @@
     type ViewCtx,
   } from "./projection";
   import * as placement from "./placement";
-  import {
-    footprint,
-    RACK_DEPTH_MM,
-    RACK_UNIT_MM,
-    RACK_WIDTH_MM,
-    type Room,
-    type Size3,
-    type Wall,
-  } from "./spatial";
+  import * as sceneOps from "./scene-ops";
+  import { type Room, type Wall } from "./spatial";
   import Panel from "./widgets/Panel.svelte";
   import Screen from "./widgets/Screen.svelte";
   import Vu from "./widgets/Vu.svelte";
@@ -154,8 +146,7 @@
 
   // --- Patch cables --------------------------------------------------------------------------------
   // A stable key for a connection (its two endpoints), for the {#each} in the cable overlay.
-  const connKey = (c: Connection): string =>
-    `${c.from.device}:${c.from.port}->${c.to.device}:${c.to.port}`;
+  const connKey = sceneOps.connKey;
 
   // Measured jack-connector centres in surface space, keyed "device:direction:port" (from each jack's
   // `data-jack` attribute). Populated by measureJacks after layout; lets a cable anchor at the real
@@ -421,41 +412,21 @@
     if (e.key === "Escape" && dragCable) dragCable = null;
   }
 
-  // The carrier domain of a connection (from its output port), or null if unknown.
-  function connectionDomain(c: Connection): PortDomain | null {
-    const dev = deviceById(scene, c.from.device);
-    const desc = dev ? descriptorFor(catalog, dev.typeId) : undefined;
-    return desc?.ports.find((p) => p.direction === "output" && p.id === c.from.port)?.domain ?? null;
-  }
+  // Connection introspection + edits are pure scene-ops; App wraps them to bind scene/catalog/cables
+  // and to hot-swap the engine after any edit that changes the runnable patch.
+  const connectionDomain = (c: Connection): PortDomain | null =>
+    sceneOps.connectionDomain(scene, catalog, c);
+  const connectionKind = (c: Connection): PortKind => sceneOps.connectionKind(scene, catalog, c);
 
-  // The connector kind of a connection (from its output port) — picks the cable's colour from the signal
-  // palette. Falls back to "line" (neutral grey) when the port can't be resolved.
-  function connectionKind(c: Connection): PortKind {
-    const dev = deviceById(scene, c.from.device);
-    const desc = dev ? descriptorFor(catalog, dev.typeId) : undefined;
-    return desc?.ports.find((p) => p.direction === "output" && p.id === c.from.port)?.kind ?? "line";
-  }
-
-  // Apply a legal verdict to the patch and hot-swap: drop the replaced edge (fan-in is illegal, so a
-  // new cable into an occupied input replaces its source), add the new one, rebuild the engine. A fresh
-  // **analog** connection gets a transparent default cable (the first preset); digital/event stay ideal.
   function commitCable(v: ConnectVerdict): void {
-    if (!v.ok) return;
-    let conns = scene.patch.connections;
-    if (v.replaces) {
-      const rk = connKey(v.replaces);
-      conns = conns.filter((c) => connKey(c) !== rk);
-    }
-    const conn: Connection = { from: v.connection.from, to: v.connection.to };
-    if (connectionDomain(conn) === "analog" && cables[0]) conn.cable = cableSpec(cables[0]);
-    scene.patch.connections = [...conns, conn];
+    sceneOps.commitCable(scene, catalog, cables, v);
     hotSwap();
   }
 
-  // Remove a cable (from the inspector) and hot-swap. Anything it fed now reads silence.
+  // Remove a cable (from the inspector) and hot-swap; drop the inspector selection if it was this one.
   function disconnect(c: Connection): void {
     const k = connKey(c);
-    scene.patch.connections = scene.patch.connections.filter((x) => connKey(x) !== k);
+    sceneOps.disconnect(scene, c);
     if (selectedCableKey === k) selectedCableKey = null;
     hotSwap();
   }
@@ -476,55 +447,26 @@
   // Set (or clear, `""` ⇒ ideal wire) the cable type on a connection, then hot-swap — the cable's R·C
   // is baked into the edge at compile, so changing it rebuilds the engine.
   function setCableType(c: Connection, typeId: string): void {
-    const idx = scene.patch.connections.findIndex((x) => connKey(x) === connKey(c));
-    if (idx < 0) return;
-    const preset = typeId ? cables.find((ct) => ct.typeId === typeId) : undefined;
-    const updated: Connection = { from: { ...c.from }, to: { ...c.to } };
-    if (preset) updated.cable = cableSpec(preset);
-    scene.patch.connections[idx] = updated;
+    sceneOps.setCableType(scene, cables, c, typeId);
     hotSwap();
   }
 
-  // The occupied U-runs of a rack, excluding `excludeId` (the device being placed).
   // Thin adapters over placement.ts, handed to the world layer as the drag legality + commit hooks.
   // Both build the layout ctx inline (so reads stay reactive) and pass the already-derived placedItems.
   const canPlace = (id: string, x: number, y: number): boolean =>
     placement.canPlace(layout(), placedItems, id, x, y);
   const moveTo = (id: string, x: number, y: number): void => placement.moveTo(layout(), id, x, y);
 
-  // Spaces (rooms). Switching shows only that space's gear; membership persists in the scene.
-  function addSpace(): void {
-    let n = scene.ui.spaces.length + 1;
-    while (scene.ui.spaces.some((s) => s.id === `space-${n}`)) n++;
-    const space = newSpace(`space-${n}`, `Space ${n}`);
-    scene.ui.spaces.push(space);
-    currentSpace = space.id;
-  }
-  // Send a free-standing device to another space (it lands at that space's floor origin).
-  function moveDeviceToSpace(id: string, spaceId: string): void {
-    const place = scene.ui.placements[id];
-    if (!place) return;
-    place.rack = undefined;
-    place.space = spaceId;
-    place.position = { x: 0, y: 0, z: 0 };
-  }
-  // Move a rack to another space; its mounted gear follows.
-  function moveRackToSpace(id: string, spaceId: string): void {
-    const rack = rackById(scene, id);
-    if (!rack) return;
-    rack.space = spaceId;
-    for (const d of scene.patch.devices) {
-      const place = scene.ui.placements[d.id];
-      if (place?.rack?.id === id) place.space = spaceId;
-    }
-  }
-
-  // Flip a unit front↔back to reach its rear I/O (no clearance step — flipping is direct).
-  function toggleFlip(id: string): void {
-    const place = scene.ui.placements[id];
-    if (!place) return;
-    place.facing = place.facing === "back" ? "front" : "back";
-  }
+  // Spaces (rooms) + cross-space moves + flip — UI-only scene furniture (no hot-swap). Thin wrappers
+  // over scene-ops; addSpace returns the new id so we switch to it.
+  const addSpace = (): void => {
+    currentSpace = sceneOps.addSpace(scene);
+  };
+  const moveDeviceToSpace = (id: string, spaceId: string): void =>
+    sceneOps.moveDeviceToSpace(scene, id, spaceId);
+  const moveRackToSpace = (id: string, spaceId: string): void =>
+    sceneOps.moveRackToSpace(scene, id, spaceId);
+  const toggleFlip = (id: string): void => sceneOps.toggleFlip(scene, id);
 
   function seedParamValues(): void {
     const values: Record<string, number> = {};
@@ -567,55 +509,18 @@
     pushParams(send);
   }
 
-  // Add gear from the catalog: a new instance placed free-standing on the wall in view (just past the
-  // existing gear), then a hot-swap. Its ports read silence until patched (Story 4.4).
+  // Add gear (rebuilds the engine) / a rack (UI furniture, no rebuild); remove either. Thin wrappers
+  // over scene-ops — addDevice/removeDevice hot-swap, the rack ops don't (per the plan's table).
   function addDevice(typeId: string): void {
-    const rightX = placedItems.reduce((m, it) => Math.max(m, it.rect.x + it.rect.width), 0);
-    let n = 1;
-    while (scene.patch.devices.some((d) => d.id === `${typeId}-${n}`)) n++;
-    const id = `${typeId}-${n}`;
-    const desc = descriptorFor(catalog, typeId);
-    const size = desc ? footprint(desc.formFactor) : { width: 0, height: 0, depth: 0 };
-    const { wall, position } = placement.wallSpawn(view(), size, rightX + 60);
-    scene.patch.devices.push({ id, typeId });
-    scene.ui.placements[id] = { space: currentSpace, wall, position, facing: "front" };
+    sceneOps.addDevice(layout(), placedItems, typeId);
     hotSwap();
   }
-
-  // Remove a device (never the output tap, which would invalidate the patch): drop it from the patch,
-  // its connections, and its placement, then hot-swap. Anything it fed now reads silence.
   function removeDevice(id: string): void {
-    if (scene.patch.output.device === id) return;
-    scene.patch.devices = scene.patch.devices.filter((d) => d.id !== id);
-    scene.patch.connections = scene.patch.connections.filter(
-      (c) => c.from.device !== id && c.to.device !== id,
-    );
-    delete scene.ui.placements[id];
+    sceneOps.removeDevice(scene, id);
     hotSwap();
   }
-
-  // Add / remove a rack — purely UI furniture (the engine has no racks), so no hot-swap. Removing a
-  // rack un-mounts its gear, leaving each unit free-standing.
-  function addRack(): void {
-    const rightX = placedItems.reduce((m, it) => Math.max(m, it.rect.x + it.rect.width), 0);
-    let n = 1;
-    while (scene.ui.racks.some((r) => r.id === `rack-${n}`)) n++;
-    const slots = 8;
-    const frameSize: Size3 = {
-      width: RACK_WIDTH_MM + 2 * FRAME_MARGIN,
-      height: slots * RACK_UNIT_MM + 2 * FRAME_MARGIN,
-      depth: RACK_DEPTH_MM,
-    };
-    const { wall, position } = placement.wallSpawn(view(), frameSize, rightX + 60);
-    scene.ui.racks.push({ id: `rack-${n}`, space: currentSpace, wall, position, slots });
-  }
-  function removeRack(id: string): void {
-    for (const d of scene.patch.devices) {
-      const place = scene.ui.placements[d.id];
-      if (place?.rack?.id === id) place.rack = undefined; // un-mount; keep its free position
-    }
-    scene.ui.racks = scene.ui.racks.filter((r) => r.id !== id);
-  }
+  const addRack = (): void => sceneOps.addRack(layout(), placedItems);
+  const removeRack = (id: string): void => sceneOps.removeRack(scene, id);
 
   async function start(): Promise<void> {
     if (started) return;
