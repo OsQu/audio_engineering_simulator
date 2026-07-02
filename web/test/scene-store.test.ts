@@ -13,6 +13,22 @@ describe("scene store", () => {
     expect(scene.ui.spaces.length).toBe(1);
   });
 
+  it("the default scene is a rectangular room with wall-tagged gear (rack on the back wall)", () => {
+    const scene = defaultScene();
+    const space = scene.ui.spaces[0];
+    // A rectangular room, wider than deep → the left/right walls are the shorter sides.
+    expect(space.room.width).toBeGreaterThan(space.room.depth);
+    const rack = scene.ui.racks[0];
+    expect(rack.wall).toBe("back");
+    // Mounted gear inherits its rack's wall (as it inherits the rack's space).
+    for (const place of Object.values(scene.ui.placements)) {
+      if (place.rack?.id === rack.id) expect(place.wall).toBe(rack.wall);
+    }
+    // The synth + speaker stand against the front wall (where the window to the live room is).
+    expect(scene.ui.placements.synth.wall).toBe("front");
+    expect(scene.ui.placements.spk.wall).toBe("front");
+  });
+
   it("round-trips a scene through serialize/parse, placements included", () => {
     const scene = defaultScene();
     const back = parseScene(serializeScene(scene));

@@ -17,7 +17,7 @@
   import { cablePathData, cableSpec, cableTypeIdFor, evaluateConnection } from "./connections";
   import type { ConnectVerdict, Endpoint } from "./connections";
   import type { Connection, Patch, PortRef } from "./scene";
-  import { defaultScene, loadScene, type Scene, saveScene, setSceneParam } from "./scene-store";
+  import { defaultScene, loadScene, newSpace, type Scene, saveScene, setSceneParam } from "./scene-store";
   import type { Rack } from "./scene-store";
   import {
     footprint,
@@ -477,7 +477,7 @@
   function addSpace(): void {
     let n = scene.ui.spaces.length + 1;
     while (scene.ui.spaces.some((s) => s.id === `space-${n}`)) n++;
-    const space = { id: `space-${n}`, name: `Space ${n}` };
+    const space = newSpace(`space-${n}`, `Space ${n}`);
     scene.ui.spaces.push(space);
     currentSpace = space.id;
   }
@@ -558,6 +558,7 @@
     scene.patch.devices.push({ id, typeId });
     scene.ui.placements[id] = {
       space: currentSpace,
+      wall: "front", // provisional — Story 4.6.3 places new gear on the wall currently in view
       position: { x: rightX + 60, y: 0, z: 0 },
       facing: "front",
     };
@@ -582,7 +583,13 @@
     const rightX = placedItems.reduce((m, it) => Math.max(m, it.rect.x + it.rect.width), 0);
     let n = 1;
     while (scene.ui.racks.some((r) => r.id === `rack-${n}`)) n++;
-    scene.ui.racks.push({ id: `rack-${n}`, space: currentSpace, position: { x: rightX + 60, y: 0, z: 0 }, slots: 8 });
+    scene.ui.racks.push({
+      id: `rack-${n}`,
+      space: currentSpace,
+      wall: "front", // provisional — Story 4.6.3 places a new rack on the wall currently in view
+      position: { x: rightX + 60, y: 0, z: 0 },
+      slots: 8,
+    });
   }
   function removeRack(id: string): void {
     for (const d of scene.patch.devices) {

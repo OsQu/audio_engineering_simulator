@@ -9,19 +9,24 @@
 // a save that doesn't match the current schema is simply discarded and the default scene is used.
 
 import type { Patch } from "./scene";
-import type { Vec3 } from "./spatial";
+import type { Room, Vec3, Wall } from "./spatial";
 
 /** Current save-format version. A saved scene at any other version is discarded (no migration). Bumped
- *  to 6 when the default scene gained the VU + digital meters, so a stale save doesn't hide them. */
-export const SCHEMA_VERSION = 6;
+ *  to 7 when a space became a rectangular room with four walls (Story 4.6): spaces gained a `room` and
+ *  placements/racks a `wall` tag, so a stale v6 save doesn't lack them. */
+export const SCHEMA_VERSION = 7;
 
 /** A space (room) in the studio — a UI grouping over the one engine graph (the engine never knows
- *  about rooms). Multiple spaces + switching arrive in Story 4.3.6; the default scene has one. */
+ *  about rooms). A space is a **rectangular room**: gear stands against one of four walls, each an
+ *  elevation view you turn between, over a top-down floor plan (Story 4.6). */
 export interface Space {
   /** Stable space id, referenced by a device's `Placement.space` and a `Rack.space`. */
   id: string;
   /** Human display name. */
   name: string;
+  /** The room's floor extent + wall height (world mm). The four walls (front/back/left/right) are
+   *  derived from this rectangle; nothing stores per-wall geometry. */
+  room: Room;
 }
 
 /** A 19" rack — a container of U-slots that rackmount gear mounts into. UI-only (the engine has no
@@ -31,6 +36,8 @@ export interface Rack {
   id: string;
   /** The space this rack stands in. */
   space: string;
+  /** Which wall the rack stands against — the elevation it (and its mounted gear) appears in. */
+  wall: Wall;
   /** Lower-left-front corner of the **U-slot region**, world millimetres (the frame draws around it). */
   position: Vec3;
   /** Number of U-slots. */
@@ -46,6 +53,9 @@ export type DeviceFacing = "front" | "back";
 export interface Placement {
   /** The id of the space (room) this device sits in. */
   space: string;
+  /** Which wall this device stands against — the elevation it appears in. Mounted gear inherits its
+   *  rack's wall (kept in sync when it mounts), mirroring how it inherits the rack's `space`. */
+  wall: Wall;
   /** Free-standing lower-left-front corner, world mm. Used when not mounted in a rack. */
   position: Vec3;
   /** If mounted: which rack + bottom U-slot. Absent ⇒ free-standing at `position`. */
@@ -69,23 +79,40 @@ export interface Scene {
   patch: Patch;
 }
 
-/** The studio's single default space. */
-const DEFAULT_SPACE: Space = { id: "control-room", name: "Control Room" };
+/** Default room dimensions for a space (world mm) — a 4 m × 3 m room, 1.4 m of wall shown. */
+const DEFAULT_ROOM: Room = { width: 4000, depth: 3000, height: 1400 };
 
-/** A free-standing placement on the floor at world-x `x`. */
-function free(x: number): Placement {
+/** A fresh space with default room dimensions — used by the default scene and the "add space" control. */
+export function newSpace(id: string, name: string): Space {
+  return { id, name, room: { ...DEFAULT_ROOM } };
+}
+
+/** The studio's single default space — a 4 m × 3 m control room, 1.4 m of wall shown. */
+const CONTROL_ROOM: Space = newSpace("control-room", "Control Room");
+
+/** A free-standing placement on the floor against `wall`, at floor position `(x, z)` world mm. */
+function free(wall: Wall, x: number, z: number): Placement {
   return {
-    space: DEFAULT_SPACE.id,
-    position: { x, y: 0, z: 0 },
+    space: CONTROL_ROOM.id,
+    wall,
+    position: { x, y: 0, z },
     facing: "front",
   };
 }
 
-/** A rack-mounted placement at `uSlot` of `rackId` (its free `position` is where it stands if unmounted). */
-function mounted(rackId: string, uSlot: number, freeX: number): Placement {
+/** A rack-mounted placement at `uSlot` of `rackId` on `wall` (its free `position` is where it stands if
+ *  unmounted). Mounted gear shares its rack's wall. */
+function mounted(
+  rackId: string,
+  uSlot: number,
+  wall: Wall,
+  freeX: number,
+  freeZ: number,
+): Placement {
   return {
-    space: DEFAULT_SPACE.id,
-    position: { x: freeX, y: 0, z: 0 },
+    space: CONTROL_ROOM.id,
+    wall,
+    position: { x: freeX, y: 0, z: freeZ },
     rack: { id: rackId, uSlot },
     facing: "front",
   };
@@ -94,9 +121,13 @@ function mounted(rackId: string, uSlot: number, freeX: number): Placement {
 /** The default studio: the chain `synth → gain → VU → AD → digital meter → DA → speaker`, tapped at
  * the speaker. The two meters sit either side of the AD so gain-staging across the converter is
  * visible out of the box: the VU reads the analog level in dBu, the digital meter the same signal in
- * dBFS. The synth and speaker (desktop gear) stand on the floor; the rackmount gain/VU/AD/meter/DA
- * mount in an 8U rack between them. The gain stage and meters are unity passthroughs. The `typeId`s
- * match the `devices` catalog; device ids are what control messages address. */
+ * dBFS. The gain stage and meters are unity passthroughs.
+ *
+ * Spatial layout (Story 4.6): the rackmount gain/VU/AD/meter/DA mount in an 8U rack against the **back**
+ * wall (z≈0); the synth and speaker (desktop gear) stand along the **front** wall (z near the room's far
+ * depth), where the window to the live room is. So the signal chain runs front→back→front — its cables
+ * cross walls, drawn as portal stubs in each elevation. The `typeId`s match the `devices` catalog;
+ * device ids are what control messages address. */
 export function defaultScene(): Scene {
   const patch: Patch = {
     devices: [
@@ -119,22 +150,29 @@ export function defaultScene(): Scene {
     output: { device: "spk", port: 0 },
   };
 
-  const rackX = 760;
+  const rackX = 760; // the back-wall rack's world-x
+  const frontZ = 2600; // desktop gear stands near the front wall (room depth 3000)
   return {
     schemaVersion: SCHEMA_VERSION,
     ui: {
-      spaces: [DEFAULT_SPACE],
+      spaces: [CONTROL_ROOM],
       racks: [
-        { id: "rack-1", space: DEFAULT_SPACE.id, position: { x: rackX, y: 0, z: 0 }, slots: 8 },
+        {
+          id: "rack-1",
+          space: CONTROL_ROOM.id,
+          wall: "back",
+          position: { x: rackX, y: 0, z: 0 },
+          slots: 8,
+        },
       ],
       placements: {
-        synth: free(0),
-        gain: mounted("rack-1", 0, rackX),
-        vu: mounted("rack-1", 1, rackX),
-        ad: mounted("rack-1", 2, rackX),
-        dig: mounted("rack-1", 3, rackX),
-        da: mounted("rack-1", 4, rackX),
-        spk: free(1500),
+        synth: free("front", 200, frontZ),
+        gain: mounted("rack-1", 0, "back", rackX, 0),
+        vu: mounted("rack-1", 1, "back", rackX, 0),
+        ad: mounted("rack-1", 2, "back", rackX, 0),
+        dig: mounted("rack-1", 3, "back", rackX, 0),
+        da: mounted("rack-1", 4, "back", rackX, 0),
+        spk: free("front", 2800, frontZ),
       },
     },
     patch,
