@@ -348,11 +348,9 @@
   .viewport {
     position: relative;
     width: 100%;
-    height: 62vh;
+    height: 100%; /* fill the parent stage (App makes it a flex-fill full-height area) */
     overflow: hidden;
-    background: #2a2d31;
-    border: 1px solid #1c1e21;
-    border-radius: 8px;
+    background: var(--ae-bg-room);
     touch-action: none;
   }
   .surface {

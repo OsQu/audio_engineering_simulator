@@ -649,50 +649,9 @@
 />
 
 <main>
-  <h1>Scene-driven engine — Svelte harness</h1>
-  <p>
-    The canonical <em>scene</em> (<code>synth → AD → DA → speaker</code>) built from a serialized
-    patch and running live in an <code>AudioWorkletProcessor</code> as <code>SceneEngine</code>.
-    Controls are rendered
-    <strong>from the device catalog</strong>
-    and addressed
-    <strong>by device id</strong>; the scene can be <strong>saved / loaded</strong> (versioned JSON
-    in localStorage) and
-    <strong>reloaded live</strong> to exercise the engine's glitch-free hot-swap.
-  </p>
-  <p>
-    <strong>Build the wasm first:</strong> <code>npm run wasm</code>, then <code>npm run dev</code>.
-    Browsers require a user gesture to start audio.
-  </p>
-
-  <p><button type="button" onclick={start} disabled={started}>▶ start</button></p>
-  <p class="status">{status}</p>
-  <p class="health">{health}</p>
-
-  {#if ready}
-    <section class="controls">
-      <div class="master">
-        <label class="volume">
-          <span>Volume</span>
-          <input
-            type="range"
-            min="0"
-            max="1"
-            step="0.01"
-            value={volume}
-            oninput={(e) => onVolume(Number(e.currentTarget.value))}
-          />
-          <span class="readout">{Math.round(volume * 100)}%</span>
-        </label>
-        <Vu {level} />
-      </div>
-
-      <p>
-        Play with the keyboard: <kbd>A</kbd> <kbd>W</kbd> <kbd>S</kbd> <kbd>E</kbd> <kbd>D</kbd>
-        <kbd>F</kbd> <kbd>T</kbd> <kbd>G</kbd> <kbd>Y</kbd> <kbd>H</kbd> <kbd>U</kbd> <kbd>J</kbd>
-        <kbd>K</kbd> map to one octave from C4. (<kbd>Z</kbd>/<kbd>X</kbd> shift octave down/up.)
-      </p>
-
+  <header class="toolbar">
+    <button type="button" class="start" onclick={start} disabled={started}>▶ start</button>
+    {#if ready}
       <div class="spaces">
         {#each scene.ui.spaces as space (space.id)}
           <button
@@ -708,7 +667,7 @@
       </div>
 
       <div class="palette">
-        <span class="palette-label">Add to {currentSpace}:</span>
+        <span class="palette-label">Add:</span>
         {#each catalog as desc (desc.typeId)}
           <button type="button" class="add-chip" onclick={() => addDevice(desc.typeId)}>
             {desc.name}
@@ -716,12 +675,35 @@
         {/each}
         <button type="button" class="add-chip rack" onclick={addRack}>Rack</button>
       </div>
-      <p class="world-hint">
-        Drag the background to pan, scroll to zoom; drag a unit by its top bar to move it (snap into a
-        rack's free U-slot, or out onto the floor; red = an illegal spot). To see a unit's back,
-        <strong>pull it out</strong> first, then flip. Send a unit or rack to another room with its
-        space selector. Zoom in to operate a panel.
-      </p>
+
+      <div class="master">
+        <label class="volume">
+          <span>Vol</span>
+          <input
+            type="range"
+            min="0"
+            max="1"
+            step="0.01"
+            value={volume}
+            oninput={(e) => onVolume(Number(e.currentTarget.value))}
+          />
+          <span class="readout">{Math.round(volume * 100)}%</span>
+        </label>
+        <Vu {level} />
+      </div>
+
+      <span class="scene-buttons">
+        <button type="button" onclick={saveCurrent}>save</button>
+        <button type="button" onclick={loadSaved}>load</button>
+        <button type="button" onclick={reload}>reload</button>
+      </span>
+
+      <span class="statuses">{[status, health, midiStatus].filter(Boolean).join(" · ")}</span>
+    {/if}
+  </header>
+
+  {#if ready}
+    <div class="stage">
       <!-- One patch cable: three stacked strokes for depth (dark drop-shadow, signal-coloured core, thin
            lit highlight — colour from the connector kind), plus a wide transparent hit-path for
            click-to-disconnect (its pointer events go off during a drag so `elementFromPoint` can see the
@@ -942,34 +924,46 @@
         </div>
       {/if}
 
-      <p class="midi">{midiStatus}</p>
-      <p class="scene-buttons">
-        <button type="button" onclick={saveCurrent}>save scene</button>
-        <button type="button" onclick={loadSaved}>load scene</button>
-        <button type="button" onclick={reload}>reload (hot-swap)</button>
-      </p>
-    </section>
+    </div>
   {/if}
 </main>
 
 <style>
   main {
     font: 15px/1.5 var(--ae-font-ui);
-    max-width: 52rem;
-    margin: 3rem auto;
-    padding: 0 1rem;
+    display: flex;
+    flex-direction: column;
+    height: 100dvh;
     color: var(--ae-text-secondary);
   }
-  h1 {
-    font-family: var(--ae-font-display);
-    color: var(--ae-text-primary);
-    letter-spacing: 0.01em;
+  /* Slim top toolbar over a full-height stage; wraps to a second row if the palette gets wide. */
+  .toolbar {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 0.4rem 0.8rem;
+    padding: 0.4rem 0.7rem;
+    background: var(--ae-bg-panel);
+    border-bottom: 1px solid var(--ae-line-panel);
+  }
+  .start {
+    font-weight: 600;
+  }
+  .statuses {
+    margin-left: auto;
+    font-size: 0.75rem;
+    color: var(--ae-text-muted);
+    font-variant-numeric: tabular-nums;
+  }
+  .stage {
+    position: relative; /* anchor for the floating cable inspector */
+    flex: 1;
+    min-height: 0;
   }
   .master {
     display: flex;
-    flex-direction: column;
-    gap: 0.5rem;
-    margin: 0.5rem 0 1rem;
+    align-items: center;
+    gap: 0.6rem;
   }
   .volume {
     display: flex;
@@ -985,12 +979,6 @@
     width: 3rem;
     font-variant-numeric: tabular-nums;
     color: var(--ae-text-muted);
-  }
-  code {
-    background: var(--ae-bg-chip);
-    color: var(--ae-text-primary);
-    padding: 0.1em 0.3em;
-    border-radius: 3px;
   }
   button {
     font: inherit;
@@ -1008,21 +996,13 @@
     opacity: 0.5;
     cursor: default;
   }
-  .status {
-    color: var(--ae-text-muted);
-  }
-  .health {
-    color: var(--ae-text-muted);
-    font-size: 0.85em;
-    font-variant-numeric: tabular-nums;
-  }
-  .controls {
-    margin-top: 1.5rem;
+  .scene-buttons {
+    display: flex;
+    gap: 0.3rem;
   }
   .spaces {
     display: flex;
     gap: 0.3rem;
-    margin: 0.5rem 0 0.3rem;
     flex-wrap: wrap;
   }
   .space-tab {
@@ -1083,11 +1063,6 @@
   .add-chip.rack {
     border-style: dashed;
     color: var(--ae-text-muted);
-  }
-  .world-hint {
-    font-size: 0.8rem;
-    color: var(--ae-text-muted);
-    margin: 0.5rem 0;
   }
   /* A patch cable drawn in the world overlay (surface mm; stroke scales with zoom). */
   .cable {
@@ -1200,16 +1175,23 @@
     stroke-width: 5;
   }
   /* Cable inspector strip (shown when a cable is selected). */
+  /* Floats over the stage (bottom-centre) rather than taking layout space, so the world stays full. */
   .cable-inspector {
+    position: absolute;
+    left: 50%;
+    bottom: 1rem;
+    transform: translateX(-50%);
+    z-index: 6;
     display: flex;
     align-items: center;
     flex-wrap: wrap;
     gap: 0.6rem;
-    margin: 0.5rem 0;
     padding: 0.4rem 0.75rem;
-    background: #2a2d31;
-    color: #e0e0e0;
-    border-radius: 6px;
+    background: var(--ae-bg-panel);
+    color: var(--ae-text-strong);
+    border: 1px solid var(--ae-line-panel);
+    border-radius: var(--ae-radius-panel);
+    box-shadow: var(--ae-shadow-card);
     font-size: 0.8rem;
   }
   .cable-inspector .ci-type,
@@ -1308,12 +1290,5 @@
   }
   .slot:first-child {
     border-bottom: none;
-  }
-  kbd {
-    background: var(--ae-bg-chip);
-    color: var(--ae-text-strong);
-    border: 1px solid var(--ae-line-chip);
-    border-radius: 3px;
-    padding: 0.05em 0.35em;
   }
 </style>
