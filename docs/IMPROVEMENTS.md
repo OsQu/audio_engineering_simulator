@@ -12,3 +12,4 @@
   - Click catalog button -> Drawer opens where you click the device
 - ~Hide the volume and "save load reload" under a menu.~ DONE
 - ~Hide global VU meter and simulation info behind debug menu~ DONE
+- Do not allow creating new spaces, but describe them in the scene/space file. So from user perspective the layout is hard coded
