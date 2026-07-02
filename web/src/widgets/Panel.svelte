@@ -250,9 +250,13 @@
     margin-top: 0.6rem;
   }
   .meters {
+    /* Readouts sit side by side across the (wide) rack front — Peak next to RMS, the VU needle next
+       to its Peak — instead of stacking, which keeps the front short enough for a thin rack unit. */
     display: flex;
-    flex-direction: column;
-    gap: 0.3rem;
+    flex-direction: row;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: clamp(0.5rem, 3cqw, 1.5rem);
     margin-top: 0.2rem;
   }
 
