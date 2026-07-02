@@ -51,6 +51,7 @@ pub use synth::SynthVoice;
 
 use crate::param::{ParamDecl, Params};
 use crate::port::{InputPort, OutputPort};
+use crate::readout::ReadoutDecl;
 use crate::rng::Rng;
 use crate::signal::{AnalogRate, Lane};
 
@@ -92,12 +93,28 @@ pub trait Node {
         &[]
     }
 
+    /// The node's scalar readouts, in id order — the meter/probe values the host reads back (the
+    /// node→host lane). Each [`ReadoutDecl`] names an id; `compile` reserves one slot per declaration
+    /// in the schedule's readout store and refreshes it each block from
+    /// [`read_readouts`](Self::read_readouts). Default: none. A node names its readouts with `const`s
+    /// whose [`ReadoutId`](crate::ReadoutId) equals the declaration's position here.
+    fn readouts(&self) -> &[ReadoutDecl] {
+        &[]
+    }
+
     /// Transform a block: read the `inputs` lanes and current `params`, write each output lane's
     /// **open-circuit** value into `outputs`. Hot path — no allocation, no panic. The slice
     /// lengths are the nodes' total lane counts (sum of each port's
     /// [`lane_count`](crate::InputPort::lane_count)); a node reads a control param at sample `i`
     /// with [`params.value_at_or`](Params::value_at_or), passing its own field as the fallback.
     fn process(&mut self, params: &Params, inputs: &[Lane], outputs: &mut [Lane]);
+
+    /// Write this node's current readout values into `out`, in [`readouts()`](Self::readouts) id
+    /// order (`out.len() == readouts().len()`, guaranteed by the schedule). Called once per block,
+    /// after [`process`](Self::process), to snapshot the readings into the schedule's store. Off the
+    /// per-sample path but **on the audio thread**: no allocation, no panic. A node whose reading is
+    /// already a field just copies it out; nodes with no readouts use the default no-op.
+    fn read_readouts(&self, _out: &mut [f32]) {}
 
     /// Seed this node's stochastic state from `rng`, an independent per-node stream.
     ///

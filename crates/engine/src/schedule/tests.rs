@@ -2062,3 +2062,125 @@ mod hot_path_robustness {
         );
     }
 }
+
+/// The node→host readout lane: a node declares readouts, the schedule reserves a store, and each
+/// block it snapshots the current reading for the host to poll — the observe-side mirror of params.
+mod readout_lane {
+    use super::super::*;
+    use crate::electrical::OutputZ;
+    use crate::graph::NodeId;
+    use crate::param::Params;
+    use crate::port::{InputPort, OutputPort};
+    use crate::readout::{ReadoutDecl, ReadoutHandle};
+
+    fn rate() -> AnalogRate {
+        AnalogRate::new(384_000.0)
+    }
+
+    /// A minimal readout-bearing node: emits a constant 1 V and reports how many blocks it has
+    /// processed as readout 0. Counting blocks (rather than a constant) proves the schedule snapshots
+    /// the reading *after* each block's `process`, exactly once per block.
+    struct BlockCounter {
+        blocks: f32,
+        readouts: [ReadoutDecl; 1],
+        outputs: [OutputPort; 1],
+    }
+
+    impl BlockCounter {
+        fn new() -> Self {
+            Self {
+                blocks: 0.0,
+                readouts: [ReadoutDecl { id: ReadoutId(0) }],
+                outputs: [OutputZ::new(Ohms::new(150.0)).into()],
+            }
+        }
+    }
+
+    impl Node for BlockCounter {
+        fn inputs(&self) -> &[InputPort] {
+            &[]
+        }
+
+        fn outputs(&self) -> &[OutputPort] {
+            &self.outputs
+        }
+
+        fn readouts(&self) -> &[ReadoutDecl] {
+            &self.readouts
+        }
+
+        fn process(&mut self, _params: &Params, _inputs: &[Lane], outputs: &mut [Lane]) {
+            self.blocks += 1.0;
+            for v in outputs[0].voltage_mut().as_mut_slice() {
+                *v = 1.0;
+            }
+        }
+
+        fn read_readouts(&self, out: &mut [f32]) {
+            out[0] = self.blocks;
+        }
+    }
+
+    /// A resolved readout starts at the store's zero-init and then, each processed block, reflects
+    /// *that* block's reading — proving the snapshot runs after `process`, once per block.
+    #[test]
+    fn readout_resolves_and_snapshots_each_block() {
+        let mut g = Graph::new();
+        let n = g.add(BlockCounter::new());
+        g.set_output(n, 0);
+        let mut sched = compile(g, 8, rate(), 0).expect("compiles");
+        let h = sched.readout(n, ReadoutId(0)).expect("readout 0 resolves");
+
+        // Nothing processed yet ⇒ the store holds its zero initialisation.
+        assert_eq!(sched.readout_value(h), Some(0.0));
+
+        let mut out = VoltageBuffer::zeros(8, rate());
+        for expected in 1..=5 {
+            sched.process(&mut out);
+            assert_eq!(
+                sched.readout_value(h),
+                Some(expected as f32),
+                "reading reflects this block, snapshotted after process"
+            );
+        }
+    }
+
+    /// Readout resolution is total: an out-of-range id or node returns `None`, and polling a foreign
+    /// handle reads `None` rather than panicking — the same defensiveness as the param/event seams.
+    #[test]
+    fn readout_resolution_is_total() {
+        let mut g = Graph::new();
+        let n = g.add(BlockCounter::new());
+        g.set_output(n, 0);
+        let sched = compile(g, 8, rate(), 0).expect("compiles");
+
+        assert!(sched.readout(n, ReadoutId(0)).is_some());
+        assert!(sched.readout(n, ReadoutId(1)).is_none(), "id out of range");
+        assert!(
+            sched.readout(NodeId(99), ReadoutId(0)).is_none(),
+            "node out of range"
+        );
+        assert!(
+            sched.readout_value(ReadoutHandle(9999)).is_none(),
+            "a foreign handle reads None, never panics"
+        );
+    }
+
+    /// A node with no readouts reserves no store — resolving any readout on it is `None`, and the
+    /// default no-op `read_readouts` is never handed a slice to fill.
+    #[test]
+    fn a_node_without_readouts_reserves_nothing() {
+        use crate::node::TestSource;
+        use crate::signal::Volts;
+
+        let mut g = Graph::new();
+        let src = g.add(TestSource::new(Volts::new(1.0), Ohms::new(100.0)));
+        g.set_output(src, 0);
+        let mut sched = compile(g, 8, rate(), 0).expect("compiles");
+        assert!(sched.readout(src, ReadoutId(0)).is_none());
+
+        // Still processes cleanly with an empty readout store.
+        let mut out = VoltageBuffer::zeros(8, rate());
+        sched.process(&mut out);
+    }
+}

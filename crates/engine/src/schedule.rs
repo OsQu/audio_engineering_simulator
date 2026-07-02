@@ -38,6 +38,7 @@ use crate::node::{Lifted, Node};
 use crate::noise::NoiseDensity;
 use crate::param::{ParamHandle, ParamId, ParamQueue, Params, Smoother, smooth_samples};
 use crate::port::{DigitalFace, EventFace};
+use crate::readout::{ReadoutHandle, ReadoutId};
 use crate::rng::Rng;
 use crate::signal::{
     AnalogRate, ClockDomainId, Domain, EventBuffer, Lane, SampleBuffer, TimedEvent, VoltageBuffer,
@@ -273,6 +274,15 @@ pub struct Schedule {
     param_base: Vec<usize>,
     /// Number of params each node declared (its run length in `param_store`).
     param_count: Vec<usize>,
+    /// One scalar slot per declared readout, flat and contiguous by node (mirrors `param_store`):
+    /// node `n`'s readouts are `readout_store[readout_base[n] .. + readout_count[n]]`. Refreshed
+    /// once per block from each node's [`read_readouts`](crate::Node::read_readouts) — the node→host
+    /// lane the host polls via [`readout_value`](Self::readout_value).
+    readout_store: Vec<f32>,
+    /// Start index of each node's readout run in `readout_store`.
+    readout_base: Vec<usize>,
+    /// Number of readouts each node declared (its run length in `readout_store`).
+    readout_count: Vec<usize>,
 }
 
 impl Schedule {
@@ -314,6 +324,27 @@ impl Schedule {
         } else {
             None
         }
+    }
+
+    /// Resolve a node's declared [`readout`](crate::Node::readouts) to a handle the host can poll
+    /// (see [`ReadoutHandle`]). Returns `None` if the node or readout id is out of range. Off the hot
+    /// path — the mirror of [`param`](Self::param) for the node→host lane.
+    #[must_use]
+    pub fn readout(&self, node: NodeId, id: ReadoutId) -> Option<ReadoutHandle> {
+        let base = *self.readout_base.get(node.0)?;
+        if (id.0 as usize) < self.readout_count[node.0] {
+            Some(ReadoutHandle(base + id.0 as usize))
+        } else {
+            None
+        }
+    }
+
+    /// The latest snapshot value for `handle` — the reading from the most recently processed block —
+    /// or `None` if the handle is foreign / out of range. Off the hot path: the host polls it after
+    /// [`process_io`](Self::process_io). Total over a stale handle, like the param/event drains.
+    #[must_use]
+    pub fn readout_value(&self, handle: ReadoutHandle) -> Option<f32> {
+        self.readout_store.get(handle.0).copied()
     }
 
     /// Process one block with no external input — the convenience for offline renders and chains
@@ -398,6 +429,9 @@ impl Schedule {
             param_store,
             param_base,
             param_count,
+            readout_store,
+            readout_base,
+            readout_count,
             ..
         } = self;
 
@@ -440,6 +474,15 @@ impl Schedule {
                     }
                 }
             }
+        }
+
+        // Snapshot the node→host lane: pull each node's current readings into the store, once per
+        // block, now that every node has processed this block (so a reading reflects this block, not
+        // the last). Each node writes into its own pre-sized run — zero-alloc, panic-free.
+        for (n, node) in nodes.iter().enumerate() {
+            let base = readout_base[n];
+            let run = base..base + readout_count[n];
+            node.read_readouts(&mut readout_store[run]);
         }
 
         // Advance every de-zipper one block: this block's nodes read the block-start values, so
@@ -806,6 +849,19 @@ pub fn compile(
         param_count[n] = param_store.len() - param_base[n];
     }
 
+    // --- 11. Reserve the readout store: one scalar slot per declared readout, contiguous by node
+    //         (the node→host mirror of the param store). Zero-initialised; the first processed block
+    //         fills it. A node's readout `r` resolves to `readout_base[node] + r`. ---
+    let mut readout_base = vec![0usize; node_count];
+    let mut readout_count = vec![0usize; node_count];
+    let mut readout_len = 0usize;
+    for (n, node) in nodes.iter().enumerate() {
+        readout_base[n] = readout_len;
+        readout_count[n] = node.readouts().len();
+        readout_len += readout_count[n];
+    }
+    let readout_store = vec![0.0_f32; readout_len];
+
     // The tap is the output port's first conductor (its hot leg for a balanced port).
     let out_buf = out_port_base[out_node.0][out_port];
     Ok(Schedule {
@@ -820,6 +876,9 @@ pub fn compile(
         param_store,
         param_base,
         param_count,
+        readout_store,
+        readout_base,
+        readout_count,
     })
 }
 

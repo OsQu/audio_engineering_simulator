@@ -14,6 +14,7 @@ mod node;
 mod noise;
 mod param;
 mod port;
+mod readout;
 mod rng;
 mod schedule;
 mod signal;
@@ -34,6 +35,7 @@ pub use node::{
 pub use noise::NoiseDensity;
 pub use param::{ParamDecl, ParamHandle, ParamId, ParamQueue, Params};
 pub use port::{AudioFormat, DigitalFace, EventFace, InputPort, OutputPort};
+pub use readout::{ReadoutDecl, ReadoutHandle, ReadoutId};
 pub use rng::Rng;
 pub use schedule::{CompileError, EventInputId, EventQueue, Schedule, ScheduleSlot, compile};
 pub use signal::{
