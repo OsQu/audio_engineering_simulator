@@ -18,14 +18,27 @@
   import type { ConnectVerdict, Endpoint } from "./connections";
   import type { Connection, Patch, PortRef } from "./scene";
   import { defaultScene, loadScene, newSpace, type Scene, saveScene, setSceneParam } from "./scene-store";
-  import type { Rack } from "./scene-store";
+  import {
+    deviceById,
+    deviceRect,
+    deviceUnits,
+    FRAME_MARGIN,
+    GRID_MM,
+    isRack,
+    type LayoutCtx,
+    type PlacedItem,
+    placedItemsFor,
+    rackById,
+    rackFrameSize,
+    rackRect,
+    type ViewCtx,
+  } from "./projection";
   import {
     elevationToWorld,
     footprint,
     nearestFreeSlot,
     nearestWall,
     orientedSize,
-    project,
     RACK_DEPTH_MM,
     RACK_UNIT_MM,
     RACK_WIDTH_MM,
@@ -35,7 +48,6 @@
     type Size3,
     type Vec3,
     type Wall,
-    wallProjection,
   } from "./spatial";
   import Panel from "./widgets/Panel.svelte";
   import Screen from "./widgets/Screen.svelte";
@@ -138,106 +150,16 @@
     },
   );
 
-  const FRAME_MARGIN = 14; // mm of rack frame drawn around the U-slot region
-  const GRID_MM = 50; // free-placement snap grid (world mm) — eases aligning gear on the floor
   // Human labels for the wall-view switcher.
   const WALL_LABELS: Record<Wall, string> = { front: "Front", back: "Back", left: "Left", right: "Right" };
 
-  const deviceById = (id: string) => scene.patch.devices.find((d) => d.id === id);
-  const rackById = (id: string) => scene.ui.racks.find((r) => r.id === id);
-  const isRack = (id: string) => rackById(id) !== undefined;
+  // The projection context, rebuilt inline on each call so its field reads register as reactive
+  // dependencies of whatever $derived/handler invokes it. Never hoist these into a plain const at
+  // module-init time — the fields would be captured stale.
+  const view = (): ViewCtx => ({ space: currentSpace, view: currentView, wall: currentWall, room });
+  const layout = (): LayoutCtx => ({ ...view(), scene, catalog });
 
-  // How many U a device occupies — 0 if it isn't rackmount gear (so it never mounts in a rack).
-  function deviceUnits(typeId: string): number {
-    const desc = descriptorFor(catalog, typeId);
-    return desc && desc.formFactor.kind === "rackmount" ? desc.formFactor.rackUnits : 0;
-  }
-
-  // A rack's frame footprint (world mm) — the U-slot column plus the drawn margin, RACK_DEPTH deep.
-  const rackFrameSize = (rack: Rack): Size3 => ({
-    width: RACK_WIDTH_MM + 2 * FRAME_MARGIN,
-    height: rack.slots * RACK_UNIT_MM + 2 * FRAME_MARGIN,
-    depth: RACK_DEPTH_MM,
-  });
-
-  // A rack's frame rect in the current wall's elevation (the draggable box drawn behind its gear).
-  function rackRect(rack: Rack): Rect2 {
-    return wallProjection(rack.position, orientedSize(rackFrameSize(rack), rack.wall), rack.wall, room);
-  }
-
-  // A device's rect in the **current wall's elevation** — derived from its rack + U-slot when mounted,
-  // else from its free-standing position projected onto its wall. Its elevation *width* is always the
-  // panel width (a unit faces into the room on every wall); only the horizontal *position* is wall-
-  // dependent, so mounted gear is placed inside the already-projected rack frame. `null` without a
-  // descriptor/placement.
-  function deviceRect(deviceId: string, typeId: string): Rect2 | null {
-    const desc = descriptorFor(catalog, typeId);
-    const place = scene.ui.placements[deviceId];
-    if (!desc || !place) return null;
-    const size = footprint(desc.formFactor);
-    if (place.rack) {
-      const rack = rackById(place.rack.id);
-      if (!rack) return null;
-      const frame = rackRect(rack);
-      return {
-        x: frame.x + FRAME_MARGIN,
-        y: frame.y + FRAME_MARGIN + place.rack.uSlot * RACK_UNIT_MM,
-        width: RACK_WIDTH_MM,
-        height: size.height,
-      };
-    }
-    return wallProjection(place.position, orientedSize(size, place.wall), place.wall, room);
-  }
-
-  type PlacedItem = { id: string; rect: Rect2; background?: boolean; z: number };
-
-  // A device/rack's **top-down floor footprint** (world x/z), for the plan view. Uses the wall-oriented
-  // box so a side-wall unit sits the right way round; racks show as one box (mounted gear is hidden).
-  const rackFloorRect = (rack: Rack): Rect2 =>
-    project(rack.position, orientedSize(rackFrameSize(rack), rack.wall), "top");
-  function deviceFloorRect(deviceId: string, typeId: string): Rect2 | null {
-    const desc = descriptorFor(catalog, typeId);
-    const place = scene.ui.placements[deviceId];
-    if (!desc || !place) return null;
-    return project(place.position, orientedSize(footprint(desc.formFactor), place.wall), "top");
-  }
-
-  // The items to render. In a **wall elevation**: rack frames (behind) then that wall's devices (on top),
-  // with `z` interleaving them with the cable layer (z 2) by facing so a continuous cable occludes right.
-  // In the **top-down plan**: the whole room's racks + free-standing gear as floor footprints (mounted
-  // gear is hidden inside its rack; cables aren't drawn — there are no visible jacks from above).
-  const placedItems = $derived.by((): PlacedItem[] => {
-    if (currentView === "top") {
-      return [
-        ...scene.ui.racks
-          .filter((r) => r.space === currentSpace)
-          .map((r): PlacedItem => ({ id: r.id, rect: rackFloorRect(r), background: true, z: 0 })),
-        ...scene.patch.devices
-          .filter((d) => {
-            const p = scene.ui.placements[d.id];
-            return p?.space === currentSpace && !p.rack; // mounted gear lives inside its rack box
-          })
-          .map((d) => ({ id: d.id, rect: deviceFloorRect(d.id, d.typeId), z: 3 }))
-          .filter((it): it is PlacedItem => it.rect !== null),
-      ];
-    }
-    return [
-      ...scene.ui.racks
-        .filter((r) => r.space === currentSpace && r.wall === currentWall)
-        .map((r): PlacedItem => ({ id: r.id, rect: rackRect(r), background: true, z: 0 })),
-      ...scene.patch.devices
-        .filter((d) => {
-          const p = scene.ui.placements[d.id];
-          return p?.space === currentSpace && p.wall === currentWall;
-        })
-        .map((d) => ({
-          id: d.id,
-          rect: deviceRect(d.id, d.typeId),
-          z: scene.ui.placements[d.id]?.facing === "back" ? 1 : 3,
-        }))
-        .filter((it): it is PlacedItem => it.rect !== null),
-    ];
-  });
+  const placedItems = $derived.by((): PlacedItem[] => placedItemsFor(layout()));
 
   // --- Patch cables --------------------------------------------------------------------------------
   // A stable key for a connection (its two endpoints), for the {#each} in the cable overlay.
@@ -296,14 +218,14 @@
     direction: "input" | "output",
     api: WorldApi,
   ): { x: number; y: number } | null {
-    const device = deviceById(ref.device);
+    const device = deviceById(scene, ref.device);
     const place = scene.ui.placements[ref.device];
     if (!device || !place || !inView(ref.device)) return null;
     if (place.facing === "back") {
       const jack = jackAnchors[jackKey(ref.device, direction, ref.port)];
       if (jack) return jack; // precise: the real socket on the shown back panel
     }
-    const rect = deviceRect(ref.device, device.typeId);
+    const rect = deviceRect(layout(), ref.device, device.typeId);
     if (!rect) return null;
     // Front-facing (or not yet measured): the sockets sit centred on the back panel, so estimate near
     // the chassis centre — nudged toward the signal-flow direction (output right, input left) so the
@@ -392,7 +314,7 @@
   // The display name of the pending patch's source device (for the "patching from…" banner).
   const pendingSourceName = $derived.by((): string | null => {
     if (dragCable?.mode !== "pending") return null;
-    const dev = deviceById(dragCable.source.device);
+    const dev = deviceById(scene, dragCable.source.device);
     return (dev && descriptorFor(catalog, dev.typeId)?.name) || dragCable.source.device;
   });
 
@@ -404,7 +326,7 @@
     const [device, direction, portStr] = key.split(":");
     if (!device || (direction !== "input" && direction !== "output")) return null;
     const port = Number(portStr);
-    const dev = deviceById(device);
+    const dev = deviceById(scene, device);
     const desc = dev ? descriptorFor(catalog, dev.typeId) : undefined;
     const pd = desc?.ports.find((p) => p.direction === direction && p.id === port);
     if (!pd) return null;
@@ -510,7 +432,7 @@
 
   // The carrier domain of a connection (from its output port), or null if unknown.
   function connectionDomain(c: Connection): PortDomain | null {
-    const dev = deviceById(c.from.device);
+    const dev = deviceById(scene, c.from.device);
     const desc = dev ? descriptorFor(catalog, dev.typeId) : undefined;
     return desc?.ports.find((p) => p.direction === "output" && p.id === c.from.port)?.domain ?? null;
   }
@@ -518,7 +440,7 @@
   // The connector kind of a connection (from its output port) — picks the cable's colour from the signal
   // palette. Falls back to "line" (neutral grey) when the port can't be resolved.
   function connectionKind(c: Connection): PortKind {
-    const dev = deviceById(c.from.device);
+    const dev = deviceById(scene, c.from.device);
     const desc = dev ? descriptorFor(catalog, dev.typeId) : undefined;
     return desc?.ports.find((p) => p.direction === "output" && p.id === c.from.port)?.kind ?? "line";
   }
@@ -579,7 +501,7 @@
       if (d.id === excludeId) continue;
       const place = scene.ui.placements[d.id];
       if (place?.rack?.id === rackId) {
-        occ.push({ startSlot: place.rack.uSlot, rackUnits: deviceUnits(d.typeId) });
+        occ.push({ startSlot: place.rack.uSlot, rackUnits: deviceUnits(catalog, d.typeId) });
       }
     }
     return occ;
@@ -596,7 +518,7 @@
   ): { rackId: string; slot: number } | null {
     for (const rack of scene.ui.racks) {
       if (rack.space !== currentSpace || rack.wall !== currentWall) continue;
-      const frame = rackRect(rack);
+      const frame = rackRect(view(), rack);
       const slotOy = frame.y + FRAME_MARGIN;
       const within =
         x >= frame.x &&
@@ -616,12 +538,12 @@
   // and a device is legal if it can mount in a rack at `(x,y)` or stands free without overlapping another
   // item (its elevation width is always the panel width, since a unit faces the room).
   function canPlace(id: string, x: number, y: number): boolean {
-    if (currentView === "top" || isRack(id)) return true;
-    const device = deviceById(id);
+    if (currentView === "top" || isRack(scene, id)) return true;
+    const device = deviceById(scene, id);
     if (!device) return false;
     const desc = descriptorFor(catalog, device.typeId);
     if (!desc) return false;
-    const units = deviceUnits(device.typeId);
+    const units = deviceUnits(catalog, device.typeId);
     if (units > 0 && rackSlotAt(id, x, y, units)) return true;
     const size = footprint(desc.formFactor);
     const candidate: Rect2 = { x, y, width: size.width, height: size.height };
@@ -636,18 +558,18 @@
       return;
     }
     if (!currentWall) return;
-    const rack = rackById(id);
+    const rack = rackById(scene, id);
     if (rack) {
       rack.position = elevationToWorld(rack.position, rackFrameSize(rack), rack.wall, room, x, y);
       return;
     }
-    const device = deviceById(id);
+    const device = deviceById(scene, id);
     const place = scene.ui.placements[id];
     if (!device || !place) return;
-    const units = deviceUnits(device.typeId);
+    const units = deviceUnits(catalog, device.typeId);
     const hit = units > 0 ? rackSlotAt(id, x, y, units) : null;
     if (hit) {
-      const rack = rackById(hit.rackId);
+      const rack = rackById(scene, hit.rackId);
       place.rack = { id: hit.rackId, uSlot: hit.slot };
       if (rack) {
         place.space = rack.space; // a mounted device lives in its rack's space…
@@ -665,7 +587,7 @@
   // wall** the item now sits against (its box centre decides), so it appears in that wall's elevation. A
   // rack's mounted gear follows its wall.
   function moveToTop(id: string, x: number, y: number): void {
-    const rack = rackById(id);
+    const rack = rackById(scene, id);
     if (rack) {
       rack.position = { x, y: rack.position.y, z: y };
       const s = orientedSize(rackFrameSize(rack), rack.wall);
@@ -679,7 +601,7 @@
       }
       return;
     }
-    const device = deviceById(id);
+    const device = deviceById(scene, id);
     const place = scene.ui.placements[id];
     if (!device || !place) return;
     const desc = descriptorFor(catalog, device.typeId);
@@ -710,7 +632,7 @@
   }
   // Move a rack to another space; its mounted gear follows.
   function moveRackToSpace(id: string, spaceId: string): void {
-    const rack = rackById(id);
+    const rack = rackById(scene, id);
     if (!rack) return;
     rack.space = spaceId;
     for (const d of scene.patch.devices) {
@@ -1177,8 +1099,8 @@
         {/snippet}
 
         {#snippet controls(itemId)}
-          {#if isRack(itemId)}
-            {@const rack = rackById(itemId)}
+          {#if isRack(scene, itemId)}
+            {@const rack = rackById(scene, itemId)}
             {#if rack}
               <select
                 class="space-select"
@@ -1234,14 +1156,14 @@
         {#snippet item(itemId)}
           {#if currentView === "top"}
             <!-- Top-down plan: a labelled floor footprint (no panel — you can't see a face from above). -->
-            {@const rack = rackById(itemId)}
-            {@const device = deviceById(itemId)}
+            {@const rack = rackById(scene, itemId)}
+            {@const device = deviceById(scene, itemId)}
             {@const desc = device ? descriptorFor(catalog, device.typeId) : undefined}
             <div class="plan-tile" class:rack={!!rack}>
               <span>{rack ? `${rack.id} · ${rack.slots}U` : (desc?.name ?? itemId)}</span>
             </div>
-          {:else if isRack(itemId)}
-            {@const rack = rackById(itemId)}
+          {:else if isRack(scene, itemId)}
+            {@const rack = rackById(scene, itemId)}
             {#if rack}
               <div class="rack-frame">
                 <span class="rack-label">{rack.id} · {rack.slots}U</span>
@@ -1253,7 +1175,7 @@
               </div>
             {/if}
           {:else}
-            {@const device = deviceById(itemId)}
+            {@const device = deviceById(scene, itemId)}
             {@const desc = device ? descriptorFor(catalog, device.typeId) : undefined}
             {@const place = scene.ui.placements[itemId]}
             {#if device && desc && place}
