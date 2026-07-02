@@ -397,7 +397,7 @@ no-modules`** for the worklet (a classic script: `AudioWorkletGlobalScope` lacks
 
 ## Epic 4 — UI: Skeuomorphic Panels + Patch Cables
 
-**Progress:** **Stories 4.1 ✅, 4.2 ✅, 4.3 ✅, 4.4 ✅, and 4.5 ✅ done.** 4.1 — the engine→UI seam: a new `devices` crate,
+**Progress:** **Stories 4.1 ✅, 4.2 ✅, 4.3 ✅, 4.4 ✅, 4.5 ✅, and 4.6 ✅ done.** 4.1 — the engine→UI seam: a new `devices` crate,
 scene IR + catalog + `build_patch`, and `SceneEngine` (scene-driven, generically controlled, hot-swappable).
 4.2 — the skeuomorphic panel system on a **Svelte 5** harness: a descriptor → panel renderer + widget
 vocabulary (knobs/faders/switches/jacks/screen/VU), front/back flip, a real `powered` control param, and a
@@ -414,9 +414,10 @@ cable catalog. 4.5 ✅ — **visualization**: the node→host scalar readout lan
 digital dBFS meter, and a static per-connection loading-loss annotation, surfaced as device meter screens, a
 cable-inspector loss line, and a global levels panel; the raw-sample **scope + spectrum FFT** were split out
 into a new **Story 4.7** at 4.5 pickup (waveform probes are a distinct mechanism from the scalar lane).
-**Story 4.6 🚧 in progress** — reshaped at pickup into **room walls + multi-view**: a space becomes a
+4.6 ✅ — reshaped at pickup into **room walls + multi-view**: a space becomes a
 rectangular room whose four wall-elevations you turn between, plus a top-down floor plan, with cross-wall/
-room patching. The sketch's *operator-reach* idea was **dropped** (both the avatar and the fallback zoom
+room **click-to-pick** patching and draggable portal chips; all UI/scene-`ui`, engine untouched. The
+sketch's *operator-reach* idea was **dropped** (both the avatar and the fallback zoom
 gate — not enough payoff for the interaction complexity). **4.7** stays at Story level until picked up. The original
 4-story sketch was reshaped into the now-7-story arc below after the UI vision
 grew from "device panels + cables" into a **game-like spatial studio/venue sim** (browsable gear catalog,
@@ -1401,7 +1402,7 @@ split out to **Story 4.7** at pickup.
   chrome** (`out_ptr`), distinct from the placeable `VuMeter` device; the readouts snapshot is re-serialized per
   throttle tick (tiny — a handful of scalars); a **phantom-presence** readout is deferred to Epic 5 (no
   condenser-mic device is cataloged yet to attach it to).
-#### Story 4.6 — The spatial world, part 2: room walls + multi-view — 🚧 **In progress**
+#### Story 4.6 — The spatial world, part 2: room walls + multi-view — ✅ **Done**
 
 _Goal:_ finish the spatial sim (PROJECT_PLAN §5 "model in 3-D, render in 2-D"; §9 Stage 4 "build and
 operate a small studio through the UI"). A space becomes a **rectangular room with four walls**: you
@@ -1480,49 +1481,62 @@ _Design notes (settled at planning):_
   pre-authored, never drawn. Portal chips are **draggable** (offset persisted per connection-end) so they
   can be moved out of the way.
 
-- **Task 4.6.1 — Pure spatial extensions: wall projection + grid snap (TS, Vitest).** Add a `Wall` type
+- **Task 4.6.1 — Pure spatial extensions: wall projection + grid snap (TS, Vitest).** ✅ Add a `Wall` type
   (`front|back|left|right`) + a room-dims type; `wallProjection(pos, size, wall, room)` → an elevation
   `Rect2` (y-up), mirroring back/right; `snapToGrid(v, step)`. Reuse the shipped `project(…, "top")` for the
   floor plan. _Done/validate:_ Vitest hand-calc cases for each wall (incl. a mirrored back/right box and a
   left/right unit projected on the **depth** axis) + grid-snap edges; the module imports no DOM/Svelte.
-- **Task 4.6.2 — Scene `ui`: rooms + wall tags + store (SCHEMA 6→7, no migration).** `Space` gains
+- **Task 4.6.2 — Scene `ui`: rooms + wall tags + store (SCHEMA 6→7, no migration).** ✅ `Space` gains
   `width/depth/height`; `Placement` and `Rack` gain `wall`. Redefine `defaultScene` as one rectangular
   Control Room — the 8U rack against the **back** wall, synth + speaker along the **front** (which carries
   the decorative window) — and bump `SCHEMA_VERSION`. _Done/validate:_ a scene round-trips rooms + wall
   tags through save/load; a stale version is discarded; the worklet still receives only `patch`; the
   updated `scene-store` tests are green.
 - **Task 4.6.3 — Wall-aware elevations + view switching (generalize the front view to four walls).**
-  `deviceRect`/`rackRect`/`placedItems` become wall-aware (filter to the current wall, project via
+  ✅ `deviceRect`/`rackRect`/`placedItems` become wall-aware (filter to the current wall, project via
   `wallProjection`); a **view switcher** turns between front/back/left/right; the decorative window draws
   on the front wall; cross-view cables render as **portal stubs** (the 4.4 mechanism, "not in this view").
   _Done/validate:_ you turn between all four walls; gear appears on its tagged wall; within-wall patching
   works; a cross-wall cable shows as a labelled stub. Verified in-browser.
-- **Task 4.6.4 — Top-down floor plan + arrange + grid-snap.** Add **top** to the switcher: render the room
+- **Task 4.6.4 — Top-down floor plan + arrange + grid-snap.** ✅ Add **top** to the switcher: render the room
   rectangle + every device/rack as a **labelled footprint box** (via `project top`), panels/cables hidden,
   a rack a single box with its mounted gear hidden; **drag to rearrange** on the floor (updating `x`/`z`
   and **re-tagging the wall** when dragged against a different wall), grid-snapped. Reuse `WorldView` with a
   top-mode `item` snippet. _Done/validate:_ top view shows the whole room; rearranging racks/gear
   (grid-snapped) reflects in the wall views; a wall re-tag on drag takes effect. Verified in-browser.
-- **Task 4.6.5 — Cross-view patching (click-to-pick, survives a wall/room switch).** A *click* on a source
+- **Task 4.6.5 — Cross-view patching (click-to-pick, survives a wall/room switch).** ✅ A *click* on a source
   jack holds a **pending** cable that survives turning to another wall/room; a second click on a
   destination jack commits (`evaluateConnection` + `loadPatch` hot-swap); same-wall drag-to-patch stays.
   Esc / re-clicking the source cancels; a "patching from…" banner shows the held state. _Done/validate:_
   patch synth (front) → a rack unit (back) by clicking across a view switch; illegal jacks stay pending;
   cross-space patching works the same. Verified in-browser.
-- **Task 4.6.6 — Draggable portal chips (persisted offset).** The cross-view portal stubs become
+- **Task 4.6.6 — Draggable portal chips (persisted offset).** ✅ The cross-view portal stubs become
   draggable so they can be moved out of the way; the offset (from the jack anchor) persists per
   connection-end in scene `ui` (`SCHEMA_VERSION` 7→8, no migration). _Done/validate:_ drag a portal chip,
   it stays put across save/load; each end moves independently; selecting the cable via its stub still works.
   Verified in-browser.
 
-_Validate:_ turn between all four wall-elevations of a rectangular room + a top-down floor plan of the
-same room; the rack sits on the **back** wall and the synth/speaker + window on the **front**; arranging
-gear in top view (**grid-snapped**) reflects across the wall views; within-wall patching works and
+_Validate:_ ✅ **met.** You turn between all four wall-elevations of a rectangular room + a top-down floor
+plan of the same room; the rack sits on the **back** wall and the synth/speaker + window on the **front**;
+arranging gear in top view (**grid-snapped**) reflects across the wall views; within-wall patching works and
 cross-view cables show as **portal stubs** you can **patch across** and **drag out of the way**. The pure
 spatial logic (wall projection, grid snap, nearest-wall) is **Vitest-unit-tested**; the scene round-trips
-rooms + wall tags + portal offsets (`SCHEMA_VERSION` 6→8, no migration); the **engine and `patch` gain
-nothing** (no Rust change). Full gate green (`cargo fmt --check && cargo lint && cargo test && cargo wasm
-&& cargo docs`) plus `web` Vitest/Biome/typecheck/build.
+rooms + wall tags + portal offsets (`SCHEMA_VERSION` 6→8, no migration); the **engine and `patch` gained
+nothing** (no Rust change). `web` gate green (Vitest 147 tests, Biome, `svelte-check` 0 errors, `vite build`).
+
+_Delivered:_ the studio became a **rectangular room with four walls + a floor plan**. Pure spatial math
+lives in `web/src/spatial.ts` (`wallProjection`, `orientedSize`, `elevationToWorld`, `nearestWall`,
+`snapToGrid`), hand-calc-tested in `web/test/spatial.test.ts`. A `Space` now carries `room` dims and every
+`Placement`/`Rack` a `wall` tag (scene `ui` only — the worklet still receives just the `patch` projection);
+the default scene is a 4000×3000 Control Room with the 8U rack on the back wall and synth + speaker + a
+decorative window on the front. A **front/back/left/right/top view switcher** drives wall-aware elevations
+(`projection.ts` filters+projects to the current wall) and a top-down floor plan (labelled footprint boxes,
+drag-to-rearrange with grid-snap + wall re-tag). Cross-view cables draw as the generalized 4.4 **portal
+stubs**, now **draggable** with per-connection-end offsets persisted in scene `ui`; and patching gained a
+**click-to-pick** mode (`patching.ts`) whose pending cable survives a wall/room switch, retiring 4.4's
+pre-authored-only limitation. The whole story survived the mid-flight App.svelte split (`spatial`,
+`projection`, `cable-view`, `patching`, `placement`, `scene-ops`, `params`, `jack-anchors`) with the
+engine/`patch` contract untouched.
 - **Story 4.7 — Visualization, part 2: scope + spectrum (waveform probes).** Split out of Story 4.5 at its
   pickup: the **raw per-sample tap** surface a scope and spectrum need — a distinct mechanism from 4.5's
   scalar readout lane. A **zero-copy sample ring** (à la `out_ptr`, tapping a node/port's block), a **scope**
