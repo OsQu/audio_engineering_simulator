@@ -86,6 +86,11 @@
     localStorage.setItem(VOLUME_KEY, String(v));
   }
 
+  // Collapse the toolbar `<details>` menu a control lives in, so picking an action closes its drawer.
+  function closeMenu(e: Event): void {
+    (e.currentTarget as HTMLElement | null)?.closest("details")?.removeAttribute("open");
+  }
+
   // The page's authoritative scene: a saved one if present, else the default studio. The plain
   // `initialScene` const lets both `scene` and `currentSpace` seed from the same value without one
   // $state initializer reading another (which would only capture its initial value).
@@ -408,28 +413,16 @@
 
   // Pointer-down on a jack connector. Normally starts a drag (only reachable on a shown back panel; a
   // front-facing device's back is rotated away and non-interactive). While a **pending** cable is held,
-  // this is the *second* click: complete onto a legal destination jack, cancel by re-clicking the source
-  // jack, and otherwise stay pending (so panning / rearranging / an illegal jack don't lose the patch).
+  // this begins the *second* interaction — we only record the press point here and resolve it on
+  // pointer-up (see `onCablePointerUp`), so a click can be told apart from a pan (a press-and-drag).
   function onCablePointerDown(e: PointerEvent): void {
     if (!worldApi) return;
     const el = (e.target as HTMLElement | null)?.closest<HTMLElement>("[data-jack]");
     const key = el?.dataset.jack;
 
     if (dragCable?.mode === "pending") {
-      if (!key) return; // empty space — keep the pending pick
-      if (key === jackKeyOf(dragCable.source)) {
-        dragCable = null; // re-clicking the source cancels
-        return;
-      }
-      const target = endpointFromJackKey(key);
-      if (target) {
-        const verdict = evaluateConnection(dragCable.source, target, scene.patch.connections);
-        if (verdict.ok) {
-          commitCable(verdict);
-          dragCable = null;
-        }
-      }
-      return; // illegal jack: stay pending (hover already showed it red)
+      cableDown = { x: e.clientX, y: e.clientY, moved: false };
+      return;
     }
 
     if (!key) return;
@@ -446,7 +439,9 @@
   // feel). Fires with no button pressed too, so a pending cable tracks the cursor between clicks.
   function onCablePointerMove(e: PointerEvent): void {
     if (!dragCable || !worldApi) return;
-    if (dragCable.mode === "drag" && !cableDown.moved) {
+    // Track whether the active press has moved past the click threshold — but only while a button is
+    // held (`e.buttons`), so a pending cable's buttonless cursor-follow is never mistaken for a pan.
+    if (e.buttons !== 0 && !cableDown.moved) {
       if (Math.hypot(e.clientX - cableDown.x, e.clientY - cableDown.y) > 4) cableDown.moved = true;
     }
     const cursor = worldApi.clientToSurface(e.clientX, e.clientY);
@@ -475,19 +470,37 @@
     dragCable = { ...dragCable, srcPoint, free: cursor, over: false, legal: false, verdict: null };
   }
 
-  // Release. A drag over a legal jack commits; a drag that never moved (a click) is promoted to a
-  // **pending** pick that survives a view switch; a real drag released over nothing is cancelled. A
-  // pending cable is completed on the next pointer-*down*, so pointer-up does nothing for it.
-  function onCablePointerUp(): void {
-    if (!dragCable || dragCable.mode !== "drag") return;
-    if (dragCable.verdict?.ok) {
-      commitCable(dragCable.verdict);
-      dragCable = null;
-    } else if (!cableDown.moved) {
-      dragCable = { ...dragCable, mode: "pending", over: false, legal: false, verdict: null };
-    } else {
-      dragCable = null;
+  // Release. Two cases, keyed on the cable's mode:
+  //  - **drag** (dragging out from the source jack): a release over a legal jack commits; a press that
+  //    never moved (a click) is promoted to a **pending** pick that survives a view switch; a real drag
+  //    released over nothing is cancelled.
+  //  - **pending** (a held cable): resolve the second interaction. A press-and-drag over empty space is a
+  //    pan, so leave the pick untouched. A *click* resolves it — complete onto a legal destination jack,
+  //    and cancel the patch on anything else (empty space, an illegal jack, or the source jack).
+  function onCablePointerUp(e: PointerEvent): void {
+    if (!dragCable) return;
+
+    if (dragCable.mode === "drag") {
+      if (dragCable.verdict?.ok) {
+        commitCable(dragCable.verdict);
+        dragCable = null;
+      } else if (!cableDown.moved) {
+        dragCable = { ...dragCable, mode: "pending", over: false, legal: false, verdict: null };
+      } else {
+        dragCable = null;
+      }
+      return;
     }
+
+    if (cableDown.moved) return; // a pan — keep the pending pick
+    const el = document.elementFromPoint(e.clientX, e.clientY)?.closest<HTMLElement>("[data-jack]");
+    const key = el?.dataset.jack;
+    const target = key && key !== jackKeyOf(dragCable.source) ? endpointFromJackKey(key) : null;
+    if (target) {
+      const verdict = evaluateConnection(dragCable.source, target, scene.patch.connections);
+      if (verdict.ok) commitCable(verdict);
+    }
+    dragCable = null;
   }
 
   // Esc cancels an in-progress patch (drag or pending).
@@ -941,39 +954,67 @@
         </button>
       </div>
 
-      <div class="palette">
-        <span class="palette-label">Add:</span>
-        {#each catalog as desc (desc.typeId)}
-          <button type="button" class="add-chip" onclick={() => addDevice(desc.typeId)}>
-            {desc.name}
+      <!-- Gear catalog, tucked in a drawer so it isn't always spilling across the toolbar. -->
+      <details class="menu">
+        <summary>+ Add</summary>
+        <div class="menu-panel palette">
+          {#each catalog as desc (desc.typeId)}
+            <button
+              type="button"
+              class="add-chip"
+              onclick={(e) => {
+                addDevice(desc.typeId);
+                closeMenu(e);
+              }}
+            >
+              {desc.name}
+            </button>
+          {/each}
+          <button
+            type="button"
+            class="add-chip rack"
+            onclick={(e) => {
+              addRack();
+              closeMenu(e);
+            }}
+          >
+            Rack
           </button>
-        {/each}
-        <button type="button" class="add-chip rack" onclick={addRack}>Rack</button>
-      </div>
+        </div>
+      </details>
 
-      <div class="master">
-        <label class="volume">
-          <span>Vol</span>
-          <input
-            type="range"
-            min="0"
-            max="1"
-            step="0.01"
-            value={volume}
-            oninput={(e) => onVolume(Number(e.currentTarget.value))}
-          />
-          <span class="readout">{Math.round(volume * 100)}%</span>
-        </label>
-        <Vu {level} />
-      </div>
+      <!-- Monitor volume + scene save/load/reload, behind a menu. -->
+      <details class="menu right push">
+        <summary>⚙ Scene</summary>
+        <div class="menu-panel scene-menu">
+          <label class="volume">
+            <span>Vol</span>
+            <input
+              type="range"
+              min="0"
+              max="1"
+              step="0.01"
+              value={volume}
+              oninput={(e) => onVolume(Number(e.currentTarget.value))}
+            />
+            <span class="readout">{Math.round(volume * 100)}%</span>
+          </label>
+          <span class="scene-buttons">
+            <button type="button" onclick={(e) => { saveCurrent(); closeMenu(e); }}>save</button>
+            <button type="button" onclick={(e) => { loadSaved(); closeMenu(e); }}>load</button>
+            <button type="button" onclick={(e) => { reload(); closeMenu(e); }}>reload</button>
+          </span>
+        </div>
+      </details>
 
-      <span class="scene-buttons">
-        <button type="button" onclick={saveCurrent}>save</button>
-        <button type="button" onclick={loadSaved}>load</button>
-        <button type="button" onclick={reload}>reload</button>
-      </span>
-
-      <span class="statuses">{[status, health, midiStatus].filter(Boolean).join(" · ")}</span>
+      <!-- Global VU + simulation status/health/MIDI readout, behind a debug menu. -->
+      <details class="menu right">
+        <summary>Debug</summary>
+        <div class="menu-panel debug-menu">
+          <Vu {level} />
+          <span class="statuses">{[status, health, midiStatus].filter(Boolean).join(" · ")}</span>
+        </div>
+      </details>
     {/if}
   </header>
 
@@ -1348,7 +1389,7 @@
     font-weight: 600;
   }
   .statuses {
-    margin-left: auto;
+    max-width: 22rem;
     font-size: 0.75rem;
     color: var(--ae-text-muted);
     font-variant-numeric: tabular-nums;
@@ -1358,10 +1399,50 @@
     flex: 1;
     min-height: 0;
   }
-  .master {
+  /* Toolbar dropdown: a <details> whose <summary> is a chip-styled button and whose panel floats below. */
+  .menu {
+    position: relative;
+  }
+  .menu.push {
+    margin-left: auto; /* push this menu (and any after it) to the toolbar's right edge */
+  }
+  .menu > summary {
+    list-style: none;
+    cursor: pointer;
+    user-select: none;
+    padding: 0.5em 1.2em;
+    font-size: 0.85rem;
+    color: var(--ae-text-strong);
+    background: var(--ae-bg-chip);
+    border: 1px solid var(--ae-line-chip);
+    border-radius: var(--ae-radius-control);
+  }
+  .menu > summary::-webkit-details-marker {
+    display: none;
+  }
+  .menu[open] > summary,
+  .menu > summary:hover {
+    background: var(--ae-bg-panel);
+  }
+  .menu-panel {
+    position: absolute;
+    top: calc(100% + 0.35rem);
+    z-index: 20;
     display: flex;
-    align-items: center;
-    gap: 0.6rem;
+    gap: 0.5rem;
+    padding: 0.6rem;
+    background: var(--ae-bg-panel);
+    border: 1px solid var(--ae-line-panel);
+    border-radius: var(--ae-radius-control);
+    box-shadow: 0 8px 24px rgb(0 0 0 / 0.35);
+  }
+  .menu.right .menu-panel {
+    right: 0; /* right-anchored menus open flush to their right edge, not off-screen */
+  }
+  .menu-panel.scene-menu,
+  .menu-panel.debug-menu {
+    flex-direction: column;
+    align-items: flex-start;
   }
   .volume {
     display: flex;
@@ -1503,15 +1584,9 @@
     color: var(--ae-text-strong);
   }
   .palette {
-    display: flex;
     flex-wrap: wrap;
     align-items: center;
-    gap: 0.3rem;
-    margin: 0.3rem 0;
-  }
-  .palette-label {
-    font-size: 0.75rem;
-    color: var(--ae-text-muted);
+    max-width: 24rem;
   }
   .add-chip {
     font: inherit;
