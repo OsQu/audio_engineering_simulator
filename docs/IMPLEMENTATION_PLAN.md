@@ -397,7 +397,7 @@ no-modules`** for the worklet (a classic script: `AudioWorkletGlobalScope` lacks
 
 ## Epic 4 — UI: Skeuomorphic Panels + Patch Cables
 
-**Progress:** **Stories 4.1 ✅, 4.2 ✅, 4.3 ✅, and 4.4 ✅ done.** 4.1 — the engine→UI seam: a new `devices` crate,
+**Progress:** **Stories 4.1 ✅, 4.2 ✅, 4.3 ✅, 4.4 ✅, and 4.5 ✅ done.** 4.1 — the engine→UI seam: a new `devices` crate,
 scene IR + catalog + `build_patch`, and `SceneEngine` (scene-driven, generically controlled, hot-swappable).
 4.2 — the skeuomorphic panel system on a **Svelte 5** harness: a descriptor → panel renderer + widget
 vocabulary (knobs/faders/switches/jacks/screen/VU), front/back flip, a real `powered` control param, and a
@@ -410,10 +410,11 @@ engine untouched. Operator **reach** and **multi-view projections** were deferre
 drag-to-connect between back-panel jacks → `loadPatch` hot-swap, client-side legality (incl. feedback-cycle
 rejection), a cable inspector with pickable cable types (R·C rides the edge, inaudible by design → Epic 5),
 behind/front cable layering, and cross-space **portal** endpoints; engine untouched beyond the `devices`
-cable catalog. **Story 4.5 🚧 in progress** — visualization: the node→host scalar readout lane, a `VuMeter`
-(analog VU/dBu) + digital dBFS meter, and static analog-domain readouts (per-connection loading loss). The
-raw-sample **scope + spectrum FFT** were split out into a new **Story 4.7** at 4.5 pickup (waveform probes
-are a distinct mechanism from the scalar lane). 4.6–4.7 stay at Story level until picked up. The original
+cable catalog. 4.5 ✅ — **visualization**: the node→host scalar readout lane, a `VuMeter` (analog VU/dBu) + a
+digital dBFS meter, and a static per-connection loading-loss annotation, surfaced as device meter screens, a
+cable-inspector loss line, and a global levels panel; the raw-sample **scope + spectrum FFT** were split out
+into a new **Story 4.7** at 4.5 pickup (waveform probes are a distinct mechanism from the scalar lane).
+**Next: Story 4.6** (top-down view + operator reach). 4.6–4.7 stay at Story level until picked up. The original
 4-story sketch was reshaped into the now-7-story arc below after the UI vision
 grew from "device panels + cables" into a **game-like spatial studio/venue sim** (browsable gear catalog,
 racks and containers, freely placed in a pan/zoom world, multiple _spaces_ with snakes between them,
@@ -1234,7 +1235,7 @@ the engine rewires via the proven 4.1 `loadPatch` hot-swap; the only new Rust is
   **snake bundle** is minimal (per-cable stubs sharing a room label); the cable effect is **inaudible by
   design** with today's low-Z sources.
 
-#### Story 4.5 — Visualization: meters + analog-domain readouts (the node→host lane) — 🚧 **In progress**
+#### Story 4.5 — Visualization: meters + analog-domain readouts (the node→host lane) — ✅ **Done**
 
 _Goal:_ the distinctive **visualization payoff** — *gain-staging across the AD/DA boundary made visible* —
 on the proven engine. It delivers the genuinely-new **node→host scalar readout lane** (the engine's third
@@ -1345,8 +1346,8 @@ _Design notes (settled at planning):_
   signal, the cable inspector shows each cable's dB loss, and the global panel shows dBu→dBFS across the
   converter; the master-output VU is unchanged (chrome); the `web` `check`/`typecheck`/`build` + Vitest pass.
 
-_Validate:_ a `VuMeter` and a digital dBFS meter, placed in a scene through the UI, show **live** readings
-via the new node→host lane (VU/dBu on the analog side of the AD, dBFS on the digital side — gain-staging
+_Validate:_ ✅ **met.** A `VuMeter` and a digital dBFS meter, placed in a scene through the UI, show **live**
+readings via the new node→host lane (VU/dBu on the analog side of the AD, dBFS on the digital side — gain-staging
 across the boundary made visible); the cable inspector shows each analog connection's **loading loss** in dB
 and the global panel lists levels/losses along the chain; meters are **signal-transparent** (inserting one
 doesn't change the sound) and the readout snapshot survives a hot-swap; the engine gains **only** the readout
