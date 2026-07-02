@@ -213,6 +213,13 @@ impl SceneEngine {
             self.param_drops = self.param_drops.saturating_add(1);
         }
     }
+
+    /// The live scene's meter readings: `(device id, values in readout-id order)` from the last block
+    /// rendered. The native form behind the wasm [`readouts`](Self::readouts) getter (a `JsValue`
+    /// needs a JS realm), so tests can assert readings without one.
+    pub(crate) fn readout_readings(&self) -> Vec<(String, Vec<f32>)> {
+        self.current.readout_snapshot()
+    }
 }
 
 #[wasm_bindgen]
@@ -324,6 +331,28 @@ impl SceneEngine {
     #[must_use]
     pub fn param_drops(&self) -> u32 {
         self.param_drops
+    }
+
+    /// The live scene's meter readings as a structured JS value — an array of `[deviceId, values]`
+    /// pairs (values in readout-id order), from the last block rendered. The worklet polls this on a
+    /// throttle and posts it to the page to drive device meter screens. Off the hot path; tiny (a few
+    /// scalars), so the per-poll serialize is negligible.
+    ///
+    /// # Errors
+    /// Returns the serializer error as a `JsValue` if serialization fails (it does not in practice).
+    pub fn readouts(&self) -> Result<JsValue, JsValue> {
+        serde_wasm_bindgen::to_value(&self.readout_readings()).map_err(Into::into)
+    }
+
+    /// The live scene's per-connection **loading loss** in dB as a JS value — an array indexed by
+    /// scene connection order, each entry a number or `null` (digital/event connections have no
+    /// resistive loading). Static (changes only on a structural edit), so the worklet ships it in
+    /// `ready` and again after a hot-swap, not per frame.
+    ///
+    /// # Errors
+    /// Returns the serializer error as a `JsValue` if serialization fails (it does not in practice).
+    pub fn connection_losses(&self) -> Result<JsValue, JsValue> {
+        serde_wasm_bindgen::to_value(self.current.connection_losses()).map_err(Into::into)
     }
 
     /// Pointer to the captured host block in WASM linear memory. JS builds **one**
@@ -586,5 +615,64 @@ mod tests {
         assert_eq!(engine.out_len(), 128); // 1024 / 8
         assert_eq!(engine.host_rate_hz(), 48_000.0);
         assert!(!engine.out_ptr().is_null());
+    }
+
+    /// A canonical patch with a `vu_meter` inline (`synth → vu → ad → da → spk`), tapped at the
+    /// speaker.
+    fn metered_patch() -> Patch {
+        Patch {
+            devices: vec![
+                dev("synth", "synth_voice"),
+                dev("vu", "vu_meter"),
+                dev("ad", "ad_converter"),
+                dev("da", "da_converter"),
+                dev("spk", "speaker"),
+            ],
+            connections: vec![
+                conn("synth", 0, "vu", 0),
+                conn("vu", 0, "ad", 0),
+                conn("ad", 0, "da", 0),
+                conn("da", 0, "spk", 0),
+            ],
+            output: PortRef {
+                device: "spk".into(),
+                port: 0,
+            },
+        }
+    }
+
+    /// The VU device's VU reading (readout 0) from the current snapshot.
+    fn vu_reading(engine: &SceneEngine) -> f32 {
+        engine
+            .readout_readings()
+            .into_iter()
+            .find(|(d, _)| d == "vu")
+            .expect("vu device present in the snapshot")
+            .1[0]
+    }
+
+    /// The node→host lane surfaced through `SceneEngine`: a `VuMeter` reads near its floor while idle,
+    /// then climbs well above it once a note has played and the ~300 ms ballistics settle — a live
+    /// reading addressed by `(device, id)`, moving with the signal.
+    #[test]
+    fn scene_engine_reports_meter_readings() {
+        let mut engine = SceneEngine::from_patch(&metered_patch()).expect("metered patch builds");
+
+        for _ in 0..8 {
+            engine.render_quantum();
+        }
+        let idle = vu_reading(&engine);
+        assert!(idle < -40.0, "idle VU sits near its floor, got {idle}");
+
+        engine.note_on("synth", NOTE, 100);
+        for _ in 0..600 {
+            // ~1.6 s, well past the 300 ms VU ballistics
+            engine.render_quantum();
+        }
+        let sounding = vu_reading(&engine);
+        assert!(
+            sounding > -20.0,
+            "VU should climb with signal, got {sounding}"
+        );
     }
 }

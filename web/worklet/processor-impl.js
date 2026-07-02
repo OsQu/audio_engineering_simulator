@@ -16,6 +16,10 @@ const HEALTH_REPORT_EVERY = 96;
 // report (the meter widget smooths the rest via a CSS transition).
 const LEVEL_REPORT_EVERY = 8;
 
+// Post the device meter readings on the same ~47×/second cadence as the master level — a handful of
+// scalars (each meter node's VU/dBu/dBFS), read from the engine's node→host readout lane.
+const READOUT_REPORT_EVERY = 8;
+
 class SceneProcessor extends AudioWorkletProcessor {
   constructor(options) {
     super();
@@ -62,6 +66,7 @@ class SceneProcessor extends AudioWorkletProcessor {
       this.maxMs = 0; // worst single-quantum render time seen (all-time)
       this.quanta = 0; // quanta rendered, for the report throttle
       this.levelPeak = 0; // max |sample| since the last level report, for the VU meter
+      this.lossesDirty = false; // re-send connection losses after a hot-swap installs the new scene
 
       // Live control. The main thread posts generic, device-addressed messages; we forward
       // them onto the engine, which only enqueues (latest-wins target / timestamped event), applied by
@@ -84,6 +89,9 @@ class SceneProcessor extends AudioWorkletProcessor {
           case "loadPatch":
             try {
               this.engine.load_patch(d.patch); // throws on a bad patch; the live scene keeps running
+              // The new scene's connection losses go live at the next render_quantum swap; flag a
+              // post-swap re-send so the page's static readouts (cable inspector / levels panel) refresh.
+              this.lossesDirty = true;
             } catch (err) {
               this.port.postMessage({
                 type: "error",
@@ -102,6 +110,8 @@ class SceneProcessor extends AudioWorkletProcessor {
         signalPathLatencyMs: this.engine.signal_path_latency_ms,
         catalog,
         cables,
+        // Static per-connection loading loss (dB, or null for digital) for the initial scene.
+        losses: this.engine.connection_losses(),
       });
     } catch (err) {
       this.port.postMessage({
@@ -146,6 +156,19 @@ class SceneProcessor extends AudioWorkletProcessor {
     if (this.quanta % LEVEL_REPORT_EVERY === 0) {
       this.port.postMessage({ type: "level", peak: this.levelPeak });
       this.levelPeak = 0;
+    }
+
+    // Device meter readings (node→host readout lane), same cadence — keyed by device id so the page
+    // routes each to its panel's meter screen. Survives hot-swaps: the snapshot reads the live scene.
+    if (this.quanta % READOUT_REPORT_EVERY === 0) {
+      this.port.postMessage({ type: "readouts", readings: this.engine.readouts() });
+    }
+
+    // A hot-swap just installed a new scene (render_quantum above did the swap): re-send its static
+    // connection losses once so the cable inspector / levels panel refresh, then clear the flag.
+    if (this.lossesDirty) {
+      this.port.postMessage({ type: "losses", losses: this.engine.connection_losses() });
+      this.lossesDirty = false;
     }
 
     // Throttled health snapshot: the compute-budget side (overruns / worst render) plus the engine's

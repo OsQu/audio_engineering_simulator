@@ -23,7 +23,7 @@ use std::fmt;
 
 use engine::{
     AnalogRate, Cable, CompileError, EventInputId, Farads, Graph, NodeId, Ohms, ParamHandle,
-    Schedule, compile,
+    ReadoutHandle, Schedule, compile,
 };
 
 use crate::catalog::{BuiltDevice, instantiate};
@@ -83,6 +83,9 @@ pub struct BuiltScene {
     params: BTreeMap<String, Vec<ParamHandle>>,
     /// device id → its (first) event input, for note routing. Absent for devices with no event input.
     events: BTreeMap<String, EventInputId>,
+    /// device id → its `ReadoutHandle`s, indexed by **device-level readout id**. Absent for devices
+    /// that expose no readouts (measure nothing) — the node→host mirror of `params`.
+    readouts: BTreeMap<String, Vec<ReadoutHandle>>,
     /// Per scene [`Connection`](crate::Connection) (same index as `patch.connections`): the edge's
     /// **loading loss** in dB (`20·log10` of the baked resistive divider gain, so ≤ 0 dB — an
     /// attenuation), or `None` for a digital/event connection (ideal, no resistive loading). The
@@ -126,6 +129,40 @@ impl BuiltScene {
     #[must_use]
     pub fn event_input(&self, device: &str) -> Option<EventInputId> {
         self.events.get(device).copied()
+    }
+
+    /// Resolve `(device, device-level readout id)` to its [`ReadoutHandle`], or `None` if the device
+    /// or readout id is unknown. The node→host mirror of [`param`](Self::param).
+    #[must_use]
+    pub fn readout(&self, device: &str, readout_id: u32) -> Option<ReadoutHandle> {
+        self.readouts
+            .get(device)
+            .and_then(|handles| handles.get(readout_id as usize))
+            .copied()
+    }
+
+    /// A snapshot of every metering device's current readings: `(device id, values in readout-id
+    /// order)` from the most recently processed block. Only devices that expose readouts appear.
+    /// Cheap (a handful of scalars) — the host polls it each meter frame to drive its screens.
+    #[must_use]
+    pub fn readout_snapshot(&self) -> Vec<(String, Vec<f32>)> {
+        self.readouts
+            .iter()
+            .map(|(device, handles)| {
+                let values = handles
+                    .iter()
+                    .map(|&h| self.schedule.readout_value(h).unwrap_or(0.0))
+                    .collect();
+                (device.clone(), values)
+            })
+            .collect()
+    }
+
+    /// Every scene connection's loading loss in dB, by connection index (`None` for digital/event
+    /// connections). The static analog-domain readout the UI surfaces per cable and in the levels panel.
+    #[must_use]
+    pub fn connection_losses(&self) -> &[Option<f32>] {
+        &self.connection_losses
     }
 
     /// The **loading loss** of scene connection `index` (its position in the patch's connection
@@ -255,6 +292,7 @@ pub fn build_patch(
     // 4. Resolve the generic control surface against the compiled schedule.
     let mut params = BTreeMap::new();
     let mut events = BTreeMap::new();
+    let mut readouts = BTreeMap::new();
     for device in &patch.devices {
         let built = &devices[&device.id];
         let handles: Vec<ParamHandle> = built
@@ -276,12 +314,27 @@ pub fn build_patch(
         {
             events.insert(device.id.clone(), ev);
         }
+
+        // Readout handles (node→host lane), in device readout-id order. Only metering devices have any.
+        if !built.readouts.is_empty() {
+            let handles: Vec<ReadoutHandle> = built
+                .readouts
+                .iter()
+                .map(|&(node, id)| {
+                    schedule
+                        .readout(node, id)
+                        .expect("a freshly built device's readout resolves in its own schedule")
+                })
+                .collect();
+            readouts.insert(device.id.clone(), handles);
+        }
     }
 
     Ok(BuiltScene {
         schedule,
         params,
         events,
+        readouts,
         connection_losses,
     })
 }
@@ -608,6 +661,56 @@ mod tests {
         let scene = build_patch(&patch, BLOCK_LEN, rate(), 0).expect("builds");
         let loss = scene.connection_loading_loss(2).expect("analog");
         assert!((loss - (-0.9458)).abs() < 1e-3, "cabled conn 2 loss {loss}");
+    }
+
+    /// A metering device's readouts resolve by `(device, id)` and appear in the snapshot. A silent
+    /// scene reads the VU meter's floor; resolution is total (out-of-range id, non-meter device,
+    /// unknown device all → `None`).
+    #[test]
+    fn meter_readout_resolves_and_snapshots() {
+        // synth → vu (inline analog meter) → ad → da → spk.
+        let patch = Patch {
+            devices: vec![
+                device("synth", "synth_voice"),
+                device("vu", "vu_meter"),
+                device("ad", "ad_converter"),
+                device("da", "da_converter"),
+                device("spk", "speaker"),
+            ],
+            connections: vec![
+                conn("synth", 0, "vu", 0),
+                conn("vu", 0, "ad", 0),
+                conn("ad", 0, "da", 0),
+                conn("da", 0, "spk", 0),
+            ],
+            output: PortRef {
+                device: "spk".into(),
+                port: 0,
+            },
+        };
+        let mut scene = build_patch(&patch, BLOCK_LEN, rate(), 0).expect("builds");
+
+        assert!(scene.readout("vu", 0).is_some(), "VU readout");
+        assert!(scene.readout("vu", 1).is_some(), "peak-dBu readout");
+        assert!(scene.readout("vu", 2).is_none(), "readout id out of range");
+        assert!(
+            scene.readout("synth", 0).is_none(),
+            "the synth exposes no readouts"
+        );
+        assert!(scene.readout("nope", 0).is_none(), "unknown device");
+
+        // Render a few silent blocks; the VU meter settles at its reading floor.
+        let mut out = VoltageBuffer::zeros(BLOCK_LEN, rate());
+        for _ in 0..8 {
+            scene.schedule_mut().process(&mut out);
+        }
+        let snapshot = scene.readout_snapshot();
+        let vu = snapshot
+            .iter()
+            .find(|(d, _)| d == "vu")
+            .expect("vu in snapshot");
+        assert_eq!(vu.1.len(), 2, "VU + peak");
+        assert!(vu.1[0] < -50.0, "silent VU near floor, got {}", vu.1[0]);
     }
 
     #[test]

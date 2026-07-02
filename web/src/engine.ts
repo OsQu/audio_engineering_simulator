@@ -18,13 +18,30 @@ export type ControlMessage =
   | { type: "noteOff"; device: string; note: number }
   | { type: "loadPatch"; patch: Patch };
 
-/** The worklet's ready handshake: engine geometry + group delay + the fetched device & cable catalogs. */
+/** The worklet's ready handshake: engine geometry + group delay + the fetched device & cable catalogs,
+ *  plus the initial scene's static per-connection loading loss. */
 export type ReadyMessage = {
   type: "ready";
   len: number;
   signalPathLatencyMs: number;
   catalog: DeviceDescriptor[];
   cables: CableType[];
+  /** Per scene connection (same index as the patch's connection list): loading loss in dB, or `null`
+   *  for a digital/event connection (ideal, no resistive loading). */
+  losses: (number | null)[];
+};
+
+/** Live device meter readings, posted ~47×/s: one entry per metering device, `[deviceId, values]`
+ *  with values in readout-id order (matching the device descriptor's `readouts`). */
+export type ReadoutsMessage = {
+  type: "readouts";
+  readings: [string, number[]][];
+};
+
+/** Refreshed static per-connection loading loss, posted once after a hot-swap installs a new scene. */
+export type LossesMessage = {
+  type: "losses";
+  losses: (number | null)[];
 };
 
 /** The throttled real-time-health snapshot (compute-budget overruns + engine queue drops). */
@@ -59,6 +76,12 @@ export interface EngineHandlers {
   onLevel: (peak: number) => void;
   /** Fired once the engine is live: hands back the catalog and the `send` channel. */
   onReady: (ready: ReadyMessage, send: (msg: ControlMessage) => void) => void;
+  /** Live device meter readings (node→host lane), ~47×/s: `[deviceId, values]` per metering device.
+   *  Optional — the UI wires it when it renders meter screens (Story 4.5.7). */
+  onReadouts?: (readings: [string, number[]][]) => void;
+  /** Refreshed per-connection loading loss (dB, or `null`) after a structural edit. Optional, like
+   *  `onReadouts`. The initial losses arrive on `ready`. */
+  onLosses?: (losses: (number | null)[]) => void;
 }
 
 /** Compose the end-to-end latency line from the engine group delay + the browser's measured latency. */
@@ -133,6 +156,10 @@ export async function startEngine(
       handlers.onHealth(d as HealthMessage);
     } else if (d?.type === "level") {
       handlers.onLevel((d as LevelMessage).peak);
+    } else if (d?.type === "readouts") {
+      handlers.onReadouts?.((d as ReadoutsMessage).readings);
+    } else if (d?.type === "losses") {
+      handlers.onLosses?.((d as LossesMessage).losses);
     } else if (d?.type === "error") {
       handlers.onStatus(`worklet error: ${d.message}`);
       console.error("worklet error:", d.message, "\n", d.stack);
