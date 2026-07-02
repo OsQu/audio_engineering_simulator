@@ -8,6 +8,9 @@ import { mount } from "svelte";
 // (styles/components.css) are NOT imported — they're copied into each widget's
 // scoped <style> during the re-skin; the tokens below resolve for them for free.
 import "./styles/tokens.css";
+// Base layer: applies the room-level tokens (dark background, base text, dark
+// native controls). Must load after tokens.css so the vars exist.
+import "./styles/base.css";
 import App from "./App.svelte";
 
 const target = document.getElementById("app");

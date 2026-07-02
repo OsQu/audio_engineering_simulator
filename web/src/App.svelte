@@ -940,13 +940,16 @@
 
 <style>
   main {
-    font:
-      15px/1.5 system-ui,
-      sans-serif;
+    font: 15px/1.5 var(--ae-font-ui);
     max-width: 52rem;
     margin: 3rem auto;
     padding: 0 1rem;
-    color: #1a1a1a;
+    color: var(--ae-text-secondary);
+  }
+  h1 {
+    font-family: var(--ae-font-display);
+    color: var(--ae-text-primary);
+    letter-spacing: 0.01em;
   }
   .master {
     display: flex;
@@ -959,7 +962,7 @@
     align-items: center;
     gap: 0.6rem;
     font-size: 0.8rem;
-    color: #444;
+    color: var(--ae-text-secondary);
   }
   .volume input {
     width: 12rem;
@@ -967,10 +970,11 @@
   .volume .readout {
     width: 3rem;
     font-variant-numeric: tabular-nums;
-    color: #777;
+    color: var(--ae-text-muted);
   }
   code {
-    background: #f0f0f0;
+    background: var(--ae-bg-chip);
+    color: var(--ae-text-primary);
     padding: 0.1em 0.3em;
     border-radius: 3px;
   }
@@ -978,12 +982,23 @@
     font: inherit;
     padding: 0.5em 1.2em;
     cursor: pointer;
+    color: var(--ae-text-strong);
+    background: var(--ae-bg-chip);
+    border: 1px solid var(--ae-line-chip);
+    border-radius: var(--ae-radius-control);
+  }
+  button:hover:not(:disabled) {
+    background: var(--ae-bg-panel);
+  }
+  button:disabled {
+    opacity: 0.5;
+    cursor: default;
   }
   .status {
-    color: #555;
+    color: var(--ae-text-muted);
   }
   .health {
-    color: #777;
+    color: var(--ae-text-muted);
     font-size: 0.85em;
     font-variant-numeric: tabular-nums;
   }
@@ -1000,20 +1015,20 @@
     font: inherit;
     font-size: 0.8rem;
     padding: 0.25rem 0.7rem;
-    border: 1px solid #ccc;
+    border: 1px solid var(--ae-line-chip);
     border-bottom: none;
     border-radius: 5px 5px 0 0;
-    background: #ececec;
-    color: #555;
+    background: var(--ae-bg-panel-2);
+    color: var(--ae-text-muted);
     cursor: pointer;
   }
   .space-tab.active {
-    background: #2a2d31;
-    color: #fff;
-    border-color: #2a2d31;
+    background: var(--ae-bg-panel);
+    color: var(--ae-text-primary);
+    border-color: var(--ae-line-panel);
   }
   .space-tab.add {
-    color: #888;
+    color: var(--ae-text-faint);
     background: transparent;
     border-style: dashed;
   }
@@ -1022,10 +1037,10 @@
     font-size: 9px;
     margin-left: 2px;
     max-width: 6rem;
-    border: 1px solid #555;
+    border: 1px solid var(--ae-line-chip);
     border-radius: 3px;
-    background: #4a4d52;
-    color: #e0e0e0;
+    background: var(--ae-bg-chip);
+    color: var(--ae-text-strong);
   }
   .palette {
     display: flex;
@@ -1036,28 +1051,28 @@
   }
   .palette-label {
     font-size: 0.75rem;
-    color: #888;
+    color: var(--ae-text-muted);
   }
   .add-chip {
     font: inherit;
     font-size: 0.75rem;
     padding: 0.2rem 0.6rem;
-    border: 1px solid #bbb;
+    border: 1px solid var(--ae-line-chip);
     border-radius: 12px;
-    background: #f4f4f4;
-    color: #333;
+    background: var(--ae-bg-chip);
+    color: var(--ae-text-strong);
     cursor: pointer;
   }
   .add-chip:hover {
-    background: #e6e6e6;
+    background: var(--ae-bg-panel);
   }
   .add-chip.rack {
     border-style: dashed;
-    color: #666;
+    color: var(--ae-text-muted);
   }
   .world-hint {
     font-size: 0.8rem;
-    color: #777;
+    color: var(--ae-text-muted);
     margin: 0.5rem 0;
   }
   /* A patch cable drawn in the world overlay (surface mm; stroke scales with zoom). */
@@ -1194,8 +1209,9 @@
     border-bottom: none;
   }
   kbd {
-    background: #f0f0f0;
-    border: 1px solid #ccc;
+    background: var(--ae-bg-chip);
+    color: var(--ae-text-strong);
+    border: 1px solid var(--ae-line-chip);
     border-radius: 3px;
     padding: 0.05em 0.35em;
   }
