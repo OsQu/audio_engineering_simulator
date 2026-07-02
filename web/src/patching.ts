@@ -106,8 +106,11 @@ export function pointerMove(
 // Release. `clickNotDrag` is true when the press never moved past the drag threshold.
 //  - **drag**: a release over a legal jack commits; a click (no move) promotes to a **pending** pick
 //    that survives a view switch; a real drag released over nothing cancels.
-//  - **pending**: a press-and-drag is a pan → keep the pick. A *click* resolves it: commit onto a legal
-//    destination jack, and cancel on anything else (empty space, an illegal jack, or the source jack).
+//  - **pending**: a press-and-drag is a pan → keep the pick. A *click* resolves it only in the two ways
+//    that must end the patch: a legal destination jack commits, and re-clicking the source cancels.
+//    Everything else keeps the pick — a click on empty space, on a non-jack (e.g. the view/space
+//    switcher, which is how a cross-view patch is completed), or on an illegal jack. Cancel otherwise is
+//    via Esc or the banner's Cancel button.
 export function pointerUp(
   state: PatchState,
   hit: JackHit | null,
@@ -123,12 +126,12 @@ export function pointerUp(
     return { state: null };
   }
 
-  if (!clickNotDrag) return { state }; // a pan — keep the pending pick
-  if (hit && hit.key !== jackKeyOf(state.source)) {
-    const verdict = evaluateConnection(state.source, hit.endpoint, deps.connections);
-    if (verdict.ok) return { state: null, commit: verdict };
-  }
-  return { state: null };
+  if (!clickNotDrag) return { state }; // a press-and-drag is a pan — keep the pick
+  if (!hit) return { state }; // empty space / a non-jack (e.g. the switcher) — keep it through the switch
+  if (hit.key === jackKeyOf(state.source)) return { state: null }; // re-clicking the source cancels
+  const verdict = evaluateConnection(state.source, hit.endpoint, deps.connections);
+  if (verdict.ok) return { state: null, commit: verdict }; // a legal destination commits
+  return { state }; // an illegal jack — keep the pick so another target can be tried
 }
 
 // Esc (or any explicit cancel) drops an in-progress patch.

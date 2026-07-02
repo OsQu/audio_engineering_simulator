@@ -141,22 +141,26 @@ describe("pointerUp — pending mode", () => {
     const p = pending();
     expect(pointerUp(p, null, false, deps).state).toBe(p); // unchanged
   });
-  it("cancels on a click over empty space", () => {
-    expect(pointerUp(pending(), null, true, deps)).toEqual({ state: null });
+  it("keeps the pick through a non-jack click (the view/space switcher — how cross-view completes)", () => {
+    const p = pending();
+    const res = pointerUp(p, null, true, deps); // click on empty space / a switcher button
+    expect(res.state).toBe(p); // survives the switch
+    expect(res.commit).toBeUndefined();
   });
   it("cancels on a click back on the source jack", () => {
     expect(pointerUp(pending(), srcHit, true, deps)).toEqual({ state: null });
   });
-  it("cancels (no commit) on a click over an illegal jack", () => {
-    // Another device's output jack — output→output is illegal, so the click cancels without committing.
+  it("keeps the pick (no commit) on a click over an illegal jack", () => {
+    // Another device's output jack — output→output is illegal, so the pick stays for another try.
     const otherOut: Endpoint = { device: "s2", port: 0, direction: "output", domain: "analog" };
     const outHit: JackHit = {
       key: jackKeyOf(otherOut),
       endpoint: otherOut,
       anchor: { x: 5, y: 5 },
     };
-    const res = pointerUp(pending(), outHit, true, deps);
-    expect(res.state).toBeNull();
+    const p = pending();
+    const res = pointerUp(p, outHit, true, deps);
+    expect(res.state).toBe(p);
     expect(res.commit).toBeUndefined();
   });
 });
