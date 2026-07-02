@@ -78,6 +78,36 @@ mod compile_and_solve {
     }
 
     #[test]
+    fn edge_gain_exposes_the_baked_loading_divider() {
+        // source(100 Ω) → gain → sum: the two analog edges' baked loading gains, by graph edge
+        // order. edge 0 (src→gain): 10000/(100+10000) = 0.990099; edge 1 (gain→sum):
+        // 10000/(150+10000) = 0.985222 (same dividers as `source_gain_sum_chain_matches_hand_calc`).
+        let mut g = Graph::new();
+        let src = g.add(TestSource::new(Volts::new(1.0), Ohms::new(100.0)));
+        let amp = g.add(gain(2.0));
+        let sum = g.add(PassiveSum::new(
+            vec![InputZ::new(Ohms::new(10_000.0))],
+            Ohms::new(150.0),
+        ));
+        g.connect_ideal(src, 0, amp, 0); // edge 0
+        g.connect_ideal(amp, 0, sum, 0); // edge 1
+        g.set_output(sum, 0);
+
+        let sched = compile(g, 8, rate(), 0).expect("valid chain");
+        assert_relative_eq!(
+            sched.edge_gain(0).expect("edge 0"),
+            0.990_099,
+            epsilon = 1e-5
+        );
+        assert_relative_eq!(
+            sched.edge_gain(1).expect("edge 1"),
+            0.985_222,
+            epsilon = 1e-5
+        );
+        assert!(sched.edge_gain(2).is_none(), "no third edge");
+    }
+
+    #[test]
     fn rejects_missing_output() {
         let mut g = Graph::new();
         g.add(TestSource::new(Volts::new(1.0), Ohms::new(100.0)));

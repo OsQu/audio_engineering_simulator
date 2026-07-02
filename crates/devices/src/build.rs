@@ -83,6 +83,11 @@ pub struct BuiltScene {
     params: BTreeMap<String, Vec<ParamHandle>>,
     /// device id → its (first) event input, for note routing. Absent for devices with no event input.
     events: BTreeMap<String, EventInputId>,
+    /// Per scene [`Connection`](crate::Connection) (same index as `patch.connections`): the edge's
+    /// **loading loss** in dB (`20·log10` of the baked resistive divider gain, so ≤ 0 dB — an
+    /// attenuation), or `None` for a digital/event connection (ideal, no resistive loading). The
+    /// static analog-domain readout the UI shows per cable.
+    connection_losses: Vec<Option<f32>>,
 }
 
 impl fmt::Debug for BuiltScene {
@@ -122,6 +127,22 @@ impl BuiltScene {
     pub fn event_input(&self, device: &str) -> Option<EventInputId> {
         self.events.get(device).copied()
     }
+
+    /// The **loading loss** of scene connection `index` (its position in the patch's connection
+    /// list), in dB — `20·log10` of the baked resistive divider gain, so ≤ 0 dB (an attenuation).
+    /// `None` if the index is out of range or the connection is digital/event (ideal, no resistive
+    /// loading). This is the frequency-independent divider loss; a cable's treble rolloff is a
+    /// separate effect not folded in.
+    #[must_use]
+    pub fn connection_loading_loss(&self, index: usize) -> Option<f32> {
+        self.connection_losses.get(index).copied().flatten()
+    }
+}
+
+/// A linear voltage gain as decibels: `20·log10(gain)`. For a loading divider (gain ≤ 1) this is
+/// ≤ 0 — the loss. Done in `f64` for precision.
+fn gain_to_db(gain: f32) -> f32 {
+    (20.0 * f64::from(gain).log10()) as f32
 }
 
 /// Resolve a device output `PortRef` to a concrete `(node, output port)`.
@@ -196,10 +217,14 @@ pub fn build_patch(
         };
     }
 
-    // 2. Remap each scene connection (and the output tap) through the device maps to graph edges.
+    // 2. Remap each scene connection (and the output tap) through the device maps to graph edges,
+    //    recording each connection's graph edge index (edges are appended in call order, after the
+    //    devices' internal edges) so its baked loading loss can be read back after compile.
+    let mut connection_edges: Vec<usize> = Vec::with_capacity(patch.connections.len());
     for conn in &patch.connections {
         let (from_node, from_port) = resolve_output(&devices, &conn.from)?;
         let (to_node, to_port) = resolve_input(&devices, &conn.to)?;
+        connection_edges.push(graph.connection_count());
         match &conn.cable {
             Some(cable) => graph.connect_cabled(
                 from_node,
@@ -219,6 +244,13 @@ pub fn build_patch(
 
     // 3. Compile (fixed seed → reproducible). Engine validation (domain, cycles, rates) lands here.
     let schedule = compile(graph, block_len, rate, seed)?;
+
+    // 3b. Read back each connection's baked loading loss (analog only; digital/event → None), by the
+    //     graph edge index recorded above — the static analog-domain readout the UI surfaces.
+    let connection_losses: Vec<Option<f32>> = connection_edges
+        .iter()
+        .map(|&ei| schedule.edge_gain(ei).map(gain_to_db))
+        .collect();
 
     // 4. Resolve the generic control surface against the compiled schedule.
     let mut params = BTreeMap::new();
@@ -250,6 +282,7 @@ pub fn build_patch(
         schedule,
         params,
         events,
+        connection_losses,
     })
 }
 
@@ -531,6 +564,50 @@ mod tests {
         });
         let mut scene = build_patch(&patch, BLOCK_LEN, rate(), 0).expect("cabled patch builds");
         assert!(peak_after_note(&mut scene, "synth", 32) > 0.05);
+    }
+
+    /// The static loading-loss readout reads each connection's baked divider. In the canonical patch
+    /// `synth(1 Ω)→ad(1 MΩ)` [conn 0], `ad→da` digital [conn 1], `da(150 Ω)→spk(10 kΩ)` [conn 2]:
+    /// hand calc for conn 2 is 10000/(150+10000) = 0.985222 → 20·log10 = −0.1293 dB; conn 0 is
+    /// essentially unloaded; conn 1 is digital (ideal, no loss).
+    #[test]
+    fn connection_loading_loss_reads_the_baked_divider() {
+        let scene = build_patch(&canonical_patch(), BLOCK_LEN, rate(), 0).expect("builds");
+
+        let loss2 = scene.connection_loading_loss(2).expect("da→spk is analog");
+        assert!((loss2 - (-0.1293)).abs() < 1e-3, "conn 2 loss {loss2}");
+
+        let loss0 = scene
+            .connection_loading_loss(0)
+            .expect("synth→ad is analog");
+        assert!(
+            loss0.abs() < 1e-3,
+            "1 Ω into 1 MΩ is ~unloaded, got {loss0}"
+        );
+
+        assert!(
+            scene.connection_loading_loss(1).is_none(),
+            "digital edge has no resistive loading loss"
+        );
+        assert!(
+            scene.connection_loading_loss(9).is_none(),
+            "out-of-range connection index"
+        );
+    }
+
+    /// A cable's series resistance joins the divider and deepens the loading loss. A 1 kΩ cable on
+    /// `da(150 Ω)→spk(10 kΩ)` gives 10000/(150+1000+10000) = 0.89686 → −0.9458 dB, well past the
+    /// ideal wire's −0.1293 dB.
+    #[test]
+    fn a_cable_deepens_the_loading_loss() {
+        let mut patch = canonical_patch();
+        patch.connections[2].cable = Some(crate::scene::CableSpec {
+            resistance_ohms: 1000.0,
+            capacitance_farads: 1e-9,
+        });
+        let scene = build_patch(&patch, BLOCK_LEN, rate(), 0).expect("builds");
+        let loss = scene.connection_loading_loss(2).expect("analog");
+        assert!((loss - (-0.9458)).abs() < 1e-3, "cabled conn 2 loss {loss}");
     }
 
     #[test]

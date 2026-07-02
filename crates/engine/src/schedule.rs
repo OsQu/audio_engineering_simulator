@@ -283,6 +283,12 @@ pub struct Schedule {
     readout_base: Vec<usize>,
     /// Number of readouts each node declared (its run length in `readout_store`).
     readout_count: Vec<usize>,
+    /// The baked resistive **loading gain** of each edge, indexed by graph edge order (the order
+    /// edges were added to the [`Graph`]); `None` for a digital/event edge, which has no resistive
+    /// loading. This is the divider ratio `Zin/(Zout + Zcable + Zin)` (fan-out aware) — the DC part
+    /// of the connection's attenuation, i.e. its **loading loss** as a linear gain. Read off the hot
+    /// path by [`edge_gain`](Self::edge_gain) (`20·log10` of it is the loss in dB).
+    edge_gains: Vec<Option<f32>>,
 }
 
 impl Schedule {
@@ -345,6 +351,16 @@ impl Schedule {
     #[must_use]
     pub fn readout_value(&self, handle: ReadoutHandle) -> Option<f32> {
         self.readout_store.get(handle.0).copied()
+    }
+
+    /// The baked resistive **loading gain** of edge `edge_index` (in graph edge order), or `None` if
+    /// the index is out of range or the edge is digital/event (no resistive loading). It's the
+    /// divider ratio the connection applies (fan-out aware); `20·log10` of it is the edge's
+    /// **loading loss** in dB. Off the hot path — read once after `compile` to report signal-chain
+    /// levels; the frequency-dependent cable rolloff is a separate effect, not folded in here.
+    #[must_use]
+    pub fn edge_gain(&self, edge_index: usize) -> Option<f32> {
+        self.edge_gains.get(edge_index).copied().flatten()
     }
 
     /// Process one block with no external input — the convenience for offline renders and chains
@@ -661,6 +677,9 @@ pub fn compile(
     //        transform per conductor** — the same differential divider gain on each, but an
     //        independent cable one-pole (each wire has its own filter state). ---
     let mut edge_kinds: Vec<Option<Vec<EdgeKind>>> = (0..edges.len()).map(|_| None).collect();
+    // The resistive loading gain per edge, captured as it's baked (analog only; None otherwise), so
+    // the host can report each connection's loading loss after compile.
+    let mut edge_gains: Vec<Option<f32>> = vec![None; edges.len()];
     let mut by_port: Vec<usize> = (0..edges.len()).collect();
     by_port.sort_by_key(|&ei| (edges[ei].from_node.0, edges[ei].from_port));
     let mut i = 0;
@@ -708,6 +727,8 @@ pub fn compile(
                         }));
                     }
                     edge_kinds[ei] = Some(kinds);
+                    // Same divider gain on every conductor — record it once as the edge's loading loss.
+                    edge_gains[ei] = Some(gains[k]);
                 }
             }
             Domain::DigitalAudio => {
@@ -879,6 +900,7 @@ pub fn compile(
         readout_store,
         readout_base,
         readout_count,
+        edge_gains,
     })
 }
 
