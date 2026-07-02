@@ -32,7 +32,7 @@
   // **dragging** lives on the whole device body — a pointerdown that doesn't land on a control, jack,
   // or the corner chrome (see onDevicePointerDown) grabs the unit, so turning a knob never moves it.
   import type { Snippet } from "svelte";
-  import type { Rect2 } from "../spatial";
+  import { type Rect2, snapToGrid } from "../spatial";
 
   interface WorldItem {
     id: string;
@@ -61,6 +61,9 @@
     canPlace?: (id: string, x: number, y: number) => boolean;
     /** When this changes (e.g. the shown space switches), the camera re-frames the new content. */
     fitKey?: string;
+    /** Free-placement grid step, world mm. A dragged/nudged item's position snaps to this grid for
+     *  easier alignment (0 ⇒ no snapping). Rack mounting still snaps to U-slots in the parent's commit. */
+    gridStep?: number;
     /** Optional content drawn in the surface's own coordinate space, on top of the gear (e.g. patch
      *  cables). Handed a {@link WorldApi} so the parent can place things without touching the transform.
      *  The world layer stays ignorant of what this is — the standing WebGL escape hatch. */
@@ -80,6 +83,7 @@
     onMoveTo,
     canPlace,
     fitKey,
+    gridStep = 0,
     overlay,
     cables,
     api = $bindable(),
@@ -172,8 +176,8 @@
     if (!step) return;
     e.preventDefault();
     userAdjusted = true;
-    const x = it.rect.x + step[0];
-    const y = Math.max(0, it.rect.y + step[1]);
+    const x = snapToGrid(it.rect.x + step[0], gridStep);
+    const y = Math.max(0, snapToGrid(it.rect.y + step[1], gridStep));
     if (legalAt(it.id, x, y)) onMoveTo(it.id, x, y);
   }
 
@@ -185,8 +189,9 @@
   function onPointerMove(e: PointerEvent): void {
     if (drag) {
       // Screen delta → world delta (÷ zoom); screen-y grows down, world-y grows up, so negate dy.
-      const x = grab.worldX + (e.clientX - grab.px) / zoom;
-      const y = Math.max(0, grab.worldY - (e.clientY - grab.py) / zoom);
+      // Snap the live position to the placement grid so the preview lands where the drop will commit.
+      const x = snapToGrid(grab.worldX + (e.clientX - grab.px) / zoom, gridStep);
+      const y = Math.max(0, snapToGrid(grab.worldY - (e.clientY - grab.py) / zoom, gridStep));
       drag = { id: drag.id, x, y, legal: legalAt(drag.id, x, y) };
     } else if (pan) {
       panX = pan.panX0 + (e.clientX - pan.px);

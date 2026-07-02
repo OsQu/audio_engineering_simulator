@@ -37,6 +37,21 @@ export interface Rect2 {
  *  4.3 renders only "front"; "top"/"side" exist so the projection seam is proven (Story 4.6). */
 export type ViewKind = "front" | "top" | "side";
 
+/** Which wall of a rectangular room a device stands against — the elevation view it appears in. A
+ *  placement carries this tag (Story 4.6); the wall view is a *projection* of its 3-D truth, never a
+ *  stored per-view position. front/back run along x; left/right run along z (the shorter sides when
+ *  depth < width). */
+export type Wall = "front" | "back" | "left" | "right";
+
+/** A rectangular room's floor extent (millimetres): `width` along x, `depth` along z. `height` is the
+ *  wall's vertical extent (along y) — carried for the elevation/top-view chrome, not the projection
+ *  math. The four walls fall out of this rectangle; nothing stores per-wall geometry. */
+export interface Room {
+  width: number;
+  depth: number;
+  height: number;
+}
+
 /** 1U rack-slot height, millimetres. */
 export const RACK_UNIT_MM = 44.45;
 /** Standard 19" rack width, millimetres. */
@@ -70,9 +85,50 @@ export function project(pos: Vec3, size: Size3, view: ViewKind): Rect2 {
   }
 }
 
+/** Project a positioned 3-D box onto one wall's **elevation** — the horizontal axis runs *along* that
+ *  wall, the vertical is always world y (up). This is the multi-view generalization of `project(…,
+ *  "front")` (Story 4.6): each wall is a projection of the single 3-D truth, never a stored 2-D position.
+ *
+ *  Convention — you stand inside the room looking outward at the wall, screen-x increasing to *your
+ *  right*. Turning between walls flips left/right where it physically should:
+ *  - **front** (far wall, looking +z): screen-x = world x (identity — matches the pre-4.6 single view).
+ *  - **back** (near wall, turned 180°, looking −z): x mirrored about the room width.
+ *  - **left** (x=0 wall, turned left, looking −x): screen-x = world z (uses the depth axis).
+ *  - **right** (x=W wall, turned right, looking +x): z mirrored about the room depth.
+ *  A box on `[a, a+w]` mirrored about extent `E` becomes `[E-(a+w), E-a]` — same width, origin reflected. */
+export function wallProjection(pos: Vec3, size: Size3, wall: Wall, room: Room): Rect2 {
+  switch (wall) {
+    case "front":
+      return { x: pos.x, y: pos.y, width: size.width, height: size.height };
+    case "back":
+      return {
+        x: room.width - (pos.x + size.width),
+        y: pos.y,
+        width: size.width,
+        height: size.height,
+      };
+    case "left":
+      return { x: pos.z, y: pos.y, width: size.depth, height: size.height };
+    case "right":
+      return {
+        x: room.depth - (pos.z + size.depth),
+        y: pos.y,
+        width: size.depth,
+        height: size.height,
+      };
+  }
+}
+
 /** Do two axis-aligned rectangles overlap? Touching edges (zero overlap area) do not count. */
 export function rectsOverlap(a: Rect2, b: Rect2): boolean {
   return a.x < b.x + b.width && b.x < a.x + a.width && a.y < b.y + b.height && b.y < a.y + a.height;
+}
+
+/** Snap a coordinate to the nearest multiple of `step` — the free-placement grid the world layer drops
+ *  gear onto (Story 4.6). A non-positive step is a no-op (returns `v` unchanged), so a caller can pass 0
+ *  to disable snapping without a branch. */
+export function snapToGrid(v: number, step: number): number {
+  return step > 0 ? Math.round(v / step) * step : v;
 }
 
 // --- Rack U-slot model -----------------------------------------------------------------------------

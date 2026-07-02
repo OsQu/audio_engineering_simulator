@@ -111,6 +111,7 @@
   let currentSpace = $state(initialScene.ui.spaces[0]?.id ?? "");
 
   const FRAME_MARGIN = 14; // mm of rack frame drawn around the U-slot region
+  const GRID_MM = 50; // free-placement snap grid (world mm) — eases aligning gear on the floor
 
   const deviceById = (id: string) => scene.patch.devices.find((d) => d.id === id);
   const rackById = (id: string) => scene.ui.racks.find((r) => r.id === id);
@@ -798,7 +799,7 @@
         {/if}
       {/snippet}
 
-      <WorldView items={placedItems} onMoveTo={moveTo} {canPlace} fitKey={currentSpace} bind:api={worldApi}>
+      <WorldView items={placedItems} onMoveTo={moveTo} {canPlace} fitKey={currentSpace} gridStep={GRID_MM} bind:api={worldApi}>
         {#snippet cables(api)}
           <!-- Every same-space cable, drawn once as a continuous lead. The devices' z (set in
                placedItems by facing) decides which panels each cable passes in front of vs behind. -->
