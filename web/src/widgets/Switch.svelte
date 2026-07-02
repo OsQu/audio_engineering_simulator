@@ -29,53 +29,67 @@
 </div>
 
 <style>
+  /* A bat-toggle: recessed barrel (jack tokens) + a metal nub that slides up when on, with an LED lamp
+     above it (led tokens). Internals are proportional (%), and the button scales with the chassis height
+     (cqh, capped at its rem) so a 1U rack unit shrinks it instead of clipping — same approach as Knob. */
   .switch {
     display: flex;
     flex-direction: column;
     align-items: center;
-    width: 4.5rem;
-    gap: 0.25rem;
+    width: min(4.5rem, 92cqh);
+    gap: min(0.25rem, 3cqh);
   }
   button {
     position: relative;
-    width: 2.4rem;
-    height: 3rem;
+    width: min(2.2rem, 40cqh);
+    height: min(3rem, 58cqh);
     padding: 0;
-    border: 1px solid #111;
+    border: 1px solid var(--ae-jack-edge);
     border-radius: 4px;
-    background: #2b2b2b;
+    background: radial-gradient(circle at 50% 32%, var(--ae-jack-top), var(--ae-jack-bot));
+    box-shadow: var(--ae-bevel-press);
     cursor: pointer;
   }
   .led {
     position: absolute;
-    top: 0.3rem;
+    top: 9%;
     left: 50%;
     transform: translateX(-50%);
-    width: 0.45rem;
-    height: 0.45rem;
+    width: 20%;
+    aspect-ratio: 1;
     border-radius: 50%;
-    background: #5a1a1a;
+    background: var(--ae-led-red-off);
+    box-shadow: var(--ae-bevel-press);
   }
   button.on .led {
-    background: #36d36b;
-    box-shadow: 0 0 5px #36d36b;
+    background: radial-gradient(circle at 40% 35%, var(--ae-led-green-lit), var(--ae-led-green));
+    box-shadow:
+      0 0 6px var(--ae-led-green-glow),
+      inset 0 0 2px rgba(255, 255, 255, 0.7);
   }
   .cap {
     position: absolute;
-    left: 4px;
-    right: 4px;
-    bottom: 4px;
-    height: 1.4rem;
+    left: 12%;
+    right: 12%;
+    bottom: 8%;
+    height: 46%;
     border-radius: 3px;
-    background: linear-gradient(#555, #3a3a3a);
+    background: linear-gradient(to bottom, var(--ae-fader-cap-top), var(--ae-fader-cap-bot));
+    box-shadow: var(--ae-bevel-top);
     transition: transform 0.08s ease;
   }
   button.on .cap {
-    transform: translateY(-0.5rem);
-    background: linear-gradient(#6a6a6a, #4a4a4a);
+    transform: translateY(-34%);
+    background: linear-gradient(to bottom, var(--ae-metal-collar-3), var(--ae-fader-cap-top));
   }
   .label {
-    font-size: 0.7rem;
-    color: #444;
+    font-family: var(--ae-font-ui);
+    font-weight: var(--ae-label-weight);
+    font-size: min(var(--ae-label-size), 17cqh);
+    letter-spacing: var(--ae-label-spacing);
+    text-transform: uppercase;
+    color: var(--ae-faceplate-ink, var(--ae-text-strong));
+    text-align: center;
+    line-height: 1.15;
   }
 </style>

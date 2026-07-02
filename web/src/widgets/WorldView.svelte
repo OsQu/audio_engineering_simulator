@@ -29,7 +29,8 @@
   //
   // Interaction is split so it never conflicts: **panning** lives on a `.backdrop` *sibling* of the
   // devices (a device press can't bubble to a sibling, so operating a control never pans), and
-  // **dragging** lives on each device's `.grip` handle (so turning a knob never moves the device).
+  // **dragging** lives on the whole device body — a pointerdown that doesn't land on a control, jack,
+  // or the corner chrome (see onDevicePointerDown) grabs the unit, so turning a knob never moves it.
   import type { Snippet } from "svelte";
   import type { Rect2 } from "../spatial";
 
@@ -37,9 +38,13 @@
     id: string;
     /** Front-elevation rect in world millimetres (`y` = bottom edge). */
     rect: Rect2;
-    /** Background furniture (e.g. a rack frame): drawn **below** the cable underlay, so cables between
-     *  its contained gear stay visible. Foreground items (devices) draw above the underlay. */
+    /** Background furniture (e.g. a rack frame). A styling hook; stacking is set via `z`. */
     background?: boolean;
+    /** Stacking order (CSS z-index). The parent sets it per item to interleave items with the single
+     *  cable layer (z 2): a device showing its **back** sits *below* the cables (they plug into its
+     *  visible sockets), one facing **front** sits *above* them (cables tuck behind its panel). A rack
+     *  frame sits at the bottom. Defaults to 2. */
+    z?: number;
   }
 
   interface Props {
@@ -60,9 +65,10 @@
      *  cables). Handed a {@link WorldApi} so the parent can place things without touching the transform.
      *  The world layer stays ignorant of what this is — the standing WebGL escape hatch. */
     overlay?: Snippet<[WorldApi]>;
-    /** Like `overlay`, but drawn **behind** the gear (below the device panels) — e.g. cables that should
-     *  tuck behind a front-facing unit. Same {@link WorldApi}, same coordinate space. */
-    underlay?: Snippet<[WorldApi]>;
+    /** Like `overlay`, but drawn at the CABLE layer (z 2) — between back-facing and front-facing device
+     *  panels — e.g. the patch cables. Each item's `z` decides whether it sits in front of or behind
+     *  these, so a single continuous cable is occluded correctly per device. Same coordinate space. */
+    cables?: Snippet<[WorldApi]>;
     /** Bound out to the parent so it can convert coordinates outside the overlay snippet (e.g. to
      *  DOM-measure jack positions into surface space). `undefined` until the surface mounts. */
     api?: WorldApi;
@@ -75,7 +81,7 @@
     canPlace,
     fitKey,
     overlay,
-    underlay,
+    cables,
     api = $bindable(),
   }: Props = $props();
 
@@ -133,6 +139,23 @@
     userAdjusted = true;
     grab = { px: e.clientX, py: e.clientY, worldX: it.rect.x, worldY: it.rect.y };
     drag = { id: it.id, x: it.rect.x, y: it.rect.y, legal: true };
+  }
+
+  // The whole device body is the drag surface, but elements that own their own pointer gesture —
+  // controls (knob/fader = slider, switch = button), patch jacks, and the corner chrome buttons —
+  // must not start a move. A pointerdown landing on any of these is left alone.
+  const DRAG_EXCLUDE = 'button, input, select, textarea, a, [role="slider"], [role="switch"], [data-jack]';
+
+  function onDevicePointerDown(e: PointerEvent, it: WorldItem): void {
+    if ((e.target as HTMLElement | null)?.closest(DRAG_EXCLUDE)) return;
+    startDeviceDrag(e, it);
+  }
+
+  // Keyboard nudge fires only when the device box itself is focused — arrow keys bubbling up from a
+  // focused control (which handles its own value change) must not also move the device.
+  function onDeviceKey(e: KeyboardEvent, it: WorldItem): void {
+    if (e.target !== e.currentTarget) return;
+    nudge(e, it);
   }
 
   function nudge(e: KeyboardEvent, it: WorldItem): void {
@@ -266,45 +289,42 @@
       <div class="floor"></div>
     </div>
 
-    {#if underlay}
-      <!-- Behind-the-gear layer (below the device panels): cables that should tuck behind a
-           front-facing unit. Same surface-local space as the overlay. -->
+    {#if cables}
+      <!-- Cable layer (z 2): sits between back-facing device panels (below) and front-facing ones
+           (above), so one continuous cable plugs into a visible back socket yet tucks behind a front. -->
       <svg
-        class="underlay"
+        class="cables"
         width={ROOM_WIDTH}
         height={ROOM_HEIGHT}
         viewBox="0 0 {ROOM_WIDTH} {ROOM_HEIGHT}"
         aria-hidden="true"
       >
-        {@render underlay(worldApi)}
+        {@render cables(worldApi)}
       </svg>
     {/if}
 
     {#each items as it (it.id)}
       {@const p = shown(it)}
+      <!-- The whole device body is the drag surface (grab anywhere to move); controls / jacks / the
+           corner chrome opt out in onDevicePointerDown, so operating them never moves the unit. -->
       <div
         class="device"
         class:background={it.background}
         class:dragging={drag?.id === it.id}
         class:illegal={drag?.id === it.id && !drag.legal}
-        style="left: {p.x}px; bottom: {p.y}px; width: {it.rect.width}px; height: {it.rect.height}px;"
+        style="left: {p.x}px; bottom: {p.y}px; width: {it.rect.width}px; height: {it.rect.height}px;
+               z-index: {drag?.id === it.id ? 10 : (it.z ?? 2)};"
+        role="button"
+        tabindex="0"
+        aria-label="{it.id} — drag to move"
+        onpointerdown={(e) => onDevicePointerDown(e, it)}
+        onkeydown={(e) => onDeviceKey(e, it)}
       >
-        <div class="bar">
-          <div
-            class="grip"
-            role="button"
-            tabindex="0"
-            aria-label="move {it.id}"
-            onpointerdown={(e) => startDeviceDrag(e, it)}
-            onkeydown={(e) => nudge(e, it)}
-          >
-            <span class="dots">⠿</span>
-          </div>
-          {#if controls}
-            <div class="bar-controls">{@render controls(it.id)}</div>
-          {/if}
-        </div>
         <div class="content">{@render item(it.id)}</div>
+        {#if controls}
+          <!-- Chrome (flip / space / remove) floats in the top-right corner, out of the drag surface. -->
+          <div class="corner">{@render controls(it.id)}</div>
+        {/if}
       </div>
     {/each}
 
@@ -328,11 +348,9 @@
   .viewport {
     position: relative;
     width: 100%;
-    height: 62vh;
+    height: 100%; /* fill the parent stage (App makes it a flex-fill full-height area) */
     overflow: hidden;
-    background: #2a2d31;
-    border: 1px solid #1c1e21;
-    border-radius: 8px;
+    background: var(--ae-bg-room);
     touch-action: none;
   }
   .surface {
@@ -355,15 +373,16 @@
     pointer-events: none;
     z-index: 5;
   }
-  /* Behind-the-gear cable layer: above background furniture (racks, z-index 0) so cables between rack
-     gear show, but below device panels (z-index 2) so they still tuck behind a front-facing unit. */
-  .underlay {
+  /* Cable layer: fixed at z 2. Items sort around it by facing (back-facing < 2 < front-facing), so a
+     single continuous cable is drawn in front of the panels it plugs into and behind the ones it tucks
+     under — see WorldItem.z. */
+  .cables {
     position: absolute;
     top: 0;
     left: 0;
     overflow: visible;
     pointer-events: none;
-    z-index: 1;
+    z-index: 2;
   }
   .floor {
     position: absolute;
@@ -380,49 +399,32 @@
     overflow: hidden;
     box-shadow: 0 2px 6px rgba(0, 0, 0, 0.4);
     border-radius: 6px;
-    z-index: 2; /* device panels sit above the cable underlay (z-index 1) */
-  }
-  /* Background furniture (racks): below the cable underlay, so cables between rack gear stay visible. */
-  .device.background {
-    z-index: 0;
+    /* z-index is set inline per item (WorldItem.z) so panels interleave with the cable layer by facing;
+       a dragged item is lifted above everything. */
+    cursor: grab; /* the body is the drag surface; controls override with their own cursor */
   }
   .device.dragging {
-    z-index: 10;
     box-shadow: 0 6px 18px rgba(0, 0, 0, 0.55);
+    cursor: grabbing;
   }
   .device.illegal {
     outline: 2px solid #d9534f;
     outline-offset: 1px;
   }
-  .bar {
-    flex: none;
-    height: 16px;
-    display: flex;
-    align-items: stretch;
-    background: #3a3d42;
-    color: #9aa0a6;
-    font-size: 10px;
-    line-height: 1;
+  .device:focus-visible {
+    outline: 2px solid var(--ae-signal-mic-lit);
+    outline-offset: 1px;
   }
-  .grip {
-    flex: 1;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    cursor: grab;
-    user-select: none;
-  }
-  .grip:focus-visible {
-    outline: 2px solid #6ab0f3;
-    outline-offset: -2px;
-  }
-  .device.dragging .grip {
-    cursor: grabbing;
-  }
-  .bar-controls {
-    flex: none;
+  /* Chrome (flip / space / remove) floats in the device's top-right corner — above the faceplate and
+     outside the drag surface (its buttons/select opt out of the body drag in onDevicePointerDown). */
+  .corner {
+    position: absolute;
+    top: 3px;
+    right: 3px;
+    z-index: 4;
     display: flex;
     align-items: center;
+    gap: 3px;
   }
   .content {
     flex: 1;

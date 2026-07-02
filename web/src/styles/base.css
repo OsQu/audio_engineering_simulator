@@ -1,0 +1,22 @@
+/* ============================================================================
+ * Global base layer — the dark studio shell.
+ * ----------------------------------------------------------------------------
+ * Sits on top of tokens.css (imported after it in main.ts). tokens.css only
+ * *defines* the --ae-* vars; this file *applies* the room-level ones so the
+ * whole page reads as the dark studio from the start. Kept separate from
+ * tokens.css (which stays purely declarative) and from App.svelte (the
+ * throwaway harness) so this base survives when the real UI replaces the
+ * harness.
+ * ============================================================================ */
+
+:root {
+  /* Native form controls (range sliders, selects, scrollbars) render dark. */
+  color-scheme: dark;
+}
+
+body {
+  margin: 0;
+  background: var(--ae-bg-room);
+  color: var(--ae-text-secondary);
+  font-family: var(--ae-font-ui);
+}

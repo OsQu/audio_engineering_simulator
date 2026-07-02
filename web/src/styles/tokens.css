@@ -1,0 +1,236 @@
+/* ============================================================================
+ * Audio Engineer Simulator — Design Tokens (CSS custom properties)
+ * ----------------------------------------------------------------------------
+ * Source of truth for the studio-realistic, hybrid-skeuomorphic look extracted
+ * from the concept art. Mirrored 1:1 by tokens.ts (keep the two in sync).
+ *
+ * Drop this on a high-level wrapper (e.g. the world layer or :root). Everything
+ * in components.css and your re-skinned widgets reads from these vars, so a
+ * single edit here re-themes the whole app.
+ * ============================================================================ */
+
+/* ---- Fonts -----------------------------------------------------------------
+ * Adjust the url() paths to wherever the font files live in your app
+ * (Vite serves /public at the root, so /fonts/… works if you drop them there). */
+/* Space Grotesk (SIL OFL) — free stand-in for the display face; one variable
+ * file covers the weights the design uses (400 / 500 / 700). */
+@font-face {
+  font-family: "Space Grotesk";
+  src: url("/fonts/SpaceGrotesk-Variable.ttf") format("truetype-variations");
+  font-weight: 300 700;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Inter";
+  src: url("/fonts/Inter-Variable.ttf") format("truetype-variations");
+  font-weight: 100 900;
+  font-display: swap;
+}
+
+:root {
+  /* ====================================================================== */
+  /* SIGNAL PALETTE                                                         */
+  /* Connector + cable color = what the port carries. Each signal has a     */
+  /* base (the canonical color), a -lit highlight (gradient top / hot wire) */
+  /* and a -glow (the soft halo around live jacks & LEDs).                  */
+  /* ====================================================================== */
+  --ae-signal-mic: #2f6fc0;
+  --ae-signal-mic-lit: #6fb0ef;
+  --ae-signal-mic-glow: rgba(74, 144, 217, 0.45);
+
+  --ae-signal-line: #9aa0a6;
+  --ae-signal-line-lit: #e9edf1;
+  --ae-signal-line-glow: rgba(190, 196, 202, 0.35);
+
+  --ae-signal-instrument: #d2762a;
+  --ae-signal-instrument-lit: #f2ac6a;
+  --ae-signal-instrument-glow: rgba(224, 138, 60, 0.45);
+
+  --ae-signal-speaker: #c5392c;
+  --ae-signal-speaker-lit: #ef6f66;
+  --ae-signal-speaker-glow: rgba(214, 69, 60, 0.45);
+
+  --ae-signal-digital: #1f9c8d;
+  --ae-signal-digital-lit: #5fd6c6;
+  --ae-signal-digital-glow: rgba(43, 179, 163, 0.45);
+
+  --ae-signal-midi: #7e54c8;
+  --ae-signal-midi-lit: #b692ea;
+  --ae-signal-midi-glow: rgba(155, 108, 214, 0.45);
+
+  /* ====================================================================== */
+  /* SURFACES & CHROME (the app/world around the gear)                      */
+  /* ====================================================================== */
+  --ae-bg-room: #0a0b0d; /* deepest backdrop / floor shadow      */
+  --ae-bg-panel: #15171b; /* HUD panels, legend bars              */
+  --ae-bg-panel-2: #101216; /* paired darker panel face             */
+  --ae-bg-card: #1a1d22; /* card top (use with --ae-bg-card-2)   */
+  --ae-bg-card-2: #131519; /* card bottom for the vertical sheen   */
+  --ae-bg-chip: #1b1e23; /* pills, tags, small controls          */
+
+  --ae-line-card: #25282e; /* card / control hairline border       */
+  --ae-line-panel: #24272d; /* panel hairline border                */
+  --ae-line-chip: #2c3036; /* chip border                          */
+  --ae-line-hard: #0a0b0d; /* chassis / cut-edge near-black         */
+
+  /* ====================================================================== */
+  /* TEXT                                                                   */
+  /* ====================================================================== */
+  --ae-text-primary: #f3f5f7; /* headings, key readouts               */
+  --ae-text-strong: #dfe3e7; /* control titles                       */
+  --ae-text-secondary: #aeb6bf; /* body copy                            */
+  --ae-text-muted: #7e8794; /* captions, units, sub-labels          */
+  --ae-text-faint: #566069; /* watermark / disabled                 */
+  --ae-text-readout: #5fd6c6; /* digital numeric readouts (teal)      */
+
+  /* ====================================================================== */
+  /* INDICATOR LEDs (state lights — not signal jacks)                       */
+  /* Each: -lit center, base edge, -glow halo, plus an -off (dark, unlit).  */
+  /* ====================================================================== */
+  --ae-led-green: #1f9b3f;
+  --ae-led-green-lit: #9bffb4;
+  --ae-led-green-glow: rgba(60, 220, 110, 0.85);
+  --ae-led-green-off: #1a2417;
+  --ae-led-amber: #dc9b2f;
+  --ae-led-amber-lit: #ffe39a;
+  --ae-led-amber-glow: rgba(240, 180, 60, 0.8);
+  --ae-led-amber-off: #241a1a;
+  --ae-led-red: #c5392c;
+  --ae-led-red-lit: #ff8d83;
+  --ae-led-red-glow: rgba(230, 70, 60, 0.8);
+  --ae-led-red-off: #241a1a;
+  --ae-led-neutral-off: #121316;
+
+  /* ====================================================================== */
+  /* METAL / KNOB CAP FINISHES (gradient stops — compose in components.css) */
+  /* ====================================================================== */
+  /* Brushed metal collar (the ring around every knob) */
+  --ae-metal-collar-1: #e8ebee;
+  --ae-metal-collar-2: #b0b6bc;
+  --ae-metal-collar-3: #7a8087;
+  --ae-metal-collar-4: #565b61;
+  --ae-knob-tick: #9aa0a6;
+
+  /* Knob cap variants (top → bottom). Pair each with its pointer color. */
+  --ae-cap-dark-top: #3e4248;
+  --ae-cap-dark-bot: #16181b;
+  --ae-cap-dark-pointer: #f1f1ef;
+  --ae-cap-chrome-top: #d4d8dc;
+  --ae-cap-chrome-bot: #82888e;
+  --ae-cap-chrome-pointer: #1a1a1a;
+  --ae-cap-red-top: #d8584a;
+  --ae-cap-red-bot: #7a1810;
+  --ae-cap-red-pointer: #ffffff;
+  --ae-cap-blue-top: #5b8fd6;
+  --ae-cap-blue-bot: #1f3f7a;
+  --ae-cap-blue-pointer: #ffffff;
+  --ae-cap-cream-top: #e6e3da;
+  --ae-cap-cream-bot: #aaa597;
+  --ae-cap-cream-pointer: #1a1a1a;
+
+  /* Fader hardware */
+  --ae-fader-slot-edge: #070809;
+  --ae-fader-slot-mid: #2a2d31;
+  --ae-fader-cap-top: #43464c;
+  --ae-fader-cap-bot: #191b1e;
+  --ae-fader-index: #e9edf1; /* the white throw line on the cap     */
+  --ae-fader-cap-master-top: #c43b32; /* red master fader cap            */
+  --ae-fader-cap-master-bot: #7a1810;
+
+  /* Jack barrel (the recessed connector body; the ring uses a signal var) */
+  --ae-jack-top: #3a3d42;
+  --ae-jack-bot: #0c0d10;
+  --ae-jack-edge: #050608;
+
+  /* VU meter */
+  --ae-vu-face-top: #f3ecd4;
+  --ae-vu-face-bot: #e3d8b4;
+  --ae-vu-ink: #3a3527; /* scale arc, ticks, lettering            */
+  --ae-vu-red: #b23a2a; /* over-0 red zone                        */
+  --ae-vu-needle: #1a1a1a;
+  --ae-vu-pivot: #2a2a2a;
+  --ae-vu-bezel-1: #0c0d0f; /* the dark surround the glass sits in    */
+  --ae-vu-bezel-2: #1c1e21;
+
+  /* ====================================================================== */
+  /* PANEL FINISHES (device faceplates — 165° gradient top→mid→bottom)      */
+  /* Each finish ships its faceplate stops + the matching rack-ear color.   */
+  /* ====================================================================== */
+  --ae-finish-grey-1: #c8cac3;
+  --ae-finish-grey-2: #b0b2aa;
+  --ae-finish-grey-3: #9a9c94;
+  --ae-finish-grey-ear: #92948c; /* vintage opto (LA-2A) */
+  --ae-finish-slate-1: #3c4855;
+  --ae-finish-slate-2: #2e3947;
+  --ae-finish-slate-3: #26303c;
+  --ae-finish-slate-ear: #1c222b; /* slate-blue pre (Neve) */
+  --ae-finish-black-1: #222420;
+  --ae-finish-black-2: #161712;
+  --ae-finish-black-3: #0f100c;
+  --ae-finish-black-ear: #0c0d0f; /* matte black (Distressor) */
+
+  /* ====================================================================== */
+  /* RACK CHASSIS & HARDWARE                                                */
+  /* ====================================================================== */
+  --ae-rack-shell-1: #202327; /* cabinet body top                      */
+  --ae-rack-shell-2: #14161a; /* cabinet body bottom                   */
+  --ae-rack-rail: #191b1e; /* the perforated mounting rails         */
+  --ae-rack-hole: #050608; /* punched holes in the rails            */
+  --ae-rack-screw-1: #eef1f3; /* chrome rack screw highlight           */
+  --ae-rack-screw-2: #8a9097;
+  --ae-rack-screw-3: #4a4f55;
+  --ae-rack-vent-dark: #0c0d0f; /* blank/vented filler stripes           */
+  --ae-rack-vent-lite: #2a2d31;
+  --ae-rack-glow: rgba(255, 205, 140, 0.14); /* warm top-light wash  */
+
+  /* ====================================================================== */
+  /* TYPOGRAPHY                                                             */
+  /* ====================================================================== */
+  --ae-font-display: "Space Grotesk", system-ui, sans-serif; /* names, headings */
+  --ae-font-ui: "Inter", system-ui, sans-serif; /* labels, readouts */
+
+  --ae-label-size: 9px; /* engraved control label                  */
+  --ae-label-weight: 600;
+  --ae-label-spacing: 0.09em; /* uppercase tracking on control labels    */
+  --ae-legend-spacing: 0.16em; /* wider engraved section/legend tracking  */
+  --ae-value-size: 9px; /* knob/fader value text                   */
+
+  /* ====================================================================== */
+  /* ELEVATION & EDGES                                                      */
+  /* ====================================================================== */
+  --ae-shadow-card: 0 16px 34px rgba(0, 0, 0, 0.55);
+  --ae-shadow-rack: 0 28px 56px rgba(0, 0, 0, 0.6);
+  --ae-shadow-knob: 0 2px 4px rgba(0, 0, 0, 0.55);
+  --ae-shadow-control: 0 2px 4px rgba(0, 0, 0, 0.5);
+  --ae-bevel-top: inset 0 1px 0 rgba(255, 255, 255, 0.06); /* lit top lip   */
+  --ae-bevel-press: inset 0 1px 2px rgba(0, 0, 0, 0.7); /* recessed slot */
+
+  /* Radii */
+  --ae-radius-card: 12px;
+  --ae-radius-panel: 6px;
+  --ae-radius-control: 5px;
+  --ae-radius-pill: 999px;
+
+  /* Spacing scale (control gaps, padding) */
+  --ae-space-1: 4px;
+  --ae-space-2: 7px;
+  --ae-space-3: 12px;
+  --ae-space-4: 18px;
+  --ae-space-5: 26px;
+
+  /* ====================================================================== */
+  /* CABLES (patch leads)                                                   */
+  /* A cable is three stacked strokes: a dark drop-shadow underlay, the     */
+  /* signal-colored core, and a thin lit highlight. Width tokens below;     */
+  /* color comes from the matching --ae-signal-* / --ae-signal-*-lit vars.  */
+  /* ====================================================================== */
+  --ae-cable-shadow: #0a0d12;
+  --ae-cable-shadow-w: 9px;
+  --ae-cable-core-w: 6px;
+  --ae-cable-highlight-w: 2px;
+  --ae-cable-sag: 90px; /* how far control points droop below the endpoints */
+
+  /* Floor-plan / top-view routing (dashed signal trails) */
+  --ae-route-dash: "2 7";
+  --ae-route-arrow: #cfd3d8;
+}
