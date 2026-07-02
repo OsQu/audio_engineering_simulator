@@ -20,13 +20,20 @@
   import { defaultScene, loadScene, newSpace, type Scene, saveScene, setSceneParam } from "./scene-store";
   import type { Rack } from "./scene-store";
   import {
+    elevationToWorld,
     footprint,
     nearestFreeSlot,
-    project,
+    orientedSize,
+    RACK_DEPTH_MM,
     RACK_UNIT_MM,
     RACK_WIDTH_MM,
     type Rect2,
     rectsOverlap,
+    type Room,
+    type Size3,
+    type Vec3,
+    type Wall,
+    wallProjection,
   } from "./spatial";
   import Panel from "./widgets/Panel.svelte";
   import Screen from "./widgets/Screen.svelte";
@@ -109,9 +116,25 @@
   // --- The spatial world ---------------------------------------------------------------------------
   // The space (room) currently shown; switching changes the rendered/interactable set.
   let currentSpace = $state(initialScene.ui.spaces[0]?.id ?? "");
+  // The view within the current space: one of the four wall elevations, or the top-down floor plan.
+  // "top" lands in Story 4.6.4; the wall elevations render here.
+  let currentView = $state<Wall | "top">("front");
+  // The wall currently in elevation, or null in the top view.
+  const currentWall = $derived<Wall | null>(currentView === "top" ? null : currentView);
+  // The current space's room (the four walls derive from this rectangle). Falls back to a default box
+  // if the space id can't be resolved (shouldn't happen — every space carries a room since schema 7).
+  const room = $derived<Room>(
+    scene.ui.spaces.find((s) => s.id === currentSpace)?.room ?? {
+      width: 4000,
+      depth: 3000,
+      height: 1400,
+    },
+  );
 
   const FRAME_MARGIN = 14; // mm of rack frame drawn around the U-slot region
   const GRID_MM = 50; // free-placement snap grid (world mm) — eases aligning gear on the floor
+  // Human labels for the wall-view switcher.
+  const WALL_LABELS: Record<Wall, string> = { front: "Front", back: "Back", left: "Left", right: "Right" };
 
   const deviceById = (id: string) => scene.patch.devices.find((d) => d.id === id);
   const rackById = (id: string) => scene.ui.racks.find((r) => r.id === id);
@@ -123,21 +146,23 @@
     return desc && desc.formFactor.kind === "rackmount" ? desc.formFactor.rackUnits : 0;
   }
 
-  // A rack's U-slot region origin (lower-left), world mm — inset from the frame by the margin.
-  const slotOrigin = (rack: Rack) => ({ x: rack.position.x + FRAME_MARGIN, y: rack.position.y + FRAME_MARGIN });
+  // A rack's frame footprint (world mm) — the U-slot column plus the drawn margin, RACK_DEPTH deep.
+  const rackFrameSize = (rack: Rack): Size3 => ({
+    width: RACK_WIDTH_MM + 2 * FRAME_MARGIN,
+    height: rack.slots * RACK_UNIT_MM + 2 * FRAME_MARGIN,
+    depth: RACK_DEPTH_MM,
+  });
 
-  // A rack's frame rect (the draggable box drawn behind its gear).
+  // A rack's frame rect in the current wall's elevation (the draggable box drawn behind its gear).
   function rackRect(rack: Rack): Rect2 {
-    return {
-      x: rack.position.x,
-      y: rack.position.y,
-      width: RACK_WIDTH_MM + 2 * FRAME_MARGIN,
-      height: rack.slots * RACK_UNIT_MM + 2 * FRAME_MARGIN,
-    };
+    return wallProjection(rack.position, orientedSize(rackFrameSize(rack), rack.wall), rack.wall, room);
   }
 
-  // A device's front-elevation rect — derived from its rack + U-slot when mounted, else from its
-  // free-standing position. `null` if it has no descriptor or is hidden inside a collapsed rack.
+  // A device's rect in the **current wall's elevation** — derived from its rack + U-slot when mounted,
+  // else from its free-standing position projected onto its wall. Its elevation *width* is always the
+  // panel width (a unit faces into the room on every wall); only the horizontal *position* is wall-
+  // dependent, so mounted gear is placed inside the already-projected rack frame. `null` without a
+  // descriptor/placement.
   function deviceRect(deviceId: string, typeId: string): Rect2 | null {
     const desc = descriptorFor(catalog, typeId);
     const place = scene.ui.placements[deviceId];
@@ -146,10 +171,15 @@
     if (place.rack) {
       const rack = rackById(place.rack.id);
       if (!rack) return null;
-      const o = slotOrigin(rack);
-      return { x: o.x, y: o.y + place.rack.uSlot * RACK_UNIT_MM, width: size.width, height: size.height };
+      const frame = rackRect(rack);
+      return {
+        x: frame.x + FRAME_MARGIN,
+        y: frame.y + FRAME_MARGIN + place.rack.uSlot * RACK_UNIT_MM,
+        width: RACK_WIDTH_MM,
+        height: size.height,
+      };
     }
-    return project(place.position, size, "front");
+    return wallProjection(place.position, orientedSize(size, place.wall), place.wall, room);
   }
 
   // The items to render in the current space: rack frames first (behind), then devices (on top).
@@ -158,10 +188,13 @@
   // tuck behind its panel). This is what makes a continuous cable occlude correctly per device.
   const placedItems = $derived([
     ...scene.ui.racks
-      .filter((r) => r.space === currentSpace)
+      .filter((r) => r.space === currentSpace && r.wall === currentWall)
       .map((r) => ({ id: r.id, rect: rackRect(r), background: true, z: 0 })),
     ...scene.patch.devices
-      .filter((d) => scene.ui.placements[d.id]?.space === currentSpace)
+      .filter((d) => {
+        const p = scene.ui.placements[d.id];
+        return p?.space === currentSpace && p.wall === currentWall;
+      })
       .map((d) => ({
         id: d.id,
         rect: deviceRect(d.id, d.typeId),
@@ -205,6 +238,7 @@
   $effect(() => {
     void ready;
     void currentSpace;
+    void currentView;
     void catalog.length;
     void worldApi;
     JSON.stringify(scene.ui.placements);
@@ -228,7 +262,7 @@
   ): { x: number; y: number } | null {
     const device = deviceById(ref.device);
     const place = scene.ui.placements[ref.device];
-    if (!device || !place || place.space !== currentSpace) return null;
+    if (!device || !place || !inView(ref.device)) return null;
     if (place.facing === "back") {
       const jack = jackAnchors[jackKey(ref.device, direction, ref.port)];
       if (jack) return jack; // precise: the real socket on the shown back panel
@@ -249,15 +283,25 @@
   // back-facing device (visible sockets) below, a front-facing one above. So a cable plugs into a visible
   // back socket yet tucks behind a front panel, with no split. (Sockets are back-mounted today.)
 
-  // Is a device placed in the currently-shown space?
-  const inSpace = (deviceId: string): boolean =>
-    scene.ui.placements[deviceId]?.space === currentSpace;
-  // A cable with both ends here draws as a full cable; exactly one end here → a portal stub to the other
-  // room (snakes MVP); neither end here → not shown in this view. The engine sees a plain mono
-  // connection either way — spaces and portals are UI-only.
-  const bothInSpace = (c: Connection): boolean => inSpace(c.from.device) && inSpace(c.to.device);
-  const oneInSpace = (c: Connection): boolean => inSpace(c.from.device) !== inSpace(c.to.device);
+  // Is a device visible in the current view — i.e. in the shown space *and* against the shown wall? Only
+  // one wall of one space renders at a time, so this is the "same view" test the cable renderer keys on.
+  const inView = (deviceId: string): boolean => {
+    const p = scene.ui.placements[deviceId];
+    return p?.space === currentSpace && p.wall === currentWall;
+  };
+  // A cable with both ends in view draws as a full lead; exactly one end here → a portal stub toward the
+  // other view (the 4.4 mechanism, generalized from "other room" to "other wall/room"); neither end here
+  // → not shown. The engine sees a plain mono connection either way — walls/spaces/portals are UI-only.
+  const bothInView = (c: Connection): boolean => inView(c.from.device) && inView(c.to.device);
+  const oneInView = (c: Connection): boolean => inView(c.from.device) !== inView(c.to.device);
   const spaceName = (id: string): string => scene.ui.spaces.find((s) => s.id === id)?.name ?? id;
+  // A short label for where a cable's off-view end lives: the room name if it's in another space, else
+  // the wall name (a different wall of this same room).
+  function otherEndLabel(deviceId: string): string {
+    const p = scene.ui.placements[deviceId];
+    if (!p) return "?";
+    return p.space !== currentSpace ? spaceName(p.space) : WALL_LABELS[p.wall];
+  }
   // How far a portal stub extends from its jack, in surface mm.
   const PORTAL_LEN = 180;
 
@@ -411,8 +455,9 @@
     return occ;
   }
 
-  // If (x,y) lands over an open rack in this space, the nearest free start-slot a `units`-high device
-  // fits at — else null. The drag-snap target.
+  // If elevation `(x,y)` lands over an open rack on the shown wall, the nearest free start-slot a
+  // `units`-high device fits at — else null. The drag-snap target. `(x,y)` are elevation coords (the
+  // rack is compared via its projected frame), so this works identically on every wall.
   function rackSlotAt(
     excludeId: string,
     x: number,
@@ -420,23 +465,25 @@
     units: number,
   ): { rackId: string; slot: number } | null {
     for (const rack of scene.ui.racks) {
-      if (rack.space !== currentSpace) continue;
-      const o = slotOrigin(rack);
+      if (rack.space !== currentSpace || rack.wall !== currentWall) continue;
+      const frame = rackRect(rack);
+      const slotOy = frame.y + FRAME_MARGIN;
       const within =
-        x >= o.x - FRAME_MARGIN &&
-        x <= o.x + RACK_WIDTH_MM + FRAME_MARGIN &&
-        y >= o.y &&
-        y <= o.y + rack.slots * RACK_UNIT_MM;
+        x >= frame.x &&
+        x <= frame.x + frame.width &&
+        y >= slotOy &&
+        y <= slotOy + rack.slots * RACK_UNIT_MM;
       if (!within) continue;
-      const desired = Math.floor((y - o.y) / RACK_UNIT_MM);
+      const desired = Math.floor((y - slotOy) / RACK_UNIT_MM);
       const slot = nearestFreeSlot({ slots: rack.slots }, rackOccupants(rack.id, excludeId), units, desired);
       if (slot !== null) return { rackId: rack.id, slot };
     }
     return null;
   }
 
-  // Legality for live drag feedback + the commit gate. Racks reposition freely; a device is legal if
-  // it can mount in a rack at (x,y), or stands free without overlapping any other item.
+  // Legality for live drag feedback + the commit gate, in the shown wall's elevation. Racks reposition
+  // freely; a device is legal if it can mount in a rack at `(x,y)`, or stands free without overlapping
+  // any other item. The candidate's elevation width is always the panel width (a unit faces the room).
   function canPlace(id: string, x: number, y: number): boolean {
     if (isRack(id)) return true;
     const device = deviceById(id);
@@ -445,17 +492,19 @@
     if (!desc) return false;
     const units = deviceUnits(device.typeId);
     if (units > 0 && rackSlotAt(id, x, y, units)) return true;
-    const candidate = project({ x, y, z: 0 }, footprint(desc.formFactor), "front");
+    const size = footprint(desc.formFactor);
+    const candidate: Rect2 = { x, y, width: size.width, height: size.height };
     return !placedItems.some((it) => it.id !== id && rectsOverlap(candidate, it.rect));
   }
 
-  // Commit a drag (only ever called for a legal spot): move a rack, or snap a device into a rack slot
-  // / set it free-standing.
+  // Commit a drag (only ever called for a legal spot), in the shown wall's elevation: move a rack, or
+  // snap a device into a rack slot / set it free-standing. Elevation `(x,y)` is mapped back to the world
+  // 3-D truth via `elevationToWorld` (so mirrored/rotated walls land where the cursor is).
   function moveTo(id: string, x: number, y: number): void {
+    if (!currentWall) return; // dragging only happens in a wall elevation
     const rack = rackById(id);
     if (rack) {
-      rack.position.x = x;
-      rack.position.y = y;
+      rack.position = elevationToWorld(rack.position, rackFrameSize(rack), rack.wall, room, x, y);
       return;
     }
     const device = deviceById(id);
@@ -466,10 +515,15 @@
     if (hit) {
       const rack = rackById(hit.rackId);
       place.rack = { id: hit.rackId, uSlot: hit.slot };
-      if (rack) place.space = rack.space; // a mounted device lives in its rack's space
+      if (rack) {
+        place.space = rack.space; // a mounted device lives in its rack's space…
+        place.wall = rack.wall; // …and against its rack's wall
+      }
     } else {
+      const desc = descriptorFor(catalog, device.typeId);
+      const size = desc ? footprint(desc.formFactor) : { width: 0, height: 0, depth: 0 };
       place.rack = undefined;
-      place.position = { x, y, z: place.position.z };
+      place.position = elevationToWorld(place.position, size, place.wall, room, x, y);
     }
   }
 
@@ -548,20 +602,34 @@
     pushParams(send);
   }
 
-  // Add gear from the catalog: a new instance placed free-standing in the current space (just past the
+  // A world placement for new gear spawned against the wall currently in view, at elevation-x `elevX`
+  // (its perpendicular-to-wall axis sits it flush to that wall). Mapped back through `elevationToWorld`
+  // so it appears at `elevX` on any wall, mirrored ones included. Falls back to the front wall in the
+  // top view.
+  function wallSpawn(size: Size3, elevX: number): { wall: Wall; position: Vec3 } {
+    const wall = currentWall ?? "front";
+    const FLUSH = 400; // nominal depth of the against-the-wall zone, world mm
+    const seed: Vec3 =
+      wall === "front"
+        ? { x: 0, y: 0, z: room.depth - FLUSH }
+        : wall === "right"
+          ? { x: room.width - FLUSH, y: 0, z: 0 }
+          : { x: 0, y: 0, z: 0 }; // back / left sit against the origin walls
+    return { wall, position: elevationToWorld(seed, size, wall, room, elevX, 0) };
+  }
+
+  // Add gear from the catalog: a new instance placed free-standing on the wall in view (just past the
   // existing gear), then a hot-swap. Its ports read silence until patched (Story 4.4).
   function addDevice(typeId: string): void {
     const rightX = placedItems.reduce((m, it) => Math.max(m, it.rect.x + it.rect.width), 0);
     let n = 1;
     while (scene.patch.devices.some((d) => d.id === `${typeId}-${n}`)) n++;
     const id = `${typeId}-${n}`;
+    const desc = descriptorFor(catalog, typeId);
+    const size = desc ? footprint(desc.formFactor) : { width: 0, height: 0, depth: 0 };
+    const { wall, position } = wallSpawn(size, rightX + 60);
     scene.patch.devices.push({ id, typeId });
-    scene.ui.placements[id] = {
-      space: currentSpace,
-      wall: "front", // provisional — Story 4.6.3 places new gear on the wall currently in view
-      position: { x: rightX + 60, y: 0, z: 0 },
-      facing: "front",
-    };
+    scene.ui.placements[id] = { space: currentSpace, wall, position, facing: "front" };
     hotSwap();
   }
 
@@ -583,13 +651,14 @@
     const rightX = placedItems.reduce((m, it) => Math.max(m, it.rect.x + it.rect.width), 0);
     let n = 1;
     while (scene.ui.racks.some((r) => r.id === `rack-${n}`)) n++;
-    scene.ui.racks.push({
-      id: `rack-${n}`,
-      space: currentSpace,
-      wall: "front", // provisional — Story 4.6.3 places a new rack on the wall currently in view
-      position: { x: rightX + 60, y: 0, z: 0 },
-      slots: 8,
-    });
+    const slots = 8;
+    const frameSize: Size3 = {
+      width: RACK_WIDTH_MM + 2 * FRAME_MARGIN,
+      height: slots * RACK_UNIT_MM + 2 * FRAME_MARGIN,
+      depth: RACK_DEPTH_MM,
+    };
+    const { wall, position } = wallSpawn(frameSize, rightX + 60);
+    scene.ui.racks.push({ id: `rack-${n}`, space: currentSpace, wall, position, slots });
   }
   function removeRack(id: string): void {
     for (const d of scene.patch.devices) {
@@ -697,6 +766,20 @@
         <button type="button" class="space-tab add" onclick={addSpace}>+ space</button>
       </div>
 
+      <!-- Wall-view switcher: turn to face each wall of the room (top-down floor plan → Story 4.6.4). -->
+      <div class="views" role="group" aria-label="wall view">
+        {#each ["front", "right", "back", "left"] as const as w (w)}
+          <button
+            type="button"
+            class="view-tab"
+            class:active={currentView === w}
+            onclick={() => (currentView = w)}
+          >
+            {WALL_LABELS[w]}
+          </button>
+        {/each}
+      </div>
+
       <div class="palette">
         <span class="palette-label">Add:</span>
         {#each catalog as desc (desc.typeId)}
@@ -768,14 +851,14 @@
         {/if}
       {/snippet}
 
-      <!-- A cross-space connection: only one end is in this room, so instead of a continuous cable we
-           draw a short stub from that end to a labelled portal chip pointing at the other room (the
-           snakes MVP). The engine still sees a plain mono connection. -->
+      <!-- A cross-view connection: only one end is in this view (other wall or other room), so instead of
+           a continuous cable we draw a short stub from that end to a labelled portal chip pointing at
+           where the other end lives (the snakes MVP). The engine still sees a plain mono connection. -->
       {#snippet onePortal(c: Connection, api: WorldApi)}
-        {@const fromIn = inSpace(c.from.device)}
+        {@const fromIn = inView(c.from.device)}
         {@const ref = fromIn ? c.from : c.to}
         {@const dir = fromIn ? "output" : "input"}
-        {@const otherSpace = (fromIn ? scene.ui.placements[c.to.device] : scene.ui.placements[c.from.device])?.space ?? ""}
+        {@const otherLabel = otherEndLabel(fromIn ? c.to.device : c.from.device)}
         {@const a = cableAnchor(ref, dir, api)}
         {#if a}
           {@const p = { x: a.x + (fromIn ? PORTAL_LEN : -PORTAL_LEN), y: a.y + 36 }}
@@ -801,23 +884,44 @@
             text-anchor={fromIn ? "start" : "end"}
             dominant-baseline="middle"
           >
-            {fromIn ? `→ ${spaceName(otherSpace)}` : `${spaceName(otherSpace)} →`}
+            {fromIn ? `→ ${otherLabel}` : `${otherLabel} →`}
           </text>
         {/if}
       {/snippet}
 
-      <WorldView items={placedItems} onMoveTo={moveTo} {canPlace} fitKey={currentSpace} gridStep={GRID_MM} bind:api={worldApi}>
+      <WorldView
+        items={placedItems}
+        onMoveTo={moveTo}
+        {canPlace}
+        fitKey={`${currentSpace}:${currentView}`}
+        gridStep={GRID_MM}
+        bind:api={worldApi}
+      >
         {#snippet cables(api)}
-          <!-- Every same-space cable, drawn once as a continuous lead. The devices' z (set in
-               placedItems by facing) decides which panels each cable passes in front of vs behind. -->
-          {#each scene.patch.connections.filter(bothInSpace) as c (connKey(c))}
+          <!-- Every cable with both ends in this view, drawn once as a continuous lead. The devices' z
+               (set in placedItems by facing) decides which panels each cable passes in front of vs behind. -->
+          {#each scene.patch.connections.filter(bothInView) as c (connKey(c))}
             {@render oneCable(c, api)}
           {/each}
         {/snippet}
 
         {#snippet overlay(api)}
-          <!-- On top of everything: cross-space portal stubs and the drag rubber-band while patching. -->
-          {#each scene.patch.connections.filter(oneInSpace) as c (connKey(c))}
+          <!-- Decorative window to the live room, on the front wall (a room detail — not a functional
+               portal; cross-space audio rides the existing 4.4 portal cables). -->
+          {#if currentView === "front"}
+            {@const wTop = api.worldToSurface(room.width / 2 - 600, 1000)}
+            {@const wBot = api.worldToSurface(room.width / 2 + 600, 500)}
+            <g class="window">
+              <rect x={wTop.x} y={wTop.y} width={wBot.x - wTop.x} height={wBot.y - wTop.y} rx="6" />
+              <line x1={(wTop.x + wBot.x) / 2} y1={wTop.y} x2={(wTop.x + wBot.x) / 2} y2={wBot.y} />
+              <line x1={wTop.x} y1={(wTop.y + wBot.y) / 2} x2={wBot.x} y2={(wTop.y + wBot.y) / 2} />
+              <text class="window-label" x={(wTop.x + wBot.x) / 2} y={wTop.y - 22} text-anchor="middle">
+                Live Room
+              </text>
+            </g>
+          {/if}
+          <!-- On top of everything: cross-view portal stubs and the drag rubber-band while patching. -->
+          {#each scene.patch.connections.filter(oneInView) as c (connKey(c))}
             {@render onePortal(c, api)}
           {/each}
           {#if dragCable}
@@ -1078,6 +1182,32 @@
     gap: 0.3rem;
     flex-wrap: wrap;
   }
+  /* Wall-view switcher — a segmented control to turn between the room's walls. */
+  .views {
+    display: flex;
+    gap: 0;
+    border: 1px solid var(--ae-line-chip);
+    border-radius: var(--ae-radius-control);
+    overflow: hidden;
+  }
+  .view-tab {
+    font: inherit;
+    font-size: 0.75rem;
+    padding: 0.2rem 0.6rem;
+    border: none;
+    border-radius: 0;
+    border-left: 1px solid var(--ae-line-chip);
+    background: var(--ae-bg-panel-2);
+    color: var(--ae-text-muted);
+    cursor: pointer;
+  }
+  .view-tab:first-child {
+    border-left: none;
+  }
+  .view-tab.active {
+    background: var(--ae-bg-chip);
+    color: var(--ae-text-primary);
+  }
   .space-tab {
     font: inherit;
     font-size: 0.8rem;
@@ -1229,6 +1359,22 @@
     stroke: #f4a94a;
     stroke-width: 9;
     opacity: 1;
+  }
+  /* Decorative window to the live room on the front wall (glass pane + mullions + label). */
+  .window rect {
+    fill: rgba(120, 170, 200, 0.1);
+    stroke: var(--ae-line-hard);
+    stroke-width: 4;
+  }
+  .window line {
+    stroke: var(--ae-line-hard);
+    stroke-width: 3;
+  }
+  .window-label {
+    fill: var(--ae-text-muted);
+    font-size: 30px;
+    letter-spacing: var(--ae-legend-spacing);
+    text-transform: uppercase;
   }
   /* A cross-space portal stub + its chip and room label. */
   .cable.portal {

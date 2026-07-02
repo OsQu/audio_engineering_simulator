@@ -57,7 +57,7 @@ export const RACK_UNIT_MM = 44.45;
 /** Standard 19" rack width, millimetres. */
 export const RACK_WIDTH_MM = 482.6;
 /** Nominal rack chassis depth, millimetres. */
-const RACK_DEPTH_MM = 300;
+export const RACK_DEPTH_MM = 300;
 
 /** The physical box of a device, derived from its catalog form factor: a rackmount unit's box comes
  *  from its U-count + the standard 19" width/depth; desktop gear carries its own authored box. */
@@ -83,6 +83,17 @@ export function project(pos: Vec3, size: Size3, view: ViewKind): Rect2 {
     case "side":
       return { x: pos.z, y: pos.y, width: size.depth, height: size.height };
   }
+}
+
+/** A device's world-axis box **oriented for the wall it stands against**. A unit's panel always faces
+ *  *into* the room, so against the left/right walls it's turned 90° about the vertical: the panel width
+ *  now runs along z (depth into the room runs along x). front/back keep the catalog orientation (panel
+ *  width along x, depth along z). This is what makes a device's elevation always show its panel width,
+ *  and its top-view footprint sit the right way round, on every wall. */
+export function orientedSize(size: Size3, wall: Wall): Size3 {
+  return wall === "left" || wall === "right"
+    ? { width: size.depth, height: size.height, depth: size.width }
+    : size;
 }
 
 /** Project a positioned 3-D box onto one wall's **elevation** — the horizontal axis runs *along* that
@@ -116,6 +127,32 @@ export function wallProjection(pos: Vec3, size: Size3, wall: Wall, room: Room): 
         width: size.depth,
         height: size.height,
       };
+  }
+}
+
+/** Inverse of {@link wallProjection} for the in-view axes: given an item dragged to elevation position
+ *  `(elevX along the wall, elevY = height)`, recover its world lower-left-front corner. The
+ *  perpendicular-to-wall axis isn't touched by an elevation drag, so it's carried over from `pos`. Pass
+ *  the **catalog** size (unoriented); the mirror uses the *oriented* extent internally. This is what lets
+ *  a device dragged on a mirrored (back/right) or rotated (left/right) elevation land where the cursor is. */
+export function elevationToWorld(
+  pos: Vec3,
+  size: Size3,
+  wall: Wall,
+  room: Room,
+  elevX: number,
+  elevY: number,
+): Vec3 {
+  const os = orientedSize(size, wall);
+  switch (wall) {
+    case "front":
+      return { x: elevX, y: elevY, z: pos.z };
+    case "back":
+      return { x: room.width - os.width - elevX, y: elevY, z: pos.z };
+    case "left":
+      return { x: pos.x, y: elevY, z: elevX };
+    case "right":
+      return { x: pos.x, y: elevY, z: room.depth - os.depth - elevX };
   }
 }
 

@@ -1,9 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
   canPlaceInRack,
+  elevationToWorld,
   fitsInRack,
   footprint,
   nearestFreeSlot,
+  orientedSize,
   project,
   RACK_UNIT_MM,
   RACK_WIDTH_MM,
@@ -97,6 +99,57 @@ describe("wallProjection", () => {
     // back: mirror [3520,4000] about 4000 → [0,480]; right: mirror [2700,3000] about 3000 → [0,300].
     expect(wallProjection(corner, size, "back", room).x).toBe(0);
     expect(wallProjection(corner, size, "right", room).x).toBe(0);
+  });
+});
+
+describe("orientedSize", () => {
+  const size = { width: 480, height: 90, depth: 300 };
+  it("leaves front/back in the catalog orientation (panel width along x)", () => {
+    expect(orientedSize(size, "front")).toEqual(size);
+    expect(orientedSize(size, "back")).toEqual(size);
+  });
+  it("turns left/right 90°: panel width runs along z, depth along x", () => {
+    const turned = { width: 300, height: 90, depth: 480 };
+    expect(orientedSize(size, "left")).toEqual(turned);
+    expect(orientedSize(size, "right")).toEqual(turned);
+  });
+  it("makes the wall elevation show the panel width on every wall", () => {
+    const room: Room = { width: 4000, depth: 3000, height: 1400 };
+    const pos = { x: 500, y: 0, z: 200 };
+    // On every wall the elevation width equals the panel width (480), never the depth.
+    for (const wall of ["front", "back", "left", "right"] as const) {
+      expect(wallProjection(pos, orientedSize(size, wall), wall, room).width).toBe(480);
+    }
+  });
+});
+
+describe("elevationToWorld", () => {
+  const room: Room = { width: 4000, depth: 3000, height: 1400 };
+  const size = { width: 480, height: 90, depth: 300 };
+
+  // The core invariant: dragging to where an item already projects must return its own position (on the
+  // in-view axes). elevationToWorld(wallProjection(pos).x/y) === pos, for every wall.
+  it("round-trips wallProjection on the in-view axes, for every wall", () => {
+    const cases: {
+      pos: { x: number; y: number; z: number };
+      wall: "front" | "back" | "left" | "right";
+    }[] = [
+      { pos: { x: 500, y: 40, z: 200 }, wall: "front" },
+      { pos: { x: 500, y: 40, z: 200 }, wall: "back" },
+      { pos: { x: 500, y: 40, z: 200 }, wall: "left" },
+      { pos: { x: 500, y: 40, z: 200 }, wall: "right" },
+    ];
+    for (const { pos, wall } of cases) {
+      const e = wallProjection(pos, orientedSize(size, wall), wall, room);
+      const back = elevationToWorld(pos, size, wall, room, e.x, e.y);
+      expect(back).toEqual(pos);
+    }
+  });
+
+  it("carries the perpendicular-to-wall axis over unchanged (an elevation drag doesn't move it)", () => {
+    // front/back drags leave z alone; left/right drags leave x alone.
+    expect(elevationToWorld({ x: 1, y: 0, z: 777 }, size, "front", room, 100, 0).z).toBe(777);
+    expect(elevationToWorld({ x: 888, y: 0, z: 1 }, size, "left", room, 100, 0).x).toBe(888);
   });
 });
 
