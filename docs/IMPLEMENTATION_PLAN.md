@@ -414,10 +414,10 @@ cable catalog. 4.5 ✅ — **visualization**: the node→host scalar readout lan
 digital dBFS meter, and a static per-connection loading-loss annotation, surfaced as device meter screens, a
 cable-inspector loss line, and a global levels panel; the raw-sample **scope + spectrum FFT** were split out
 into a new **Story 4.7** at 4.5 pickup (waveform probes are a distinct mechanism from the scalar lane).
-**Story 4.6 🚧 in progress** — reshaped at pickup into **room walls + multi-view + zoom-gated reach**: a
-space becomes a rectangular room whose four wall-elevations you turn between, plus a top-down floor plan;
-the sketch's *operator avatar* was dropped in favour of a **zoom gate** (rearrange vs. operate). **4.7**
-stays at Story level until picked up. The original
+**Story 4.6 🚧 in progress** — reshaped at pickup into **room walls + multi-view**: a space becomes a
+rectangular room whose four wall-elevations you turn between, plus a top-down floor plan, with cross-wall/
+room patching. The sketch's *operator-reach* idea was **dropped** (both the avatar and the fallback zoom
+gate — not enough payoff for the interaction complexity). **4.7** stays at Story level until picked up. The original
 4-story sketch was reshaped into the now-7-story arc below after the UI vision
 grew from "device panels + cables" into a **game-like spatial studio/venue sim** (browsable gear catalog,
 racks and containers, freely placed in a pan/zoom world, multiple _spaces_ with snakes between them,
@@ -507,7 +507,10 @@ and the why are recorded.
   surface); the sim tracks the operator's position and what's within **reach** (zoom out for the overview,
   but then you can't touch); back-panel access is **gated behind a physical action** (flip a unit, pull it
   from the rack, roll the rack off the wall); bounds-checking is cheap **axis-aligned-rectangle (AABB)**
-  overlap because audio gear is boxes; switching rooms switches the interactable set. _Why the stack is
+  overlap because audio gear is boxes; switching rooms switches the interactable set. _(Update, Story 4.6:
+  the **operator-reach** and **back-panel clearance-gate** ideas were both **dropped** as over-complex for a
+  single-operator sandbox — flipping is direct and all in-view gear is always operable; the rest — rooms,
+  dimensions, AABB, projection — shipped.)_ _Why the stack is
   unchanged:_ the novel, hard parts — the spatial model, placement legality, reach, view projection — are
   **framework-agnostic data + math**, and the _presentation_ is only tens-to-low-hundreds of rectangles in
   a 2-D projection (≈260 nodes is the Epic-5 napkin ceiling), which DOM/SVG over the CSS-transform pan/zoom
@@ -1398,21 +1401,20 @@ split out to **Story 4.7** at pickup.
   chrome** (`out_ptr`), distinct from the placeable `VuMeter` device; the readouts snapshot is re-serialized per
   throttle tick (tiny — a handful of scalars); a **phantom-presence** readout is deferred to Epic 5 (no
   condenser-mic device is cataloged yet to attach it to).
-#### Story 4.6 — The spatial world, part 2: room walls, multi-view & zoom-gated reach — 🚧 **In progress**
+#### Story 4.6 — The spatial world, part 2: room walls + multi-view — 🚧 **In progress**
 
 _Goal:_ finish the spatial sim (PROJECT_PLAN §5 "model in 3-D, render in 2-D"; §9 Stage 4 "build and
 operate a small studio through the UI"). A space becomes a **rectangular room with four walls**: you
 **turn between wall-elevation views** (front — with a window to the live room; back — where the racks
 live; the shorter left/right sides) and a **top-down floor plan** of the same room, arranging gear across
-the walls (grid-snapped) from above. Then a **zoom gate** within a wall view separates **rearranging**
-from **operating**: zoom out and you can still drag gear around, but knobs, patching, and flip lock until
-you zoom back in. All of it is UI/scene-`ui` state — the engine and runnable `patch` gain **nothing** (the
-epic's "spaces are a UI concept" decision). This is the deferred half of 4.3, kept cheap because 4.3
-stored the full 3-D coordinate truth already.
+the walls (grid-snapped) from above. Wiring works **across walls/rooms** too — a click-to-pick patch that
+survives a view switch, with draggable portal chips for the off-view ends. All of it is UI/scene-`ui`
+state — the engine and runnable `patch` gain **nothing** (the epic's "spaces are a UI concept" decision).
+This is the deferred half of 4.3, kept cheap because 4.3 stored the full 3-D coordinate truth already.
 
 _Watch out:_
 
-- **Engine + `patch` gain nothing.** Rooms, walls, views, and the zoom gate are all TS/scene-`ui`; the
+- **Engine + `patch` gain nothing.** Rooms, walls, views, and portals are all TS/scene-`ui`; the
   worklet still receives only the `patch` projection (no rooms/walls/positions). **No Rust change** — if a
   task wants one, something is being modelled in the wrong layer.
 - **Single coordinate truth — never per-view 2-D positions.** A placement keeps its one `(x,y,z)` truth +
@@ -1420,8 +1422,8 @@ _Watch out:_
   position per wall is the drift bug.
 - **The "4.3 clearance gate" does not exist in the landed code.** 4.3's notes describe a `pulledOut`
   clearance step, but the shipped `Placement` is `{space, position, rack?, facing}` and `toggleFlip` is
-  direct. So do **not** lean on a clearance gate — the **zoom gate** is what now guards operating (flip
-  included).
+  direct. So flipping to a device's back stays a direct, ungated action — there is no clearance/reach
+  gate on operating (see the dropped-reach design note).
 - **Keep the world layer thin.** `WorldView` still knows only positioned boxes + pointer mechanics; wall /
   top projection, view switching, portal stubs, and the operate/rearrange gate live in the **parent** —
   the WebGL escape hatch stays intact.
@@ -1430,18 +1432,20 @@ _Watch out:_
   "not in this space" to "not in this view").
 - **Default-scene UX.** The studio must be usable out of the box — the starting wall shows real gear (not
   the empty window wall) at a zoom where controls are operable; don't spawn it zoomed-out-locked.
-- _Scope guard:_ **views + zoom-gate + grid-snap only.** No operator avatar, no new devices/cables/probes,
-  the window stays **decorative**, and cross-space audio stays the existing 4.4 portal-cable mechanism.
+- _Scope guard:_ **views + cross-view patching + grid-snap only.** No operator avatar / reach gate, no new
+  devices or probes, the window stays **decorative**, and cross-space audio stays the existing 4.4
+  portal-cable mechanism (now drawable across walls/rooms, not just pre-authored).
 
 _Design notes (settled at planning):_
 
-- **Reshaped at pickup — no operator avatar.** The sketch's "operator position + reach" became a
-  **zoom-threshold gate** within a wall view (no avatar, no floor position, no walk). Below the threshold
-  you **rearrange** (drag gear); at/above it you **operate** (knobs/faders/switches, patching, flip).
-  _Rejected: an operator entity with a floor position + reach radius_ — a whole interaction subsystem
-  (walk, per-item distance gating, movement affordances) heavier than the payoff; the zoom gate delivers
-  "you can only touch what you've stepped up to" from camera state we already have. (Confirmed with Oskari:
-  "zoom-threshold, no operator"; "disable operate, allow layout".)
+- **Operator reach — dropped entirely (decision at build).** The sketch's "operator position + reach" was
+  first reshaped into a **zoom-threshold gate** (no avatar: zoom out ⇒ rearrange-only, zoom in ⇒ operate),
+  then **cut altogether** — it complicated the interaction (a locked/operable split across every control,
+  jack, and flip) without enough payoff for a single-operator sandbox. So there is **no reach or zoom gate**:
+  all gear in the current view is always fully operable. _Rejected first:_ an operator entity with a floor
+  position + reach radius (a whole walk/distance-gating subsystem). _Then rejected:_ the zoom-threshold
+  fallback (per-control lock state, a "zoom in to operate" mode). If a reason to gate interaction ever
+  appears (e.g. a challenge/game layer in Epic 5), revisit then — the 3-D truth needed for it is already stored.
 - **A space is a rectangular room with four walls.** A `Space` gains authored `width × depth (× height)`;
   the four walls (front/back/left/right) fall out of the rectangle — left/right are **shorter** when
   depth < width, as they should be. Each wall is an **elevation view** you turn between; a **top-down floor
@@ -1464,10 +1468,17 @@ _Design notes (settled at planning):_
   scope beyond a views story. _Rejected: front + back walls only_ — all four generalize cheaply once the
   model + top view exist (chosen: **all four**).
 - **View state is ephemeral; room/wall data persists.** The current wall/top view is App state (default
-  front), like `currentSpace`; room dims + per-placement `wall` are scene `ui`. `SCHEMA_VERSION` bumps
-  6→7; **no migration** (localStorage is disposable — the default scene is redefined as a proper room).
+  front), like `currentSpace`; room dims + per-placement `wall` (+ dragged portal offsets) are scene `ui`.
+  `SCHEMA_VERSION` bumps **6→8** across the story (7 = rooms + wall tags, 8 = portal offsets); **no
+  migration** (localStorage is disposable — the default scene is redefined as a proper room).
 - **Grid snap** on free placement (both views) via a pure `snapToGrid` helper; rack mounting keeps its
   existing U-slot snapping.
+- **Cross-view patching = click-to-pick (not drag).** A single drag can't cross a view switch, so a
+  *click* on a source jack holds a **pending** cable that survives turning to another wall/room; a second
+  click on a destination jack commits (same `evaluateConnection` legality + `loadPatch` hot-swap). Same-wall
+  drag-to-patch is kept. This also retires 4.4's limitation that cross-space cables could only be
+  pre-authored, never drawn. Portal chips are **draggable** (offset persisted per connection-end) so they
+  can be moved out of the way.
 
 - **Task 4.6.1 — Pure spatial extensions: wall projection + grid snap (TS, Vitest).** Add a `Wall` type
   (`front|back|left|right`) + a room-dims type; `wallProjection(pos, size, wall, room)` → an elevation
@@ -1492,25 +1503,26 @@ _Design notes (settled at planning):_
   and **re-tagging the wall** when dragged against a different wall), grid-snapped. Reuse `WorldView` with a
   top-mode `item` snippet. _Done/validate:_ top view shows the whole room; rearranging racks/gear
   (grid-snapped) reflects in the wall views; a wall re-tag on drag takes effect. Verified in-browser.
-- **Task 4.6.5 — Zoom-gated reach: operate vs. rearrange.** In wall elevations, a **zoom threshold**:
-  below it, controls / jacks / flip are **locked** (pointer-events off + dimmed) but **drag-to-rearrange
-  still works**; at/above it, full interaction, with a small "zoom in to operate" hint. `WorldView`
-  exposes its zoom (or a `canOperate` flag); the parent passes a `locked` state into `Panel` and disables
-  flip + patching. _Done/validate:_ zoomed out you can rearrange but can't turn a knob, patch, or flip;
-  zooming in restores operation; top view (layout-only) is unaffected. Verified in-browser.
-
-_Natural cut line:_ Tasks 4.6.1–4.6.4 are **Part A** (rooms/walls/views); Task 4.6.5 is **Part B** (the
-zoom gate) — the deferrable tail if the Story runs long, mirroring how 4.5 split its scope off to 4.7.
+- **Task 4.6.5 — Cross-view patching (click-to-pick, survives a wall/room switch).** A *click* on a source
+  jack holds a **pending** cable that survives turning to another wall/room; a second click on a
+  destination jack commits (`evaluateConnection` + `loadPatch` hot-swap); same-wall drag-to-patch stays.
+  Esc / re-clicking the source cancels; a "patching from…" banner shows the held state. _Done/validate:_
+  patch synth (front) → a rack unit (back) by clicking across a view switch; illegal jacks stay pending;
+  cross-space patching works the same. Verified in-browser.
+- **Task 4.6.6 — Draggable portal chips (persisted offset).** The cross-view portal stubs become
+  draggable so they can be moved out of the way; the offset (from the jack anchor) persists per
+  connection-end in scene `ui` (`SCHEMA_VERSION` 7→8, no migration). _Done/validate:_ drag a portal chip,
+  it stays put across save/load; each end moves independently; selecting the cable via its stub still works.
+  Verified in-browser.
 
 _Validate:_ turn between all four wall-elevations of a rectangular room + a top-down floor plan of the
 same room; the rack sits on the **back** wall and the synth/speaker + window on the **front**; arranging
 gear in top view (**grid-snapped**) reflects across the wall views; within-wall patching works and
-cross-view cables show as **portal stubs**; zooming out in a wall view **locks operating** (knobs /
-patching / flip) while still allowing **rearrange**, and zooming in restores it. The pure spatial logic
-(wall projection, grid snap) is **Vitest-unit-tested**; the scene round-trips rooms + wall tags
-(`SCHEMA_VERSION` 6→7, no migration); the **engine and `patch` gain nothing**. Full gate green
-(`cargo fmt --check && cargo lint && cargo test && cargo wasm && cargo docs`) plus `web`
-Vitest/Biome/typecheck/build.
+cross-view cables show as **portal stubs** you can **patch across** and **drag out of the way**. The pure
+spatial logic (wall projection, grid snap, nearest-wall) is **Vitest-unit-tested**; the scene round-trips
+rooms + wall tags + portal offsets (`SCHEMA_VERSION` 6→8, no migration); the **engine and `patch` gain
+nothing** (no Rust change). Full gate green (`cargo fmt --check && cargo lint && cargo test && cargo wasm
+&& cargo docs`) plus `web` Vitest/Biome/typecheck/build.
 - **Story 4.7 — Visualization, part 2: scope + spectrum (waveform probes).** Split out of Story 4.5 at its
   pickup: the **raw per-sample tap** surface a scope and spectrum need — a distinct mechanism from 4.5's
   scalar readout lane. A **zero-copy sample ring** (à la `out_ptr`, tapping a node/port's block), a **scope**
