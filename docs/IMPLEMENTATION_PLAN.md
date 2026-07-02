@@ -1105,6 +1105,16 @@ draggable jacks + cables), §7 (UI as a pure consumer — the engine learns noth
   legible `BuildError` on the status line and the cable **snaps back** — no broken patch, no audio-thread
   panic.
 
+*Known limitation — connector *kind* is not enforced (TODO, follow-up):* connection legality currently
+checks only the **carrier domain** (analog / digital / events), so **any analog jack accepts any other**
+— a TRS output patches into an XLR input, a speaker binding-post into a line jack, etc. In the real world
+connectors are physically specific. The `kind` (mic / line / instrument / speaker / digital / midi)
+already rides every `PortDescriptor` and `CableType`, so the fix is additive: extend `evaluateConnection`
+(and the cable picker) with a **connector-compatibility rule** — either exact-kind match or a small
+compatibility table (e.g. TRS↔TRS, XLR↔XLR, with sanctioned adapters), and pick the cable's connectors
+from the endpoints. This is a UI/legality refinement (no engine change — the engine validates by domain);
+schedule it as a 4.4 follow-up or a small Epic-5 wiring-realism item.
+
 - **Task 4.4.1 — Cable catalog (content) + UI exposure + hand-calc oracle.** A `CABLES` table in `devices`
   of named cable presets (`type_id`, label, connector `kind`, series R + shunt C; the seam for
   length-scaling noted but a fixed nominal length is fine), exposed to the UI alongside the device catalog
