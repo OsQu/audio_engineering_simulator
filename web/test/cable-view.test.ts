@@ -155,6 +155,29 @@ describe("cableAnchor", () => {
     expect(cableAnchor(ctxOf(scene), {}, ref("a"), "output", idApi)).toEqual({ x: 124, y: 45 });
   });
 
+  it("rack-mounted: anchors at the measured socket when the *rack* is turned to back (own facing stays front)", () => {
+    // The regression: a bolted-in unit keeps facing "front"; only the rack flips. cableAnchor must use
+    // effective (rack) facing, else it estimates the front-panel position and the cable floats off the jack.
+    const scene = makeScene({
+      a: { ...place("s1", "back", "front"), rack: { id: "r1", uSlot: 0 } },
+    });
+    scene.ui.racks = [
+      {
+        id: "r1",
+        space: "s1",
+        wall: "back",
+        facing: "back",
+        position: { x: 0, y: 0, z: 0 },
+        slots: 8,
+      },
+    ];
+    const anchors = { "a:output:0": { x: 9, y: 9 } };
+    expect(cableAnchor(ctxOf(scene, "back"), anchors, ref("a"), "output", idApi)).toEqual({
+      x: 9,
+      y: 9,
+    });
+  });
+
   it("is null when the device isn't in the shown view (drawn as a portal instead)", () => {
     const scene = makeScene({ a: place("s1", "back") });
     expect(cableAnchor(ctxOf(scene, "front"), {}, ref("a"), "output", idApi)).toBeNull();

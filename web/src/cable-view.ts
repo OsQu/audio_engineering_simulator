@@ -3,7 +3,7 @@
 // the DOM-measured jack anchors, and the world api (all injected), so the estimate math (the chassis-edge
 // fallback ratios, the default portal stub) is testable with a fake api.
 
-import { deviceById, deviceRect, type LayoutCtx } from "./projection";
+import { deviceById, deviceRect, effectiveFacing, type LayoutCtx } from "./projection";
 import type { Connection, PortRef } from "./scene";
 import { connKey } from "./scene-ops";
 import type { Scene } from "./scene-store";
@@ -68,6 +68,10 @@ export function portalOffset(
 // measured socket centre; otherwise (front-facing, or not yet measured) fall back to the chassis edge
 // (output → right, input → left, spread by port index). `null` when the device isn't in the shown space
 // — a cross-space end is drawn as a portal, not a continuous cable.
+//
+// Facing is the **effective** facing (rack-aware): a rack-mounted unit shows whichever side its rack is
+// turned to, so a flipped rack exposes its gear's back sockets even though each unit's own `facing` stays
+// "front" — anchor at the measured sockets, not the front-panel estimate.
 export function cableAnchor(
   ctx: LayoutCtx,
   jackAnchors: Record<string, Pt>,
@@ -78,7 +82,7 @@ export function cableAnchor(
   const device = deviceById(ctx.scene, ref.device);
   const place = ctx.scene.ui.placements[ref.device];
   if (!device || !place || !inView(ctx, ref.device)) return null;
-  if (place.facing === "back") {
+  if (effectiveFacing(ctx.scene, ref.device) === "back") {
     const jack = jackAnchors[jackKey(ref.device, direction, ref.port)];
     if (jack) return jack; // precise: the real socket on the shown back panel
   }
