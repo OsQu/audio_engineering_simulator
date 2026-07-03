@@ -364,14 +364,24 @@
   });
 
   // --- Playing the focused instrument (note input follows focus) ------------------------------------
+  // Whether a device's events input is fed by a cable (an incoming connection to its events-in port).
+  // If so, host-injected notes are a no-op — the performance comes from the patched source instead — so
+  // the on-screen keybed shows disabled and the keyboard doesn't target it.
+  function eventsInputDriven(deviceId: string, desc: DeviceDescriptor): boolean {
+    const evPort = desc.ports.find((p) => p.direction === "input" && p.domain === "events");
+    if (!evPort) return false;
+    return scene.patch.connections.some((c) => c.to.device === deviceId && c.to.port === evPort.id);
+  }
   // The device a keyboard/MIDI/on-screen note plays: the focused device iff it's an instrument (a
-  // keybed surface), else null. A plain string|null so the wireKeyboard effect below only re-runs when
-  // the *target* changes — turning a knob (which mutates the scene) doesn't re-attach the listener.
+  // keybed surface) whose events input is *open* (not cable-driven), else null. A plain string|null so
+  // the wireKeyboard effect below only re-runs when the *target* changes — turning a knob (which
+  // mutates the scene) doesn't re-attach the listener.
   const keyboardTarget = $derived.by((): string | null => {
     if (focusedDevice === null) return null;
     const dev = deviceById(scene, focusedDevice);
     const desc = dev ? descriptorFor(catalog, dev.typeId) : undefined;
-    return dev && desc && focusSurfaceFor(desc) === "instrument" ? dev.id : null;
+    if (!dev || !desc || focusSurfaceFor(desc) !== "instrument") return null;
+    return eventsInputDriven(dev.id, desc) ? null : dev.id;
   });
   // Notes currently sounding, for the keybed highlight — fed by every source (mouse, QWERTY, MIDI) so
   // the on-screen keys light up whichever way you play.
@@ -1025,9 +1035,9 @@
                 {/if}
               </Panel>
               {#if f.surface === "instrument"}
-                <!-- The keybed = the device's open events input, drawn on-screen. Notes host-inject into
-                     the focused instrument (its own if open, else through a patched controller). -->
-                <Keybed held={heldNotes} onNote={playNote} />
+                <!-- The keybed = the device's open events input, drawn on-screen. Disabled when the input
+                     is cable-driven (a patched controller performs it instead — host notes are a no-op). -->
+                <Keybed held={heldNotes} onNote={playNote} disabled={eventsInputDriven(f.device.id, f.desc)} />
               {/if}
             </div>
           </div>

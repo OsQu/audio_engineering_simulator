@@ -12,9 +12,9 @@ import type { Patch } from "./scene";
 import type { Room, Vec3, Wall } from "./spatial";
 
 /** Current save-format version. A saved scene at any other version is discarded (no migration). Bumped
- *  to 9 when racks gained a `facing` (turn the whole rack around to reach its gear's rear I/O): a stale
- *  v8 rack lacks the field, so it's discarded rather than defaulted. */
-export const SCHEMA_VERSION = 9;
+ *  to 10 when the default scene gained a standalone MIDI controller pre-patched to the synth (Story
+ *  4.8): a stale v9 save lacks the controller + its events cable, so it's discarded rather than kept. */
+export const SCHEMA_VERSION = 10;
 
 /** A space (room) in the studio — a UI grouping over the one engine graph (the engine never knows
  *  about rooms). A space is a **rectangular room**: gear stands against one of four walls, each an
@@ -133,10 +133,13 @@ function mounted(
   };
 }
 
-/** The default studio: the chain `synth → gain → VU → AD → digital meter → DA → speaker`, tapped at
- * the speaker. The two meters sit either side of the AD so gain-staging across the converter is
- * visible out of the box: the VU reads the analog level in dBu, the digital meter the same signal in
- * dBFS. The gain stage and meters are unity passthroughs.
+/** The default studio: a standalone MIDI controller plays the chain
+ * `controller → synth → gain → VU → AD → digital meter → DA → speaker`, tapped at the speaker. The
+ * controller's events cable into the synth means you play out of the box by focusing the controller
+ * (the synth's own keybed is then edge-driven — see the "driven by MIDI IN" hint). The two meters sit
+ * either side of the AD so gain-staging across the converter is visible out of the box: the VU reads
+ * the analog level in dBu, the digital meter the same signal in dBFS. The gain stage and meters are
+ * unity passthroughs.
  *
  * Spatial layout (Story 4.6): the rackmount gain/VU/AD/meter/DA mount in an 8U rack against the **back**
  * wall (z≈0); the synth and speaker (desktop gear) stand along the **front** wall (z near the room's far
@@ -146,6 +149,7 @@ function mounted(
 export function defaultScene(): Scene {
   const patch: Patch = {
     devices: [
+      { id: "ctrl", typeId: "midi_controller" },
       { id: "synth", typeId: "synth_voice" },
       { id: "gain", typeId: "gain_stage" },
       { id: "vu", typeId: "vu_meter" },
@@ -155,6 +159,9 @@ export function defaultScene(): Scene {
       { id: "spk", typeId: "speaker" },
     ],
     connections: [
+      // The controller's MIDI-OUT drives the synth's MIDI-IN — the first events cable, so playing works
+      // out of the box by focusing the controller (this also makes the synth's own input edge-driven).
+      { from: { device: "ctrl", port: 0 }, to: { device: "synth", port: 0 } },
       { from: { device: "synth", port: 0 }, to: { device: "gain", port: 0 } },
       { from: { device: "gain", port: 0 }, to: { device: "vu", port: 0 } },
       { from: { device: "vu", port: 0 }, to: { device: "ad", port: 0 } },
@@ -182,6 +189,7 @@ export function defaultScene(): Scene {
         },
       ],
       placements: {
+        ctrl: free("front", 900, frontZ),
         synth: free("front", 200, frontZ),
         gain: mounted("rack-1", 0, "back", rackX, 0),
         vu: mounted("rack-1", 1, "back", rackX, 0),

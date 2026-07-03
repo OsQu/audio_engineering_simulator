@@ -9,8 +9,11 @@
     held: number[];
     /** Emit a note-on (`on=true`) / note-off for a MIDI note when a key is pressed / released. */
     onNote: (on: boolean, note: number) => void;
+    /** When the device's events input is cable-driven, the keybed can't perform (host notes are a
+     *  no-op) — it renders inert and greyed, with a hint that the patched source plays it instead. */
+    disabled?: boolean;
   }
-  let { held, onNote }: Props = $props();
+  let { held, onNote, disabled = false }: Props = $props();
 
   const START = 60; // C4 — the base octave's C
   const OCTAVES = 2;
@@ -46,7 +49,7 @@
   // Track which keys this keybed is holding via pointer, so leaving/releasing only fires once.
   let pressed = $state<number[]>([]);
   function press(note: number): void {
-    if (pressed.includes(note)) return;
+    if (disabled || pressed.includes(note)) return;
     pressed = [...pressed, note];
     onNote(true, note);
   }
@@ -62,7 +65,7 @@
   });
 </script>
 
-<div class="keybed">
+<div class="keybed" class:disabled>
   <div class="keys">
     {#each whites as note (note)}
       <button
@@ -94,13 +97,23 @@
       ></button>
     {/each}
   </div>
-  <p class="hint">Click keys, or type <kbd>A</kbd>–<kbd>K</kbd> to play · <kbd>Z</kbd>/<kbd>X</kbd> change octave</p>
+  {#if disabled}
+    <p class="hint">Driven by <strong>MIDI In</strong> — play it from the patched controller</p>
+  {:else}
+    <p class="hint">Click keys, or type <kbd>A</kbd>–<kbd>K</kbd> to play · <kbd>Z</kbd>/<kbd>X</kbd> change octave</p>
+  {/if}
 </div>
 
 <style>
   .keybed {
     width: 100%;
     max-width: 620px;
+  }
+  /* Cable-driven input: the keybed can't perform, so grey it and make the keys inert. */
+  .keybed.disabled .keys {
+    opacity: 0.45;
+    filter: grayscale(0.6);
+    pointer-events: none;
   }
   /* White keys tile the row; black keys float above at fractional boundary positions. */
   .keys {
