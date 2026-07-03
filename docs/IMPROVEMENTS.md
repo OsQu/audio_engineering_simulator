@@ -1,6 +1,6 @@
 # The file contains improvements and bugs that we can tackle between stories
 
-- The rack faces are not logical. You can swap an individual piece easily but rack doesn't have any flip button. If the devices are tied to the rack, you should access the back panel of the device either by turning the whole rack around (seeing rack's backside which shows all devicse back sides) or take a device off from the rack and then turn it
+- ~The rack faces are not logical. You can swap an individual piece easily but rack doesn't have any flip button. If the devices are tied to the rack, you should access the back panel of the device either by turning the whole rack around (seeing rack's backside which shows all devicse back sides) or take a device off from the rack and then turn it~ DONE
 - The analog cable types are not enforced: You can insert XLR cable to TRS socket. These should be handled at engine level
 - ~Patching is a bit cumbersome. We should stop cable patching if we click while dragging the cable and it's not a valid slot~ DONE
 - ~Start the simulation on the page load, no need to click "Start"~ SKIP
