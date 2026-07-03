@@ -590,13 +590,10 @@ _Watch out:_
   params/ports/readouts **by id**; all appearance lives in the web component. A task that wants a Rust
   layout field is a bug, not a shortcut.
 - **No cosmetic controls.** A faceplate can only draw controls that map to **real params** (the
-  power-as-control ethos: "don't flag what should emerge"). The 8i6's front switches must back onto real
-  engine state — hence the `MicPreamp` node — not fake toggles.
-- **Hot-path contract on the new node.** `MicPreamp::process` stays zero-alloc, panic-free,
-  denormal-flushed. The hi-Z switch changes an input **impedance value** feeding the local-solve divider
-  (a value change, not a topology edit — no recompile); phantom is a declared electrical-state param read
-  in `process` but currently without signal consequence (see design notes). Determinism unaffected (no
-  new RNG).
+  power-as-control ethos: "don't flag what should emerge"). The 8i6 therefore exposes only **gain + power**
+  on its preamps; its INST/AIR/PAD/48V switches are **omitted, not faked**, because none can be honestly
+  modeled in today's engine (see the deferred-preamp-physics design note). **No new engine node this
+  Story** — the preamps reuse the existing `GainStage`.
 - **Fallback parity.** After the `Chassis` refactor, the generic `Panel` (every un-authored device) must
   render and flip **identically** to today — verified in-browser. The registry defaults to `Panel`, so
   nothing existing changes silently.
@@ -624,19 +621,26 @@ _Design notes (settled at planning):_
   shared bezel + 3-D flip (and setting the handle context) so a device authors only face _contents_. The
   generic `Panel` is **rebuilt on `Chassis`** (one flip implementation). _Rejected: leaving `Panel`
   untouched_ (two flip impls to keep in sync).
-- **`MicPreamp` engine node — honest backing for the front controls.** A new node (gain, powered,
-  phantom, hi-Z) so the 8i6's INST/48V switches are real, not cosmetic. **hi-Z (INST)** switches the input
-  **impedance** into the existing `InputZ`/`divider_gain` local solve — a genuinely emergent loading
-  effect. Like the cable R·C (inaudible into today's low-Z sources **by design**), its audible payoff is
-  **latent until Epic 5's hi-Z sources** (guitar pickups) exist — real physics, deferred consequence, not
-  a flag. **48V (phantom)** is a real electrical-state param asserted on the input; its consequence
-  (powering a condenser mic) **emerges with Epic 5 condenser mics** — declared and read, currently without
-  signal effect, documented as a deliberate latency (the cable-R·C precedent), _not_ a cosmetic toggle.
-  **AIR (high-shelf) and PAD (attenuation) are deferred to 5.1** (more preamp physics) — the faceplate
-  omits what isn't yet real. _Rejected: extending the generic `GainStage`_ (leaks mic-pre concepts into a
-  node `gain_stage`/`channel_strip` share); _rejected: cosmetic INST/48V toggles_ (ethos).
+- **Preamp physics deferred — why the 8i6 shows only gain + power (settled after a code check).** The 8i6
+  reuses the existing `GainStage` for its preamps; **INST/AIR/PAD/48V are omitted** because none is
+  honestly modelable in today's engine, and the "no cosmetic controls" ethos forbids faking them:
+  - **INST/hi-Z** would change the preamp's input impedance, but the loading divider is **baked at
+    compile** into the edge transform (`schedule.rs`, from the port's static `InputZ`) — so a hi-Z switch
+    is **structural** (needs a recompile-on-toggle, like repatching), not a smoothed `set_param`. Its
+    effect is **latent anyway** (no hi-Z sources exist until Epic 5), so it would be recompile plumbing for
+    zero audible payoff now.
+  - **48V/phantom** is architecturally **inert on a preamp**: the existing `CondenserMic` self-emits
+    phantom when its *own* flag is set (phantom flows upstream through the pull-based DAG and is
+    approximated at the mic), so a preamp-side switch has **no path to reach the mic**. Real phantom supply
+    needs an upstream side-graph (Epic-5 work, like the planned ground/clock side-graphs).
+  - **AIR** (analog high-shelf) needs a new analog filter; **PAD** (in-`process` attenuation) *is* cleanly
+    modelable now but adds little without a hot source.
+
+  All four ride in with **Epic 5 (5.1)** when the preamp gets real physics — the switches appear when they
+  are honest. _Rejected: a `MicPreamp` node carrying declared-but-inert INST/48V params now_ — a code check
+  showed both would be cosmetic-or-latent, exactly what the ethos forbids. Recorded in `IMPROVEMENTS.md`.
 - **`scarlett_8i6` catalog entry — minimal but honest.** Multi-node chassis reusing existing nodes: 2×
-  `MicPreamp` → 2× `AdConverter` (the digital "USB send"); a digital "USB return" → `DaConverter` →
+  `GainStage` preamps (gain + power) → 2× `AdConverter` (the digital "USB send"); a digital "USB return" → `DaConverter` →
   monitor + phones gain stages → analog outs; MIDI in/out via `EventThru`. Exposed face: **front** = 2
   combo inputs + a headphone out; **back** = line outs, digital send/return, MIDI, power. _Known
   simplifications (not bugs):_ USB is modeled as separate per-lane digital ports (our connector model is
@@ -660,47 +664,41 @@ _Design notes (settled at planning):_
   **valid ids** and **places every param/port** — the web mirror of the Rust
   `catalog_aligns_with_exposed_face` guard.
 
-- **Task 5.7.1 — `MicPreamp` engine node.** New `engine` node with params gain (Knob), powered (Switch),
-  phantom (Switch), hi-Z/INST (Switch). hi-Z selects the input impedance feeding `divider_gain`; phantom
-  is a declared electrical-state param (no signal effect yet, documented). Hot-path clean
-  (zero-alloc/panic-free/denormal-flush). _Done:_ engine tests green including a **hand-calc oracle** —
-  line-Z vs inst-Z divider loss against a constructed high-output-impedance source, the number computed in
-  a comment (§9); default values leave a unity/quiet identity; `cargo wasm` portability holds.
-- **Task 5.7.2 — `scarlett_8i6` catalog entry (`devices`).** Multi-node entry (2× MicPreamp → 2× AD;
-  digital return → DA → monitor/phones gains; MIDI `EventThru`) with UI metadata (labels/kinds/connectors)
-  positionally aligned to the exposed face. _Done:_ `catalog_aligns_with_exposed_face` +
-  `descriptors_carry_engine_truth` pass; an `instantiate` test pins the multi-node port/param remap (as
+- **Task 5.7.1 — `scarlett_8i6` catalog entry (`devices`).** Multi-node entry (2× `GainStage` preamps →
+  2× AD; digital return → DA → monitor/phones gains; MIDI `EventThru`) with UI metadata
+  (labels/kinds/connectors) positionally aligned to the exposed face. _Done:_ `catalog_aligns_with_exposed_face`
+  + `descriptors_carry_engine_truth` pass; an `instantiate` test pins the multi-node port/param remap (as
   `channel_strip` does); the descriptor serializes camelCase; the device renders (via the **generic
   Panel**, pre-faceplate) in-browser.
-- **Task 5.7.3 — Faceplate plumbing + `Chassis` + `Panel` refactor.** Add the `DeviceHandle` context, the
+- **Task 5.7.2 — Faceplate plumbing + `Chassis` + `Panel` refactor.** Add the `DeviceHandle` context, the
   `Chassis` primitive (bezel + flip + sets context), and the `Control`/`Socket`/`Reading` bound wrappers;
   **rebuild the generic `Panel` on `Chassis`** using the wrappers. _Done:_ every existing device renders
   and flips **identically** (fallback parity), knobs/faders/switches/jacks still drive the engine and
   patch; `pnpm check`/`typecheck`/`build` green; verified in-browser.
-- **Task 5.7.4 — Device-UI registry + both render sites + focus generalization.** `device-ui.ts` registry
+- **Task 5.7.3 — Device-UI registry + both render sites + focus generalization.** `device-ui.ts` registry
   (`typeId → component`, else `Panel`); wire it into the in-world `item` snippet **and** the focus overlay,
   replacing the hardcoded synth-Screen and console branches; rework `focus.ts` so focusability =
   registered-focus-surface ∨ playable, with `Console` and the synth `Screen` registered. Keybed still
   appended for instruments. _Done:_ synth (in-world + focus + keybed) and `channel_strip` (Console focus)
   behave as before, now via the registry; no hardcoded `typeId`/`surface` branches remain in App's render
   sites; in-browser parity.
-- **Task 5.7.5 — `Scarlett8i6.svelte` faceplate + brand + primitives + guardrail.** The bespoke component:
-  **front** (2 combo inputs with gain knobs + INST/48V switches, monitor + phones knobs, headphone jack)
-  and **back** (line outs, digital send/return, MIDI, power) laid out in scoped CSS; red chassis via a new
-  `skin.accent`, threaded to the faceplate border **and** the top-down `.plan-tile`. Extract the
-  `Section`/`Legend`/`ButtonCluster`/`Silkscreen` primitives and any new widget (a labeled toggle button /
-  indicator LED) it needs. Add the **Vitest mount-test guardrail** (valid-ids + full param/port coverage
-  per registered faceplate). _Done:_ zoomed in, the 8i6 reads as a simplified Focusrite — mixed front/back
-  I/O, red chassis (in elevation **and** top view), section legends — its controls drive the live engine
-  and its jacks patch with correct cable anchors; the mount test passes; full Rust gate + web
-  `check`/`typecheck`/`test`/`build` green; verified in-browser by eye.
+- **Task 5.7.4 — `Scarlett8i6.svelte` faceplate + brand + primitives + guardrail.** The bespoke component:
+  **front** (2 combo inputs with gain knobs, monitor + phones knobs, headphone jack, plus the power
+  switch(es) the exposed face carries) and **back** (line outs, digital send/return, MIDI, power) laid out
+  in scoped CSS; red chassis via a new `skin.accent`, threaded to the faceplate border **and** the
+  top-down `.plan-tile`. Extract the `Section`/`Legend`/`ButtonCluster`/`Silkscreen` primitives and any new
+  widget (a labeled toggle button / indicator LED) it needs. Add the **Vitest mount-test guardrail**
+  (valid-ids + full param/port coverage per registered faceplate). _Done:_ zoomed in, the 8i6 reads as a
+  simplified Focusrite — mixed front/back I/O, red chassis (in elevation **and** top view), section legends
+  — its controls drive the live engine and its jacks patch with correct cable anchors; the mount test
+  passes; full Rust gate + web `check`/`typecheck`/`test`/`build` green; verified in-browser by eye.
 
 _Validate:_ un-authored devices render/flip **identically** through the generic `Panel` fallback (rebuilt
 on `Chassis`); the **Scarlett 8i6** renders as a bespoke faceplate with **mixed-face I/O**, **red chassis**
 in both the wall elevation and the top-down plan, and **section legends**, its controls driving the live
-engine and its jacks patching with correct cable anchors; **INST** switches a real input impedance
-(hand-calc oracle in the `MicPreamp` test) and **48V** is a real declared electrical-state param (latent
-consequence, documented); the **focus overlay** renders custom faceplates (and `Console` for
+engine and its jacks patching with correct cable anchors; the preamps expose only **gain + power**
+(INST/AIR/PAD/48V deferred to Epic 5 — none honestly modelable yet, recorded in `IMPROVEMENTS.md`); the
+**focus overlay** renders custom faceplates (and `Console` for
 `channel_strip`) via the registry with the synth keybed intact; the **mount-test guardrail** proves every
 registered faceplate references only valid ids and places all params/ports; the **layer rule holds** (no
 layout vocabulary on the Rust descriptor); the full Rust gate (`cargo fmt --check && cargo lint && cargo

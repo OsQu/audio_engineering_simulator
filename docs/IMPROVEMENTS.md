@@ -14,3 +14,8 @@
 - ~Hide the volume and "save load reload" under a menu.~ DONE
 - ~Hide global VU meter and simulation info behind debug menu~ DONE
 - Do not allow creating new spaces, but describe them in the scene/space file. So from user perspective the layout is hard coded
+- Audio-interface / mic-preamp physics for the front-panel switches (INST, AIR, PAD, 48V), so devices like the Scarlett 8i6 can show them honestly instead of omitting them (deferred out of Story 5.7 — see its design notes). None is honestly modelable in today's engine:
+  - **INST / hi-Z** changes input impedance, but the loading divider is baked at *compile* (`schedule.rs`, from the port's static `InputZ`), so a runtime switch is structural — needs recompile-on-toggle (like repatching), not a smoothed param. Latent anyway until high-Z sources (guitar pickups) exist.
+  - **48V phantom** is inert on a preamp: the `CondenserMic` self-emits phantom (it flows upstream through the pull-based DAG and is approximated at the mic), so a preamp-side switch has no path to reach it. Needs an upstream phantom-supply side-graph (like the planned ground/clock side-graphs).
+  - **AIR** = an analog high-shelf filter (new analog DSP); **PAD** = in-`process` attenuation (cleanly modelable now, but adds little without a hot source).
+  - Natural home: **Epic 5 / Story 5.1** (audio interface + more preamp physics).
