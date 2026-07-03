@@ -583,6 +583,17 @@ API), and to the Epic-4 settled layer rule (the **catalog owns which ports/param
 how they're drawn**). Proven end-to-end on a **simplified Focusrite Scarlett 8i6** — the first mixed-face,
 branded device.
 
+_Progress:_ **Part 1 (tasks 5.7.1–5.7.4) is done and committed** on `e5-s7/per-device-faceplates` — the
+faceplate system (registry + `DeviceHandle`/`Chassis`/bound widgets, generic `Panel` fallback, focus
+generalized) and the reduced proving 8i6. **Part 2 (tasks 5.7.5–5.7.10) is added scope**, surfaced while
+building the 8i6: the engine concepts + fidelity needed to make it (and real interfaces generally) faithful.
+Some part-2 tasks are large (near story-sized — multichannel digital, routing, preamp physics); the
+executor may split any into sub-tasks, but they're tracked here per the decision to finish the 8i6 under
+this Story. The detailed execution plan (settled decisions, code recon, per-task designs) lives in
+[`one_off_plans/story_5_7_part2_plan.md`](./one_off_plans/story_5_7_part2_plan.md); execution order is
+**5.7.5 → 5.7.6 → 5.7.7 → 5.7.9 → 5.7.8 → 5.7.10** (matrix before full I/O, so the expanded 8i6 is
+wired around the matrix once).
+
 _Watch out:_
 
 - **Layer rule, unchanged.** The Rust catalog gains **no layout vocabulary** (positions/faces/colours) —
@@ -696,13 +707,78 @@ _Design notes (settled at planning):_
 _Validate:_ un-authored devices render/flip **identically** through the generic `Panel` fallback (rebuilt
 on `Chassis`); the **Scarlett 8i6** renders as a bespoke faceplate with **mixed-face I/O**, **red chassis**
 in both the wall elevation and the top-down plan, and **section legends**, its controls driving the live
-engine and its jacks patching with correct cable anchors; the preamps expose only **gain + power**
-(INST/AIR/PAD/48V deferred to Epic 5 — none honestly modelable yet, recorded in `IMPROVEMENTS.md`); the
+engine and its jacks patching with correct cable anchors; the preamps expose only **gain + power** (part 1;
+INST/AIR/PAD/48V arrive in task **5.7.6**); the
 **focus overlay** renders custom faceplates (and `Console` for
 `channel_strip`) via the registry with the synth keybed intact; the **mount-test guardrail** proves every
 registered faceplate references only valid ids and places all params/ports; the **layer rule holds** (no
 layout vocabulary on the Rust descriptor); the full Rust gate (`cargo fmt --check && cargo lint && cargo
 test && cargo wasm && cargo docs`) plus web `check`/`typecheck`/`test`/`build` pass; verified in-browser.
+
+_Design notes — extended scope (part 2, folded in after 5.7.1–5.7.4 landed):_ The proving 8i6 is
+deliberately reduced, and building it surfaced engine concepts missing to make it — or any faithful
+interface — real. These are folded in as the tasks below rather than scattered to later stories (they were
+first captured in `docs/IMPROVEMENTS.md`, now promoted here). Each carries its own rationale + done-state;
+the larger ones (multichannel digital, routing, preamp physics) may be split into sub-tasks by the executor.
+
+- **Task 5.7.5 — Device-level power gate (framework, not per-node).** Today each `GainStage` carries its own
+  `powered` param, so a multi-node device exposes one power switch *per stage* — the 8i6 already shows 4,
+  and adding line-I/O stages (5.7.8) would multiply them. Introduce a **device-level power** the faceplate
+  presents once (a real interface is bus-powered — a single state), the per-node gates becoming an
+  implementation detail driven by it (or one framework-level gate applied at the device boundary). This is
+  the "generic framework-level power" deferral first noted in Epic 4 / Story 4.2. _Done:_ the 8i6 presents a
+  single power control that silences the whole device (de-clicked, no recompile); single-node devices'
+  power still works; catalog-alignment + engine tests green.
+- **Task 5.7.6 — Preamp physics: INST / PAD / AIR / 48V.** The honest backing for the 8i6's front-panel
+  switches (omitted in part 1 because none was modelable in today's engine). Each needs real work, in
+  rough order of ease:
+  - **PAD** — input attenuation: a smoothed in-`process` multiply (like `powered`), audible immediately.
+  - **INST / hi-Z** — switches the preamp's **input impedance**. The loading divider is **baked at
+    compile** (`schedule.rs`, from the port's static `InputZ`), so this needs either a recompile-on-toggle
+    (structural, like repatching) or a runtime-re-solvable divider driven by a param. Audible payoff is
+    latent until Epic-5 hi-Z sources exist, but the impedance change is real. Oracle: line-Z vs inst-Z
+    divider loss against a constructed high-output-impedance source (§9).
+  - **AIR** — an analog **high-shelf** filter (new analog DSP; EQ is digital-only today).
+  - **48V phantom** — the hard one: `CondenserMic` self-emits phantom (it flows upstream through the
+    pull-based DAG, approximated at the mic), so a preamp switch has **no path to reach the mic**. Real
+    phantom needs a small **upstream phantom-supply side-graph** (mirroring the planned ground/clock
+    side-graphs) — which is an Epic-5 decision-level piece; **48V may stay deferred** if that side-graph
+    isn't built here, while INST/PAD/AIR land. _Done:_ the preamp exposes gain + the modeled switches with
+    hand-calc oracles where analog; the 8i6 faceplate shows them; engine gate green.
+- **Task 5.7.7 — Multichannel digital ports.** Every digital port today is a single mono lane
+  (`lane_count() == 1`); a real USB (or ADAT/S-PDIF) connector carries **many channels bidirectionally over
+  one physical connector**. Add a **multichannel digital port/lane** concept (a port with N lanes behind one
+  jack) so an interface's USB is one connector, not the several mono digital ports the 8i6 fakes now. This
+  is the Epic-1-deferred "multichannel digital ports (ADAT 8-lane etc.)" item — large; touches the port/lane
+  model, `compile`, and the wasm/UI descriptor. _Done:_ a device declares a multichannel digital port; the
+  8i6's USB becomes one; existing mono digital paths unchanged; engine + `cargo wasm` gate green.
+- **Task 5.7.8 — 8i6 full analog I/O + S/PDIF.** With device power (5.7.5) and multichannel digital (5.7.7)
+  in place, grow the reduced 8i6 to the real unit: add the **rear line inputs** and the **additional line
+  outputs** (so it reads as ~8-in/6-out, not 2-in/1-line-out) and **S/PDIF** in/out (deferred in part 1).
+  Extend the catalog entry (more AD/DA/gain nodes) and place the new I/O on the faceplate (front vs back per
+  the real panel). _Done:_ the 8i6's exposed face matches the real unit's I/O count; catalog-alignment +
+  `instantiate` remap tests updated; the faceplate places everything (guardrail green); in-browser.
+- **Task 5.7.9 — Runtime routing matrix (engine concept + focus-view UI).** Interfaces and mixers route any
+  input to any output through an internal **matrix** (the 8i6's is Focusrite Control). We have **no
+  runtime-configurable routing** — internal wiring is fixed `InternalEdge`s and inter-device signal is fixed
+  graph edges. Add a **routing abstraction**: per the routing-seam note in `crates/devices/src/catalog.rs`,
+  runtime-switchable routing "is **not** a topology change — it lives inside a node behind a control param",
+  so a **params-driven matrix node** (route input *i* → output *j* via matrix params, no recompile) is the
+  intended shape (vs. user-repatching, which recompiles). Surface it in the **focus view** as a matrix grid
+  (rows = inputs, cols = outputs), registered as the interface's focus surface (the part-1 registry already
+  supports per-device focus surfaces). _Done:_ a routable node routes inputs → outputs at runtime via matrix
+  params; a focus-view matrix grid drives them; engine + web gate green; in-browser.
+- **Task 5.7.10 — Device dimensions pass.** The catalog `FormFactor` boxes are rough guesses (the 8i6 was
+  authored 210×50×150 mm; several devices likely approximate). Do a pass against real gear so the spatial
+  world's relative sizes read right. Small. _Done:_ dimensions reviewed/corrected; `catalog_carries_sane_form_factors`
+  green; the spatial layout looks right in-browser.
+
+_Validate (part 2):_ the 8i6 is a **faithful** interface — full analog + digital I/O (multichannel USB,
+S/PDIF, rear line ins, line outs), a **single power** control (not per-stage), honest **INST/PAD/AIR** (and
+48V if the phantom side-graph lands here), and a **routing matrix** in its focus view assigning inputs to
+outputs at runtime; device **dimensions** corrected; the full Rust gate (`cargo fmt --check && cargo lint &&
+cargo test && cargo wasm && cargo docs`) plus web `check`/`typecheck`/`test`/`build` pass; verified
+in-browser.
 
 _Decision — ground-loop hum should become emergent from grounding topology (deferred to this Epic)._
 Today (Story 1.5) `Cable::with_hum` is a **manual** injection — the user asserts "a ground loop exists
