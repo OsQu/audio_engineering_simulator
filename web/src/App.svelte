@@ -39,6 +39,7 @@
   import * as placement from "./placement";
   import * as sceneOps from "./scene-ops";
   import { type Room, type Wall } from "./spatial";
+  import Console from "./widgets/Console.svelte";
   import Keybed from "./widgets/Keybed.svelte";
   import Panel from "./widgets/Panel.svelte";
   import Screen from "./widgets/Screen.svelte";
@@ -1014,30 +1015,40 @@
               <button type="button" class="focus-close" onclick={closeFocus}>Close</button>
             </header>
             <div class="focus-body">
-              <Panel
-                device={f.device.id}
-                typeId={f.device.typeId}
-                name={f.desc.name}
-                params={f.desc.params}
-                ports={f.desc.ports}
-                readouts={f.desc.readouts}
-                valueFor={(id) => paramValue(f.device.id, f.desc, id)}
-                readingFor={(id) => readingFor(f.device.id, id)}
-                onParam={(p, v) => onParamInput(f.device.id, p, v)}
-              >
-                {#if f.device.typeId === "synth_voice"}
-                  <Screen
-                    attackMs={paramValue(f.device.id, f.desc, 1)}
-                    decayMs={paramValue(f.device.id, f.desc, 2)}
-                    sustain={paramValue(f.device.id, f.desc, 3)}
-                    releaseMs={paramValue(f.device.id, f.desc, 4)}
-                  />
+              {#if f.surface === "console"}
+                <!-- Console: the same descriptor params, re-laid-out as a mixing-console channel strip
+                     (richer than the in-rack panel — zero engine change). -->
+                <Console
+                  params={f.desc.params}
+                  valueFor={(id) => paramValue(f.device.id, f.desc, id)}
+                  onParam={(p, v) => onParamInput(f.device.id, p, v)}
+                />
+              {:else}
+                <Panel
+                  device={f.device.id}
+                  typeId={f.device.typeId}
+                  name={f.desc.name}
+                  params={f.desc.params}
+                  ports={f.desc.ports}
+                  readouts={f.desc.readouts}
+                  valueFor={(id) => paramValue(f.device.id, f.desc, id)}
+                  readingFor={(id) => readingFor(f.device.id, id)}
+                  onParam={(p, v) => onParamInput(f.device.id, p, v)}
+                >
+                  {#if f.device.typeId === "synth_voice"}
+                    <Screen
+                      attackMs={paramValue(f.device.id, f.desc, 1)}
+                      decayMs={paramValue(f.device.id, f.desc, 2)}
+                      sustain={paramValue(f.device.id, f.desc, 3)}
+                      releaseMs={paramValue(f.device.id, f.desc, 4)}
+                    />
+                  {/if}
+                </Panel>
+                {#if f.surface === "instrument"}
+                  <!-- The keybed = the device's open events input, drawn on-screen. Disabled when the input
+                       is cable-driven (a patched controller performs it instead — host notes are a no-op). -->
+                  <Keybed held={heldNotes} onNote={playNote} disabled={eventsInputDriven(f.device.id, f.desc)} />
                 {/if}
-              </Panel>
-              {#if f.surface === "instrument"}
-                <!-- The keybed = the device's open events input, drawn on-screen. Disabled when the input
-                     is cable-driven (a patched controller performs it instead — host notes are a no-op). -->
-                <Keybed held={heldNotes} onNote={playNote} disabled={eventsInputDriven(f.device.id, f.desc)} />
               {/if}
             </div>
           </div>
