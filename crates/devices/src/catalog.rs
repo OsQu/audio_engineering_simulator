@@ -118,6 +118,8 @@ pub struct PortDescriptor {
     pub domain: PortDomain,
     /// Connector kind for the UI (mic/line/instrument/speaker/digital/MIDI jack styling).
     pub kind: PortKind,
+    /// Physical connector shape — the hard constraint on what may plug in (see [`Connector`]).
+    pub connector: Connector,
 }
 
 /// One scalar readout a device exposes for the host to display (a meter value read back over the
@@ -160,8 +162,9 @@ pub enum PortDomain {
     Events,
 }
 
-/// Connector kind, for jack styling and connection-legality hints. UI-only — the engine
-/// validates by *domain*, not by this tag.
+/// Connector kind, for jack styling and connection-legality hints. This is the *signal class*
+/// (mic/line/instrument/…) a jack presents, which drives colour/labelling — **not** the physical
+/// connector shape. Whether two jacks can actually be joined is governed by [`Connector`], not this.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub enum PortKind {
@@ -171,6 +174,40 @@ pub enum PortKind {
     Speaker,
     Digital,
     Midi,
+}
+
+/// The **physical connector shape** a port (or cable end) presents — the hard, mechanical constraint on
+/// what can plug into what, distinct from the signal-class [`PortKind`]. Two ports may only be joined
+/// when their connectors are [compatible](connectors_compatible); a level/signal-class mismatch (a mic
+/// into a line input) is *not* rejected here — it stays emergent from the voltage physics, per the
+/// project's "don't flag what should emerge" rule. Only shape incompatibility (an XLR into a ¼" hole)
+/// is a genuine impossibility and rejected.
+///
+/// Deliberately coarse and extensible — only the connectors today's catalog needs. `QuarterInch`
+/// unifies TS and TRS: they share the same jack (a TS plug seats in a TRS socket, just unbalanced), so
+/// they are one connector here. `Xlr`/`Speakon`/`Digital` are carried forward for gear that lands in
+/// Epic 5 (balanced mics, power amps, multi-format digital).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum Connector {
+    /// ¼" (6.35 mm) phone jack — TS and TRS unified (same hole). Instrument + line gear.
+    QuarterInch,
+    /// 3-pin XLR — balanced mic / line.
+    Xlr,
+    /// speakON / binding-post speaker connector.
+    Speakon,
+    /// 5-pin DIN — MIDI (events domain).
+    Din5,
+    /// A digital-audio connector (one entry for now; SPDIF/ADAT/AES split lands in Epic 5).
+    Digital,
+}
+
+/// Whether two connectors can be physically joined. The whole rule: they must be the *same* connector
+/// (TS/TRS are already unified under [`Connector::QuarterInch`]). Adapters/hybrid leads (XLR↔TRS) are
+/// out of scope. Domain compatibility is a *separate* check the engine owns at compile.
+#[must_use]
+pub fn connectors_compatible(a: Connector, b: Connector) -> bool {
+    a == b
 }
 
 impl From<Domain> for PortDomain {
@@ -227,6 +264,7 @@ struct ParamUi {
 struct PortUi {
     label: &'static str,
     kind: PortKind,
+    connector: Connector,
 }
 
 struct ReadoutUi {
@@ -283,10 +321,12 @@ const CATALOG: &[CatalogEntry] = &[
         inputs: &[PortUi {
             label: "MIDI",
             kind: PortKind::Midi,
+            connector: Connector::Din5,
         }],
         outputs: &[PortUi {
             label: "Out",
             kind: PortKind::Instrument,
+            connector: Connector::QuarterInch,
         }],
         readouts: &[],
     },
@@ -318,10 +358,12 @@ const CATALOG: &[CatalogEntry] = &[
         inputs: &[PortUi {
             label: "In",
             kind: PortKind::Line,
+            connector: Connector::QuarterInch,
         }],
         outputs: &[PortUi {
             label: "Out",
             kind: PortKind::Line,
+            connector: Connector::QuarterInch,
         }],
         readouts: &[],
     },
@@ -345,10 +387,12 @@ const CATALOG: &[CatalogEntry] = &[
         inputs: &[PortUi {
             label: "In",
             kind: PortKind::Digital,
+            connector: Connector::Digital,
         }],
         outputs: &[PortUi {
             label: "Out",
             kind: PortKind::Digital,
+            connector: Connector::Digital,
         }],
         readouts: &[],
     },
@@ -369,10 +413,12 @@ const CATALOG: &[CatalogEntry] = &[
         inputs: &[PortUi {
             label: "Analog In",
             kind: PortKind::Line,
+            connector: Connector::QuarterInch,
         }],
         outputs: &[PortUi {
             label: "Digital Out",
             kind: PortKind::Digital,
+            connector: Connector::Digital,
         }],
         readouts: &[],
     },
@@ -393,10 +439,12 @@ const CATALOG: &[CatalogEntry] = &[
         inputs: &[PortUi {
             label: "Digital In",
             kind: PortKind::Digital,
+            connector: Connector::Digital,
         }],
         outputs: &[PortUi {
             label: "Analog Out",
             kind: PortKind::Line,
+            connector: Connector::QuarterInch,
         }],
         readouts: &[],
     },
@@ -414,10 +462,15 @@ const CATALOG: &[CatalogEntry] = &[
         inputs: &[PortUi {
             label: "In",
             kind: PortKind::Speaker,
+            // The speaker is a simplified powered-monitor terminus fed by the line-level DA, so its
+            // input is a ¼" line jack today — this keeps the default `da→spk` connection legal. A
+            // Speakon input arrives with an Epic-5 power amp + passive speaker.
+            connector: Connector::QuarterInch,
         }],
         outputs: &[PortUi {
             label: "Tap",
             kind: PortKind::Speaker,
+            connector: Connector::QuarterInch,
         }],
         readouts: &[],
     },
@@ -482,10 +535,12 @@ const CATALOG: &[CatalogEntry] = &[
         inputs: &[PortUi {
             label: "In",
             kind: PortKind::Line,
+            connector: Connector::QuarterInch,
         }],
         outputs: &[PortUi {
             label: "Out",
             kind: PortKind::Line,
+            connector: Connector::QuarterInch,
         }],
         readouts: &[],
     },
@@ -502,10 +557,12 @@ const CATALOG: &[CatalogEntry] = &[
         inputs: &[PortUi {
             label: "In",
             kind: PortKind::Line,
+            connector: Connector::QuarterInch,
         }],
         outputs: &[PortUi {
             label: "Thru",
             kind: PortKind::Line,
+            connector: Connector::QuarterInch,
         }],
         readouts: &[
             ReadoutUi {
@@ -535,10 +592,12 @@ const CATALOG: &[CatalogEntry] = &[
         inputs: &[PortUi {
             label: "In",
             kind: PortKind::Digital,
+            connector: Connector::Digital,
         }],
         outputs: &[PortUi {
             label: "Thru",
             kind: PortKind::Digital,
+            connector: Connector::Digital,
         }],
         readouts: &[
             ReadoutUi {
@@ -756,6 +815,7 @@ fn describe(entry: &CatalogEntry) -> DeviceDescriptor {
             direction: PortDirection::Input,
             domain: p.domain.into(),
             kind: ui.kind,
+            connector: ui.connector,
         });
     let outputs = face
         .outputs
@@ -768,6 +828,7 @@ fn describe(entry: &CatalogEntry) -> DeviceDescriptor {
             direction: PortDirection::Output,
             domain: p.domain.into(),
             kind: ui.kind,
+            connector: ui.connector,
         });
     let ports = inputs.chain(outputs).collect();
 
@@ -968,6 +1029,67 @@ mod tests {
         // camelCase field names are the wire contract (matches the TS mirror).
         assert!(json.contains("typeId"));
         assert!(json.contains("readouts"));
+        // Ports carry their physical connector, serialized camelCase.
+        assert!(json.contains("connector"));
+        assert!(json.contains("quarterInch"));
+    }
+
+    /// Connector compatibility is same-connector only (TS/TRS already unified as `QuarterInch`); a
+    /// signal-class difference is *not* what's checked here — only the physical shape.
+    #[test]
+    fn connectors_compatible_is_same_connector_only() {
+        assert!(connectors_compatible(
+            Connector::QuarterInch,
+            Connector::QuarterInch
+        ));
+        assert!(connectors_compatible(Connector::Xlr, Connector::Xlr));
+        assert!(!connectors_compatible(
+            Connector::QuarterInch,
+            Connector::Xlr
+        ));
+        assert!(!connectors_compatible(
+            Connector::Speakon,
+            Connector::QuarterInch
+        ));
+    }
+
+    /// Ports carry an authored physical connector, distinct from their signal-class `kind`: the synth's
+    /// instrument out and the gain stage's line in are both ¼" (so they interconnect despite differing
+    /// kinds), the AD's digital out is a digital connector, the synth's MIDI in is a 5-pin DIN, and the
+    /// speaker terminus takes a ¼" line feed today (keeping the default `da→spk` connection legal).
+    #[test]
+    fn ports_carry_authored_connectors() {
+        let all = descriptors();
+        let connector = |type_id: &str, dir: PortDirection, id: u32| {
+            all.iter()
+                .find(|d| d.type_id == type_id)
+                .unwrap_or_else(|| panic!("no device {type_id}"))
+                .ports
+                .iter()
+                .find(|p| p.direction == dir && p.id == id)
+                .unwrap_or_else(|| panic!("no {type_id} port {id}"))
+                .connector
+        };
+        assert_eq!(
+            connector("synth_voice", PortDirection::Output, 0),
+            Connector::QuarterInch
+        );
+        assert_eq!(
+            connector("synth_voice", PortDirection::Input, 0),
+            Connector::Din5
+        );
+        assert_eq!(
+            connector("gain_stage", PortDirection::Input, 0),
+            Connector::QuarterInch
+        );
+        assert_eq!(
+            connector("ad_converter", PortDirection::Output, 0),
+            Connector::Digital
+        );
+        assert_eq!(
+            connector("speaker", PortDirection::Input, 0),
+            Connector::QuarterInch
+        );
     }
 
     /// The meter devices expose their node readouts as descriptors: the VU meter's VU + peak, the

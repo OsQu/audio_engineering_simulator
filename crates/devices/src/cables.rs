@@ -20,7 +20,7 @@
 //! Digital / event routes carry no cable (the engine ignores a `CableSpec` on a non-analog edge), so the
 //! UI offers cables on analog connections only.
 
-use crate::catalog::PortKind;
+use crate::catalog::{Connector, PortKind};
 use serde::Serialize;
 
 /// One cable type the UI can offer — a realistic R·C preset plus a connector kind. Numeric fields are SI
@@ -36,6 +36,9 @@ pub struct CableType {
     pub label: String,
     /// Connector kind, for jack/cable styling (mirrors a port's `kind`).
     pub kind: PortKind,
+    /// Physical connector shape — which jacks this cable can plug into (mirrors a port's `connector`).
+    /// The picker offers a connection only the cables whose `connector` matches its ports.
+    pub connector: Connector,
     /// Nominal length in metres the R·C was authored at (display + length-scaling seam).
     pub length_m: f32,
     /// Series resistance, ohms (the `Zcable` term of the loading divider).
@@ -52,6 +55,7 @@ struct CableEntry {
     type_id: &'static str,
     label: &'static str,
     kind: PortKind,
+    connector: Connector,
     length_m: f32,
     resistance_ohms: f32,
     capacitance_farads: f32,
@@ -65,6 +69,7 @@ const CABLES: &[CableEntry] = &[
         type_id: "patch_short",
         label: "Patch Cable (0.5 m)",
         kind: PortKind::Line,
+        connector: Connector::QuarterInch,
         length_m: 0.5,
         resistance_ohms: 0.05,
         capacitance_farads: 5.0e-11, // 0.5 m × ~100 pF/m = 50 pF
@@ -74,6 +79,7 @@ const CABLES: &[CableEntry] = &[
         type_id: "instrument_3m",
         label: "Instrument Cable (3 m)",
         kind: PortKind::Instrument,
+        connector: Connector::QuarterInch,
         length_m: 3.0,
         resistance_ohms: 0.15,
         capacitance_farads: 3.0e-10, // 3 m × ~100 pF/m = 300 pF
@@ -83,6 +89,7 @@ const CABLES: &[CableEntry] = &[
         type_id: "instrument_6m",
         label: "Instrument Cable (6 m)",
         kind: PortKind::Instrument,
+        connector: Connector::QuarterInch,
         length_m: 6.0,
         resistance_ohms: 0.3,
         capacitance_farads: 6.0e-10, // 6 m × ~100 pF/m = 600 pF
@@ -92,6 +99,7 @@ const CABLES: &[CableEntry] = &[
         type_id: "mic_10m",
         label: "Mic Cable (10 m)",
         kind: PortKind::Mic,
+        connector: Connector::Xlr,
         length_m: 10.0,
         resistance_ohms: 0.5,
         capacitance_farads: 5.0e-10, // 10 m × ~50 pF/m = 500 pF
@@ -101,6 +109,7 @@ const CABLES: &[CableEntry] = &[
         type_id: "speaker_5m",
         label: "Speaker Cable (5 m)",
         kind: PortKind::Speaker,
+        connector: Connector::Speakon,
         length_m: 5.0,
         resistance_ohms: 0.1,
         capacitance_farads: 2.5e-10,
@@ -117,6 +126,7 @@ pub fn cable_types() -> Vec<CableType> {
             type_id: c.type_id.to_owned(),
             label: c.label.to_owned(),
             kind: c.kind,
+            connector: c.connector,
             length_m: c.length_m,
             resistance_ohms: c.resistance_ohms,
             capacitance_farads: c.capacitance_farads,
@@ -272,6 +282,17 @@ mod tests {
         assert!(json.contains("resistanceOhms"));
         assert!(json.contains("capacitanceFarads"));
         assert!(json.contains("lengthM"));
+        assert!(json.contains("connector"));
         assert!(json.contains("instrument_6m"), "expected the 6 m preset");
+    }
+
+    /// Each preset carries the physical connector its jacks present: ¼" for patch/instrument, XLR for the
+    /// mic cable, speakON for the speaker cable — the axis the UI cable picker filters on.
+    #[test]
+    fn presets_carry_expected_connectors() {
+        assert_eq!(preset("patch_short").connector, Connector::QuarterInch);
+        assert_eq!(preset("instrument_6m").connector, Connector::QuarterInch);
+        assert_eq!(preset("mic_10m").connector, Connector::Xlr);
+        assert_eq!(preset("speaker_5m").connector, Connector::Speakon);
     }
 }
