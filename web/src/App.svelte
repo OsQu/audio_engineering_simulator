@@ -6,6 +6,7 @@
 
   import type { CableType, DeviceDescriptor, ParamDescriptor, PortDomain, PortKind } from "./catalog";
   import { descriptorFor, isPlayable } from "./catalog";
+  import { focusSurfaceFor, isFocusable } from "./focus";
   import {
     type ControlMessage,
     healthSummary,
@@ -294,9 +295,14 @@
     dragCable = res.state;
   }
 
-  // Esc cancels an in-progress patch (drag or pending).
-  function onCableKey(e: KeyboardEvent): void {
-    if (e.key === "Escape" && dragCable) dragCable = patching.cancel();
+  // Esc closes the focus overlay first, else cancels an in-progress patch (drag or pending).
+  function onGlobalKey(e: KeyboardEvent): void {
+    if (e.key !== "Escape") return;
+    if (focusedDevice !== null) {
+      focusedDevice = null;
+      return;
+    }
+    if (dragCable) dragCable = patching.cancel();
   }
 
   // Connection introspection + edits are pure scene-ops; App wraps them to bind scene/catalog/cables
@@ -335,6 +341,32 @@
   const cablesForSelected = $derived.by((): CableType[] =>
     selectedConn ? sceneOps.cablesFor(scene, catalog, cables, selectedConn) : [],
   );
+
+  // --- Device focus mode (sit down at a device: a large, device-specific interaction surface) --------
+  // Transient UI state (like the cable-inspector selection) — never persisted to scene `ui`. The
+  // presentation is an overlay that dims the world (a peer of the cable-inspector / patch-banner
+  // overlays), not a WorldView spatial change.
+  let focusedDevice = $state<string | null>(null);
+  // The focused device resolved to what the surface needs — its instance, descriptor, and which
+  // surface to draw — or null when nothing is focused (or the focused device has gone / isn't
+  // focusable, so a stale id renders nothing).
+  const focused = $derived.by(() => {
+    if (focusedDevice === null) return null;
+    const device = deviceById(scene, focusedDevice);
+    const desc = device ? descriptorFor(catalog, device.typeId) : undefined;
+    if (!device || !desc) return null;
+    const surface = focusSurfaceFor(desc);
+    return surface ? { device, desc, surface } : null;
+  });
+  const closeFocus = (): void => {
+    focusedDevice = null;
+  };
+  // The focus dialog element, for a basic focus-trap: move keyboard focus into the surface when it
+  // opens (depends only on the focused *id* + the element, so turning a knob doesn't steal focus back).
+  let focusSurfaceEl = $state<HTMLElement | undefined>();
+  $effect(() => {
+    if (focusedDevice !== null) focusSurfaceEl?.focus();
+  });
 
   // Set (or clear, `""` ⇒ ideal wire) the cable type on a connection, then hot-swap — the cable's R·C
   // is baked into the edge at compile, so changing it rebuilds the engine.
@@ -387,6 +419,7 @@
     hotSwap();
   }
   function removeDevice(id: string): void {
+    if (focusedDevice === id) focusedDevice = null;
     sceneOps.removeDevice(scene, id);
     hotSwap();
   }
@@ -471,7 +504,7 @@
   onpointerdown={onCablePointerDown}
   onpointermove={onCablePointerMove}
   onpointerup={onCablePointerUp}
-  onkeydown={onCableKey}
+  onkeydown={onGlobalKey}
 />
 
 <main>
@@ -763,8 +796,17 @@
             {/if}
           {:else}
             {@const place = scene.ui.placements[itemId]}
+            {@const focusDesc = descriptorFor(catalog, deviceById(scene, itemId)?.typeId ?? "")}
             {#if place}
               {#if currentView !== "top"}
+                <!-- Sit down at a device that warrants deep control (a synth keybed, a console): open its
+                     large focus surface. Only devices with a surface show the chip (converters/speaker
+                     don't). A wall-elevation affordance, like flip — no panel is shown in the top plan. -->
+                {#if focusDesc && isFocusable(focusDesc)}
+                  <button type="button" class="chip" aria-label="open {focusDesc.name}" onclick={() => (focusedDevice = itemId)}>
+                    open
+                  </button>
+                {/if}
                 <!-- Flip/eject are wall-elevation affordances (no panel is shown in the top-down plan).
                      A bolted-in unit can't be flipped on its own — turn its rack around instead, or
                      eject it here to flip it free-standing. -->
@@ -900,6 +942,53 @@
             Disconnect
           </button>
           <button type="button" class="ci-close" onclick={() => (selectedCableKey = null)}>Close</button>
+        </div>
+      {/if}
+
+      {#if focused}
+        {@const f = focused}
+        <!-- Device focus overlay: sit down at the device. Dims the world and shows its surface large — a
+             peer of the cable-inspector / patch-banner overlays, not a WorldView spatial change. Click the
+             backdrop or press Esc to leave. The surface reuses the same descriptor-driven Panel props as
+             the in-world panel (Story 4.8.4 adds the instrument keybed, 4.8.6 the console). -->
+        <div
+          class="focus-backdrop"
+          role="button"
+          tabindex="-1"
+          aria-label="close focus"
+          onclick={(e) => {
+            if (e.target === e.currentTarget) closeFocus();
+          }}
+          onkeydown={(e) => {
+            if (e.key === "Enter") closeFocus();
+          }}
+        >
+          <div
+            class="focus-surface"
+            bind:this={focusSurfaceEl}
+            role="dialog"
+            aria-modal="true"
+            aria-label={`${f.desc.name} — focus`}
+            tabindex="-1"
+          >
+            <header class="focus-head">
+              <span class="focus-name">{f.desc.name}</span>
+              <button type="button" class="focus-close" onclick={closeFocus}>Close</button>
+            </header>
+            <div class="focus-body">
+              <Panel
+                device={f.device.id}
+                typeId={f.device.typeId}
+                name={f.desc.name}
+                params={f.desc.params}
+                ports={f.desc.ports}
+                readouts={f.desc.readouts}
+                valueFor={(id) => paramValue(f.device.id, f.desc, id)}
+                readingFor={(id) => readingFor(f.device.id, id)}
+                onParam={(p, v) => onParamInput(f.device.id, p, v)}
+              />
+            </div>
+          </div>
         </div>
       {/if}
 
@@ -1394,6 +1483,63 @@
   }
   .cable-inspector .ci-close {
     margin-left: auto;
+  }
+  /* Device focus overlay — dims the world and centres the focused device's surface. Above the toolbar
+     menus (z 20) so nothing peeks through; covers the stage only (the toolbar stays reachable). */
+  .focus-backdrop {
+    position: absolute;
+    inset: 0;
+    z-index: 30;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 2rem;
+    background: rgb(0 0 0 / 0.55);
+    cursor: default;
+  }
+  .focus-surface {
+    display: flex;
+    flex-direction: column;
+    gap: 0.8rem;
+    max-width: min(90%, 900px);
+    max-height: 90%;
+    overflow: auto;
+    padding: 1rem 1.2rem 1.4rem;
+    background: var(--ae-bg-panel);
+    border: 1px solid var(--ae-line-panel);
+    border-radius: var(--ae-radius-panel);
+    box-shadow: var(--ae-shadow-card);
+  }
+  .focus-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+  }
+  .focus-name {
+    font-size: 1rem;
+    font-weight: 600;
+    color: var(--ae-text-strong);
+  }
+  .focus-close {
+    font: inherit;
+    font-size: 0.72rem;
+    padding: 0.2rem 0.7rem;
+    color: var(--ae-text-strong);
+    background: var(--ae-bg-chip);
+    border: 1px solid var(--ae-line-chip);
+    border-radius: var(--ae-radius-control);
+    cursor: pointer;
+  }
+  /* Blow the panel up to fill the surface: the in-world panel is sized small for the world, but the focus
+     view has room, so let it grow. */
+  .focus-body {
+    display: flex;
+    justify-content: center;
+  }
+  .focus-body :global(.panel) {
+    width: 100%;
+    min-height: 220px;
   }
   /* Global levels & losses panel — live meter readings + static connection losses. */
   .levels {
