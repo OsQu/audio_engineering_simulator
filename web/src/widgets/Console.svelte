@@ -7,15 +7,13 @@
   // `valueFor` / `onParam` props, so a move here and a move on the rack panel are the one control — no
   // engine or catalog change, purely a richer presentation of the same truth.
   import type { ParamDescriptor } from "../catalog";
+  import type { DeviceUiProps } from "../device-ui";
   import Fader from "./Fader.svelte";
   import Switch from "./Switch.svelte";
 
-  interface Props {
-    params: ParamDescriptor[];
-    valueFor: (id: number) => number;
-    onParam: (p: ParamDescriptor, value: number) => void;
-  }
-  let { params, valueFor, onParam }: Props = $props();
+  // A focus surface in the device-ui registry, so it accepts the full faceplate prop shape; it only
+  // needs the params + value/onParam plumbing to re-lay-out the channel strip.
+  let { params, valueFor, onParam }: DeviceUiProps = $props();
 
   // Group params into signal-flow sections by the first word of the label ("Input Gain" → section
   // "Input", control "Gain"). Order is preserved, so sections read top-of-chain to bottom.

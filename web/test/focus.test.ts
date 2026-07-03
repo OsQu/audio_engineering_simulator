@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { DeviceDescriptor, PortDescriptor } from "../src/catalog";
-import { focusSurfaceFor, isFocusable } from "../src/focus";
+import { isFocusable } from "../src/focus";
 
 const eventsIn: PortDescriptor = {
   id: 0,
@@ -30,30 +30,21 @@ function device(typeId: string, ports: PortDescriptor[]): DeviceDescriptor {
   };
 }
 
-describe("focusSurfaceFor", () => {
-  it("gives any device with an events input an instrument (keybed) surface — derived, not listed", () => {
-    // Both the synth and the standalone controller have an events input, so both get a keybed with no
-    // per-type entry needed.
-    expect(focusSurfaceFor(device("synth_voice", [eventsIn]))).toBe("instrument");
-    expect(focusSurfaceFor(device("midi_controller", [eventsIn]))).toBe("instrument");
-    // Even an unknown future events-in device gets a keybed for free.
-    expect(focusSurfaceFor(device("some_new_synth", [eventsIn]))).toBe("instrument");
-  });
-
-  it("gives channel_strip a console surface via the explicit override", () => {
-    expect(focusSurfaceFor(device("channel_strip", [analogIn]))).toBe("console");
-  });
-
-  it("is null for a device with no deep-control surface", () => {
-    expect(focusSurfaceFor(device("speaker", [analogIn]))).toBeNull();
-    expect(focusSurfaceFor(device("ad_converter", [analogIn]))).toBeNull();
-  });
-});
-
 describe("isFocusable", () => {
-  it("is true exactly when there is a surface to show", () => {
+  it("is true for any device with an events input (it earns a keybed) — derived, not listed", () => {
+    // Both the synth and the standalone controller have an events input, so both are focusable with no
+    // per-type entry needed; even an unknown future events-in device is focusable for free.
     expect(isFocusable(device("synth_voice", [eventsIn]))).toBe(true);
+    expect(isFocusable(device("midi_controller", [eventsIn]))).toBe(true);
+    expect(isFocusable(device("some_new_synth", [eventsIn]))).toBe(true);
+  });
+
+  it("is true for a type with a dedicated focus surface (channel_strip → console)", () => {
     expect(isFocusable(device("channel_strip", [analogIn]))).toBe(true);
+  });
+
+  it("is false for a device with no deep-control surface", () => {
     expect(isFocusable(device("speaker", [analogIn]))).toBe(false);
+    expect(isFocusable(device("ad_converter", [analogIn]))).toBe(false);
   });
 });

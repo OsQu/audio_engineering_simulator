@@ -5,8 +5,9 @@
   // skeuomorphic panel widgets land in Story 4.2.3. Generic by device id throughout.
 
   import type { CableType, DeviceDescriptor, ParamDescriptor, PortDomain, PortKind } from "./catalog";
-  import { descriptorFor } from "./catalog";
-  import { focusSurfaceFor, isFocusable } from "./focus";
+  import { descriptorFor, isPlayable } from "./catalog";
+  import { deviceUi, focusUi } from "./device-ui";
+  import { isFocusable } from "./focus";
   import {
     type ControlMessage,
     healthSummary,
@@ -39,10 +40,7 @@
   import * as placement from "./placement";
   import * as sceneOps from "./scene-ops";
   import { type Room, type Wall } from "./spatial";
-  import Console from "./widgets/Console.svelte";
   import Keybed from "./widgets/Keybed.svelte";
-  import Panel from "./widgets/Panel.svelte";
-  import Screen from "./widgets/Screen.svelte";
   import Vu from "./widgets/Vu.svelte";
   import WorldView from "./widgets/WorldView.svelte";
   import type { WorldApi } from "./widgets/WorldView.svelte";
@@ -343,16 +341,15 @@
   // presentation is an overlay that dims the world (a peer of the cable-inspector / patch-banner
   // overlays), not a WorldView spatial change.
   let focusedDevice = $state<string | null>(null);
-  // The focused device resolved to what the surface needs — its instance, descriptor, and which
-  // surface to draw — or null when nothing is focused (or the focused device has gone / isn't
-  // focusable, so a stale id renders nothing).
+  // The focused device resolved to its instance + descriptor — or null when nothing is focused (or the
+  // focused device has gone / isn't focusable, so a stale id renders nothing). Which surface component
+  // to draw is `focusUi(typeId)`; whether a keybed is appended is `isPlayable(desc)`.
   const focused = $derived.by(() => {
     if (focusedDevice === null) return null;
     const device = deviceById(scene, focusedDevice);
     const desc = device ? descriptorFor(catalog, device.typeId) : undefined;
-    if (!device || !desc) return null;
-    const surface = focusSurfaceFor(desc);
-    return surface ? { device, desc, surface } : null;
+    if (!device || !desc || !isFocusable(desc)) return null;
+    return { device, desc };
   });
   const closeFocus = (): void => {
     focusedDevice = null;
@@ -381,7 +378,7 @@
     if (focusedDevice === null) return null;
     const dev = deviceById(scene, focusedDevice);
     const desc = dev ? descriptorFor(catalog, dev.typeId) : undefined;
-    if (!dev || !desc || focusSurfaceFor(desc) !== "instrument") return null;
+    if (!dev || !desc || !isPlayable(desc)) return null;
     return eventsInputDriven(dev.id, desc) ? null : dev.id;
   });
   // Notes currently sounding, for the keybed highlight — fed by every source (mouse, QWERTY, MIDI) so
@@ -913,7 +910,9 @@
             {@const desc = device ? descriptorFor(catalog, device.typeId) : undefined}
             {@const place = scene.ui.placements[itemId]}
             {#if device && desc && place}
-              <Panel
+              <!-- The device's registered faceplate (its own component, or the generic Panel). -->
+              {@const Faceplate = deviceUi(device.typeId)}
+              <Faceplate
                 device={device.id}
                 typeId={device.typeId}
                 name={desc.name}
@@ -924,17 +923,7 @@
                 valueFor={(id) => paramValue(device.id, desc, id)}
                 readingFor={(id) => readingFor(device.id, id)}
                 onParam={(p, v) => onParamInput(device.id, p, v)}
-              >
-                {#if device.typeId === "synth_voice"}
-                  <!-- Synth-specific screen: ADSR contour from params 1=attack, 2=decay, 3=sustain, 4=release. -->
-                  <Screen
-                    attackMs={paramValue(device.id, desc, 1)}
-                    decayMs={paramValue(device.id, desc, 2)}
-                    sustain={paramValue(device.id, desc, 3)}
-                    releaseMs={paramValue(device.id, desc, 4)}
-                  />
-                {/if}
-              </Panel>
+              />
             {/if}
           {/if}
         {/snippet}
@@ -986,6 +975,8 @@
 
       {#if focused}
         {@const f = focused}
+        <!-- The device's focus surface (its dedicated one — e.g. a console — or its faceplate). -->
+        {@const Surface = focusUi(f.device.typeId)}
         <!-- Device focus overlay: sit down at the device. Dims the world and shows its surface large — a
              peer of the cable-inspector / patch-banner overlays, not a WorldView spatial change. Click the
              backdrop or press Esc to leave. The surface reuses the same descriptor-driven Panel props as
@@ -1015,40 +1006,21 @@
               <button type="button" class="focus-close" onclick={closeFocus}>Close</button>
             </header>
             <div class="focus-body">
-              {#if f.surface === "console"}
-                <!-- Console: the same descriptor params, re-laid-out as a mixing-console channel strip
-                     (richer than the in-rack panel — zero engine change). -->
-                <Console
-                  params={f.desc.params}
-                  valueFor={(id) => paramValue(f.device.id, f.desc, id)}
-                  onParam={(p, v) => onParamInput(f.device.id, p, v)}
-                />
-              {:else}
-                <Panel
-                  device={f.device.id}
-                  typeId={f.device.typeId}
-                  name={f.desc.name}
-                  params={f.desc.params}
-                  ports={f.desc.ports}
-                  readouts={f.desc.readouts}
-                  valueFor={(id) => paramValue(f.device.id, f.desc, id)}
-                  readingFor={(id) => readingFor(f.device.id, id)}
-                  onParam={(p, v) => onParamInput(f.device.id, p, v)}
-                >
-                  {#if f.device.typeId === "synth_voice"}
-                    <Screen
-                      attackMs={paramValue(f.device.id, f.desc, 1)}
-                      decayMs={paramValue(f.device.id, f.desc, 2)}
-                      sustain={paramValue(f.device.id, f.desc, 3)}
-                      releaseMs={paramValue(f.device.id, f.desc, 4)}
-                    />
-                  {/if}
-                </Panel>
-                {#if f.surface === "instrument"}
-                  <!-- The keybed = the device's open events input, drawn on-screen. Disabled when the input
-                       is cable-driven (a patched controller performs it instead — host notes are a no-op). -->
-                  <Keybed held={heldNotes} onNote={playNote} disabled={eventsInputDriven(f.device.id, f.desc)} />
-                {/if}
+              <Surface
+                device={f.device.id}
+                typeId={f.device.typeId}
+                name={f.desc.name}
+                params={f.desc.params}
+                ports={f.desc.ports}
+                readouts={f.desc.readouts}
+                valueFor={(id) => paramValue(f.device.id, f.desc, id)}
+                readingFor={(id) => readingFor(f.device.id, id)}
+                onParam={(p, v) => onParamInput(f.device.id, p, v)}
+              />
+              {#if isPlayable(f.desc)}
+                <!-- The keybed = the device's open events input, drawn on-screen. Disabled when the input
+                     is cable-driven (a patched controller performs it instead — host notes are a no-op). -->
+                <Keybed held={heldNotes} onNote={playNote} disabled={eventsInputDriven(f.device.id, f.desc)} />
               {/if}
             </div>
           </div>
