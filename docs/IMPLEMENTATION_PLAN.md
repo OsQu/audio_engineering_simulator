@@ -1551,6 +1551,75 @@ engine/`patch` contract untouched.
   keeps the engine lean; an engine FFT keeps the DSP in one place — measure); tap cost on the hot path;
   which probes are device-embedded vs. global. _Scope guard:_ waveform probes only — the scalar meters +
   analog-domain readouts are 4.5.
+- **Story 4.8 — Device focus mode + the interaction seam (retires the global virtual keyboard).** From
+  `docs/IMPROVEMENTS.md`: kill the global QWERTY "virtual keyboard" (today a `window` listener wired **once
+  to the first playable synth** — a recorded 4.3 limitation) and replace it with a general **focus mode**:
+  click a device that warrants deep control (synth, console; later a DAW) to open a large, device-specific
+  **interaction surface**, with note/param input scoped to the focused device. The generalization is the
+  point — not "a keyboard for synths" but a rich surface per complex device type. Almost entirely a `web/`
+  story (focus is UI state like spaces/racks); the engine gains **one** trivial node (below) and `synth_voice`
+  is unchanged. _Settled design (from the planning dialogue):_
+  - **Two orthogonal seams.** A device's **ports = the signal seam** (how it wires to other devices —
+    analog/digital/**events** in/out, engine + catalog truth); its **focus surface = the interaction seam**
+    (how a human operates it once "sat down at it," UI-only). Every device with meaningful interaction
+    registers a focus surface; simple inline devices (converters, speaker) don't. The surface scales from a
+    few knobs to a keybed to a whole console to an entire DAW — one framework.
+  - **Focus is UI-only state**, `focusedDevice: string | null` in `App.svelte` (transient, like the cable-
+    inspector selection — not persisted to scene `ui`). Presentation is an **overlay** layer that dims the
+    world and renders the surface large (Esc / click-away to exit) — a peer of the existing cable-inspector /
+    patch-banner overlays, **not** a `WorldView` spatial-model change (the WebGL escape hatch stays intact).
+    _Rejected: zoom-to-device in-world_ — less room for a keybed/console, complicates keyboard capture, and
+    brushes the already-rejected reach/zoom gate (4.6).
+  - **A TS focus-surface registry keyed by `typeId`** decides focusability + which surface — following the
+    existing `synth_voice → Screen.svelte` (ADSR) precedent, **not** a catalog flag (keeps the engine/`devices`
+    layer free of UI-presentation vocabulary; playability stays derived via `isPlayable` = has an events
+    input). Surfaces receive the same props the in-world `Panel` gets (`descriptor` / `valueFor` /
+    `readingFor` / `onParam`) plus, for instruments, a `send`-note callback — so they reuse `onParamInput` /
+    `readingFor` with no new plumbing.
+  - **Input capture scoped to focus.** `wireKeyboard` / `wireMidi` stop targeting a fixed device at startup;
+    while an instrument surface is mounted it captures QWERTY + Web MIDI and emits `noteOn/noteOff` to
+    `focusedDevice`, detaching on unfocus (and ignoring events while a form control is focused). Web MIDI
+    access is still requested once (a permission); only the **target** follows focus. This fixes the recorded
+    "wired once to the initial synth, doesn't re-route" limitation for free.
+  - **MIDI is a signal on a cable — inter-chassis only, never inside a device (Option B).** Event-edge
+    routing is **already built and tested** in the engine (`schedule.rs` `EdgeKind::EventRoute` →
+    `events_mut().copy_from(...)`; `schedule/tests.rs` `event_route_copies_events` incl. fan-out). What's
+    missing is only a device that *emits* events. So:
+    - **The keybed is never a node — it is the device's open events input** ("performance in," source-
+      agnostic: host-fed via focus when open, edge-fed when a cable is patched). **How the keys reach the
+      sound engine inside the chassis (CV/gate on an analog synth, an internal bus on a workstation) is
+      inside-the-box, out of scope** — the same boundary already drawn for circuitry / clock-recovery PLLs.
+      Fabricating an internal `keyboard → EventRoute → voice` edge would import MIDI where an analog synth has
+      none — **that is the leak we reject**. A "synth with an attached keyboard" is therefore just
+      `synth_voice` whose focus surface draws a keybed bound to its events input; "has keys" is a UI attribute,
+      not an engine structure.
+    - **Internal event edges are legitimate only for real event processing** (an arpeggiator, a MIDI channel
+      filter) — never to represent the keys. Rule: the performance *source* is the open input; an internal
+      event edge exists only when a node genuinely transforms the event stream.
+    - **The engine's one new node = the standalone controller's forwarder** (host-fed events-in → events-out
+      copy). It is a *real device* (a physical controller forwards keypresses to MIDI-OUT), not an internal-
+      abstraction leak. Host injection reuses the existing `note_on(device)` open-input path unchanged; once a
+      controller's cable drives a synth's input, that input is no longer open ⇒ `note_on(synth)` becomes a
+      no-op automatically (falls out of `build.rs`). The controller **exposes a MIDI-IN jack too** (its host-
+      fed input, per the exposed-face convention — realistic for thru/merge; decided).
+    - **The device shapes, from two primitives** (`events-in` = consumes a performance; `events-out` =
+      produces one): _MIDI controller_ = events-out (+ MIDI-IN jack), keybed surface, no sound; _keyboard
+      synth_ = events-in + audio-out, keybed+voice surface; _sound module_ = events-in + audio-out, voice
+      surface only (must be patched from a controller); _mixing console_ = many analog I/O, full channel
+      surface; _computer + DAW_ (future) = events-out (play synths) + events-in (record) + audio I/O, the DAW
+      app as its surface — **no new engine concepts** (reuses the same events cable + AD/DA seams).
+  - **Story scope:** the focus framework + the **synth virtual-keyboard surface** (the concrete IMPROVEMENTS
+    ask — on-screen piano + QWERTY, the note-mapping lifted out of the global listener) + a **standalone MIDI
+    controller device** wired to a synth by an events cable (the first-ever events connection exercised in the
+    UI — legality machinery exists but is undriven) + **one console surface** for `channel_strip` (proving a
+    complex device gets a richer-than-rack view from the same descriptor, zero engine change). Ship the default
+    scene with a controller pre-patched to a synth so playing works out of the box.
+  - _Open at pickup:_ overlay markup/a11y (focus-trap, keyboard-only enter/exit); whether the console surface
+    reuses `Panel` or a richer variant; the pure logic (note-mapping / which-surface / focusability) as a
+    Vitest-tested rendering-free module; whether the controller's forwarder is a bespoke node or a generic
+    event-passthrough. _Deferred → Epic 5:_ **MIDI merge** (local keybed + external MIDI into one input — the
+    engine's one-source-per-input rule blocks it; a merger node if ever wanted); the full **computer/DAW
+    device + surface** (no DAW device exists yet — the seam accommodates it).
 
 _Validate (epic exit):_ a small studio built, placed, patched across at least two spaces, played, and
 metered entirely through the UI; structural edits hot-swap glitch-free under sound; the UI touches only
