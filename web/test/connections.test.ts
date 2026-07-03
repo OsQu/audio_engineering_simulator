@@ -14,18 +14,31 @@ import {
 } from "../src/connections";
 import type { Connection } from "../src/scene";
 
-// Endpoint builders keep the legality cases terse.
-const out = (device: string, port = 0, domain: Endpoint["domain"] = "analog"): Endpoint => ({
+// Endpoint builders keep the legality cases terse. Connector defaults to ¼" so same-connector cases
+// (the common ones) stay terse; pass it explicitly to exercise a connector mismatch.
+const out = (
+  device: string,
+  port = 0,
+  domain: Endpoint["domain"] = "analog",
+  connector: Endpoint["connector"] = "quarterInch",
+): Endpoint => ({
   device,
   port,
   direction: "output",
   domain,
+  connector,
 });
-const inp = (device: string, port = 0, domain: Endpoint["domain"] = "analog"): Endpoint => ({
+const inp = (
+  device: string,
+  port = 0,
+  domain: Endpoint["domain"] = "analog",
+  connector: Endpoint["connector"] = "quarterInch",
+): Endpoint => ({
   device,
   port,
   direction: "input",
   domain,
+  connector,
 });
 const conn = (fromDev: string, fromPort: number, toDev: string, toPort: number): Connection => ({
   from: { device: fromDev, port: fromPort },
@@ -73,7 +86,30 @@ describe("evaluateConnection — legality", () => {
   });
 
   it("accepts a matching digital edge", () => {
-    const v = evaluateConnection(out("ad", 0, "digital"), inp("da", 0, "digital"), []);
+    const v = evaluateConnection(
+      out("ad", 0, "digital", "digital"),
+      inp("da", 0, "digital", "digital"),
+      [],
+    );
+    expect(v.ok).toBe(true);
+  });
+
+  it('rejects same-domain ports with incompatible connectors (XLR into ¼")', () => {
+    const v = evaluateConnection(
+      out("mic", 0, "analog", "xlr"),
+      inp("pre", 0, "analog", "quarterInch"),
+      [],
+    );
+    expect(v.ok).toBe(false);
+    if (!v.ok) expect(v.reason).toMatch(/connector/);
+  });
+
+  it('accepts same-connector analog ports despite differing signal-class (instrument → line, both ¼")', () => {
+    const v = evaluateConnection(
+      out("synth", 0, "analog", "quarterInch"),
+      inp("gain", 0, "analog", "quarterInch"),
+      [],
+    );
     expect(v.ok).toBe(true);
   });
 
@@ -154,6 +190,7 @@ describe("cable spec ↔ type-id round-trip", () => {
       typeId: "patch_short",
       label: "Patch",
       kind: "line",
+      connector: "quarterInch",
       lengthM: 0.5,
       resistanceOhms: 0.05,
       capacitanceFarads: 5e-11,
@@ -162,6 +199,7 @@ describe("cable spec ↔ type-id round-trip", () => {
       typeId: "instrument_6m",
       label: "Instr 6m",
       kind: "instrument",
+      connector: "quarterInch",
       lengthM: 6,
       resistanceOhms: 0.3,
       capacitanceFarads: 6e-10,

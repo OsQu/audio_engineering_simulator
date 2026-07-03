@@ -13,7 +13,13 @@
 //      click-to-delete). Coordinate-agnostic: it operates in the overlay's 2-D pixel space with **y
 //      increasing downward** (SVG/screen convention), so a cable **sags downward** (+y).
 
-import type { CableType, PortDirection, PortDomain } from "./catalog";
+import {
+  type CableType,
+  type Connector,
+  connectorsCompatible,
+  type PortDirection,
+  type PortDomain,
+} from "./catalog";
 import type { CableSpec, Connection, PortRef } from "./scene";
 
 /** One end of a prospective connection: a device's port plus the engine truth that governs legality. */
@@ -26,6 +32,9 @@ export interface Endpoint {
   direction: PortDirection;
   /** Carrier domain — must match the other end (the engine rejects a cross-domain edge). */
   domain: PortDomain;
+  /** Physical connector shape — must match the other end within a domain (an XLR won't seat in a ¼"
+   *  jack). Mirrors the `build_patch` connector check. */
+  connector: Connector;
 }
 
 /** The verdict on a proposed connection. On success it carries the **oriented** `Connection`
@@ -89,6 +98,12 @@ export function evaluateConnection(
   // Same carrier domain — a cross-domain edge is a compile-time `DomainMismatch`.
   if (out.domain !== inp.domain) {
     return { ok: false, reason: `domain mismatch: ${out.domain} → ${inp.domain}` };
+  }
+
+  // Same physical connector — an XLR won't seat in a ¼" jack. Checked after domain (a cross-domain
+  // pair is reported as a domain mismatch), mirroring `build_patch`'s domain-then-connector order.
+  if (!connectorsCompatible(out.connector, inp.connector)) {
+    return { ok: false, reason: `connector mismatch: ${out.connector} → ${inp.connector}` };
   }
 
   // A device feeding its own input is a self-cycle.

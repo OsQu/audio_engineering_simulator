@@ -19,7 +19,16 @@ const SRC: DeviceDescriptor = {
   name: "Source",
   formFactor: { kind: "desktop", widthMm: 100, heightMm: 100, depthMm: 100 },
   params: [],
-  ports: [{ id: 0, label: "out", direction: "output", domain: "analog", kind: "line" }],
+  ports: [
+    {
+      id: 0,
+      label: "out",
+      direction: "output",
+      domain: "analog",
+      kind: "line",
+      connector: "quarterInch",
+    },
+  ],
   readouts: [],
 };
 const SINK: DeviceDescriptor = {
@@ -27,7 +36,16 @@ const SINK: DeviceDescriptor = {
   name: "Sink",
   formFactor: { kind: "desktop", widthMm: 100, heightMm: 100, depthMm: 100 },
   params: [],
-  ports: [{ id: 0, label: "in", direction: "input", domain: "analog", kind: "line" }],
+  ports: [
+    {
+      id: 0,
+      label: "in",
+      direction: "input",
+      domain: "analog",
+      kind: "line",
+      connector: "quarterInch",
+    },
+  ],
   readouts: [],
 };
 const CATALOG = [SRC, SINK];
@@ -45,8 +63,20 @@ const scene: Scene = {
   },
 };
 
-const OUT: Endpoint = { device: "s1", port: 0, direction: "output", domain: "analog" };
-const IN: Endpoint = { device: "d1", port: 0, direction: "input", domain: "analog" };
+const OUT: Endpoint = {
+  device: "s1",
+  port: 0,
+  direction: "output",
+  domain: "analog",
+  connector: "quarterInch",
+};
+const IN: Endpoint = {
+  device: "d1",
+  port: 0,
+  direction: "input",
+  domain: "analog",
+  connector: "quarterInch",
+};
 const srcHit: JackHit = { key: jackKeyOf(OUT), endpoint: OUT, anchor: { x: 10, y: 10 } };
 const sinkHit: JackHit = { key: jackKeyOf(IN), endpoint: IN, anchor: { x: 90, y: 90 } };
 const deps = { connections: [] as Connection[] };
@@ -152,7 +182,13 @@ describe("pointerUp — pending mode", () => {
   });
   it("keeps the pick (no commit) on a click over an illegal jack", () => {
     // Another device's output jack — output→output is illegal, so the pick stays for another try.
-    const otherOut: Endpoint = { device: "s2", port: 0, direction: "output", domain: "analog" };
+    const otherOut: Endpoint = {
+      device: "s2",
+      port: 0,
+      direction: "output",
+      domain: "analog",
+      connector: "quarterInch",
+    };
     const outHit: JackHit = {
       key: jackKeyOf(otherOut),
       endpoint: otherOut,

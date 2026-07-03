@@ -51,6 +51,8 @@ export interface PortDescriptor {
   direction: PortDirection;
   domain: PortDomain;
   kind: PortKind;
+  /** Physical connector shape — the hard constraint on what may plug in (see {@link Connector}). */
+  connector: Connector;
 }
 
 /** One scalar readout: engine truth (id) + UI label/unit. The host reads its live value back by
@@ -72,8 +74,22 @@ export type PortDirection = "input" | "output";
 /** A port's carrier domain. */
 export type PortDomain = "analog" | "digital" | "events";
 
-/** Connector kind, for jack styling and connection-legality hints (UI-only; engine validates by domain). */
+/** Signal-class of a jack, for styling/labelling (mic/line/instrument/…). Distinct from the physical
+ *  {@link Connector} shape that governs whether two jacks can actually be joined. */
 export type PortKind = "mic" | "line" | "instrument" | "speaker" | "digital" | "midi";
+
+/** The **physical connector shape** a port (or cable end) presents — the hard constraint on what can
+ *  plug into what (mirrors the Rust `Connector`; `quarterInch` unifies TS/TRS). Two ports may only be
+ *  joined when their connectors {@link connectorsCompatible match}; a signal-class/level mismatch is
+ *  *not* rejected (that stays emergent from the voltage physics). Authoritatively enforced in
+ *  `build_patch`; mirrored here for live patching feedback. */
+export type Connector = "quarterInch" | "xlr" | "speakon" | "din5" | "digital";
+
+/** Whether two connectors can be physically joined — same-connector only (TS/TRS already unified as
+ *  `quarterInch`). Mirrors the Rust `connectors_compatible`. */
+export function connectorsCompatible(a: Connector, b: Connector): boolean {
+  return a === b;
+}
 
 /** A cable type the UI offers when wiring an analog connection — a realistic R·C preset (physical
  *  content authored on the Rust side, `crates/devices/src/cables.rs`) plus a connector kind for styling.
@@ -88,6 +104,8 @@ export interface CableType {
   label: string;
   /** Connector kind, for cable/jack styling. */
   kind: PortKind;
+  /** Physical connector shape — which jacks this cable can plug into (the picker filters on it). */
+  connector: Connector;
   /** Nominal length in metres the R·C was authored at (display + length-scaling seam). */
   lengthM: number;
   /** Series resistance, ohms (the loading-divider term). */

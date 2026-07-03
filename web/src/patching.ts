@@ -55,7 +55,7 @@ export function endpointFromJackKey(
   const desc = dev ? descriptorFor(catalog, dev.typeId) : undefined;
   const pd = desc?.ports.find((p) => p.direction === direction && p.id === port);
   if (!pd) return null;
-  return { device, port, direction, domain: pd.domain };
+  return { device, port, direction, domain: pd.domain, connector: pd.connector };
 }
 
 // Pointer-down on a jack. A pending cable is untouched here — its second interaction resolves on
