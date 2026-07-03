@@ -26,7 +26,10 @@ use engine::{
     ReadoutHandle, Schedule, compile,
 };
 
-use crate::catalog::{BuiltDevice, instantiate};
+use crate::catalog::{
+    BuiltDevice, Connector, DeviceDescriptor, PortDescriptor, PortDirection, connectors_compatible,
+    descriptors, instantiate,
+};
 use crate::scene::{Patch, PortRef};
 
 /// Why assembling a [`Patch`] failed — all caught off the audio thread (the hot path never sees a
@@ -43,6 +46,16 @@ pub enum BuildError {
     OutputPortOutOfRange { device: String, port: u32 },
     /// A connection's destination names an input port beyond the device's exposed inputs.
     InputPortOutOfRange { device: String, port: u32 },
+    /// Two **same-domain** ports present incompatible physical connectors (e.g. an XLR jack into a ¼"
+    /// jack) — they can't be joined. A hard mechanical constraint, checked before the engine's domain
+    /// check (a cross-domain wire is a [`CompileError::DomainMismatch`] instead, mirroring the UI's
+    /// domain-then-connector precedence).
+    ConnectorMismatch {
+        from: String,
+        to: String,
+        from_connector: Connector,
+        to_connector: Connector,
+    },
     /// The engine rejected the assembled graph (domain mismatch, cycle, indivisible rate, …).
     Compile(CompileError),
 }
@@ -61,6 +74,15 @@ impl fmt::Display for BuildError {
             Self::InputPortOutOfRange { device, port } => {
                 write!(f, "device {device:?} has no input port {port}")
             }
+            Self::ConnectorMismatch {
+                from,
+                to,
+                from_connector,
+                to_connector,
+            } => write!(
+                f,
+                "incompatible connectors: {from:?} ({from_connector:?}) -> {to:?} ({to_connector:?})"
+            ),
             Self::Compile(e) => write!(f, "compile error: {e:?}"),
         }
     }
@@ -202,6 +224,24 @@ fn resolve_output(
         })
 }
 
+/// The [`PortDescriptor`] for a scene device's `direction` port `port`, or `None` if the device/port
+/// isn't found — used to read a port's physical connector (and domain) for connector-compatibility.
+/// `descs` is keyed by type-id, `types` maps scene device id → type-id.
+fn port_descriptor<'a>(
+    descs: &'a BTreeMap<String, DeviceDescriptor>,
+    types: &BTreeMap<&str, &str>,
+    device: &str,
+    direction: PortDirection,
+    port: u32,
+) -> Option<&'a PortDescriptor> {
+    let type_id = types.get(device)?;
+    descs
+        .get(*type_id)?
+        .ports
+        .iter()
+        .find(|p| p.direction == direction && p.id == port)
+}
+
 /// Resolve a device input `PortRef` to a concrete `(node, input port)`.
 fn resolve_input(
     devices: &BTreeMap<String, BuiltDevice>,
@@ -254,6 +294,18 @@ pub fn build_patch(
         };
     }
 
+    // Connector taxonomy (per device type) + scene-id → type-id, for the connector-compatibility gate
+    // below. Cold path (a user gesture), so rebuilding the catalog descriptors here is fine.
+    let descs: BTreeMap<String, DeviceDescriptor> = descriptors()
+        .into_iter()
+        .map(|d| (d.type_id.clone(), d))
+        .collect();
+    let types: BTreeMap<&str, &str> = patch
+        .devices
+        .iter()
+        .map(|d| (d.id.as_str(), d.type_id.as_str()))
+        .collect();
+
     // 2. Remap each scene connection (and the output tap) through the device maps to graph edges,
     //    recording each connection's graph edge index (edges are appended in call order, after the
     //    devices' internal edges) so its baked loading loss can be read back after compile.
@@ -261,6 +313,37 @@ pub fn build_patch(
     for conn in &patch.connections {
         let (from_node, from_port) = resolve_output(&devices, &conn.from)?;
         let (to_node, to_port) = resolve_input(&devices, &conn.to)?;
+
+        // Connector-shape compatibility — a hard mechanical constraint (an XLR won't seat in a ¼"
+        // jack), checked only *within* a carrier domain: a cross-domain wire is the engine's
+        // `DomainMismatch` at compile (below), mirroring the UI's domain-then-connector precedence.
+        // Both ports resolved above, so the descriptors are present.
+        if let (Some(fp), Some(tp)) = (
+            port_descriptor(
+                &descs,
+                &types,
+                &conn.from.device,
+                PortDirection::Output,
+                conn.from.port,
+            ),
+            port_descriptor(
+                &descs,
+                &types,
+                &conn.to.device,
+                PortDirection::Input,
+                conn.to.port,
+            ),
+        ) && fp.domain == tp.domain
+            && !connectors_compatible(fp.connector, tp.connector)
+        {
+            return Err(BuildError::ConnectorMismatch {
+                from: conn.from.device.clone(),
+                to: conn.to.device.clone(),
+                from_connector: fp.connector,
+                to_connector: tp.connector,
+            });
+        }
+
         connection_edges.push(graph.connection_count());
         match &conn.cable {
             Some(cable) => graph.connect_cabled(
@@ -766,8 +849,27 @@ mod tests {
         );
     }
 
-    /// A domain mismatch (a digital output wired to an analog input) is caught by the engine and
-    /// surfaces as `BuildError::Compile`, not a panic.
+    /// `ConnectorMismatch` renders a legible message (the worklet surfaces build errors as text).
+    /// The rejection path itself needs two **same-domain** ports with different connectors, which the
+    /// current all-¼" analog catalog can't yet produce — that integration test arrives with Epic-5 gear
+    /// (XLR mics / speakON). Until then the gate is covered by `connectors_compatible` (catalog) + the
+    /// TS `evaluateConnection` mirror; here we at least pin the error's Display.
+    #[test]
+    fn connector_mismatch_displays_legibly() {
+        let e = BuildError::ConnectorMismatch {
+            from: "amp".into(),
+            to: "spk".into(),
+            from_connector: Connector::Xlr,
+            to_connector: Connector::QuarterInch,
+        };
+        let msg = format!("{e}");
+        assert!(msg.contains("incompatible connectors"), "got {msg}");
+        assert!(msg.contains("amp") && msg.contains("spk"), "names in {msg}");
+    }
+
+    /// A cross-domain wire (digital output → analog input) is left to the engine's domain check and
+    /// surfaces as `Compile(DomainMismatch)`, not a panic and not a `ConnectorMismatch` — the connector
+    /// gate is domain-scoped, so cross-domain falls through to compile (domain-then-connector precedence).
     #[test]
     fn domain_mismatch_surfaces_as_compile_error() {
         let patch = Patch {
