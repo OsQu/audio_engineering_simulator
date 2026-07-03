@@ -397,7 +397,7 @@ no-modules`** for the worklet (a classic script: `AudioWorkletGlobalScope` lacks
 
 ## Epic 4 — UI: Skeuomorphic Panels + Patch Cables
 
-**Progress:** **Stories 4.1 ✅, 4.2 ✅, 4.3 ✅, 4.4 ✅, 4.5 ✅, and 4.6 ✅ done.** 4.1 — the engine→UI seam: a new `devices` crate,
+**Progress:** **Stories 4.1 ✅, 4.2 ✅, 4.3 ✅, 4.4 ✅, 4.5 ✅, 4.6 ✅, and 4.8 ✅ done (4.7 remains).** 4.1 — the engine→UI seam: a new `devices` crate,
 scene IR + catalog + `build_patch`, and `SceneEngine` (scene-driven, generically controlled, hot-swappable).
 4.2 — the skeuomorphic panel system on a **Svelte 5** harness: a descriptor → panel renderer + widget
 vocabulary (knobs/faders/switches/jacks/screen/VU), front/back flip, a real `powered` control param, and a
@@ -418,12 +418,12 @@ into a new **Story 4.7** at 4.5 pickup (waveform probes are a distinct mechanism
 rectangular room whose four wall-elevations you turn between, plus a top-down floor plan, with cross-wall/
 room **click-to-pick** patching and draggable portal chips; all UI/scene-`ui`, engine untouched. The
 sketch's *operator-reach* idea was **dropped** (both the avatar and the fallback zoom
-gate — not enough payoff for the interaction complexity). **4.8 🚧 in progress** — **device focus mode**: a
-dimming overlay per complex device (synth keybed, `channel_strip` console) that retires the global virtual
-keyboard and scopes note/param input to the focused device, plus a standalone MIDI controller driving a synth
-through the first UI-managed **events cable** (one generic engine event node; `synth_voice` unchanged). It was
-picked up **before 4.7** (they're independent — 4.7's per-sample scope/spectrum shares no surface); **4.7**
-stays at Story level until picked up. The original
+gate — not enough payoff for the interaction complexity). **4.8 ✅** — **device focus mode**: a dimming
+overlay per complex device (synth keybed, `channel_strip` console) that retired the global virtual keyboard
+and scopes note/param input to the focused device, plus a standalone MIDI controller driving a synth through
+the first UI-managed **events cable** (one generic engine event node, `EventThru`; `synth_voice` unchanged).
+It was picked up **before 4.7** (they're independent — 4.7's per-sample scope/spectrum shares no surface);
+**4.7** is the only Story left in the epic. The original
 4-story sketch was reshaped into the now-8-story arc below after the UI vision
 grew from "device panels + cables" into a **game-like spatial studio/venue sim** (browsable gear catalog,
 racks and containers, freely placed in a pan/zoom world, multiple _spaces_ with snakes between them,
@@ -1560,7 +1560,7 @@ engine/`patch` contract untouched.
   picked up. Independent of 4.8: a distinct per-sample-tap mechanism, no shared surface. Being built after
   4.8.)_
 
-#### Story 4.8 — Device focus mode + the interaction seam (retires the global virtual keyboard) — 🚧 **In progress**
+#### Story 4.8 — Device focus mode + the interaction seam (retires the global virtual keyboard) — ✅ **Done**
 
 _Goal:_ from `docs/IMPROVEMENTS.md` — kill the global QWERTY "virtual keyboard" (today a `window` listener
 wired **once to the first playable synth** at startup, `App.svelte:426–428` — a recorded 4.3 limitation) and
@@ -1685,16 +1685,36 @@ _Design notes (settled at planning):_
   console view than its in-rack panel, driving the same params (moving a knob on the console moves it on the
   rack panel and vice-versa). Verified in-browser.
 
-_Validate:_ click a device to focus it; play a synth from its on-screen keybed + QWERTY + Web MIDI, **scoped
-to the focused device** (the global startup keyboard is gone); a **standalone MIDI controller** plays a synth
-through a **UI-managed events cable** (the default scene ships one pre-patched); a `channel_strip` opens a
-**richer-than-rack console surface from the same descriptor**; the pure logic (note-mapping / focus registry)
-is **Vitest-unit-tested**; the engine gained **exactly one generic event node** and `synth_voice` is
-unchanged; the `web` gate is green (Vitest, Biome, `svelte-check`, `vite build`) and the full Rust gate passes.
+_Validate:_ ✅ **met.** Click a device to focus it; play a synth from its on-screen keybed + QWERTY + Web
+MIDI, **scoped to the focused device** (the global startup keyboard is gone); a **standalone MIDI
+controller** plays a synth through a **UI-managed events cable** (the default scene ships one pre-patched); a
+`channel_strip` opens a **richer-than-rack console surface from the same descriptor**; the pure logic
+(note-mapping / focus registry) is **Vitest-unit-tested**; the engine gained **exactly one generic event
+node** and `synth_voice` is unchanged; the `web` gate is green (Vitest 170, Biome, `svelte-check` 0 errors,
+`vite build`) and the full Rust gate passes.
 
 _Deferred → Epic 5:_ **MIDI merge** (local keybed + external MIDI into one input — the engine's
 one-source-per-input rule blocks it; a merger node if ever wanted); the full **computer/DAW device + surface**
 (no DAW device exists yet — the seam accommodates it).
+
+_Delivered:_ device **focus mode** — click a synth/console's **"open"** chip and it opens large over a dimmed
+world (`focusedDevice` in `App.svelte`, an overlay peer of the cable-inspector / patch-banner; Esc / click-away
+/ Close exit, autofocus into the dialog). The engine gained **one node** — a generic `EventThru`
+(events-in → events-out copy, hot-path-safe) — plus a `midi_controller` catalog device (that node with a
+MIDI-IN + MIDI-OUT face); `synth_voice` is unchanged, and the whole events-routing machinery (`EventRoute`,
+open event inputs, `note_on` no-op once an input is edge-driven) was already built and tested. Pure logic
+lives in **`notes.ts`** (QWERTY→note map + octave) and **`focus.ts`** (a `typeId` registry: instrument
+surface *derived* from `isPlayable`, console an explicit override), both Vitest-tested. `wireKeyboard` /
+`wireMidi` were rewritten as **device-agnostic note detectors**: `App` routes notes to the focused instrument
+via `playNote` (QWERTY attaches per-focus, MIDI's permission requested once, target follows focus, form-control
+keystrokes ignored) — retiring the "wired once to the first synth" limitation. New surfaces: an on-screen
+**`Keybed`** (the instrument surface, disabled + "driven by MIDI In" when its events input is cable-fed) and a
+**`Console`** channel-strip for `channel_strip` (the same descriptor re-laid-out into Input/Output fader
+columns, zero engine change). The **default scene** now ships a controller pre-patched to the synth over an
+events cable — the first-ever UI events connection, playable out of the box (`SCHEMA_VERSION` 9→10, no
+migration). _Known simplification (not a bug):_ the on-screen keybed is a fixed C4–C6 while QWERTY's Z/X can
+transpose beyond it (out-of-range notes just have no on-screen key to light), and the console renders gains as
+faders where the rack panel shows knobs (a deliberate presentation choice — same param).
 
 _Validate (epic exit):_ a small studio built, placed, patched across at least two spaces, played, and
 metered entirely through the UI; structural edits hot-swap glitch-free under sound; the UI touches only

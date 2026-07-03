@@ -4,11 +4,11 @@
 - ~The analog cable types are not enforced: You can insert XLR cable to TRS socket. These should be handled at engine level~ DONE
 - ~Patching is a bit cumbersome. We should stop cable patching if we click while dragging the cable and it's not a valid slot~ DONE
 - ~Start the simulation on the page load, no need to click "Start"~ SKIP
-- Remove the virtual keyboard. Instead, let's add that functionality to a device
+- ~Remove the virtual keyboard. Instead, let's add that functionality to a device~ DONE
   - We can have a MIDI keyboard that sends midi events or if it's synth with a keyboard, it accepts the events
   - Devices can have "focus" mode, where you click them (not all, but synths, consoles etc that require more control) and dependning on the device it does different stuff. Keyboards could go to this virtual keyboard mode
   - This is probably a stand alone story
-  - PLANNED as **Story 4.8 — Device focus mode + the interaction seam** in `IMPLEMENTATION_PLAN.md` (design recorded; tasks/branch later)
+  - DELIVERED as **Story 4.8 — Device focus mode + the interaction seam** (see `IMPLEMENTATION_PLAN.md`): the global QWERTY keyboard is gone; click a synth/console to open a focus surface (an on-screen keybed for instruments, a channel-strip console for `channel_strip`), with note/param input scoped to the focused device. A standalone `midi_controller` device (an `EventThru` node) plays a synth over a MIDI cable — the default scene ships one pre-patched.
 - ~Create a proper drawer for catalog, and don't show them inline~ DONE
   - Click catalog button -> Drawer opens where you click the device
 - ~Hide the volume and "save load reload" under a menu.~ DONE
