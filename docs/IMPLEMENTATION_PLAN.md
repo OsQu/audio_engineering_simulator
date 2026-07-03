@@ -27,10 +27,10 @@ items carry far more detail than future ones** — the density of an entry track
 under-specified by neglect; it's deliberately left coarse until its turn, because the earlier work
 routinely changes its shape.
 
-**Detail gradient (concretely):** Epic 1 is broken to Task level, and its completed Stories
-(1.1–1.6) carry full design notes because they've been built. Epics 2–3 have Tasks but expect
-churn. Epics 4–5 stay at Story level — their Tasks get written when we reach them. Don't over-plan
-work whose shape the earlier work will change.
+**Detail gradient (concretely):** Epics 1–4 are built — their completed Stories carry full design
+notes and per-task delivery records, now **archived to `EPIC_<N>_NOTES.md`** with only a summary kept
+here (Epic 4's one deferred Story, 4.7, keeps its coarse sketch). **Epic 5 stays at Story level** — its
+Tasks get written when we reach them. Don't over-plan work whose shape the earlier work will change.
 
 **Branch convention:** one branch per **Story**, `e<epic>-s<story>/<short-story-slug>`,
 e.g. `e1-s2/electrical-primitives`. Its Tasks are commits on that branch; PR (or
@@ -285,7 +285,7 @@ dsp/envelope.rs`.
 
 **Progress:** Stories 3.1–3.4 ✅ — **Epic 3 complete (north star reached).** 3.1 — the engine builds to WASM and the
 in-browser feasibility benchmark clears the gate at **≈46× real-time** (in-worklet single-thread
-confirmed; the heaviest unknown in PROJECT_PLAN §10 is retired). 3.2 — **first real-time sound**: the
+confirmed; the heaviest unknown in PROJECT*PLAN §10 is retired). 3.2 — **first real-time sound**: the
 canonical patch plays live in an `AudioWorkletProcessor`, drained zero-copy one quantum at a time, on
 both a throwaway static page and the Vite/TS harness (~5.3 ms base latency, clean at idle). 3.3 —
 **live control & playing**: sliders drive smoothed params and the computer keyboard / Web MIDI play
@@ -297,7 +297,7 @@ real-time-health instrument (worklet compute-budget-overrun counter + engine que
 the page; latency measured (engine signal-path **0.625 ms** + browser base/output, reported live).
 **Verified in-browser** — glitch-free sustained playing, health clean. The **SAB event ring + COOP/COEP**
 (deferred behind the `EventQueue::push` seam, cheap to retrofit) and the **schedule hot-swap** (→ Epic 4.3)
-stay deferred, so the _"lock-free cross-thread validation"_ item is intentionally open past Epic 3.
+stay deferred, so the *"lock-free cross-thread validation"\_ item is intentionally open past Epic 3.
 
 **Goal (delivered):** the engine live in the browser — turn knobs and play an instrument with low latency,
 glitch-free, with the engine running **inside the AudioWorklet** (WASM) on the audio thread and control
@@ -395,1330 +395,130 @@ no-modules`** for the worklet (a classic script: `AudioWorkletGlobalScope` lacks
 
 ---
 
-## Epic 4 — UI: Skeuomorphic Panels + Patch Cables
-
-**Progress:** **Stories 4.1 ✅, 4.2 ✅, 4.3 ✅, 4.4 ✅, 4.5 ✅, 4.6 ✅, and 4.8 ✅ done (4.7 remains).** 4.1 — the engine→UI seam: a new `devices` crate,
-scene IR + catalog + `build_patch`, and `SceneEngine` (scene-driven, generically controlled, hot-swappable).
-4.2 — the skeuomorphic panel system on a **Svelte 5** harness: a descriptor → panel renderer + widget
-vocabulary (knobs/faders/switches/jacks/screen/VU), front/back flip, a real `powered` control param, and a
-host-side monitor volume; metering (a `VuMeter` node + node→host readout lane) stays deferred to 4.5. 4.3 —
-the **spatial world**: a front-elevation pan/zoom studio where gear lives at real coordinates, mounts in
-**rack U-slots** (drag-snap), moves between **rooms**, and is **added/removed from a catalog palette** (the
-4.1 hot-swap recompile path); pure Vitest-tested spatial logic + a thin world layer (WebGL escape hatch),
-engine untouched. Operator **reach** and **multi-view projections** were deferred to the new **Story 4.6**
-(3-D coordinate truth is stored now so they stay cheap). 4.4 ✅ — **patch cables & snakes**:
-drag-to-connect between back-panel jacks → `loadPatch` hot-swap, client-side legality (incl. feedback-cycle
-rejection), a cable inspector with pickable cable types (R·C rides the edge, inaudible by design → Epic 5),
-behind/front cable layering, and cross-space **portal** endpoints; engine untouched beyond the `devices`
-cable catalog. 4.5 ✅ — **visualization**: the node→host scalar readout lane, a `VuMeter` (analog VU/dBu) + a
-digital dBFS meter, and a static per-connection loading-loss annotation, surfaced as device meter screens, a
-cable-inspector loss line, and a global levels panel; the raw-sample **scope + spectrum FFT** were split out
-into a new **Story 4.7** at 4.5 pickup (waveform probes are a distinct mechanism from the scalar lane).
-4.6 ✅ — reshaped at pickup into **room walls + multi-view**: a space becomes a
-rectangular room whose four wall-elevations you turn between, plus a top-down floor plan, with cross-wall/
-room **click-to-pick** patching and draggable portal chips; all UI/scene-`ui`, engine untouched. The
-sketch's *operator-reach* idea was **dropped** (both the avatar and the fallback zoom
-gate — not enough payoff for the interaction complexity). **4.8 ✅** — **device focus mode**: a dimming
-overlay per complex device (synth keybed, `channel_strip` console) that retired the global virtual keyboard
-and scopes note/param input to the focused device, plus a standalone MIDI controller driving a synth through
-the first UI-managed **events cable** (one generic engine event node, `EventThru`; `synth_voice` unchanged).
-It was picked up **before 4.7** (they're independent — 4.7's per-sample scope/spectrum shares no surface);
-**4.7** is the only Story left in the epic. The original
-4-story sketch was reshaped into the now-8-story arc below after the UI vision
-grew from "device panels + cables" into a **game-like spatial studio/venue sim** (browsable gear catalog,
-racks and containers, freely placed in a pan/zoom world, multiple _spaces_ with snakes between them,
-VST-grade skeuomorphic panels with front controls and back I/O). Per the detail-gradient convention
-(§"How this plan is structured"), each Story's Tasks + behavioral/hand-calc gates are written when it is
-picked up via the story-planning skill. Settled architecture decisions are below.
-
-**Goal:** the product interface on the proven engine — a game-like studio you build by browsing a gear
-catalog, placing devices in racks and spaces, wiring them with patch cables and snakes, operating
-realistic skeuomorphic panels, and seeing/hearing the result. A **pure consumer of the published engine
-API** (params, events, scene build/load, probes) — never reaching into engine internals.
-
-**Exit criteria:** build and operate a small studio entirely through the UI — add gear from the catalog,
-place and patch it across spaces, turn its knobs and play it, and see/hear the results — glitch-free,
-with graph edits hot-swapping live under sound.
-
-**Watch-outs:**
-
-- The UI never reaches into engine internals — only the published API. Engine stays UI-free (no layout,
-  no panel concepts); UI-facing vocabulary that _is_ domain (param ranges, port domains) rides the API,
-  not the renderer.
-- **Graph edits run on the audio thread.** The engine lives _inside_ the AudioWorklet (Epic 3), and a
-  `Schedule` is a Rust object in WASM linear memory that **cannot be compiled on the main thread and
-  shipped in**. So a graph edit compiles _in the worklet_ (on a `port` message, between render quanta)
-  and installs via `ScheduleSlot` at a block boundary, dropping the old schedule off-block. `compile`
-  allocates — acceptable because edits are rare user gestures at small-studio scale, _not_ per-block —
-  but it must be measured (a long compile delays the next `process()` ⇒ a glitch). This is the riskiest
-  interaction in the epic; prove it in 4.1 and re-measure as graphs grow.
-- **Data-driven gear is UI-only.** A catalog entry is a **pair**: an engine node-or-subgraph **factory
-  (real Rust code — the black-box transform and internal routing, arbitrarily complex)** + a UI
-  **descriptor** (panel layout, control→param bindings, ports). Never model a device as "just data" —
-  that paints us into a corner the moment a device needs real behavior. Start with simple single-node
-  devices; keep the seam able to express complex / multi-node ones.
-- Keep the realism budget on the volts-and-converters layer (epic-wide rule); device panels and the
-  world renderer stay understandable.
-
-### Settled architecture decisions (epic planning)
-
-Reached in the planning dialogue; they constrain every Story. Where it matters, the rejected alternative
-and the why are recorded.
-
-- **Frontend stack: Svelte 5 + DOM/SVG, with the world-rendering layer isolated behind a thin
-  interface.** The spatial world is a CSS-transform pan/zoom surface; devices/racks are components driven
-  by descriptors; knobs/faders/jacks are SVG; meters/scopes/screens are small `<canvas>`es; "flip to
-  back" is a CSS 3-D transform. _Why this over the alternatives:_ a pure WebGL game engine (PixiJS/Phaser
-  — "Stack 3") gives the best game feel but forces every widget, text, hit-test, and a11y to be
-  hand-drawn and turns "add new gear" into bespoke draw code — directly against the easy-to-author-gear
-  goal. A framework-over-PixiJS hybrid ("Stack 2") buys WebGL-grade world performance and Epic-5 scale
-  headroom but at real complexity (DOM panels coordinate-synced over a WebGL world) that the
-  small-studio target does not yet need. We take the simplest stack with the best gear-authoring DX
-  (**"Stack 1"**) and **isolate the world layer** so it can be swapped to a WebGL canvas later _if_
-  profiling at scale demands it — mirroring the engine's own "multi-core only if profiling demands it"
-  philosophy. Svelte 5 (runes → fine-grained reactivity) over React because the UI has many live-bound
-  controls and animating meters where a virtual DOM is the wrong tool; it builds on the existing Vite/TS
-  `web/` harness with one dependency.
-- **Device metadata lives in a `wasm-bindings` catalog**, not in the engine. The catalog maps a stable
-  **type-id → (node/subgraph factory) + serializable descriptor** (display name; params with
-  label/unit/control-kind/range/default; ports with label/kind/domain/direction; panel-layout hints).
-  _Why not the engine:_ keeps the engine portable and UI-free. Lightweight name/unit _may_ be added to
-  `ParamDecl` if duplication bites, but the catalog is the source of UI truth.
-- **One serializable scene IR, shared by build and persistence.** A scene = nodes (type-id + **fixed
-  construction config** + param values) + connections + output tap + UI placement (space, rack, position).
-  The _same_ description the worklet builds an engine from is what we save/load. _Construction config is
-  fixed per device type_ (realistic gear has fixed impedances/rails); only `params()` knobs are
-  user-facing — this keeps the node factory a simple type-id → `Box<dyn Node>` (or subgraph) and avoids a
-  generic constructor-argument marshalling problem.
-- **A device is a group of 1..N nodes (the "one chassis → many nodes" seam, settled now).** The
-  descriptor/catalog/scene IR and all addressing are built around `device → (node, param/port)` from the
-  start, so a logical device can expand to several internally-wired nodes (preamps → internal AD → router
-  → … ) with a grouped port face. _We ship single-node devices first_ and introduce the first concrete
-  multi-node device only when a panel needs it — building the seam, not over-building the machinery. This
-  retires the Epic-1 deferral ("multi-stage nodes & one-chassis-many-nodes grouping → Epic 4+").
-- **Graph edits → recompile + `ScheduleSlot` hot-swap, in the worklet** (see Watch-outs). A _value_ param
-  change still just reads in `process` (no recompile, per the Epic-1 params-vs-structure rule); only
-  structural edits (add/remove device, connect/disconnect) recompile.
-- **Power on/off is a control, not a structural edit.** A device exposes a "powered" param its node reads
-  (powered-off ⇒ emits silence / passes nothing); toggling power never recompiles. _Why:_ power is
-  flipped often and should be instant and glitch-free, like a real unit's standby — a structural rebuild
-  per toggle would be wrong.
-- **Spaces are a UI concept; snakes are visual bundles.** Live room / control room / stage / monitors /
-  FOH are UI groupings over **one engine graph** (nodes carry a space tag); the engine never knows about
-  rooms. A _snake_ between spaces is a UI bundle of individual mono analog cables drawn as one — **true
-  multichannel digital bundling stays Epic 5** (5.1/5.3); nothing in the engine changes for snakes here.
-- **The spatial sim is a data/constraint model with a 2-D presentation — it stays on the Svelte + DOM/SVG
-  stack; it is _not_ a rendering problem.** Devices have real physical dimensions and live in containers
-  (rack / desk / room); placement is constrained (rackmount → rack U-slots, desktop gear → a desk
-  surface); the sim tracks the operator's position and what's within **reach** (zoom out for the overview,
-  but then you can't touch); back-panel access is **gated behind a physical action** (flip a unit, pull it
-  from the rack, roll the rack off the wall); bounds-checking is cheap **axis-aligned-rectangle (AABB)**
-  overlap because audio gear is boxes; switching rooms switches the interactable set. _(Update, Story 4.6:
-  the **operator-reach** and **back-panel clearance-gate** ideas were both **dropped** as over-complex for a
-  single-operator sandbox — flipping is direct and all in-view gear is always operable; the rest — rooms,
-  dimensions, AABB, projection — shipped.)_ _Why the stack is
-  unchanged:_ the novel, hard parts — the spatial model, placement legality, reach, view projection — are
-  **framework-agnostic data + math**, and the _presentation_ is only tens-to-low-hundreds of rectangles in
-  a 2-D projection (≈260 nodes is the Epic-5 napkin ceiling), which DOM/SVG over the CSS-transform pan/zoom
-  surface handles comfortably. A WebGL/game-engine stack only earns its complexity for thousands of
-  animated sprites, a true 3-D perspective camera, or per-pixel shaders — **none of which this wants**
-  (explicitly "no fancy 3-D"). The Stack-1 decision's _isolated world layer_ is the standing escape hatch:
-  swap that layer to a WebGL canvas later **only if** profiling at venue scale demands it — same
-  "multi-core only if profiling demands it" philosophy as the engine; don't pre-build it.
-  - **Model in 3-D, render in 2-D (the one discipline that matters).** Store a _single_ coordinate truth
-    per object — position `(x, y, z)` + a footprint box + a facing — and render top/side/front views as
-    **projections** of it (each view just picks which two axes map to screen X/Y). Storing per-view 2-D
-    positions is the trap that drifts the views out of sync. The "flip to back" CSS 3-D transform from 4.2
-    is reused, but **gated** by a clearance state (the unit must be pulled out / the rack rolled off the
-    wall before its back is reachable).
-  - **Where the model lives — split by what it _is_.** _Placement, player position, reach, zoom/view
-    state, room membership_ are UI state → the TS `ui` layer (the scene IR's reserved placement section;
-    engine-stays-UI-free, "spaces are a UI concept"). _Physical dimensions_ (rack-U height, footprint) are
-    **content, not UI** — about as intrinsic as a device's impedance — so they belong on the **`devices`
-    catalog descriptor** (derived/authored alongside the rest of the device, native-testable, no drift),
-    **not** invented in TS. _Rejected:_ dimensions as TS-only UI data (re-invents content the catalog owns,
-    risks drift); a single "spatial = UI" lump (conflates intrinsic gear facts with view state). The engine
-    gains **nothing** either way — no rooms, racks, or position.
-  - **The spatial logic is pure and rendering-free → unit-testable** (AABB overlap, placement legality,
-    reach queries, projection), fitting the project's "tests are the oracle" temperament; keep model and
-    renderer separate and the WebGL escape hatch stays open for free.
-- **Skeuomorphic = genuine interaction + recognizable layout, not photoreal textures.** Real
-  knob/fader/meter/jack behavior and gear-like layout (the VST-mimics-analog feel); branding, photoreal
-  skins, and onboarding polish are explicitly deferred (the project's deprioritize-polish non-goal). This
-  reconciles the "feels like real audio gear" goal with "fidelity over polish."
-
-### Stories
-
-#### Story 4.1 — Engine/bindings API for the UI + scene IR + device catalog — ✅ **Done**
-
-_Goal:_ the generic, UI-facing engine surface that retires the named-setter stopgap from Epic 3 and turns
-the pinned-in-Rust canonical patch into a **scene the UI builds, plays, saves, and reloads** — the
-foundation every later Epic-4 Story consumes. Delivered when the canonical patch is built from a
-_serialized scene_ (not hardcoded), played and controlled **generically by device id** through the
-worklet, a scene **save→load round-trips**, and a scene **reload hot-swaps glitch-free** under sound.
-Anchors to PROJECT_PLAN §4 (Port/Device/Graph domain model), §7 (UI as a pure consumer), and the Epic-1
-params-vs-structure + `ScheduleSlot` decisions.
-
-_Watch out:_
-
-- **The recompile/swap runs on the audio thread** (engine-in-worklet; a `Schedule` can't cross realms).
-  `load_patch` compiles in the `port` message handler between quanta and installs at a `render_quantum`
-  boundary; `compile` allocates, so a long one delays the next `process()` ⇒ a glitch. Acceptable because
-  edits are rare gestures at small-studio scale, **not** per-block — but measure it, and keep `compile`
-  off the per-block path. This is the riskiest interaction in the epic; prove it here.
-- **Engine stays serde-free and persistence-free.** serde lives in the new **`devices`** crate (the
-  catalog + scene/build layer), not the engine; the engine gains no UI/scene/versioning vocabulary. The
-  runtime ingress is **deserialize-only** on the Rust side (TS → a runnable patch → build); Rust never
-  writes the save file.
-- **Hot-path contract unchanged.** `render_quantum` stays zero-alloc / panic-free / denormal-flushed; all
-  the new fallibility (parse a patch, build a graph, `compile`) lives off the hot path, and a malformed
-  patch must surface as a legible error, never a panic on the audio thread.
-- **Data-driven gear is UI-only** (epic rule): a catalog entry's _builder is real Rust_, not data. Scope
-  guard — 4.1 ships single-node devices + **one** minimal multi-node entry to prove the seam; it is not a
-  device-coverage story.
-
-_Design notes (settled at planning):_
-
-- **Persistence is two layers, decided separately.** (1) The **durable save file is TS-owned versioned
-  JSON** — `{ schemaVersion, ui, patch }`, with load-time **migrations** in TS; human-readable, diffable,
-  backward-compatible. It holds the whole scene including UI-only placement/spaces (the `ui` section,
-  populated from 4.3; a stub in 4.1). (2) The **runtime ingress** hands the engine only the current
-  **runnable `patch`** projection (devices + param values + connections + output — no UI data), which TS
-  produces _after_ migrating. _Rejected:_ a Rust-owned canonical serde schema serialized to JSON — it
-  pulls persistence, versioning, and UI-only fields into the engine-adjacent layer (against "UI owns UI
-  data"), and TS still needs mirrored types anyway. The engine never sees the file, versioning, or UI data.
-- **Runtime ingress = serde + `serde-wasm-bindgen`** (a structured JS object → Rust struct), not a JSON
-  string. _Rejected:_ JSON strings (text + a redundant parse on each side) and `tsify` (an extra
-  proc-macro to auto-generate TS types — not worth it for the small, central patch schema, whose TS
-  interface we hand-write and keep in sync).
-- **The catalog + scene IR live in a new `devices` crate, not `wasm-bindings`** (reshaped during 4.1.2).
-  The catalog (builder + descriptor) and the scene/patch IR + build-from-scene are **core simulation
-  content** (what gear exists, its fixed electrical config, how a serialized arrangement becomes an engine
-  graph) — they belong _on_ the engine, not in the JS glue. `devices` depends on `engine` + serde and is
-  consumed by **both** `wasm-bindings` (browser) and `harness` (native render scenarios); `wasm-bindings`
-  keeps only the `JsValue` bridge (`catalog()` → JS value, `parse_patch` ← JS value). _Why:_ the engine
-  has no opinion on what gear ships (a product decision), and the catalog should be native-testable +
-  harness-usable, not trapped behind wasm. Honors "engine stays serde-free" (serde is in `devices`).
-- **A catalog entry = descriptor + builder.** The **descriptor** is serde data the UI fetches (display
-  name; params with `id/label/unit/control-kind/min/max/default`; ports with
-  `id/label/kind/domain/direction`) — it drives the catalog browser, panel rendering (4.2), and
-  connection-legality hints (4.4). Its numeric/domain fields are **derived from a freshly built node**
-  (engine truth, no drift); only labels/units/kinds are hand-authored. Builder + descriptor live
-  **together in one `CATALOG` table** — each entry bundles its `type_id`, name, a `build: fn() -> Box<dyn
-Node>` (fixed construction config), and the UI metadata, so adding gear is one self-contained entry
-  (`build_node` is a lookup; `descriptors()` iterates the same table). Nodes go in via a minimal new
-  `Graph::add_boxed`. _Refinement on the planned "zero engine change":_ a one-line `add_boxed` (which
-  `add` now delegates to) gives **one construction site** that's both graph-insertable and introspectable
-  for descriptors — killing builder/descriptor drift; worth the trivial engine addition.
-- **Chassis-group seam (proven, not over-built).** `instantiate(type_id, &mut Graph)` expands a device
-  into 1..N nodes + internal edges and returns a **`BuiltDevice`** map `{ nodes: [NodeId], inputs,
-outputs, params }` from device-level ports/params to concrete `(NodeId, …)`. The **exposed face is
-  derived by convention** — a port is exposed when no internal edge consumes it (open ports, node order);
-  all node params are exposed, concatenated — so a device needn't hand-list its face. Patch connections
-  are addressed by `(device, port)` and remapped through the map; generic control resolves `(device,
-paramId) → (NodeId, ParamId)` (→ `ParamHandle`) and an `Events`-domain input port → `EventInputId`.
-  Single-node devices are the trivial case (one node, whole face exposed). The minimal **multi-node**
-  proof is a 2-stage analog `channel_strip` (`GainStage → GainStage`): input+output gain behind one
-  device, exposing stage 0's input, stage 1's output, and _both_ gains' params (device param 1 → the
-  second node — a non-trivial remap). _(The originally sketched `GainStage → ThreeBandEq` is
-  electrically invalid — analog into a digital port — so a strip with digital EQ/dynamics needs an
-  internal AD, which arrives with deeper devices; two analog stages is the smallest valid proof.)_
-  Retires the Epic-1 "one-chassis-many-nodes → Epic 4+" deferral.
-  - **Extension points (deferred, seam is stable).** Three kinds of internal routing, three homes:
-    _(a) fixed topology_ — static `InternalEdge` data (now); _(b) build-time-parameterized topology_
-    (an N-channel mixer, an interface with N preamps) — needs an **imperative builder** variant of a
-    catalog entry (e.g. `Fixed { nodes, internal } | Built(fn(&Config, &mut Graph) -> BuiltDevice)`)
-    plus an **optional structural-config field** on the scene IR's `DeviceInstance` (serde
-    `#[serde(default)]`, backward-compatible); _(c) runtime-switchable routing_ (bypass, M/S, a routing
-    matrix) — lives **inside a node** via a control param (never a topology change, per
-    params-vs-structure), or is user-repatching → graph edit + recompile (4.3). Both (b)/(c) are
-    **additive behind `instantiate -> BuiltDevice`** (callers unaffected); first needed in **Epic 5.1**
-    (deeper mixer / patchbay), so built there, not now.
-- **`RtEngine` becomes the scene-driven surface; `BenchEngine` stays frozen** (the 3.1 gate fixture).
-  `RtEngine` owns a swap seam (`ScheduleSlot` or a pending-`Box<Schedule>`) and a stable output buffer;
-  `new(patch)` / `load_patch(patch)` build → `compile` (fixed `SEED`, so same scene reproduces) → install
-  at the next block boundary, dropping the old schedule off-block; control addressing is rebuilt after
-  every swap. The named setters (`set_level`…) are removed in favor of generic
-  `set_param(device, id, value)` / `note_on(device, …)` / `note_off(device, …)`.
-- **Known simplification (not a bug):** the old schedule's `drop` (buffer dealloc) happens on the audio
-  thread _between_ blocks — cheap at small-studio scale. A deferred-drop free-list is a later option if
-  profiling at scale shows it costing a quantum. Recorded, not built.
-- **Validation is behavioral/structural, not hand-calc volts.** 4.1 is plumbing; its oracle is that the
-  _existing_ Epic 1–3 analog/DSP assertions still hold when the patch is built from a scene rather than
-  hardcoded — i.e. **output parity** with the pinned patch, plus round-trip identity, descriptor↔node
-  count parity, and swap continuity. All prior tests stay green.
-
-- **Task 4.1.1 — Patch IR + serde ingress.** ✅ Define the runnable-patch structs (`DeviceInstance { id,
-type_id, params }`, `Connection { from:(device,port), to:(device,port), cable? }`, output tap) with
-  serde `#[derive]`; deserialize a JS object → patch (`parse_patch` in `wasm-bindings`, over
-  `serde-wasm-bindgen`). _(Landed in the new `devices` crate — see the crate-layout design note.)_
-  _Done:_ a patch object from JS deserializes into Rust and a malformed one yields a clean error (no
-  panic); native tests round-trip the IR through JSON. TS `Patch` interface hand-written.
-- **Task 4.1.2 — Device catalog: descriptor + builder (single-node entries).** ✅ The type-id registry:
-  the serde **descriptor** (numeric/domain fields derived from the node, labels authored) exposed to JS
-  via `wasm-bindings`' `catalog()` glue, and the **builder** `match` constructing nodes (`Box<dyn Node>`
-  via `Graph::add_boxed`) with fixed config. Seeded with `SynthVoice`, `GainStage`, `ThreeBandEq`,
-  `AdConverter`, `DaConverter`, `Speaker`. _Done:_ JS can fetch the catalog; tests assert UI-meta↔node
-  count alignment and that descriptors carry bit-exact param ranges + correct port domains.
-- **Task 4.1.3 — Chassis-group seam: expansion, addressing, connection remap.** Generalize the builder to
-  emit 1..N nodes + internal edges + the exposed face; `instantiate` builds the `BuiltDevice` map.
-  Add one minimal multi-node entry (the 2-stage analog `channel_strip`).
-  _Done:_ a unit test builds the multi-node device, asserts its internal wiring, and resolves its exposed
-  ports/params to the correct `(NodeId, …)`; single-node remains the trivial path.
-- **Task 4.1.4 — Build-engine-from-patch: assemble, compile, resolve handles, surface errors.** Assemble a
-  `Graph` from a patch via the catalog, `compile` (fixed seed), and resolve generic addressing through the
-  instance map; surface `CompileError` as a structured `Result` to JS. _Done:_ a native test builds the
-  **canonical patch from a patch struct** and renders the _same_ non-silent output as the pinned patch
-  (output parity); a bad patch (dangling/cycle/domain-mismatch) returns a legible error, never a panic.
-- **Task 4.1.5 — Scene-driven `RtEngine` + recompile/hot-swap + generic control.** Refactor `RtEngine` to
-  own the swap seam and a stable output buffer; `new(patch)` / `load_patch(patch)` (compile off-block,
-  install at the next `render_quantum`, drop old off-block) with addressing rebuilt post-swap; generic
-  `set_param` / `note_on` / `note_off` by device id; remove the named setters. _Done:_ native tests —
-  silent-until-note still holds; loading patch A then B makes output reflect B after the swap; a no-op
-  reload preserves output continuity (the swap is glitch-free); `BenchEngine` untouched and still green.
-- **Task 4.1.6 — Worklet + TS: scene-driven bring-up, generic control, save/load, in-browser reload.**
-  Refactor `processor-impl.js` (construct from a patch via `processorOptions`; a `loadPatch` message →
-  `engine.load_patch`; generic param/note messages by device id; `CompileError` → the status line) and
-  `main.ts` (hold the authoritative scene as versioned JSON `{ schemaVersion, ui, patch }`; build the
-  default canonical scene; generic controls; save/load via a JSON string + `localStorage`; a **reload**
-  action proving the glitch-free swap with the health line clean). _Done:_ the canonical patch runs _from
-  a scene_ in-browser, controls work generically by device, save→load round-trips, and reload is audibly
-  glitch-free with health clean.
-
-_Validate:_ ✅ **met.** The canonical patch is built from a serialized scene and played/controlled
-**generically by device id** through the worklet; `catalog()` exposes every device's descriptor; the
-chassis seam is proven by the multi-node entry's test; a scene **save→load round-trips** and a **reload
-hot-swaps glitch-free** under sound; a malformed patch surfaces a legible error, never an audio-thread
-panic; the engine touches only its public API and remains serde-free; all prior Epic 1–3 tests stay green
-and the full gate passes (`cargo fmt --check && cargo lint && cargo test && cargo wasm && cargo docs`, plus
-the `wasm-pack build` and `web` Biome/typecheck/build). Verified in-browser by ear (notes, knobs, save/load,
-reload).
-
-_Delivered:_ a clean engine→UI seam, with the catalog + scene assembly factored into a new crate and the
-real-time host generalized from the pinned patch to a scene it builds, plays, saves, and hot-swaps.
-
-- **New `devices` crate** (the product/content layer, `engine` + serde) — extracted mid-story when the
-  catalog/scene logic was recognized as core simulation, not JS glue. Holds the **`Patch` IR** (`scene.rs`),
-  the **catalog** (`catalog.rs`), and **`build_patch`** (`build.rs`); consumed by `wasm-bindings` _and_
-  available to `harness`. `wasm-bindings` kept to the thin `JsValue` bridge (`catalog()`, `parse_patch`).
-  _Engine stays serde-free_ (serde lives in `devices`).
-- **Catalog = one `CATALOG` table** of self-contained entries (builder + UI descriptor together — "add
-  gear in one place"). Descriptor numeric/domain fields are **derived from a freshly built node** (no
-  drift); only labels/units/kinds are authored. Seeded: synth, gain, 3-band EQ, AD, DA, speaker, + the
-  multi-node `channel_strip`. Exposed via `catalog()` to JS; hand-written TS mirrors in `web/src/`.
-- **Chassis-group seam** — `instantiate(type_id, &mut Graph) -> BuiltDevice` expands a device into 1..N
-  nodes + internal edges; **exposed face derived by convention** (open ports + concatenated params).
-  Proven by `channel_strip` (two analog gains; the planned gain→EQ was electrically invalid). Retires the
-  Epic-1 "one-chassis-many-nodes" deferral. _Minimal engine addition:_ `Graph::add_boxed` (one
-  construction site, both insertable + introspectable).
-- **`build_patch -> BuiltScene`** assembles a scene (instantiate → remap connections/output → compile →
-  resolve control handles by device id), with `BuildError` for every failure (unknown type/device, port
-  out of range, `CompileError`) — never a panic. Oracle: **byte-exact output parity** with a hand-built
-  engine graph.
-- **`RtEngine` → `SceneEngine`** (renamed; retrofit, not rewrite — the proven Epic-3 real-time machinery
-  kept). Scene-driven (`new(patch)` / `load_patch(patch)`); **hot-swap** at a block boundary (compile
-  off-block in the message handler, install + drop-old + clear stale queues in `render_quantum`); generic
-  `set_param`/`note_on`/`note_off` by device id; named setters removed; `BenchEngine` left frozen. Engine
-  gained `ParamQueue::clear()` (drop stale handles on swap).
-- **Worklet + TS go-live** — `SceneProcessor` builds `SceneEngine(patch)` from `processorOptions {bytes,
-patch}`, forwards generic messages, and hot-swaps on a `loadPatch` message. The page owns the
-  **versioned JSON save** (`{ schemaVersion, ui, patch }`, TS-side `migrate` scaffold; `ui` a stub until
-  4.3) with save/load (localStorage) + a live reload button.
-- **Bug found & fixed in-browser:** a hot-swap deep in a session left notes lagging multiple seconds —
-  the fresh schedule's event clock restarts at 0 but `SceneEngine.blocks` (the note-stamping clock) wasn't
-  reset. One-line fix + a regression test (`note_fires_promptly_after_deep_swap`); the prior swap test had
-  masked it (its patch silenced the synth, so _delayed_ looked like _silent_).
-- **Known simplifications (not bugs):** scene **param _values_** are applied by the host via the queue
-  (glide from default), not baked at build; the old `BuiltScene` drops on the audio thread _between_
-  blocks (cheap at small scale); `ParamQueue` cap is a fixed 256; the `ui` save section is reserved;
-  build-time-parameterized + runtime-switchable device routing are deferred to Epic 5.1 (recorded). A
-  pre-existing Epic-3 limitation surfaced: the worklet's overrun _timing_ is inactive when
-  `performance.now()` isn't exposed in `AudioWorkletGlobalScope` (queue-drop counters still live).
-- **Concepts captured** in `osku_rust_concepts.md`: serde / serde-wasm-bindgen; move-vs-heap & `Box` for
-  unsized; references as borrowing pointers; non-capturing closures → `fn` pointers; block-vs-closure +
-  `if let`/`Option::take`.
-
-#### Story 4.2 — Skeuomorphic device panels: controls → params, front/back, power — ✅ **Done**
-
-_Goal:_ the **descriptor → panel renderer** — the data-driven panel system every later device reuses —
-plus the skeuomorphic **widget vocabulary** (knobs, faders, switches, jacks, a screen, a VU), introducing
-**Svelte 5** to the harness (the Epic-4 stack decision) and standing it up against the _static_ canonical
-engine. Two devices (`synth_voice` showcased; one `gain_stage` for renderer-generality + a back-panel jack
-story) get real panels: drag-real knobs/faders driving params live, a front/back **CSS flip** to
-descriptor-driven jacks, a synth ADSR **screen**, a master-output **VU**, and a real **power** switch
-(a control param, never a recompile). Anchors to PROJECT_PLAN §4 (Device/Port domain model surfaced as a
-panel) and §7 (UI as a pure consumer of the published engine API), and to the Epic-4 settled decisions
-(Svelte 5 + DOM/SVG; descriptor-as-UI-truth; power-as-control; skeuomorphic = genuine interaction +
-recognizable layout, not photoreal).
-
-_Watch out:_
-
-- **UI touches only the published API** — `catalog()` descriptors + `set_param`/`note_on`/`note_off`/
-  `load_patch`. The engine and the `devices` descriptor gain **no** panel/layout vocabulary; visual layout
-  lives entirely in TS. (Engine-stays-UI-free, epic rule.)
-- **Power is a _value_ param, so no recompile** (params-vs-structure, Epic 1). Toggling is instant and
-  **de-clicked** by the existing `Smoother` ramp — never a graph edit. Adding `powered` must stay an
-  **identity at the default (`1.0`)** so every existing Epic 1–3 analog/DSP test still holds.
-- **Hot-path contract unchanged.** The `powered` gate runs _in_ `process` (a smoothed multiply) — must
-  stay zero-alloc, panic-free, denormal-flushed; all new fallibility (panel build, catalog fetch) is cold.
-- **Do not pull Story 4.5 forward.** No node→host readout lane, no per-device probe, no scope/spectrum.
-  The only live signal a meter may read in 4.2 is the **already-exposed master-output buffer**
-  (`out_ptr`/`out_len`) — see the 4.5 "meter is a node" note. The synth screen draws the ADSR curve from
-  param _values_ (pure TS), not from a tap.
-- **Static engine only** — no graph mutation (→ 4.4) and no spatial world / app shell (→ 4.3). Jacks
-  render but are **display-only**; panels just stack.
-- **Svelte is additive** on the existing Vite/TS harness — repackage `main.ts`'s transport/keyboard/MIDI
-  logic, **don't rebuild** the worklet, the scene store, or the engine bring-up.
-
-_Design notes (settled at planning):_
-
-- **Metering is deferred (the headline decision).** A VU meter is a **node** (voltage-native: bridging
-  `InputZ`, ~300 ms ballistics, `0 VU ≙ +4 dBu ≙ 1.228 V RMS`) computing a scalar reading in-engine — _not_
-  a getter retrofitted onto every node — and surfacing it needs a **new node→host scalar readout
-  side-channel** the engine doesn't have today. Both land in **Story 4.5** (recorded in its sketch). 4.2
-  therefore ships **no engine metering surface**: its panel VU reads the **master-output buffer** (the host
-  monitor level — honest, but not a simulated meter device) and repoints onto a `VuMeter` node's readout in
-  4.5. _Rejected:_ building the readout lane now (overlaps 4.5, adds engine surface to a UI story);
-  retrofitting a VU getter onto every node (wrong model — measurement belongs in a meter node).
-- **Power = real per-node `powered` control param**, added to `SynthVoice` and `GainStage`: a Switch-kind
-  param, range `[0, 1]`, default `1.0`, whose **smoothed** value gates the node's output (powered-off ⇒
-  output × 0 ⇒ silence, with the smoother's ramp de-clicking the transition — the "instant, glitch-free
-  standby" the Epic decision asks for). _Rejected for now:_ a **generic framework-level** power gate (like
-  smoothing-written-once) — cleaner long-term and the natural future refactor, but it touches the node/param
-  framework broadly, beyond a UI story; doing it per-node keeps 4.2 contained (known simplification, not a
-  bug). _Rejected:_ a UI-only cosmetic switch (contradicts the settled power-as-control decision). Ripple:
-  `catalog_aligns_with_exposed_face` forces the catalog UI metadata for `synth_voice`, `gain_stage`, **and**
-  `channel_strip` (two `GainStage`s) to list the new switch param(s) — bookkeeping, expected.
-- **Panel layout is TS-side auto-layout, no descriptor fields.** The generic renderer lays out a panel from
-  the descriptor: param `kind` (`knob`/`fader`/`switch`) picks the widget; port `direction`+`kind` style and
-  place the back-panel jacks. Per-type **embellishments** (the synth's ADSR screen) are opt-in TS components,
-  not descriptor data. _Rejected:_ layout-hint fields (positions/groupings) on the Rust `DeviceDescriptor` —
-  couples the engine/content layer to visual layout, against keeping `devices` lean and the renderer the home
-  of UI truth.
-- **Second device = `gain_stage`, not `channel_strip`.** A multi-node device's chassis-ness is **invisible**
-  to the descriptor-driven renderer (4.1 flattens the exposed face), so `channel_strip` adds no rendering
-  proof — while its two internal gains would force the panel's single power switch to coalesce two `powered`
-  params. `gain_stage` is a clean single-node panel (one gain knob + one power switch + in/out jacks) and
-  still proves the renderer is generic across device types. The **default scene** gains a unity gain stage:
-  `synth → gain_stage → ad → da → spk` (gain `1.0` = passthrough, so audio is unchanged).
-- **Interaction model:** pointer-drag widgets (vertical drag for knobs, along-axis for faders), **Shift =
-  fine** (reduced sensitivity), **double-click = reset to the descriptor default**, with a live value readout
-  in the param's unit. Functional skeuomorphism (SVG + CSS), not photoreal — branding/skins/onboarding stay
-  deferred (project non-goal).
-- **`catalog()` reaches the main thread via the worklet's `ready` message.** The wasm instance lives in the
-  worklet (`--target no-modules`); rather than instantiate a second copy on the main thread, the processor
-  calls `catalog()` in its constructor and includes the descriptors in `ready`. The page hands them to the
-  Svelte app. (Hand-written TS mirrors in `web/src/catalog.ts` already type them.)
-
-- **Task 4.2.1 — `powered` control param on `SynthVoice` + `GainStage` (engine + catalog).** Add a
-  Switch-kind `powered` `ParamDecl` (`[0,1]`, default `1.0`) to both nodes; gate each node's output by the
-  smoothed `powered` value in `process` (zero-alloc, denormal-flushed). Update the `synth_voice`,
-  `gain_stage`, and `channel_strip` catalog entries' UI metadata to expose the new switch param(s).
-  _Done:_ engine tests assert powered→0 settles to silence and powered→1 is normal on both nodes; the
-  default `1.0` leaves every prior engine test green; `catalog_aligns_with_exposed_face` +
-  `descriptors_carry_engine_truth` pass with the added param. (Oracle: behavioral — peak(powered 0) ≈ 0 vs
-  peak(powered 1) > 0 for the same input/note.)
-- **Task 4.2.2 — Svelte 5 in the harness + transport repackage + catalog ingress.** Add Svelte 5 +
-  `@sveltejs/vite-plugin-svelte` (one dependency) to `web/`; wire `vite.config.ts`, `tsconfig`, and Biome
-  for `.svelte`. Mount a Svelte root replacing the hardcoded `#controls` block; move `main.ts`'s
-  transport/keyboard/MIDI/scene-button logic into a Svelte-consumable module/store (engine bring-up, worklet,
-  and `scene-store` untouched). Have the worklet post `catalog()` descriptors in `ready`; expose them to the
-  app. _Done:_ the existing synth controls work, now rendered by Svelte and **driven by the fetched
-  descriptor** (not hardcoded ids); `npm run check`, `npm run typecheck`, `npm run build` green; in-browser
-  parity with current behavior (notes, knobs, save/load/reload, health/latency).
-- **Task 4.2.3 — Descriptor-driven panel renderer + control widgets.** The generic `Panel` (front face)
-  auto-laid-out from a descriptor, with `Knob` / `Fader` / `Switch` widgets chosen by param `kind` —
-  pointer-drag + Shift-fine + double-click-reset + live unit readout — each bound to `set_param` _and_ the
-  scene (persists on save). Render a panel per scene device (synth + gain_stage operable; zero-param devices
-  show only power + jacks); add `gain_stage` to `defaultScene`. Power switch drives the `powered` param.
-  _Done:_ in-browser, the synth and gain_stage panels operate the live engine (knobs/faders/power change the
-  sound), values persist across save/load, and a low `powered` audibly silences the device.
-- **Task 4.2.4 — Back panel (jacks) + front/back flip.** The back face rendered from the descriptor's
-  ports: `Jack` widgets styled by port `kind`/`domain`, inputs and outputs laid out and labeled; a per-panel
-  CSS 3-D **flip** affordance. Jacks are **display-only** (patching → 4.4). _Done:_ each panel flips
-  front↔back; the back shows correctly-styled, labeled jacks for every descriptor port; verified in-browser.
-- **Task 4.2.5 — Synth ADSR screen + master-output VU.** A synth-specific `Screen` embellishment (a small
-  `<canvas>` drawing the envelope from the live `level`/A/D/S/R param values, updating as knobs turn); a
-  `Vu` widget driven by a **throttled level message** the worklet computes from the already-exposed output
-  buffer (peak/RMS over recent quanta — **no engine change**). _Done:_ the ADSR screen tracks the synth
-  knobs; the master VU moves with output level and rests at idle; verified in-browser by eye.
-
-_Validate:_ ✅ **met.** descriptor-driven panels for `synth_voice` + `gain_stage` operate the live static
-engine (knobs/faders change the sound and persist to the scene); each panel **flips** front↔back to
-descriptor-driven, correctly-styled (display-only) jacks; the synth **ADSR screen** tracks its knobs and the
-**master-output VU** moves with output; **power** is a real `powered` param (off ⇒ silence, de-clicked, no
-recompile); **Svelte 5** stands up the renderer on the untouched worklet/transport; the engine gains only
-the `powered` params (no probe/readout lane — deferred to 4.5) and stays UI-free; the full Rust gate
-(`cargo fmt --check && cargo lint && cargo test && cargo wasm && cargo docs`) plus `wasm-pack build` and the
-`web` `check`/`typecheck`/`build` pass; verified in-browser by ear and eye.
-
-_Delivered:_ the data-driven skeuomorphic panel system + the widget vocabulary every later device reuses,
-on a Svelte 5 harness, with two device panels operating the live engine and the rest rendered generically.
-
-- **Svelte 5 introduced** (the Epic-4 stack decision realized): `@sveltejs/vite-plugin-svelte` + runes, a
-  slim `index.html`/`main.ts` mount. Transport (engine/worklet bring-up, `send`, keyboard, Web MIDI,
-  latency/health formatting) extracted to `web/src/engine.ts`; `App.svelte` owns the reactive scene/UI
-  state. The worklet, scene-store, and engine bring-up were **repackaged, not rebuilt**.
-- **Descriptor → panel renderer** (`widgets/Panel.svelte`): laid out generically from a device's descriptor
-  — a control widget per param chosen by `kind`, plus a back face of I/O jacks; zero-param devices show
-  "no front-panel controls". **Widget vocabulary** (SVG + CSS, functional-not-photoreal): `Knob` (270°
-  rotary), `Fader`, `Switch` (LED power), `Jack` (color by connector `kind`, shape by carrier `domain`),
-  `Screen`, `Vu`, with a shared pointer-drag (`drag.ts`: vertical drag, Shift = fine, double-click = reset,
-  arrow-key nudge). Front/back is a **CSS 3-D flip** (grid-stack trick → no manual height sync), kept
-  self-contained so 4.3 can gate it behind a physical-clearance action.
-- **`powered` control param** on `SynthVoice` + `GainStage` (engine): a Switch-kind param `[0,1]` default
-  `1.0`, whose smoothed value gates the node's output (off ⇒ silence, de-clicked; never a recompile —
-  params-vs-structure). Default `1.0` is identity, so all prior analog tests held; catalog entries
-  (`synth_voice`/`gain_stage`/`channel_strip`) gained the switch. _Generic framework-level power deferred_
-  (per-node for now — known simplification, not a bug).
-- **Catalog ingress**: the worklet calls `wasm_bindgen.catalog()` (where the wasm instance lives) and ships
-  descriptors in its `ready` message; the page renders panels from them. `defaultScene` gained a unity
-  `gain_stage` (`synth → gain → ad → da → spk`) for a second controllable device.
-- **Metering deferred to 4.5 (as planned):** the master VU reads the **already-exposed output buffer** (a
-  throttled peak the worklet posts ~47×/s) — the host monitor level, _not_ a simulated meter device; no
-  engine probe/readout lane added. The synth screen draws the ADSR contour from param _values_, not a tap.
-- **Two detours folded in:** (1) a **monitor volume** — a Web Audio `GainNode` between the worklet and
-  `destination`, **outside the simulation** (doesn't touch the modeled signal or the meter), defaulting to
-  25% and persisted under its own `localStorage` key (not the scene). (2) **`SynthVoice::LEVEL` range fixed**
-  to `0–1.5 V` (default `1.0`; was `0–100 V`, which left the usable range in the fader's bottom 1.5%); floor
-  kept at 0 so it still fades to silence. Both surfaced from the engine "runs hot" symptom.
-- **Bugs found & fixed:** Svelte 5 `$state` wraps the scene in a Proxy that `postMessage` can't
-  structured-clone (`DataCloneError`) — fixed with `$state.snapshot(patch)` at every worklet boundary
-  (`plainPatch()`). And a long Biome/Svelte tooling untangling: **`biome.json` is strict JSON (no comments)**
-  — comments silently broke config parsing → default rules linting `.svelte` and _corrupting_ files on save;
-  resolved by a single comment-free **root** `biome.json` (the editor LSP loads the workspace-root config),
-  with `.svelte` excluded and owned by `svelte-check` + the Svelte extension (prettier via `.prettierrc`).
-- **Known simplifications (not bugs):** jacks are **display-only** (drag-to-connect → 4.4); the meter is the
-  host monitor level, not a voltage-native `VuMeter` node + node→host readout lane (→ 4.5); panel layout is
-  TS auto-layout from param/port `kind` (no descriptor layout fields); **physical dimensions are not yet on
-  the descriptor** (the spatial-sim content → 4.3, per the spatial-sim settled decision in this Epic).
-
-#### Story 4.3 — The spatial world: spaces, racks, placement, catalog browsing — ✅ **Done**
-
-_Goal:_ turn the flat panel rack into a **game-like spatial studio** — the Svelte app shell + an isolated
-world layer where you pan/zoom across a **space** rendered as a **front rack-elevation**, place and move
-gear in **real rack-U slots** and on a desk, switch between multiple spaces, and **browse the catalog to
-add/remove gear** — the gesture that exercises the 4.1 recompile/hot-swap path live. Anchors to
-PROJECT_PLAN §7 (skeuomorphic panels as the primary paradigm) and §9 Stage 4 (build and operate a small
-studio through the UI). The novel parts — the spatial model, placement legality, projection — are
-**framework-agnostic data + math** (the epic's "spatial sim is a data/constraint model, not a rendering
-problem" decision); the engine learns nothing about rooms, racks, or position.
-
-_Watch out:_
-
-- **Engine + `patch` stay free of any spatial concept.** No rooms/racks/positions in the engine or the
-  runnable `Patch`. Placement, spaces, container membership, and clearance are **UI scene state** (the TS
-  `ui` section) only — "spaces are a UI concept."
-- **Model in 3-D, render in 2-D — never store per-view 2-D positions** (the drift trap). Store a single
-  coordinate truth per device (position `(x,y,z)` + facing; footprint comes from the descriptor) and
-  derive the front-elevation screen rect by **projection**. One view ships now; the projection stays pure
-  so top/side views are cheap later.
-- **Dimensions are content, not UI-invented.** A device's rack-U height / footprint lives on the
-  **`devices` catalog descriptor** (engine-adjacent, native-testable), mirrored into TS — _not_ re-typed
-  in the UI layer where it would drift.
-- **Only structural edits recompile.** Add/remove device (and the connections it drags along) mutates the
-  `patch` → `loadPatch` hot-swap (the proven 4.1 path). Placement, move, flip, space-switch, and clearance
-  are **pure UI — no recompile.** Add/remove are discrete gestures, so swap on commit; no continuous
-  debounce is needed (resolves the sketch's "add/remove debouncing" open question).
-- **Keep the world renderer behind a thin interface** so a future swap to a WebGL canvas touches only that
-  layer (the standing escape hatch) — but **do not build WebGL**; DOM/SVG over a CSS-transform pan/zoom
-  surface is right for tens-to-low-hundreds of rectangles at studio scale.
-- **Skeuomorphic = genuine interaction + recognizable layout, not photoreal** (epic rule). Reuse the 4.2
-  `Panel`/`Knob`/`Fader`/`Switch`/`Jack` widgets; don't paint textures.
-- _Scope guard:_ this is the spatial-sim home — resist pulling cables/snakes (4.4) or probes/meters (4.5)
-  forward, and resist the deferred reach/multi-view work below.
-
-_Design notes (settled at planning):_
-
-- **View model — store 3-D truth, render one view (front rack-elevation) now.** The full 3-D coordinate
-  truth is stored, but only the front-elevation projection is rendered this Story; the projection is a
-  **pure, unit-tested function** so adding top/side/front views later is cheap. _Rejected: multiple synced
-  projections now_ — a second renderer + view-switching on top of placement + spaces + catalog overruns
-  one Story. Front elevation (over a top-down floor plan) because it reuses the 4.2 panel + flip directly
-  and is the most "studio rack" feel; a floor plan would turn panels into rectangles and need a separate
-  "operate" view.
-- **Reach deferred; clearance is a simple per-device boolean.** 4.3 ships placement + spaces + add/remove
-  - a **"pulled-out" clearance state** that gates back-panel access (the back-flip from 4.2 is lifted out
-    of `Panel` and gated on clearance — "pull the unit / roll the rack off the wall"). _Rejected: full
-    operator-position + reach-radius model now_ — a whole interaction subsystem; it lands in a later Story
-    and the stored 3-D truth keeps it cheap. Clearance is a boolean, not a position/reach computation.
-- **Rack model — real rack-U slots.** A rackmount device carries a **U-height** (standardized 19" width);
-  a rack has **N U-slots**; placement legality is **slot occupancy** (a device's U-run must be free).
-  Desktop gear carries a **footprint box** and places freely on the desk surface with **AABB no-overlap**.
-  This is the unit-testable spatial core the epic decision calls for. _Rejected: free 2-D placement only_
-  — defers the most distinctive constraint.
-- **Where the model lives.** _Dimensions_ → the Rust `DeviceDescriptor` (a `formFactor` + size:
-  rack-U height for rackmount, a footprint box for desktop), authored per `CatalogEntry`, mirrored in
-  `catalog.ts`. _Placement / spaces / clearance / view (pan-zoom) state_ → the TS scene `ui` section. The
-  engine `patch` projection is unchanged.
-- **`SceneUi` is reshaped freely — no migration / back-compat.** localStorage is disposable (no real
-  scenes are stored anywhere), so the old `placements?: {x,y,space?}` stub is **replaced** by the 3-D
-  placement model (position + facing + container membership `{rack, uSlot}` | `{desk, pos}` + space id +
-  clearance/flip flags) and the `SCHEMA_VERSION`/`migrate` scaffold is dropped or reset — no vN→vN+1 step.
-- **World-layer interface.** A thin `WorldView` boundary fed by the **pure layout/projection model** and
-  emitting **placement intents** (move-to-slot, place-on-desk, switch-space), so the DOM/SVG renderer is
-  the only thing a future WebGL swap replaces. The spatial logic (projection, AABB, U-slot legality) is a
-  rendering-free module with its own Vitest tests — the "tests are the oracle" temperament applied to the UI.
-
-- **Task 4.3.1 — Device dimensions on the catalog.** Add `formFactor` + size fields to the Rust
-  `DeviceDescriptor` (rackmount → U-height; desktop → footprint box), authored per `CatalogEntry`, derived
-  where engine truth allows; mirror in `catalog.ts`. _Done/validate:_ native test that every entry carries
-  a sane form factor + size and serializes camelCase (extends `catalog_serializes_with_expected_types`);
-  TS mirror compiles.
-- **Task 4.3.2 — The pure spatial model + logic (TS, unit-tested).** A rendering-free module: 3-D
-  coordinate + footprint types, the **front-elevation projection** (3-D → screen rect), **AABB overlap**,
-  and **rack U-slot occupancy + placement legality** (can a device of U-height H occupy rack R from slot
-  S?). The `web` project has **no test runner yet** — stand up **Vitest** first (a dev-dep install, _the
-  user runs_ `npm install -D vitest`, plus a `test` script + a CI step mirroring `typecheck`/`check`).
-  _Done/validate:_ Vitest unit tests on projection, AABB, and slot-legality (including illegal /
-  overlapping cases); the module imports no DOM/Svelte.
-- **Task 4.3.3 — Scene `ui` placement state + store.** Replace `SceneUi` with the 3-D placement model
-  (position + facing + container membership + space id + clearance/flip flags) and update `scene-store`
-  (default scene seeds placements; save/load persists; **no migration**). The engine `patch` projection
-  stays untouched. _Done/validate:_ a scene round-trips placement through save/load; the worklet still
-  receives only `patch`; existing scene tests stay green.
-- **Task 4.3.4 — World layer + app shell (pan/zoom, one space, front elevation).** Replace the flat
-  `.rack` with a `WorldView` behind the thin interface: a CSS-transform **pan/zoom** surface rendering the
-  current space's gear from placement via the 4.3.2 projection, showing front panels (reuse `Panel`);
-  **drag a device** to a new placement, legality-checked. _Done/validate:_ you can pan/zoom and move gear;
-  placement persists; illegal moves are rejected. Verified in-browser.
-- **Task 4.3.5 — Racks & containers + clearance-gated back access.** Render racks as **U-slot columns**;
-  place/move devices into rack slots and onto the desk; **open/close** (expand/collapse) a container; lift
-  the back-flip out of `Panel` and **gate it on a per-device clearance** ("pull out" / "roll off wall").
-  _Done/validate:_ gear occupies real U-slots (overlaps rejected); a unit's back is reachable only after
-  the clearance action. Verified in-browser.
-- **Task 4.3.6 — Multiple spaces + switching.** Several spaces (e.g. live room / control room); each
-  device belongs to one; switching a space switches the rendered/interactable set. _Done/validate:_
-  create/switch spaces; gear appears only in its space; membership persists.
-- **Task 4.3.7 — Catalog browser + add/remove gear (the recompile exercise).** Browse the fetched catalog
-  descriptors; **add** a device (new id + default placement → mutate `patch.devices` → `loadPatch`) and
-  **remove** one (drop from `patch.devices`/`connections`/placement → `loadPatch`). _Done/validate:_
-  add/remove through the UI hot-swaps the engine **glitch-free under sound** with the health line clean —
-  the 4.1 recompile path proven on user-driven add/remove. Verified in-browser by ear.
-
-_Validate:_ ✅ **met.** Through the UI, in a pan/zoom **front-elevation** world: gear is placed and moved
-in **real rack-U slots** (drag-snap to the nearest free slot) and free-standing on the floor, with illegal
-(overlapping / no-free-slot) drops rejected; rooms are **created and switched** (the default ships one room
-
-- an "add space" control, and gear/racks move between rooms); a unit's back is reachable **only after** the
-  pull-out clearance action; the catalog palette **adds and removes gear**, hot-swapping the engine via the
-  4.1 `loadPatch` recompile path. The spatial logic (projection, AABB, U-slot legality, nearest-free-slot) is
-  **Vitest-unit-tested**; device dimensions are **catalog content** with native tests; the engine and `patch`
-  stay free of any rooms/racks/positions. Full gate green (`cargo fmt --check && cargo lint && cargo test &&
-cargo wasm && cargo docs`, plus `web` Vitest/Biome/typecheck/build). Verified in-browser.
-
-_Delivered:_ a game-like spatial studio on the Svelte harness — a pan/zoom front-elevation world where gear
-lives at real coordinates, mounts in rack U-slots, and moves between rooms, with add/remove driving the
-engine's hot-swap. The engine and runnable `patch` gained **nothing** (no rooms/racks/positions) — all
-spatial state is UI-only, and add/remove rides the existing 4.1 `loadPatch`/`catalog()` surface, so **no
-Rust changed** beyond the catalog dimensions.
-
-- **Device dimensions are catalog content.** `DeviceDescriptor` gained a `FormFactor` (`Rackmount { rack_units }`
-  | `Desktop { width/height/depth_mm }`), authored per `CATALOG` entry, mirrored in `catalog.ts`; native
-  tests pin sane values + the tagged camelCase wire shape. The UI derives a device's box from it.
-- **Pure spatial module (`web/src/spatial.ts`), Vitest-tested.** 3-D coordinate/footprint types, the
-  `project(pos, size, view)` **seam** (front renders now; top/side exist so Story 4.6 is a few lines),
-  `footprint`, `rectsOverlap` (AABB), and the rack model (`fitsInRack` / `canPlaceInRack` /
-  `nearestFreeSlot`). Rendering-free — the "tests are the oracle" temperament applied to the UI.
-- **Scene `ui` reshaped (`scene-store.ts`, schema v4, no migration).** `SceneUi = { spaces, racks, placements }`;
-  a `Placement` carries `position` (3-D truth) + optional rack mount + `facing` + `pulledOut`. localStorage
-  is disposable, so the shape was replaced outright (parse discards any other version). Pure
-  `serializeScene`/`parseScene` are unit-tested for round-trip + version-discard.
-- **Isolated world layer (`WorldView.svelte`)** behind a thin prop contract (`items` in world-mm + an `item`
-  snippet + a generic `controls` snippet + `onMoveTo`/`canPlace`/`fitKey`) — the standing WebGL escape hatch.
-  CSS-transform **pan/zoom** (cursor-anchored, scroll-distance-proportional), **fit-to-content** framing that
-  re-frames on room switch (`fitKey`) and backs off once the user takes over, per-device **drag grip**
-  (so operating a control never drags or pans), and a red-outline illegal-drop preview.
-- **App wiring (`App.svelte`):** front-elevation projection of placements; **drag-snap** rackmount gear into
-  the nearest free U-slot (or out to the floor); **movable racks** rendered as U-slot frames; **clearance-gated
-  back access** (`Panel`'s flip is now a controlled prop, gated behind pull-out); **multiple rooms** with tab
-  switching + add + per-item room selectors; a **catalog palette** whose add/remove mutate the `patch` and
-  hot-swap the engine (re-pushing params after each swap).
-- **Deviations from the plan (not bugs):** rack **collapse/expand was built then removed** — real racks don't
-  collapse (user call); **"desk" is the free floor**, not a distinct desk container (deferred); the default
-  scene ships **one room** (add more via the control) rather than two; **reach + multi-view projections stay
-  deferred to Story 4.6** as planned (the 3-D coordinate truth is stored now so they're cheap).
-- **Known limitations (recorded):** the computer keyboard is wired once to the **initial** synth — removing it
-  or adding a second doesn't re-route input; dragging a **rack** moves its frame live and its mounted gear
-  repositions on drop; racks reposition **freely** (no rack-vs-rack overlap rejection); "pulled out" has **no
-  z-offset** in the front elevation (z isn't visible head-on — it only unlocks the flip; the visible
-  pull-forward is a Story 4.6 top-view concern).
-- **Tooling:** stood up **Vitest** in `web/` (the project is pnpm-managed; `CLAUDE.md` corrected from npm).
-  No web CI job exists yet, so `web` typecheck/Biome/test/build aren't gated on PRs — a candidate follow-up.
-
-#### Story 4.4 — Patch cables & snakes → live graph mutation — ✅ **Done**
-
-_Goal:_ make the studio **patchable** — drag a cable between two devices' back-panel jacks and the
-engine rewires live: connect/disconnect mutates `patch.connections` → the proven 4.1 `loadPatch`
-recompile/hot-swap, glitch-free under sound. A chosen **cable type** carries real R·C so the modeled
-loading loss + treble rolloff are physically correct — **verified numerically** (per §9, cable loss is a
-hand-calc oracle, not an ear test); with realistic cables into realistic impedances the degradation is
-**inaudible by design**, which is the point (a good signal chain doesn't degrade audibly even though the
-system models it). And **cross-space connections** render as portal endpoints (the snakes MVP). Anchors
-to PROJECT_PLAN §4 (the Port/Device/Graph domain model surfaced as
-draggable jacks + cables), §7 (UI as a pure consumer — the engine learns nothing new), and §9 Stage 4
-(build and operate a small studio through the UI). This is the "patching feels natural" payoff and the
-**swap-under-load proof** — re-measure the audio-thread compile cost at realistic graph size.
-
-_Watch out:_
-
-- **The recompile/swap runs on the audio thread** (engine-in-worklet; a `Schedule` can't cross realms) —
-  connect/disconnect is the _same_ 4.1 `loadPatch` path `addDevice`/`removeDevice` already use. Edits are
-  rare gestures, so the off-block compile is acceptable, but **re-measure** it at a realistic graph size;
-  a long compile delays the next `process()` ⇒ a glitch. Keep `compile` off the per-block path.
-- **Fan-in is illegal in the engine** — an input port accepts exactly **one** incoming edge (the engine
-  rejects "two edges into one input" at compile; fan-_out_ from an output is fine and solves as parallel
-  loading). The UI must enforce this **before** compile (dropping onto an occupied input _replaces_ its
-  connection), not let a mid-patch `compile` fail.
-- **Cables only affect analog edges.** The engine's cable one-pole + loading divider ride **analog**
-  edges only; a digital/event route ignores any `CableSpec`. So offer cable physics on **analog↔analog**
-  connections only — a "cable" on a digital link would be a lie (no rolloff there).
-- **Don't re-derive the cable physics in TS** (epic rule: engine stays the home of volts-and-converters
-  realism). The rolloff/loss is the engine's _already-tested_ concern (Epic 1.2 `Cable`/`OnePole`/
-  `divider_gain`); 4.4 only authors realistic R·C **content** and wires it onto the edge.
-- **Engine + `patch` gain nothing structural.** Connections already live in the `Patch` IR and
-  `build_patch` already remaps them, bakes cables, validates domains, and rejects cycles. No `engine`
-  crate change; the only Rust touch is the **cable catalog content** in `devices`.
-- **Keep the world layer thin.** Cables are parent-owned and drawn through a surface-space overlay; the
-  `WorldView` still knows only about positioned boxes + pointer mechanics (no "cable"/"patch" concept) —
-  the WebGL escape hatch stays intact.
-- _Scope guard:_ this is the cabling story — resist pulling probes/meters (4.5) or the top-view / reach
-  work (4.6) forward; snakes stay at the **portal-endpoint MVP**, not a full bundle-routing subsystem.
-
-_Design notes (settled at planning):_
-
-- **Patching UX — per-device flip, no new view.** Jacks live on the **back** panel (4.2), reachable only
-  when a device is **pulled-out + flipped** (the 4.3 clearance gate). Since `facing` is per-device, two
-  backs can face the operator at once, so you patch by pulling out + flipping both endpoints and dragging
-  jack→jack. _Rejected: a room-wide "rear view" toggle_ (flip every unit to its back at once) — more
-  realistic ("walk behind the rack") and easier to patch, but it's effectively a second projection that
-  overlaps Story 4.6's view-switching; defer it there if the per-device flow proves fiddly. _Rejected:
-  front-panel patch points_ — abandons the back-panel realism settled in 4.2. **Known simplification (not
-  a bug):** a cable to a device whose back isn't currently shown (front-facing / pushed-in) anchors to its
-  chassis edge rather than a precise jack, so the connection is never visually lost.
-- **Cross-space connections = portal endpoints (snakes MVP).** Only one space renders at a time, so a
-  connection whose endpoints sit in different rooms **cannot** draw as a continuous bezier; it renders as a
-  labeled stub (`→ Live Room`) at each end. A **"snake"** is a UI label bundling several such cross-space
-  mono cables — the engine sees **plain mono connections**; portals + bundles are UI-only. _Rejected:
-  full snake create/break/expand routing UX_ (largest scope for one story); _rejected: same-space cables
-  only_ (the epic exit needs patching across ≥2 spaces). Satisfies the exit without a second simultaneous
-  view.
-- **Pickable cable types now; cable catalog is Rust `devices` content.** A connection carries a chosen
-  cable → `CableSpec { resistance_ohms, capacitance_farads }` (the field already on `Connection`), so the
-  engine's loading divider + treble rolloff become audible. The **cable catalog** (named presets:
-  connector kind + R·C, optionally length-scaled) lives in the **`devices` crate** with a native hand-calc
-  oracle and is exposed to the UI alongside the device catalog. _Why Rust, not TS presets:_ R·C is
-  physical **content** as intrinsic as a device's impedance — authoring it in TS re-invents content the
-  content layer owns and risks drift (the exact rationale 4.3 used for device dimensions). _Rejected:
-  ideal wires only_ — leaves the cable-physics payoff on the table, which the engine already supports for
-  free.
-- **The cable effect is modeled-but-inaudible here, and that is correct — not a shortfall.** Cable rolloff
-  needs a **high-impedance source** to be audible (`f_c = 1/(2π·R_thev·C)`, `R_thev = (Zout+R_cable) ∥ Zin`
-  — dominated by the smaller side). Every source in the current catalog is low-Z (synth 1 Ω, gain/DA
-  150 Ω), so with realistic R·C the corner sits far above 20 kHz and the series-R level drop is negligible:
-  a clean chain **does not degrade audibly even though the system models it faithfully**. This _is_ the
-  design intent, and it matches §9 ("cable loss… can't be heard reliably, so [it's] asserted numerically").
-  So 4.4 validates the physics by **hand-calc oracle** (numeric), the chosen cable **rides the edge
-  correctly**, and the effect becomes **visible** when 4.5's analog-domain readouts land and **audible**
-  when **Epic 5** adds high-Z instrument sources (a passive DI / guitar-level device). No by-ear gate in
-  4.4. _Rejected: exaggerated (unrealistic) cable C to force audibility_ — dishonest, against the
-  realism ethos; _rejected: adding a high-Z source now_ — a device-catalog change beyond this cabling
-  story, and Epic 5's natural home.
-- **Endpoints are DOM-measured; legality + geometry are a pure module.** Jack screen positions come from
-  the panel's **flexbox** layout, so cable endpoints are discovered by DOM measurement
-  (`getBoundingClientRect` → world-mm via the `WorldView` transform), **not** computed analytically. The
-  new pure `connections.ts` (peer to `spatial.ts`, rendering-free, **Vitest-tested**) owns the parts that
-  _can_ be pure: the **legality predicate** (output→input, same carrier domain, fan-in rejected, no
-  self-loop, cable only on analog) and the **bezier geometry given two endpoints** + point-near-curve
-  **hit-testing** (for click-to-delete). Endpoint discovery is the DOM-coupled part, isolated in Svelte —
-  the "tests are the oracle for the UI" temperament applied where it fits.
-- **Legality feedback is pre-compile; cycles fall back to `BuildError`.** Direction, domain, and fan-in
-  are all in the descriptor / scene, so the UI shows live green/red feedback **before** `loadPatch`. A
-  cycle (the one illegality the descriptor can't see locally) is caught by `compile` → surfaces as the
-  legible `BuildError` on the status line and the cable **snaps back** — no broken patch, no audio-thread
-  panic.
-
-*Connector enforcement — done (post-4.4 improvement, 2026-07-03):* originally connection legality checked
-only the **carrier domain**, so any analog jack accepted any other (a TRS output into an XLR input). This
-was resolved by introducing a **`Connector`** enum (the *physical shape* — `quarterInch` unifying TS/TRS,
-`xlr`, `speakon`, `din5`, `digital`), authored per port + cable in the `devices` catalog and **distinct
-from the signal-class `kind`** (so a level/signal mismatch stays emergent; only shape mismatch is
-rejected). Compatibility is same-connector-only. It is enforced **authoritatively in `build_patch`**
-(`BuildError::ConnectorMismatch`, checked *within* a domain so a cross-domain wire stays the engine's
-`DomainMismatch`) and **mirrored in the UI** (`evaluateConnection`, domain-then-connector precedence);
-the cable picker + default-cable pick are filtered to connector-fitting presets. This refines the earlier
-"engine validates by domain, connector is UI-only" decision: connector shape is now a genuine hard
-constraint in the **`devices` content layer**, while the engine *core* stays domain-only and portable.
-The rejection path has no build-level integration test yet (today's catalog is all-¼" analog, so no
-same-domain connector-diverse pair exists) — it's covered by `connectors_compatible` + the TS
-`evaluateConnection` mirror, with the Rust integration test arriving alongside Epic-5 XLR/speakON gear.
-
-- **Task 4.4.1 — Cable catalog (content) + UI exposure + hand-calc oracle.** A `CABLES` table in `devices`
-  of named cable presets (`type_id`, label, connector `kind`, series R + shunt C; the seam for
-  length-scaling noted but a fixed nominal length is fine), exposed to the UI alongside the device catalog
-  (an extra field on the `ready` handshake / a small bridge), mirrored in a TS `CableType`. _Done/validate:_
-  a **hand-calc oracle** (a `devices`/`harness` test, at the `Cable`/electrical level like the engine's own
-  cable tests): a specific preset's R·C into a **representative high-Z source** yields the hand-computed
-  corner `f_c` + divider loss (calc in a comment), **and** the same preset into the catalog's low-Z synth
-  source puts `f_c` far above 20 kHz (the modeled-but-inaudible intent, also hand-checked); plus a native
-  test that every preset has sane R·C and serializes camelCase; TS mirror compiles.
-- **Task 4.4.2 — Pure `connections.ts` module (TS, Vitest).** A rendering-free module: the
-  **legality predicate** (output→input; same carrier `domain`; reject fan-in into an already-driven input;
-  reject self-loop; cable allowed only on analog↔analog), the **bezier path** given two endpoint points
-  (a natural hanging-cable curve), and **hit-testing** (point-near-bezier, for click-to-delete).
-  _Done/validate:_ Vitest unit tests on legality (incl. wrong-direction, domain-mismatch, fan-in, self-loop
-  cases), bezier control-point math, and hit-test hits/misses; the module imports no DOM/Svelte.
-- **Task 4.4.3 — Cable overlay + jack world-positions + render existing connections.** Extend `WorldView`
-  with a thin surface-space **`overlay` snippet** so the parent draws cables in world coordinates; make
-  `Jack` report its world position (DOM-measured through the pan/zoom transform); render the current
-  scene's `patch.connections` as beziers between the back-panel jacks of pulled-out/flipped devices (a
-  front/pushed-in endpoint anchors to the chassis edge). _Done/validate:_ the default scene's connections
-  draw as cables that stay aligned through pan/zoom and device moves; verified in-browser.
-- **Task 4.4.4 — Drag-to-connect + disconnect → hot-swap.** Pointer-down on a jack starts a rubber-band
-  cable; live **green/red legality feedback** via 4.4.2; a legal drop commits `patch.connections` →
-  `hotSwap()` (the 4.1 path); **click a cable to delete** → hot-swap; dropping on an occupied input
-  **replaces** its connection; a cycle/`BuildError` surfaces on the status line and the cable snaps back.
-  **Re-measure the audio-thread compile cost** at a realistic graph size (the swap-under-load proof).
-  _Done/validate:_ connect/disconnect through the UI hot-swaps the engine **glitch-free under sound** with
-  the health line clean; illegal drops are rejected with feedback. Verified in-browser by ear.
-- **Task 4.4.5 — Cable-type picker + edge wiring.** On an analog connect, attach a cable from the
-  4.4.1 catalog (sensible default), changeable by clicking the cable; digital/event connections stay ideal
-  (no picker). The cable's R·C rides the edge through `build_patch`. _Done/validate:_ the chosen cable
-  **rides the edge** (its R·C reaches the compiled schedule — asserted via the 4.4.1 oracle direction, not
-  by ear: realistic cables into the catalog's low-Z sources are inaudible **by design**, §9), the choice
-  **persists** in the scene across save/load, and digital links show **no cable affordance**. The audible
-  payoff waits on Epic 5's high-Z sources / 4.5's readouts. Verified in-browser (picker + persistence,
-  glitch-free swap).
-- **Task 4.4.6 — Cross-space connections via portal endpoints (snakes MVP).** A connection whose endpoints
-  are in different spaces renders as a labeled **portal stub** (`→ Live Room`) at each end instead of a
-  continuous cable; a basic **snake** label bundles several such cross-space cables. The engine sees plain
-  mono connections throughout. _Done/validate:_ a device in room A patched to one in room B hot-swaps and
-  sounds; the connection shows as portals in each room and survives save/load; verified in-browser.
-
-_Validate:_ ✅ **met.** Through the UI, in the pan/zoom front-elevation world: **drag-to-connect** between
-two flipped-to-back devices' jacks wires the engine live via `loadPatch`, and **clicking a cable** selects
-it into an inspector (change cable type / disconnect) — both **glitch-free under sound** with the health
-line clean; **illegal drops** (wrong direction, domain mismatch, fan-in into an occupied input, self-loop,
-feedback cycle) are rejected with live green/red feedback (cycle detection is client-side, so no bad patch
-ever compiles); a **chosen cable type** rides the analog edge with correct R·C (**hand-calc-tested** in
-`devices`; inaudible by design into the current low-Z sources per §9 — the audible payoff is Epic 5) while
-digital links stay ideal; a **cross-space** connection renders as **portal endpoints** in each room and
-hot-swaps; the pure `connections.ts` (legality, cycle, bezier, hit-test, cable-spec mapping) is
-**Vitest-tested**; the `engine` crate and the runnable `patch` gain nothing (cables ride the existing
-`Connection.cable` + `loadPatch`). Full gate green (`cargo fmt --check && cargo lint && cargo test &&
-cargo wasm && cargo docs`, plus the `web` Vitest/Biome/typecheck/build). Verified in-browser.
-
-_Delivered:_ live patching on the spatial studio — drag a cable between two devices' back-panel jacks and
-the engine rewires via the proven 4.1 `loadPatch` hot-swap; the only new Rust is **cable content** in
-`devices` (the engine and runnable `patch` are otherwise untouched — cables ride the existing
-`Connection.cable`).
-
-- **Cable catalog is `devices` content** (`cables.rs`) — a `CABLES` table of realistic presets (patch /
-  instrument 3 m & 6 m / mic / speaker; connector `kind` + series R + shunt C authored from a per-metre
-  basis), `cable_types()` mirroring `descriptors()`, exposed via a `cable_catalog()` `wasm-bindings` bridge
-  and the worklet `ready` handshake, mirrored in a TS `CableType`. **Hand-calc oracle:** a preset's R·C into
-  a representative high-Z source hits the computed −3 dB corner; the same preset into the catalog's real
-  1 Ω synth source sits far above 20 kHz — modelled-but-inaudible **by design**, matching §9. The audible
-  payoff waits on Epic-5 high-Z instrument sources.
-- **Pure `connections.ts` (Vitest-tested)** — the legality predicate (output→input, same domain, self-loop
-  + **feedback-cycle rejection** via a DFS `wouldCreateCycle`, fan-in→replace, duplicate), cubic-bezier
-  cable geometry + point-near-curve hit-testing, and the cable-spec↔type-id round-trip. Rendering-free
-  (type-only imports), the "tests are the oracle" temperament applied to the UI. Client-side cycle
-  rejection means a bad patch never reaches `compile`, so there's no async-`BuildError` revert to handle.
-- **Cable rendering — two layers behind a thin `WorldView` seam.** `WorldView` gained `overlay` +
-  `underlay` snippets (both handed a `WorldApi` coordinate converter, `bind:api` for measurement) and a
-  per-item `background` flag; the world layer still knows only positioned boxes (WebGL escape hatch intact).
-  Cables draw **in front** of a device when it shows its back (you see the plug) and **behind** when it
-  faces front (tucked away); stacking is rack frame (0) → behind-cables (1) → panels (2) → front-cables.
-  A shown-back end anchors to the **DOM-measured socket** (`getBoundingClientRect` → surface space,
-  correctly reflecting the 3-D flip); a front-facing end **estimates** the socket near the chassis centre.
-- **Drag-to-connect + inspector.** Jacks carry a `data-jack` tag; a window-level pointer drag draws a
-  rubber-band with live green/red feedback, snapping to a candidate jack; a legal drop commits + hot-swaps
-  (fan-in replaces the occupied input's cable). Clicking a cable/portal opens a **cable inspector** (type
-  dropdown for analog — *Ideal wire* + presets; "ideal" note for digital; disconnect). A fresh analog
-  connection defaults to a transparent patch cable.
-- **Cross-space portals (snakes MVP).** A connection with one end in the shown room renders as a labelled
-  portal stub (`→ Room`); created by moving a patched device to another room (the engine sees a plain mono
-  connection throughout). Full bundle-into-one-line UX stays deferred.
-- **Detours folded in (not bugs):** (1) **panel layout** reworked so thin 1U rack units stop clipping —
-  chassis is a CSS **size container**, header/jacks/padding scale with **container units capped at the old
-  rem**, the **back panel is a horizontal jack row**, and the device **name floats in the corner** (the
-  header no longer steals height). (2) The **pull-out clearance step was removed** (flip is now direct;
-  scene `SCHEMA_VERSION` 4→5, no migration). (3) **Rack frames restacked** below the cable underlay so a
-  cable between two rack units stays visible.
-- **Known limitations (recorded):** ~connector **`kind` is not enforced**~ **now enforced** via a physical
-  `Connector` model (see the design note above, 2026-07-03); a **fan-out drag from an
-  already-connected output** is blocked by its own cable's hit-path (delete the cable to re-patch); the
-  **snake bundle** is minimal (per-cable stubs sharing a room label); the cable effect is **inaudible by
-  design** with today's low-Z sources.
-
-#### Story 4.5 — Visualization: meters + analog-domain readouts (the node→host lane) — ✅ **Done**
-
-_Goal:_ the distinctive **visualization payoff** — *gain-staging across the AD/DA boundary made visible* —
-on the proven engine. It delivers the genuinely-new **node→host scalar readout lane** (the engine's third
-control lane: it has host→node params and routed events, but **nothing node→host** today), a voltage-native
-**`VuMeter`** node (analog VU/dBu) and a **digital dBFS meter** node sharing that lane, and the **static
-analog-domain readout** of **per-connection loading loss** read off the compiled edge gains. Rendered as
-device **meter screens**, in the 4.4 **cable inspector** (per-cable dB loss), and as a **global levels
-panel**. Anchors to PROJECT_PLAN §4 (Port/Device model surfaced as readings) and §7 (UI as a pure consumer),
-and to the Epic-4 "metering = a node + a readout lane" decision settled at 4.2 planning. **Scope + spectrum
-FFT are Story 4.7**, not this Story (waveform probes are a different mechanism — see below).
-
-_Watch out:_
-
-- **The readout snapshot runs on the audio thread.** The schedule snapshots each node's readings **once per
-  block** (not per sample) after the step loop — so `Node::read_readouts` must be **zero-alloc, panic-free,
-  total** (it writes into a pre-sized slice). The meters' ballistics run *inside* `process` per sample —
-  same hot-path discipline (denormal-flush the one-pole state).
-- **Single-threaded in-worklet, so no lock-free ring.** The readout store is engine-owned and read after the
-  block completes, exactly like params/events are SPSC-shaped but exercised single-threaded (Epic-3 model).
-  **Do not** build a cross-thread SAB ring for readouts — it's the same deferred retrofit as the event ring,
-  justified only if a Worker execution model ever lands.
-- **Measurement is a node; it must emerge from the volts.** Never bolt a reading getter onto `GainStage` /
-  `AdConverter` / the speaker — the meter is its **own inserted node** computing a scalar from the signal it
-  taps. The **one** honest exception is **loading loss**, which is an *edge* property, not a node: source it
-  from the **baked `EdgeTransform.gain`** the schedule already computed (never recompute it in `devices`).
-- **Meters must be signal-transparent.** `VuMeter` / the digital meter are **inline passthrough** (high-Z
-  bridge, near-unity), so inserting one anywhere in a chain doesn't change the sound (assert it). They add no
-  randomness (determinism preserved).
-- **Loading loss reads the *baked* gain**, which already accounts for fan-out parallel loading — don't
-  reconstruct it from a single branch's divider.
-- _Scope guard:_ **no raw per-sample ring taps, scope, or spectrum FFT** (→ Story 4.7); **no phantom-presence
-  readout** until a condenser-mic *device* is cataloged (Epic 5 — nothing in the default catalog supplies
-  phantom to read); **no clip readout bolted onto `GainStage`** (headroom is UI math from the meter's peak;
-  the honest hard-clip indicator is the **digital meter at 0 dBFS**). Master-output VU stays UI chrome.
-
-_Design notes (settled at planning):_
-
-- **The readout lane is getter-based; `Node::process` is unchanged.** A node declares `readouts() ->
-  &[ReadoutDecl]` (mirroring `params()`), computes its reading into its own state during `process`, and the
-  schedule pulls it via a new defaulted `read_readouts(&self, out: &mut [f32])` in a one-pass snapshot after
-  the step loop. The schedule owns a flat `readout_store: Vec<f32>` contiguous by node
-  (`readout_base`/`readout_count`), resolved by `Schedule::readout(node, id) -> ReadoutHandle` — the exact
-  mirror of the param store. _Rejected:_ adding a `readouts: &mut [f32]` 4th argument to `process` — the
-  clean symmetry with `Params`, but it ripples through **every** `Node` impl and test helper for a feature
-  only meter/probe nodes use; the getter keeps the change to the two meter nodes.
-- **A meter is a node (settled 4.2), split into measurement + exposure.** _(1)_ `VuMeter` — voltage-native,
-  bridging `InputZ`, ~300 ms quasi-RMS ballistics, calibrated `0 VU ≙ +4 dBu ≙ 1.228 V RMS`; a **digital
-  meter** — peak/RMS **dBFS** on a `SampleBuffer` (via the existing `level.rs` helpers). _(2)_ both surface
-  their scalar(s) through the new lane. Two nodes (not one) so the **across-converter** story is complete —
-  read dBu on the analog side of the AD and dBFS on the digital side; the second node is cheap since the
-  lane, handle resolution, catalog `readouts` metadata, and meter screen are shared.
-- **Meters are inline passthrough**, insertable at any point in a chain. _Rejected:_ a sink (input-only)
-  meter — simpler node, but it can't sit mid-chain (only hang off a fan-out), which is the common "meter this
-  point" gesture.
-- **The master-output VU stays UI chrome.** It keeps reading the already-exposed `out_ptr` buffer (the host
-  monitor level — an honest signal, throttled ~47×/s). A placeable `VuMeter` **device** is the real
-  node-readout meter. _Rejected:_ forcing a `VuMeter` into the default scene to back the master VU — it
-  conflates "the monitor level" (host chrome, outside the sim) with "a meter device in the signal path."
-- **Static loading loss comes from the schedule's baked edge gains.** The schedule exposes its per-analog-edge
-  gain; `build_patch` correlates each scene `Connection` to its graph edge and `BuiltScene` answers
-  `connection_loading_loss(i) -> Option<f32>` in dB (`20·log₁₀(gain)`). _Rejected:_ recomputing loss in
-  `devices` from the endpoints' impedances — duplicates the compile-time local solve and gets **fan-out
-  parallel loading wrong** (a branch's loss depends on its siblings).
-- **Readings reach the page as a throttled `readouts` postMessage snapshot** (like the existing `level`
-  message), keyed by device id through the live `BuiltScene` maps, so it survives a hot-swap; static
-  connection losses ride the `ready`/post-swap handshake (like the catalog). _Rejected for now:_ a zero-copy
-  `Float32Array` view over the readout store — readouts are tiny and low-rate, and a zero-copy view needs its
-  offset map rebuilt on every swap; adopt it only if the snapshot cost ever bites (measure-driven, like SIMD).
-- **Scope + spectrum are Story 4.7 (reshaped at pickup).** The sketch bundled them into 4.5; a **scalar
-  readout** (a few numbers per block) and a **raw-sample waveform probe** (a high-rate zero-copy ring, plus
-  an FFT) are genuinely different mechanisms, and the 4.2 note already said "design the scalar lane first;
-  rings are for waveform probes." Splitting keeps 4.5 to one coherent week and lets the ring/FFT be designed
-  on its own terms.
-
-- **Task 4.5.1 — The node→host readout lane (engine core).** New `readout.rs` (`ReadoutId` / `ReadoutDecl` /
-  `ReadoutHandle`, mirroring `param.rs`); `Node::readouts()` + `read_readouts()` defaulted no-ops; the
-  schedule builds the readout store at compile and snapshots it each block (one pass, zero-alloc, panic-free);
-  `Schedule::readout(node, id)`. Exercised with an in-tree test node emitting a known scalar. _Done:_ the test
-  node's reading resolves and appears in the store after a block; the `no_alloc` counting-allocator test stays
-  green; `read_readouts` is total over out-of-range handles.
-- **Task 4.5.2 — `VuMeter` node (analog, inline passthrough).** `node/vu_meter.rs`: analog in→out high-Z
-  bridge, near-unity passthrough; VU (300 ms quasi-RMS one-pole, coeff baked in `prepare`) + peak-dBu
-  readouts. _Done (hand-calc oracle):_ a **1.228 V RMS** sine settles to **0 VU** (calc in a comment:
-  +4 dBu = 0.775·10^(4/20) V RMS, with the sine average↔RMS form-factor folded into the calibration);
-  passthrough is signal-transparent into a high-Z load (asserted); the reading reaches the store.
-- **Task 4.5.3 — Digital dBFS meter node.** `node/*` digital meter: `SampleBuffer` in→out passthrough; peak +
-  RMS **dBFS** via `level.rs`. _Done (hand-calc oracle):_ a **0.5-full-scale** sine reads **−6.02 dBFS** peak
-  (`20·log₁₀(0.5)`, calc in a comment); passthrough copies samples exactly.
-- **Task 4.5.4 — Static loading-loss surface (engine + build).** Expose the baked per-analog-edge gains from
-  `Schedule`; `build_patch` correlates scene connections → graph edges; `BuiltScene::connection_loading_loss`
-  in dB. _Done (hand-calc oracle):_ `z_out = 150 Ω` into `z_in = 10 kΩ`, no cable → **−0.129 dB**
-  (`20·log₁₀(10000/10150)`, calc in a comment); adding a cable's series R increases the loss as computed.
-- **Task 4.5.5 — Catalog: meter devices + readout descriptors.** Add `vu_meter` + digital-meter `CATALOG`
-  entries; extend `DeviceDescriptor` with a `readouts` list (engine-truth ids/count derived from the node,
-  labels/units hand-authored), and extend `catalog_aligns_with_exposed_face` + `descriptors_carry_engine_truth`
-  to readouts; mirror in TS `catalog.ts`. _Done:_ descriptors carry the meters' readout ids + labels; the
-  alignment tests cover readouts; native + wasm serialization pass.
-- **Task 4.5.6 — `SceneEngine` + worklet: readout snapshot + losses.** `BuiltScene` resolves `(device,
-  readout id) → ReadoutHandle`; `SceneEngine` exposes a readout snapshot keyed by device id and a
-  connection-loss accessor; the worklet posts a throttled `readouts` message and ships losses in
-  `ready`/post-swap; `engine.ts` gains the message types + handlers. _Done:_ a native `SceneEngine` test — a
-  scene with a `VuMeter`, after a note, reports a non-idle reading addressed by `(device, id)`, and losses
-  resolve; in-browser the readings update live and survive a hot-swap.
-- **Task 4.5.7 — UI: meter screens, cable-inspector loss, global levels panel.** Drive a device meter screen
-  (reuse the `Vu` widget / a meter `Screen`) from the live readouts; add per-cable loading-loss dB to the 4.4
-  cable inspector; a global "signal path / levels" panel reading across the AD/DA boundary; add the meters to
-  `defaultScene`. Pure display/formatting logic is Vitest-tested. _Done:_ in-browser the meters move with the
-  signal, the cable inspector shows each cable's dB loss, and the global panel shows dBu→dBFS across the
-  converter; the master-output VU is unchanged (chrome); the `web` `check`/`typecheck`/`build` + Vitest pass.
-
-_Validate:_ ✅ **met.** A `VuMeter` and a digital dBFS meter, placed in a scene through the UI, show **live**
-readings via the new node→host lane (VU/dBu on the analog side of the AD, dBFS on the digital side — gain-staging
-across the boundary made visible); the cable inspector shows each analog connection's **loading loss** in dB
-and the global panel lists levels/losses along the chain; meters are **signal-transparent** (inserting one
-doesn't change the sound) and the readout snapshot survives a hot-swap; the engine gains **only** the readout
-lane + two meter nodes and stays UI-free; the full Rust gate (`cargo fmt --check && cargo lint && cargo test
-&& cargo wasm && cargo docs`) plus `wasm-pack build` and the `web` `check`/`typecheck`/`build` pass; verified
-in-browser by eye.
-
-_Delivered:_ the node→host **readout lane** (the engine's third control lane) with two voltage-native meter
-nodes, a static **loading-loss** annotation off the compiled edges, surfaced as device meter screens, a
-cable-inspector loss line, and a global levels panel. The engine gained only the readout lane, the two meter
-nodes, and an `edge_gain` readback; it stays serde-free and UI-free. Scope + spectrum (waveform probes) were
-split out to **Story 4.7** at pickup.
-
-- **Readout lane (engine core).** New `readout.rs` — `ReadoutId` / `ReadoutDecl` / `ReadoutHandle`, mirroring
-  `param.rs`. `Node` gained defaulted `readouts()` + `read_readouts(&self, &mut [f32])`; **`process()` is
-  unchanged** (getter-based, chosen over a 4th `process` arg to avoid rippling every node). `Schedule` owns a
-  flat `readout_store` contiguous by node, snapshotted **once per block after the step loop** (zero-alloc,
-  panic-free — the `no_alloc` guard stays green), resolved by `readout(node, id)` / read by
-  `readout_value(handle)`, both total over stale handles.
-- **`VuMeter` node** (analog, inline passthrough: 1 MΩ bridge, 150 Ω out, unity). VU (quasi-RMS one-pole,
-  τ≈65 ms ⇒ ~300 ms to 99 %, baked in `prepare`) + peak-dBu readouts. Calibrated `0 VU ≙ +4 dBu ≙ 1.228 V
-  RMS` via the sine form factor `2√2/π`. **Oracles:** a 1.228 V RMS sine ⇒ 0 VU; its peak ⇒ +7.01 dBu.
-- **`DigitalMeter` node** (digital, inline passthrough). Per-block peak + RMS **dBFS** (the block is the
-  ~21 ms integration window — no ballistic state), full scale = 0 dBFS. **Oracle:** a 0.5-FS sine ⇒ −6.02 dBFS
-  peak / −9.03 dBFS RMS.
-- **Static loading loss** = the §5.3 impedance divider, read back — *not* a live meter (settled with Oskari
-  during the task). `Schedule` records the baked per-edge divider gain (`edge_gain`, fan-out-aware; `None` for
-  digital/event edges); `build_patch` correlates each scene connection to its graph edge; `BuiltScene::
-  connection_loading_loss(i)` returns `20·log10(gain)` dB. Kept **out** of the readout lane, so the measured
-  path stays pure. **Oracle:** `da(150 Ω)→spk(10 kΩ)` ⇒ −0.129 dB; a 1 kΩ cable deepens it to −0.946 dB.
-- **Catalog + resolution.** `vu_meter` + `digital_meter` entries; `DeviceDescriptor` gained a `readouts` list
-  (engine-truth id + authored label/unit) and `BuiltDevice` a readout map; `BuiltScene::readout(device, id)` +
-  `readout_snapshot()`; `SceneEngine::readouts()` / `connection_losses()` (JS values). TS `catalog.ts` mirrored.
-- **Transport.** The worklet posts a throttled `readouts` message (~47×/s, keyed by device id so it survives a
-  hot-swap) and ships the static `losses` in `ready` **and once after each swap** (a `lossesDirty` flag) — not
-  per frame, as designed. `engine.ts` gained the message types + **optional** `onReadouts`/`onLosses` handlers.
-  _Scalar snapshot over `postMessage`_ (a zero-copy readout view stays deferred — measure-driven).
-- **UI.** New `Meter.svelte` (unit-aware bar: VU / dBu / dBFS scales); `Panel` renders a meter screen for a
-  device with readouts; the **cable inspector** shows the analog connection's loading loss (labelled as the
-  impedance divider, not a meter); a global **“Signal path — levels & losses”** panel lists every meter's live
-  readings and each analog connection's loss. The **default scene** became `synth → gain → VU → AD → digital
-  meter → DA → speaker` (so dBu↔dBFS across the converter shows out of the box); `SCHEMA_VERSION` 5→6.
-- **Known simplifications (not bugs):** loading loss is the **resistive divider only** — cable rolloff and
-  coupled interference emerge via the meters, not this number; the master-output VU stays **host-monitor
-  chrome** (`out_ptr`), distinct from the placeable `VuMeter` device; the readouts snapshot is re-serialized per
-  throttle tick (tiny — a handful of scalars); a **phantom-presence** readout is deferred to Epic 5 (no
-  condenser-mic device is cataloged yet to attach it to).
-#### Story 4.6 — The spatial world, part 2: room walls + multi-view — ✅ **Done**
-
-_Goal:_ finish the spatial sim (PROJECT_PLAN §5 "model in 3-D, render in 2-D"; §9 Stage 4 "build and
-operate a small studio through the UI"). A space becomes a **rectangular room with four walls**: you
-**turn between wall-elevation views** (front — with a window to the live room; back — where the racks
-live; the shorter left/right sides) and a **top-down floor plan** of the same room, arranging gear across
-the walls (grid-snapped) from above. Wiring works **across walls/rooms** too — a click-to-pick patch that
-survives a view switch, with draggable portal chips for the off-view ends. All of it is UI/scene-`ui`
-state — the engine and runnable `patch` gain **nothing** (the epic's "spaces are a UI concept" decision).
-This is the deferred half of 4.3, kept cheap because 4.3 stored the full 3-D coordinate truth already.
-
-_Watch out:_
-
-- **Engine + `patch` gain nothing.** Rooms, walls, views, and portals are all TS/scene-`ui`; the
-  worklet still receives only the `patch` projection (no rooms/walls/positions). **No Rust change** — if a
-  task wants one, something is being modelled in the wrong layer.
-- **Single coordinate truth — never per-view 2-D positions.** A placement keeps its one `(x,y,z)` truth +
-  a `wall` tag; each wall view is a **projection** of it (the trap 4.3 called out). Storing a separate 2-D
-  position per wall is the drift bug.
-- **The "4.3 clearance gate" does not exist in the landed code.** 4.3's notes describe a `pulledOut`
-  clearance step, but the shipped `Placement` is `{space, position, rack?, facing}` and `toggleFlip` is
-  direct. So flipping to a device's back stays a direct, ungated action — there is no clearance/reach
-  gate on operating (see the dropped-reach design note).
-- **Keep the world layer thin.** `WorldView` still knows only positioned boxes + pointer mechanics; wall /
-  top projection, view switching, portal stubs, and the operate/rearrange gate live in the **parent** —
-  the WebGL escape hatch stays intact.
-- **Cross-view cables can't draw as one lead.** Only one wall of one space renders at a time, so a cable
-  whose endpoints aren't both in the current view must reuse the **4.4 portal stub** (generalized from
-  "not in this space" to "not in this view").
-- **Default-scene UX.** The studio must be usable out of the box — the starting wall shows real gear (not
-  the empty window wall) at a zoom where controls are operable; don't spawn it zoomed-out-locked.
-- _Scope guard:_ **views + cross-view patching + grid-snap only.** No operator avatar / reach gate, no new
-  devices or probes, the window stays **decorative**, and cross-space audio stays the existing 4.4
-  portal-cable mechanism (now drawable across walls/rooms, not just pre-authored).
-
-_Design notes (settled at planning):_
-
-- **Operator reach — dropped entirely (decision at build).** The sketch's "operator position + reach" was
-  first reshaped into a **zoom-threshold gate** (no avatar: zoom out ⇒ rearrange-only, zoom in ⇒ operate),
-  then **cut altogether** — it complicated the interaction (a locked/operable split across every control,
-  jack, and flip) without enough payoff for a single-operator sandbox. So there is **no reach or zoom gate**:
-  all gear in the current view is always fully operable. _Rejected first:_ an operator entity with a floor
-  position + reach radius (a whole walk/distance-gating subsystem). _Then rejected:_ the zoom-threshold
-  fallback (per-control lock state, a "zoom in to operate" mode). If a reason to gate interaction ever
-  appears (e.g. a challenge/game layer in Epic 5), revisit then — the 3-D truth needed for it is already stored.
-- **A space is a rectangular room with four walls.** A `Space` gains authored `width × depth (× height)`;
-  the four walls (front/back/left/right) fall out of the rectangle — left/right are **shorter** when
-  depth < width, as they should be. Each wall is an **elevation view** you turn between; a **top-down floor
-  plan** shows the whole room. `wallProjection(pos, size, wall, room)` maps the 3-D truth to a wall
-  elevation (front/back → `(x,y)`; left/right → `(z,y)`; back/right **mirrored** so left/right read
-  correctly when you turn around); `project(…, "top")` (already shipped + tested in 4.3) maps the floor plan.
-- **Wall = explicit tag, not derived.** Each `Placement`/`Rack` carries `wall`; the wall view renders gear
-  tagged there. _Rejected: deriving the wall from the floor position_ (nearest wall) — ambiguous for
-  centre-room gear, couples "which view" to exact coordinates, and is harder to test.
-- **Wall elevation reuses the 4.2/4.3 detail machinery; top view is layout-only.** In a wall view gear
-  renders as full **panels** (knobs/jacks/patching) and racks as **U-slot columns** — the current
-  front-elevation code, generalized to the current wall. In **top view** gear renders as **labelled
-  footprint boxes** (a rack is one box; its mounted gear is hidden **inside** — you can't see U-slots from
-  above), no panels/cables, drag-to-rearrange + grid-snap. This is the "top = layout, front = detail" split.
-- **Cross-view cables → portal stubs (reuse 4.4).** A cable whose endpoints aren't both in the current
-  view draws as a labelled stub, exactly like the 4.4 cross-space portal — the visibility test generalizes
-  from "same space" to "same space **and** same wall."
-- **The window is decorative.** Drawn on the front wall as room detail; space switching stays on the
-  existing tabs. _Rejected: window-as-functional-portal_ (route cross-space cables through it) — integration
-  scope beyond a views story. _Rejected: front + back walls only_ — all four generalize cheaply once the
-  model + top view exist (chosen: **all four**).
-- **View state is ephemeral; room/wall data persists.** The current wall/top view is App state (default
-  front), like `currentSpace`; room dims + per-placement `wall` (+ dragged portal offsets) are scene `ui`.
-  `SCHEMA_VERSION` bumps **6→8** across the story (7 = rooms + wall tags, 8 = portal offsets); **no
-  migration** (localStorage is disposable — the default scene is redefined as a proper room).
-- **Grid snap** on free placement (both views) via a pure `snapToGrid` helper; rack mounting keeps its
-  existing U-slot snapping.
-- **Cross-view patching = click-to-pick (not drag).** A single drag can't cross a view switch, so a
-  *click* on a source jack holds a **pending** cable that survives turning to another wall/room; a second
-  click on a destination jack commits (same `evaluateConnection` legality + `loadPatch` hot-swap). Same-wall
-  drag-to-patch is kept. This also retires 4.4's limitation that cross-space cables could only be
-  pre-authored, never drawn. Portal chips are **draggable** (offset persisted per connection-end) so they
-  can be moved out of the way.
-
-- **Task 4.6.1 — Pure spatial extensions: wall projection + grid snap (TS, Vitest).** ✅ Add a `Wall` type
-  (`front|back|left|right`) + a room-dims type; `wallProjection(pos, size, wall, room)` → an elevation
-  `Rect2` (y-up), mirroring back/right; `snapToGrid(v, step)`. Reuse the shipped `project(…, "top")` for the
-  floor plan. _Done/validate:_ Vitest hand-calc cases for each wall (incl. a mirrored back/right box and a
-  left/right unit projected on the **depth** axis) + grid-snap edges; the module imports no DOM/Svelte.
-- **Task 4.6.2 — Scene `ui`: rooms + wall tags + store (SCHEMA 6→7, no migration).** ✅ `Space` gains
-  `width/depth/height`; `Placement` and `Rack` gain `wall`. Redefine `defaultScene` as one rectangular
-  Control Room — the 8U rack against the **back** wall, synth + speaker along the **front** (which carries
-  the decorative window) — and bump `SCHEMA_VERSION`. _Done/validate:_ a scene round-trips rooms + wall
-  tags through save/load; a stale version is discarded; the worklet still receives only `patch`; the
-  updated `scene-store` tests are green.
-- **Task 4.6.3 — Wall-aware elevations + view switching (generalize the front view to four walls).**
-  ✅ `deviceRect`/`rackRect`/`placedItems` become wall-aware (filter to the current wall, project via
-  `wallProjection`); a **view switcher** turns between front/back/left/right; the decorative window draws
-  on the front wall; cross-view cables render as **portal stubs** (the 4.4 mechanism, "not in this view").
-  _Done/validate:_ you turn between all four walls; gear appears on its tagged wall; within-wall patching
-  works; a cross-wall cable shows as a labelled stub. Verified in-browser.
-- **Task 4.6.4 — Top-down floor plan + arrange + grid-snap.** ✅ Add **top** to the switcher: render the room
-  rectangle + every device/rack as a **labelled footprint box** (via `project top`), panels/cables hidden,
-  a rack a single box with its mounted gear hidden; **drag to rearrange** on the floor (updating `x`/`z`
-  and **re-tagging the wall** when dragged against a different wall), grid-snapped. Reuse `WorldView` with a
-  top-mode `item` snippet. _Done/validate:_ top view shows the whole room; rearranging racks/gear
-  (grid-snapped) reflects in the wall views; a wall re-tag on drag takes effect. Verified in-browser.
-- **Task 4.6.5 — Cross-view patching (click-to-pick, survives a wall/room switch).** ✅ A *click* on a source
-  jack holds a **pending** cable that survives turning to another wall/room; a second click on a
-  destination jack commits (`evaluateConnection` + `loadPatch` hot-swap); same-wall drag-to-patch stays.
-  Esc / re-clicking the source cancels; a "patching from…" banner shows the held state. _Done/validate:_
-  patch synth (front) → a rack unit (back) by clicking across a view switch; illegal jacks stay pending;
-  cross-space patching works the same. Verified in-browser.
-- **Task 4.6.6 — Draggable portal chips (persisted offset).** ✅ The cross-view portal stubs become
-  draggable so they can be moved out of the way; the offset (from the jack anchor) persists per
-  connection-end in scene `ui` (`SCHEMA_VERSION` 7→8, no migration). _Done/validate:_ drag a portal chip,
-  it stays put across save/load; each end moves independently; selecting the cable via its stub still works.
-  Verified in-browser.
-
-_Validate:_ ✅ **met.** You turn between all four wall-elevations of a rectangular room + a top-down floor
-plan of the same room; the rack sits on the **back** wall and the synth/speaker + window on the **front**;
-arranging gear in top view (**grid-snapped**) reflects across the wall views; within-wall patching works and
-cross-view cables show as **portal stubs** you can **patch across** and **drag out of the way**. The pure
-spatial logic (wall projection, grid snap, nearest-wall) is **Vitest-unit-tested**; the scene round-trips
-rooms + wall tags + portal offsets (`SCHEMA_VERSION` 6→8, no migration); the **engine and `patch` gained
-nothing** (no Rust change). `web` gate green (Vitest 147 tests, Biome, `svelte-check` 0 errors, `vite build`).
-
-_Delivered:_ the studio became a **rectangular room with four walls + a floor plan**. Pure spatial math
-lives in `web/src/spatial.ts` (`wallProjection`, `orientedSize`, `elevationToWorld`, `nearestWall`,
-`snapToGrid`), hand-calc-tested in `web/test/spatial.test.ts`. A `Space` now carries `room` dims and every
-`Placement`/`Rack` a `wall` tag (scene `ui` only — the worklet still receives just the `patch` projection);
-the default scene is a 4000×3000 Control Room with the 8U rack on the back wall and synth + speaker + a
-decorative window on the front. A **front/back/left/right/top view switcher** drives wall-aware elevations
-(`projection.ts` filters+projects to the current wall) and a top-down floor plan (labelled footprint boxes,
-drag-to-rearrange with grid-snap + wall re-tag). Cross-view cables draw as the generalized 4.4 **portal
-stubs**, now **draggable** with per-connection-end offsets persisted in scene `ui`; and patching gained a
-**click-to-pick** mode (`patching.ts`) whose pending cable survives a wall/room switch, retiring 4.4's
-pre-authored-only limitation. The whole story survived the mid-flight App.svelte split (`spatial`,
-`projection`, `cable-view`, `patching`, `placement`, `scene-ops`, `params`, `jack-anchors`) with the
-engine/`patch` contract untouched.
-- **Story 4.7 — Visualization, part 2: scope + spectrum (waveform probes).** Split out of Story 4.5 at its
-  pickup: the **raw per-sample tap** surface a scope and spectrum need — a distinct mechanism from 4.5's
-  scalar readout lane. A **zero-copy sample ring** (à la `out_ptr`, tapping a node/port's block), a **scope**
-  rendering the waveform on a device screen / global tool, and an **FFT spectrum**. Builds on the 4.5 probe
-  addressing (`(device, probe id)` through `BuiltScene`) and the meter-screen UI. _Open at pickup:_ the ring
-  shape + who owns it (engine-owned buffer vs. exposed pool lane); **FFT in the engine vs. JS** (a JS FFT
-  keeps the engine lean; an engine FFT keeps the DSP in one place — measure); tap cost on the hot path;
-  which probes are device-embedded vs. global. _Scope guard:_ waveform probes only — the scalar meters +
-  analog-domain readouts are 4.5.
-- **Story 4.7 — Visualization, part 2: scope + spectrum (waveform probes).** _(Still coarse — planned when
-  picked up. Independent of 4.8: a distinct per-sample-tap mechanism, no shared surface. Being built after
-  4.8.)_
-
-#### Story 4.8 — Device focus mode + the interaction seam (retires the global virtual keyboard) — ✅ **Done**
-
-_Goal:_ from `docs/IMPROVEMENTS.md` — kill the global QWERTY "virtual keyboard" (today a `window` listener
-wired **once to the first playable synth** at startup, `App.svelte:426–428` — a recorded 4.3 limitation) and
-replace it with a general **focus mode**: click a device that warrants deep control (synth, console; later a
-DAW) to open a large, device-specific **interaction surface**, with note/param input scoped to the focused
-device. The generalization is the point (PROJECT_PLAN §5 "operate gear through the UI"; §9 Stage 4) — not "a
-keyboard for synths" but a rich surface per complex device type. Almost entirely a `web/` story (focus is UI
-state like spaces/racks); the engine gains **one** generic event node (below) and `synth_voice` is unchanged.
-
-_Watch out:_
-
-- **Engine gains exactly one node; `synth_voice` and the runnable `patch` are untouched.** The only Rust
-  change is the generic event-forwarder node + a `midi_controller` catalog entry. If a task wants more engine
-  surface (a "keyboard" node, an internal keys→voice edge), it's modelling the interaction seam in the wrong
-  layer — see the Option-B note.
-- **Focus is transient UI state, never scene `ui`.** `focusedDevice: string | null` in `App.svelte`, like the
-  cable-inspector selection — not persisted, not sent to the worklet. The overlay is a **peer** of the
-  existing `.patch-banner` / `.cable-inspector` floating divs inside `.stage`, **not** a `WorldView`
-  spatial-model change (the WebGL escape hatch stays intact).
-- **The keybed is not a node — it is the device's open events input.** Do not fabricate an internal
-  `keyboard → EventRoute → voice` edge; that would import MIDI where an analog synth has none (the leak we
-  reject). "Has keys" is a UI attribute of the focus surface, bound to the events input the engine already
-  exposes.
-- **Playability/focusability stay derived, not flagged.** `isPlayable` = "has an events input" already
-  (`catalog.ts:126`); the focus registry keys off `typeId` in TS. Keep the engine/`devices` layer free of
-  UI-presentation vocabulary — no catalog "focusable" flag.
-- **Ignore key/MIDI input while a form control is focused**, so typing in the cable-type `<select>` or a
-  future text field doesn't fire notes. Web MIDI access is still requested **once** (a permission); only the
-  **target** follows focus.
-- _Scope guard:_ the focus framework + the **synth keybed surface** + a **standalone MIDI controller** + **one
-  console surface** (`channel_strip`). **No** MIDI merge, **no** DAW device, **no** zoom/reach gate, **no**
-  new probes.
-
-_Design notes (settled at planning):_
-
-- **Two orthogonal seams.** A device's **ports = the signal seam** (how it wires to other devices —
-  analog/digital/**events** in/out, engine + catalog truth); its **focus surface = the interaction seam** (how
-  a human operates it once "sat down at it," UI-only). Every device with meaningful interaction registers a
-  focus surface; simple inline devices (converters, speaker) don't. The surface scales from a few knobs to a
-  keybed to a whole console to an entire DAW — one framework.
-- **Focus presentation = a dimming overlay, not zoom-to-device.** The overlay dims the world and renders the
-  surface large (Esc / click-away / close to exit; a basic focus-trap + keyboard enter/exit, matching the
-  existing overlay conventions). _Rejected: zoom-to-device in-world_ — less room for a keybed/console,
-  complicates keyboard capture, and brushes the already-rejected reach/zoom gate (4.6).
-- **A TS focus-surface registry keyed by `typeId`** decides focusability + which surface — following the
-  existing `synth_voice → Screen.svelte` (ADSR) precedent, **not** a catalog flag. Surfaces receive the same
-  props the in-world `Panel` gets (`params` / `ports` / `valueFor` / `readingFor` / `onParam`) plus, for
-  instruments, a `send`-note callback — so they reuse `onParamInput` / `readingFor` with no new plumbing.
-- **Input capture scoped to focus.** `wireKeyboard` / `wireMidi` stop targeting a fixed device at startup;
-  while an instrument surface is mounted they capture QWERTY + Web MIDI and emit `noteOn/noteOff` to
-  `focusedDevice`, detaching on unfocus. This fixes the recorded "wired once to the initial synth, doesn't
-  re-route" limitation for free.
-- **MIDI is a signal on a cable — inter-chassis only, never inside a device (Option B).** Event-edge routing
-  is **already built and tested** in the engine (`schedule.rs:484` `EdgeKind::EventRoute` →
-  `events_mut().copy_from(...)`; fan-out at `schedule/tests.rs:1391`); open event inputs + `event_input(device)`
-  exist (`build.rs:152`). What's missing is only a device that *emits* events. So:
-  - **The keybed is the device's open events input** ("performance in," source-agnostic: host-fed via focus
-    when open, edge-fed when a cable is patched). **How the keys reach the sound engine inside the chassis
-    (CV/gate on an analog synth, an internal bus on a workstation) is inside-the-box, out of scope** — the
-    same boundary drawn for circuitry / clock-recovery PLLs. A "synth with an attached keyboard" is just
-    `synth_voice` whose focus surface draws a keybed bound to its events input.
-  - **Internal event edges are legitimate only for real event processing** (an arpeggiator, a MIDI channel
-    filter) — never to represent the keys. The performance *source* is the open input; an internal event edge
-    exists only when a node genuinely transforms the event stream.
-  - **The one new node = a generic event-passthrough** (`EventThru`: copies its open events-in lane to
-    events-out, hot-path-safe). _Decided: generic, not a bespoke `MidiController` node_ — it's the degenerate
-    case of the event processors the design already foresees (arpeggiator, channel filter), so the primitive
-    should be reusable. The `midi_controller` catalog device is just this node with a MIDI-OUT + **MIDI-IN**
-    face (the host-fed input, per the exposed-face convention — realistic for thru/merge). Host injection
-    reuses the existing `note_on(device)` open-input path; once a controller's cable drives a synth's input,
-    that input is no longer open ⇒ `note_on(synth)` becomes a no-op automatically (falls out of `build.rs`).
-  - **The device shapes, from two primitives** (`events-in` = consumes a performance; `events-out` = produces
-    one): _MIDI controller_ = events-out (+ MIDI-IN jack), keybed surface, no sound; _keyboard synth_ =
-    events-in + audio-out, keybed+voice surface; _sound module_ = events-in + audio-out, voice surface only;
-    _mixing console_ = many analog I/O, full channel surface; _computer + DAW_ (future) = events-out + events-in
-    + audio I/O — **no new engine concepts** (reuses the same events cable + AD/DA seams).
-- **The console surface is a bespoke channel-strip layout, not a scaled `Panel`.** _Decided_ so the story
-  genuinely proves "a **richer** view from the same descriptor," not merely "the same view, bigger": a
-  `channel_strip` focus surface re-lays-out the identical descriptor params into a vertical strip (EQ knobs
-  stacked over a large fader), consuming `valueFor` / `onParam` with **zero engine change**.
-- **Default scene ships a controller pre-patched to the synth.** _Decided_ so the first-ever UI events cable
-  is exercised out of the box: focus the controller to play. The synth's own events input is then edge-driven,
-  so its keybed renders **disabled with a "driven by MIDI IN" hint** (computed from `scene.patch.connections`);
-  focusing the synth still exposes its voice controls. `SCHEMA_VERSION` bumps **9→10**, no migration
-  (localStorage is disposable — the default scene is redefined).
-
-- **Task 4.8.1 — Engine: generic `EventThru` node + `midi_controller` catalog device.** Add a hot-path-safe
-  event-passthrough node (open events-in → events-out copy; zero-alloc, panic-free) in `crates/engine`; add a
-  `midi_controller` catalog entry (events-out MIDI-OUT jack + events-in MIDI-IN jack, no audio, no params) in
-  `crates/devices`; regenerate the wasm catalog. _Done/validate:_ a schedule test drives a controller's open
-  input via the event queue and asserts the note reaches a downstream sink through the `EventRoute` edge
-  (hand-authored `TimedEvent`, asserted in the sink's lane — the analog-domain oracle convention applied to
-  events); `cargo fmt --check && cargo lint && cargo test && cargo wasm && cargo docs` green.
-- **Task 4.8.2 — Pure TS logic modules (Vitest, rendering-free).** Lift the note-mapping out of the global
-  listener into `notes.ts` (`KEY_SEMITONES` / `noteFor` / octave shift, from `engine.ts:190–235`); add
-  `focus.ts` — a registry keyed by `typeId` → surface kind, plus `isFocusable(desc)` / `focusSurfaceFor(typeId)`.
-  _Done/validate:_ Vitest hand-cases for the key→MIDI mapping (incl. octave shift edges) and the
-  registry/focusability; neither module imports DOM/Svelte; `pnpm run test` green.
-- **Task 4.8.3 — Focus overlay framework.** `focusedDevice: string | null` in `App.svelte`; click a focusable
-  device to focus it; a dimming overlay (peer of `.patch-banner` / `.cable-inspector`) renders the focused
-  device's surface large; Esc / click-away / a close button exit, with a basic focus-trap + keyboard enter.
-  A generic surface (the `Panel` props) is the baseline for any focusable device. _Done/validate:_ click a
-  device → its surface opens large over a dimmed world; Esc / click-away closes it; a non-focusable device
-  (converter/speaker) doesn't open. Verified in-browser.
-- **Task 4.8.4 — Synth keybed surface + focus-scoped input capture (retire the global keyboard).** An
-  on-screen piano + QWERTY keybed surface for `synth_voice` (keybed + the existing voice controls), bound to
-  the focused instrument's events input via a `send`-note callback; refactor `wireKeyboard` / `wireMidi` to
-  target `focusedDevice` — attach while an instrument surface is mounted, detach on unfocus, and ignore
-  key/MIDI while a form control is focused; drop the startup binding to `synthDevice`. _Done/validate:_ focus
-  the synth → play it from the on-screen keys, QWERTY, and (if present) Web MIDI, all scoped to it; unfocus
-  detaches; typing in the cable-type `<select>` fires no notes. Verified in-browser.
-- **Task 4.8.5 — Standalone controller wired to a synth (first UI events cable) + default scene.** Register
-  `midi_controller` as focusable with the keybed surface (events-out, no voice); redefine `defaultScene` to
-  ship a controller pre-patched to the synth via an events cable, and bump `SCHEMA_VERSION` 9→10 (no
-  migration). The synth's keybed renders disabled + "driven by MIDI IN" when its events input is edge-driven.
-  _Done/validate:_ out of the box, focus the controller → its keybed plays the synth **through the events
-  cable**; drawing/removing the controller→synth cable in the UI hot-swaps live (the first events connection
-  exercised in the UI); `note_on(synth)` is a no-op while driven. Verified in-browser.
-- **Task 4.8.6 — Console surface for `channel_strip`.** A bespoke channel-strip focus surface that re-lays-out
-  the `channel_strip` descriptor's params into a vertical strip (EQ knobs over a large fader), consuming
-  `valueFor` / `onParam` — no engine or catalog change. _Done/validate:_ focus a `channel_strip` → a richer
-  console view than its in-rack panel, driving the same params (moving a knob on the console moves it on the
-  rack panel and vice-versa). Verified in-browser.
-
-_Validate:_ ✅ **met.** Click a device to focus it; play a synth from its on-screen keybed + QWERTY + Web
-MIDI, **scoped to the focused device** (the global startup keyboard is gone); a **standalone MIDI
-controller** plays a synth through a **UI-managed events cable** (the default scene ships one pre-patched); a
-`channel_strip` opens a **richer-than-rack console surface from the same descriptor**; the pure logic
-(note-mapping / focus registry) is **Vitest-unit-tested**; the engine gained **exactly one generic event
-node** and `synth_voice` is unchanged; the `web` gate is green (Vitest 170, Biome, `svelte-check` 0 errors,
-`vite build`) and the full Rust gate passes.
-
-_Deferred → Epic 5:_ **MIDI merge** (local keybed + external MIDI into one input — the engine's
-one-source-per-input rule blocks it; a merger node if ever wanted); the full **computer/DAW device + surface**
-(no DAW device exists yet — the seam accommodates it).
-
-_Delivered:_ device **focus mode** — click a synth/console's **"open"** chip and it opens large over a dimmed
-world (`focusedDevice` in `App.svelte`, an overlay peer of the cable-inspector / patch-banner; Esc / click-away
-/ Close exit, autofocus into the dialog). The engine gained **one node** — a generic `EventThru`
-(events-in → events-out copy, hot-path-safe) — plus a `midi_controller` catalog device (that node with a
-MIDI-IN + MIDI-OUT face); `synth_voice` is unchanged, and the whole events-routing machinery (`EventRoute`,
-open event inputs, `note_on` no-op once an input is edge-driven) was already built and tested. Pure logic
-lives in **`notes.ts`** (QWERTY→note map + octave) and **`focus.ts`** (a `typeId` registry: instrument
-surface *derived* from `isPlayable`, console an explicit override), both Vitest-tested. `wireKeyboard` /
-`wireMidi` were rewritten as **device-agnostic note detectors**: `App` routes notes to the focused instrument
-via `playNote` (QWERTY attaches per-focus, MIDI's permission requested once, target follows focus, form-control
-keystrokes ignored) — retiring the "wired once to the first synth" limitation. New surfaces: an on-screen
-**`Keybed`** (the instrument surface, disabled + "driven by MIDI In" when its events input is cable-fed) and a
-**`Console`** channel-strip for `channel_strip` (the same descriptor re-laid-out into Input/Output fader
-columns, zero engine change). The **default scene** now ships a controller pre-patched to the synth over an
-events cable — the first-ever UI events connection, playable out of the box (`SCHEMA_VERSION` 9→10, no
-migration). _Known simplification (not a bug):_ the on-screen keybed is a fixed C4–C6 while QWERTY's Z/X can
-transpose beyond it (out-of-range notes just have no on-screen key to light), and the console renders gains as
-faders where the rack panel shows knobs (a deliberate presentation choice — same param).
-
-_Validate (epic exit):_ a small studio built, placed, patched across at least two spaces, played, and
-metered entirely through the UI; structural edits hot-swap glitch-free under sound; the UI touches only
-the published engine API.
+## Epic 4 — UI: Skeuomorphic Panels + Patch Cables — ✅ **Substantially complete** (4.7 deferred)
+
+**Progress:** Stories 4.1 ✅, 4.2 ✅, 4.3 ✅, 4.4 ✅, 4.5 ✅, 4.6 ✅, 4.8 ✅ done; **4.7 deferred**. The proven
+engine now has a **game-like studio UI** built entirely on its published API. 4.1 — the engine→UI seam: a
+new `devices` crate (device **catalog** + serializable **scene/`Patch` IR** + `build_patch`) and
+`SceneEngine` (scene-driven, generically controlled, hot-swappable) with a `catalog`/`parse_patch` JS
+bridge. 4.2 — the **skeuomorphic panel system** on a **Svelte 5** harness: a descriptor→panel renderer +
+widget vocabulary (knobs/faders/switches/jacks/screen/VU), front/back flip, a real `powered` param, and a
+host-side monitor volume. 4.3 — the **spatial world**: a pan/zoom front-elevation studio where gear lives
+at real coordinates, mounts in **rack U-slots**, moves between rooms, and is added/removed from a **catalog
+palette** (the hot-swap recompile path); pure Vitest-tested spatial logic behind a thin world layer (the
+WebGL escape hatch), engine untouched, the full 3-D coordinate truth stored. 4.4 — **patch cables &
+snakes**: drag-to-connect between back-panel jacks → `loadPatch` hot-swap, client-side legality (incl.
+feedback-cycle rejection), a cable inspector with pickable cable types (R·C rides the edge), front/behind
+layering, and cross-space **portal** endpoints. 4.5 — **visualization**: the node→host scalar readout lane,
+a `VuMeter` (analog VU/dBu) + a digital dBFS meter, and static per-connection loading-loss annotations,
+surfaced as meter screens, a cable-inspector loss line, and a global levels panel. 4.6 — **room walls +
+multi-view**: a space becomes a rectangular room whose four wall-elevations you turn between, plus a
+top-down floor plan, with cross-wall/room **click-to-pick** patching and draggable portal chips (operator
+reach was dropped as not worth the interaction cost). 4.8 — **device focus mode**: click a synth/console to
+open a large interaction surface (an on-screen keybed, a channel-strip console), with note/param input
+scoped to the focused device — retiring the global virtual keyboard — plus a standalone MIDI controller
+driving a synth over the first UI-managed **events cable** (one new engine node, `EventThru`).
+
+**Goal (delivered):** the product interface on the proven engine — a game-like studio you build by browsing
+a gear catalog, placing devices in racks and spaces, wiring them with patch cables and snakes, operating
+realistic skeuomorphic panels, playing and metering the result — glitch-free, with graph edits hot-swapping
+live under sound, the UI a **pure consumer of the published engine API** (never reaching into internals).
+
+> **Full design notes, rejected alternatives, per-task delivery records, and the settled sketch for the
+> deferred Story 4.7 live in [`EPIC_4_NOTES.md`](./EPIC_4_NOTES.md).** This section keeps only the decisions
+> and the delivered surface that constrain later epics — enough to make good follow-up decisions without
+> re-deriving Epic 4.
+
+### What Epic 4 delivered (engine + web surface)
+
+- **New `devices` crate** (engine + serde): the device **catalog** (real Rust node builders + internal
+  edges + a hand-authored UI descriptor, with numeric/domain fields _derived_ from the nodes so they can't
+  drift), the serializable **scene/`Patch` IR**, `build_patch` (device→node expansion, connection remap,
+  handle resolution), the **cable catalog** (R·C presets), and connector-type + domain **legality checks**.
+- **`wasm-bindings` — `SceneEngine`**: the real-time, scene-driven surface the AudioWorklet drains, built
+  from a serialized `Patch`, **generically controlled by device id** (params/notes/`loadPatch`), with a
+  **`loadPatch` hot-swap** (compile + `ScheduleSlot` swap) for every structural edit; plus the
+  `catalog()` / `parse_patch()` JS bridge and per-connection loading-loss reporting.
+- **The node→host readout lane** (engine): scalar probes addressed by `(device, readout id)` through the
+  built scene, refreshed each block off the hot path — the `VuMeter` (analog VU + peak dBu) and the digital
+  dBFS meter ride it. One new event node, **`EventThru`** (events-in→events-out copy), + a `midi_controller`
+  device; `synth_voice` unchanged.
+- **The `web/` app** (Svelte 5 + Vite + TS): a descriptor-driven skeuomorphic **panel** system (widget
+  vocabulary + front/back flip); a pan/zoom **spatial world** (`WorldView` — positioned boxes + pointer
+  mechanics; the WebGL escape hatch) with rooms as **rectangular four-wall rooms + a top-down plan**; racks
+  with U-slot mounting; a **catalog palette**; **patch cabling** (drag + click-to-pick, cross-view portal
+  stubs, cable inspector); **meters/levels** panels; and **device focus mode** (overlay surfaces: `Keybed`,
+  `Console`). Pure logic (spatial projection, patching state machine, note mapping, focus/params) lives in
+  Vitest-tested rendering-free `.ts` modules; the aesthetic layer (`skin.ts`) is UI-only.
+
+### Decisions that bind every later epic
+
+- **Spaces, racks, walls, placement, and focus are a UI concept — the engine/`patch` gain nothing.** The
+  worklet only ever receives the `patch` projection (devices + connections + output); rooms/positions/walls
+  /portals/focus are all TS + scene `ui`. A task that wants a Rust change to model any of them is modelling
+  in the wrong layer.
+- **The catalog holds the _specs_; the web layer holds the _rendering_.** The `devices` catalog declares a
+  device's capabilities/electrical truth (which ports exist, params, ranges, connector shape, dimensions);
+  how it _looks and is operated_ — faceplate/knob skins, which chassis face a jack is drawn on, focus
+  surfaces, keybed/console layout — lives in `web/`, keyed by `typeId`. Kept UI-presentation vocabulary out
+  of engine/`devices`.
+- **The UI is a pure consumer of the published engine API, generic by device id.** Panels/controls are
+  rendered _from the fetched catalog descriptor_ (never hardcoded), params/notes/edits addressed by id; the
+  UI never reaches into engine internals.
+- **Single 3-D coordinate truth per placement, projected per view.** A placement keeps one `(x,y,z)` + a
+  `wall` tag; every wall elevation and the top plan are _projections_ — never per-view 2-D positions.
+- **Every structural edit hot-swaps via `loadPatch`** (compile off-block + `ScheduleSlot`); connection
+  **legality is checked client-side** (domain + connector shape + feedback-cycle) mirroring the engine's
+  authoritative `build_patch`, so illegal patches never reach compile.
+- **MIDI is a signal on a cable, inter-chassis only.** Event routing rides the engine's `EventRoute` edges;
+  the keybed is a device's **open events input** (host-fed via focus, edge-fed when patched), _not_ a node.
+  A device that emits events is the only new piece (`EventThru`); no internal keys→voice edge.
+- **Two visualization mechanisms, kept distinct:** the **scalar node→host readout lane** (meters, this
+  epic) vs. **raw per-sample waveform probes** (scope/spectrum, Story 4.7). Don't conflate them.
+- **`SCHEMA_VERSION` stamps the localStorage save; it is disposable — no migration** (a mismatched save is
+  discarded and the default scene rebuilt). Ended the epic at **v10**.
+
+### Deferred — decided, not gaps
+
+- **Story 4.7 — Visualization, part 2: scope + spectrum (waveform probes).** The scalar readout lane (4.5)
+  already makes gain-staging visible; the **raw per-sample tap** a scope/FFT needs is a _different_
+  mechanism and wasn't required by the epic's exit criteria. It's independent of every shipped story (no
+  shared surface — which is why 4.8 was taken first). The settled sketch (zero-copy sample ring, scope +
+  FFT, engine-vs-JS FFT open question) is recorded in `EPIC_4_NOTES.md`; resume it when a scope/analyzer is
+  actually wanted (it sits comfortably alongside Epic 5's deeper-DSP work).
+- **Operator reach / zoom-to-operate gate — cut (in 4.6), not merely deferred.** An avatar-with-reach and
+  its zoom-threshold fallback both added a locked/operable split across every control for too little payoff
+  in a single-operator sandbox; all gear in the current view is fully operable. The 3-D truth needed to
+  revisit it (e.g. a challenge layer) is stored, so it's cheap to reintroduce if Epic 5 wants it.
+
+### Story-by-story (status + the one thing each settled)
+
+- **4.1 — Engine/bindings API + scene IR + device catalog** ✅ — the `devices` crate + `SceneEngine`.
+  Settled: the UI drives the engine **generically by device id** over a serialized `Patch`; the catalog's
+  numeric/domain descriptor fields are **derived from the nodes** (can't drift), only labels/kinds authored.
+- **4.2 — Skeuomorphic panels: controls→params, front/back, power** ✅ — the Svelte 5 panel renderer +
+  widget vocabulary. Settled: panels render **from the descriptor** (front = controls, back = I/O jacks);
+  `powered` is a real smoothed control param (de-clicked), not a structural edit; metering deferred to 4.5.
+- **4.3 — The spatial world: spaces, racks, placement, catalog browsing** ✅ — pan/zoom front-elevation
+  world, U-slot racks, catalog palette. Settled: **spaces/racks/placement are UI-only** (engine untouched);
+  a placement stores the **full 3-D coordinate truth** (so 4.6's multi-view stayed cheap); a thin world
+  layer keeps the WebGL escape hatch.
+- **4.4 — Patch cables & snakes → live graph mutation** ✅ — drag-to-connect → `loadPatch` hot-swap.
+  Settled: **client-side legality** (domain/connector/feedback-cycle) mirrors `build_patch`; the cable's
+  **R·C rides the edge** (inaudible into today's low-Z sources by design — audible payoff waits for Epic 5);
+  cross-space links draw as **portal stubs**.
+- **4.5 — Visualization: meters + analog-domain readouts (node→host lane)** ✅ — the scalar readout lane +
+  VU/dBFS meters + loading-loss annotations. Settled: probes addressed by **`(device, readout id)`** through
+  the built scene, refreshed **off the hot path**; scope + spectrum are a **separate mechanism → 4.7**.
+- **4.6 — The spatial world, part 2: room walls + multi-view** ✅ — rectangular rooms, four wall-elevations
+  - top plan, cross-view click-to-pick patching. Settled: **one coordinate truth projected per view** (a
+    `wall` tag, never per-view 2-D); **operator reach dropped**; the window stays decorative.
+- **4.7 — Visualization, part 2: scope + spectrum (waveform probes)** ⏸️ **Deferred (2026-07-03)** — see
+  _Deferred_ above; settled sketch in `EPIC_4_NOTES.md` should it resume.
+- **4.8 — Device focus mode + the interaction seam** ✅ _(the epic's UX capstone)_ — focus overlays +
+  focus-scoped input, retiring the global keyboard. Settled: **MIDI is a cable signal** (one new `EventThru`
+  node; the keybed is a device's open events input, not a node); focus/keybed/console are **web-layer
+  presentation** keyed by `typeId`; `synth_voice` unchanged.
 
 ---
 
@@ -1732,6 +532,8 @@ challenges layer on top of the sandbox.
 
 **Watch-outs:** multi-core only if profiling at scale demands it (single core covers stadium on the napkin).
 Keep device transforms understandable — spend the realism budget on the volts-and-converters layer.
+
+**Notes:** The stories in this epics are not related to each other unless \*otherwise stated. We can do them in any order or only do part of them
 
 _Tasks to be elaborated when we reach this Epic._
 
@@ -1752,6 +554,20 @@ _Tasks to be elaborated when we reach this Epic._
 - **Story 5.4** — Challenge / diagnostic-scenario framework on the sandbox. Includes the
   **ground-topology-derived hum** decision below ("fix the hum" is a named challenge scenario).
 - **Story 5.5** — Optional schematic / node-graph view over the same model.
+- **Story 5.6** — Device fidelity & the corner cases it forces. As devices get more faithful (a real
+  audio interface, a proper mixer with sends/inserts, a patchbay), they break simplifying assumptions the
+  earlier UI baked in; this is where those get collected and resolved (distinct from 5.1's breadth-of-
+  coverage — this is depth-of-realism). The layer rule holds throughout: the **catalog owns which ports
+  exist** (specs), the **web owns how they're drawn** (look & feel). _First known case — mixed-face I/O:_
+  Story 4.8's `skin.ioFace` is **per-device** (a whole device's jacks on one face — `back` default,
+  `front` for the MIDI controller). Real gear splits them — an audio interface puts **hi-Z instrument
+  inputs on the front** and line/digital/word-clock on the back. Planned generalization (design sketched,
+  **not built** — no device needs it yet): `ioFace` becomes a per-port resolver `(port) => front|back`
+  (naturally keyed off the port's signal-class `kind`, since hi-Z = instrument-kind) plus a
+  `controlsFace`, and `Panel` renders each face as _the controls (if it's the controls-face) **plus** the
+  jacks assigned to that face_ — subsuming today's controls-front/jacks-back and the controller's
+  all-front. Build it **with** the first device that needs it (rides in with 5.1's audio interface), not
+  before. Further fidelity corner cases accrue here as they surface.
 
 _Decision — ground-loop hum should become emergent from grounding topology (deferred to this Epic)._
 Today (Story 1.5) `Cable::with_hum` is a **manual** injection — the user asserts "a ground loop exists
