@@ -57,7 +57,16 @@ describe("rackSlotAt", () => {
   // rackRect(front) = { x:100, y:0, w:510.6, h:383.6 }; slotOy = 0 + FRAME_MARGIN(14) = 14.
   // Slot column spans x ∈ [100, 610.6], y ∈ [14, 14 + 8·44.45 = 369.6].
   const scene = makeScene(
-    [{ id: "r1", space: "s1", wall: "front", position: { x: 100, y: 0, z: 500 }, slots: 8 }],
+    [
+      {
+        id: "r1",
+        space: "s1",
+        wall: "front",
+        facing: "front",
+        position: { x: 100, y: 0, z: 500 },
+        slots: 8,
+      },
+    ],
     {},
   );
   const ctx = ctxOf(scene, "front");
@@ -112,7 +121,16 @@ describe("canPlace", () => {
 
   it("a rack is always legal (repositions freely)", () => {
     const withRack = makeScene(
-      [{ id: "r1", space: "s1", wall: "front", position: { x: 0, y: 0, z: 0 }, slots: 8 }],
+      [
+        {
+          id: "r1",
+          space: "s1",
+          wall: "front",
+          facing: "front",
+          position: { x: 0, y: 0, z: 0 },
+          slots: 8,
+        },
+      ],
       {},
     );
     expect(canPlace(ctxOf(withRack, "front"), others, "r1", 300, 0)).toBe(true);
@@ -122,7 +140,16 @@ describe("canPlace", () => {
 describe("moveToTop — floor drag + wall re-tag", () => {
   it("re-tags a rack to the nearest wall and drags its mounted gear along", () => {
     const scene = makeScene(
-      [{ id: "r1", space: "s1", wall: "front", position: { x: 2000, y: 0, z: 1000 }, slots: 8 }],
+      [
+        {
+          id: "r1",
+          space: "s1",
+          wall: "front",
+          facing: "front",
+          position: { x: 2000, y: 0, z: 1000 },
+          slots: 8,
+        },
+      ],
       {
         c1: {
           space: "s1",
@@ -155,7 +182,16 @@ describe("moveToTop — floor drag + wall re-tag", () => {
 describe("moveTo — elevation drag mounts into a rack", () => {
   it("mounts a free device dragged over a rack slot, inheriting the rack's space + wall", () => {
     const scene = makeScene(
-      [{ id: "r1", space: "s1", wall: "front", position: { x: 100, y: 0, z: 500 }, slots: 8 }],
+      [
+        {
+          id: "r1",
+          space: "s1",
+          wall: "front",
+          facing: "front",
+          position: { x: 100, y: 0, z: 500 },
+          slots: 8,
+        },
+      ],
       { c1: { space: "s1", wall: "front", position: { x: 0, y: 0, z: 0 }, facing: "front" } },
     );
     // Drop 2U comp over slot 0 of the front rack (x=300, y=20).

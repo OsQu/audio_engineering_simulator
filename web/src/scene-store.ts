@@ -12,9 +12,9 @@ import type { Patch } from "./scene";
 import type { Room, Vec3, Wall } from "./spatial";
 
 /** Current save-format version. A saved scene at any other version is discarded (no migration). Bumped
- *  to 8 when cross-view cables gained draggable portal chips (Story 4.6): the UI now stores a per-portal
- *  offset, so a stale v7 save doesn't lack the `portals` map. */
-export const SCHEMA_VERSION = 8;
+ *  to 9 when racks gained a `facing` (turn the whole rack around to reach its gear's rear I/O): a stale
+ *  v8 rack lacks the field, so it's discarded rather than defaulted. */
+export const SCHEMA_VERSION = 9;
 
 /** A space (room) in the studio — a UI grouping over the one engine graph (the engine never knows
  *  about rooms). A space is a **rectangular room**: gear stands against one of four walls, each an
@@ -38,6 +38,11 @@ export interface Rack {
   space: string;
   /** Which wall the rack stands against — the elevation it (and its mounted gear) appears in. */
   wall: Wall;
+  /** Which way the rack is turned. A rack is a physical box: turning it around (`"back"`) exposes the
+   *  rear I/O of **all** its mounted gear at once. Mounted gear can't be flipped on its own (it's bolted
+   *  in) — its shown side follows the rack's `facing` (see `effectiveFacing`); to flip one unit you eject
+   *  it from the rack first. */
+  facing: DeviceFacing;
   /** Lower-left-front corner of the **U-slot region**, world millimetres (the frame draws around it). */
   position: Vec3;
   /** Number of U-slots. */
@@ -171,6 +176,7 @@ export function defaultScene(): Scene {
           id: "rack-1",
           space: CONTROL_ROOM.id,
           wall: "back",
+          facing: "front",
           position: { x: rackX, y: 0, z: 0 },
           slots: 8,
         },

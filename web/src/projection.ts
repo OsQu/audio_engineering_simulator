@@ -8,7 +8,7 @@
 // `ctx.view`, not the four near-duplicate helpers this replaces.
 
 import { type DeviceDescriptor, descriptorFor } from "./catalog";
-import type { Rack, Scene } from "./scene-store";
+import type { DeviceFacing, Rack, Scene } from "./scene-store";
 import {
   footprint,
   orientedSize,
@@ -38,6 +38,17 @@ export const deviceById = (scene: Scene, id: string) =>
   scene.patch.devices.find((d) => d.id === id);
 export const rackById = (scene: Scene, id: string) => scene.ui.racks.find((r) => r.id === id);
 export const isRack = (scene: Scene, id: string): boolean => rackById(scene, id) !== undefined;
+
+// Which panel side a device actually shows. A **rack-mounted** unit is bolted in, so it can't be flipped
+// on its own — its side follows the rack's `facing` (turn the whole rack around to reach the gear's rear
+// I/O). A **free-standing** unit follows its own `facing`. Defaults to "front" when the device has no
+// placement. This is the single source of truth for rendering, z-order, and jack anchoring.
+export function effectiveFacing(scene: Scene, deviceId: string): DeviceFacing {
+  const place = scene.ui.placements[deviceId];
+  if (!place) return "front";
+  if (place.rack) return rackById(scene, place.rack.id)?.facing ?? place.facing;
+  return place.facing;
+}
 
 // How many U a device occupies — 0 if it isn't rackmount gear (so it never mounts in a rack).
 export function deviceUnits(catalog: DeviceDescriptor[], typeId: string): number {
@@ -122,7 +133,7 @@ export function placedItemsFor(ctx: LayoutCtx): PlacedItem[] {
       .map((d) => ({
         id: d.id,
         rect: deviceRect(ctx, d.id, d.typeId),
-        z: scene.ui.placements[d.id]?.facing === "back" ? 1 : 3,
+        z: effectiveFacing(scene, d.id) === "back" ? 1 : 3,
       }))
       .filter((it): it is PlacedItem => it.rect !== null),
   ];

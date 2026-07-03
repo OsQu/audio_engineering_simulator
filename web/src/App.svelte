@@ -20,6 +20,7 @@
   import { defaultScene, loadScene, type Scene, saveScene, setSceneParam } from "./scene-store";
   import {
     deviceById,
+    effectiveFacing,
     GRID_MM,
     isRack,
     type LayoutCtx,
@@ -171,6 +172,7 @@
     void catalog.length;
     void worldApi;
     JSON.stringify(scene.ui.placements);
+    JSON.stringify(scene.ui.racks); // a rack flip changes which jacks (front/back) are shown
     JSON.stringify(scene.patch.connections);
     const raf = requestAnimationFrame(measureJacks);
     const settle = setTimeout(measureJacks, 480);
@@ -352,6 +354,8 @@
   const moveRackToSpace = (id: string, spaceId: string): void =>
     sceneOps.moveRackToSpace(scene, id, spaceId);
   const toggleFlip = (id: string): void => sceneOps.toggleFlip(scene, id);
+  const toggleRackFlip = (id: string): void => sceneOps.toggleRackFlip(scene, id);
+  const unmount = (id: string): void => sceneOps.unmount(scene, id);
 
   // A knob move touches all three param lanes at once — the live map (UI), the scene (for save), and the
   // engine (live) — so keep them in sync in this one visible place; they mustn't drift apart.
@@ -731,6 +735,13 @@
           {#if isRack(scene, itemId)}
             {@const rack = rackById(scene, itemId)}
             {#if rack}
+              {#if currentView !== "top"}
+                <!-- Turn the whole rack around to reach the rear I/O of all its mounted gear at once
+                     (no panel is shown in the top-down plan, so the flip is hidden there). -->
+                <button type="button" class="chip" aria-label="turn rack around" onclick={() => toggleRackFlip(itemId)}>
+                  {rack.facing === "back" ? "front" : "back"}
+                </button>
+              {/if}
               <select
                 class="space-select"
                 aria-label="rack space"
@@ -749,10 +760,18 @@
             {@const place = scene.ui.placements[itemId]}
             {#if place}
               {#if currentView !== "top"}
-                <!-- Flip is a wall-elevation affordance (no panel is shown in the top-down plan). -->
-                <button type="button" class="chip" onclick={() => toggleFlip(itemId)}>
-                  {place.facing === "back" ? "front" : "back"}
-                </button>
+                <!-- Flip/eject are wall-elevation affordances (no panel is shown in the top-down plan).
+                     A bolted-in unit can't be flipped on its own — turn its rack around instead, or
+                     eject it here to flip it free-standing. -->
+                {#if place.rack}
+                  <button type="button" class="chip" aria-label="eject from rack" onclick={() => unmount(itemId)}>
+                    eject
+                  </button>
+                {:else}
+                  <button type="button" class="chip" onclick={() => toggleFlip(itemId)}>
+                    {place.facing === "back" ? "front" : "back"}
+                  </button>
+                {/if}
               {/if}
               {#if !place.rack}
                 <!-- Mounted gear follows its rack's space, so the selector only shows when free-standing. -->
@@ -794,8 +813,8 @@
           {:else if isRack(scene, itemId)}
             {@const rack = rackById(scene, itemId)}
             {#if rack}
-              <div class="rack-frame">
-                <span class="rack-label">{rack.id} · {rack.slots}U</span>
+              <div class="rack-frame" class:rear={rack.facing === "back"}>
+                <span class="rack-label">{rack.id} · {rack.slots}U{rack.facing === "back" ? " · rear" : ""}</span>
                 <div class="slots">
                   {#each Array.from({ length: rack.slots }, (_, i) => i) as i (i)}
                     <div class="slot"></div>
@@ -815,7 +834,7 @@
                 params={desc.params}
                 ports={desc.ports}
                 readouts={desc.readouts}
-                flipped={place.facing === "back"}
+                flipped={effectiveFacing(scene, device.id) === "back"}
                 valueFor={(id) => paramValue(device.id, desc, id)}
                 readingFor={(id) => readingFor(device.id, id)}
                 onParam={(p, v) => onParamInput(device.id, p, v)}
@@ -1485,5 +1504,11 @@
   }
   .slot:first-child {
     border-bottom: none;
+  }
+  /* Rear of the rack: a cooler, flatter shell so a turned-around rack reads as "the back" at a glance
+     (the mounted gear renders its own back panels; this is just the cabinet cue). */
+  .rack-frame.rear {
+    background: linear-gradient(var(--ae-rack-shell-2), var(--ae-rack-shell-1));
+    filter: brightness(0.9) saturate(0.8);
   }
 </style>

@@ -15,6 +15,8 @@ import {
   removeRack,
   setCableType,
   toggleFlip,
+  toggleRackFlip,
+  unmount,
 } from "../src/scene-ops";
 import type { Placement, Rack, Scene } from "../src/scene-store";
 import type { Room, Wall } from "../src/spatial";
@@ -249,7 +251,16 @@ describe("removeRack", () => {
     const scene = makeScene({
       devices: [{ id: "d1", typeId: "amp" }],
       placements: { d1: mounted },
-      racks: [{ id: "r1", space: "s1", wall: "front", position: { x: 0, y: 0, z: 0 }, slots: 8 }],
+      racks: [
+        {
+          id: "r1",
+          space: "s1",
+          wall: "front",
+          facing: "front",
+          position: { x: 0, y: 0, z: 0 },
+          slots: 8,
+        },
+      ],
     });
     removeRack(scene, "r1");
     expect(scene.ui.racks).toHaveLength(0);
@@ -276,12 +287,54 @@ describe("space + flip furniture", () => {
     expect(scene.ui.placements.d1.position).toEqual({ x: 0, y: 0, z: 0 });
   });
 
-  it("toggleFlip flips facing both ways", () => {
+  it("toggleFlip flips a free-standing device's facing both ways", () => {
     const scene = makeScene({ placements: { d1: place("s1", "front") } });
     toggleFlip(scene, "d1");
     expect(scene.ui.placements.d1.facing).toBe("back");
     toggleFlip(scene, "d1");
     expect(scene.ui.placements.d1.facing).toBe("front");
+  });
+
+  it("toggleFlip is a no-op for rack-mounted gear (it's bolted in — turn the rack instead)", () => {
+    const scene = makeScene({
+      placements: { d1: place("s1", "front", { id: "r1", uSlot: 0 }) },
+    });
+    toggleFlip(scene, "d1");
+    expect(scene.ui.placements.d1.facing).toBe("front"); // unchanged
+  });
+
+  it("toggleRackFlip turns the whole rack around both ways", () => {
+    const scene = makeScene({
+      racks: [
+        {
+          id: "r1",
+          space: "s1",
+          wall: "back",
+          facing: "front",
+          position: { x: 0, y: 0, z: 0 },
+          slots: 8,
+        },
+      ],
+    });
+    toggleRackFlip(scene, "r1");
+    expect(scene.ui.racks[0].facing).toBe("back");
+    toggleRackFlip(scene, "r1");
+    expect(scene.ui.racks[0].facing).toBe("front");
+  });
+
+  it("unmount ejects a mounted device to free-standing, keeping its position", () => {
+    const mounted = place("s1", "front", { id: "r1", uSlot: 0 });
+    mounted.position = { x: 111, y: 0, z: 222 };
+    const scene = makeScene({ placements: { d1: mounted } });
+    unmount(scene, "d1");
+    expect(scene.ui.placements.d1.rack).toBeUndefined();
+    expect(scene.ui.placements.d1.position).toEqual({ x: 111, y: 0, z: 222 });
+  });
+
+  it("unmount is a no-op for already free-standing gear", () => {
+    const scene = makeScene({ placements: { d1: place("s1", "front") } });
+    unmount(scene, "d1");
+    expect(scene.ui.placements.d1.rack).toBeUndefined();
   });
 });
 

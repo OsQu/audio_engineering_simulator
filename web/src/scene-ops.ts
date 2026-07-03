@@ -114,11 +114,29 @@ export function moveRackToSpace(scene: Scene, id: string, spaceId: string): void
   }
 }
 
-// Flip a unit front↔back to reach its rear I/O (no clearance step — flipping is direct). UI-only.
+// Flip a **free-standing** unit front↔back to reach its rear I/O (no clearance step — flipping is
+// direct). Rack-mounted gear is bolted in and can't be flipped on its own — turn its rack around
+// (`toggleRackFlip`) or eject it first. UI-only.
 export function toggleFlip(scene: Scene, id: string): void {
   const place = scene.ui.placements[id];
-  if (!place) return;
+  if (!place || place.rack) return;
   place.facing = place.facing === "back" ? "front" : "back";
+}
+
+// Turn a whole rack around front↔back, exposing (or hiding) the rear I/O of all its mounted gear at
+// once — the mounted gear's shown side follows the rack (see `effectiveFacing`). UI-only.
+export function toggleRackFlip(scene: Scene, id: string): void {
+  const rack = rackById(scene, id);
+  if (!rack) return;
+  rack.facing = rack.facing === "back" ? "front" : "back";
+}
+
+// Eject a device from its rack, leaving it free-standing at the position it already carried (so it can
+// then be flipped on its own). No-op for gear that isn't racked. UI-only.
+export function unmount(scene: Scene, id: string): void {
+  const place = scene.ui.placements[id];
+  if (!place?.rack) return;
+  place.rack = undefined;
 }
 
 // Add gear from the catalog: a new instance placed free-standing on the wall in view (just past the
@@ -158,7 +176,14 @@ export function addRack(ctx: LayoutCtx, placedItems: PlacedItem[]): void {
     depth: RACK_DEPTH_MM,
   };
   const { wall, position } = wallSpawn(ctx, frameSize, rightX + 60);
-  ctx.scene.ui.racks.push({ id: `rack-${n}`, space: ctx.space, wall, position, slots });
+  ctx.scene.ui.racks.push({
+    id: `rack-${n}`,
+    space: ctx.space,
+    wall,
+    facing: "front",
+    position,
+    slots,
+  });
 }
 
 // Remove a rack — UI furniture, so no hot-swap. Un-mounts its gear, leaving each unit free-standing at

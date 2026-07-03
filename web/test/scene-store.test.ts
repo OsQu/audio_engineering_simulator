@@ -20,6 +20,7 @@ describe("scene store", () => {
     expect(space.room.width).toBeGreaterThan(space.room.depth);
     const rack = scene.ui.racks[0];
     expect(rack.wall).toBe("back");
+    expect(rack.facing).toBe("front"); // the rack starts front-out; turn it around for the rear I/O
     // Mounted gear inherits its rack's wall (as it inherits the rack's space).
     for (const place of Object.values(scene.ui.placements)) {
       if (place.rack?.id === rack.id) expect(place.wall).toBe(rack.wall);

@@ -4,6 +4,7 @@ import {
   deviceById,
   deviceRect,
   deviceUnits,
+  effectiveFacing,
   FRAME_MARGIN,
   isRack,
   type LayoutCtx,
@@ -43,6 +44,7 @@ const rack = (id: string, wall: Wall): Rack => ({
   id,
   space: "s1",
   wall,
+  facing: "front",
   position: { x: 100, y: 0, z: 500 },
   slots: 8,
 });
@@ -260,5 +262,46 @@ describe("placedItemsFor", () => {
     const items = placedItemsFor(layout(scene, "top"));
     expect(items.find((i) => i.id === "r1")).toMatchObject({ background: true, z: 0 });
     expect(items.find((i) => i.id === "d1")?.z).toBe(3);
+  });
+
+  it("elevation: a flipped rack sends its mounted gear to the back z-order", () => {
+    // Same scene but the rack is turned around: its mounted c1 now shows its back ⇒ z 1, not 3.
+    const flipped = makeScene([{ ...rack("r1", "front"), facing: "back" }], {
+      c1: {
+        space: "s1",
+        wall: "front",
+        position: { x: 0, y: 0, z: 0 },
+        rack: { id: "r1", uSlot: 0 },
+        facing: "front",
+      },
+    });
+    expect(placedItemsFor(layout(flipped, "front")).find((i) => i.id === "c1")?.z).toBe(1);
+  });
+});
+
+describe("effectiveFacing", () => {
+  it("a free-standing device follows its own facing", () => {
+    const scene = makeScene([], {
+      d1: { space: "s1", wall: "front", position: { x: 0, y: 0, z: 0 }, facing: "back" },
+    });
+    expect(effectiveFacing(scene, "d1")).toBe("back");
+  });
+
+  it("mounted gear follows the rack's facing, ignoring its own", () => {
+    const scene = makeScene([{ ...rack("r1", "front"), facing: "back" }], {
+      // its own facing is "front", but it's bolted into a rack turned to "back"
+      c1: {
+        space: "s1",
+        wall: "front",
+        position: { x: 0, y: 0, z: 0 },
+        rack: { id: "r1", uSlot: 0 },
+        facing: "front",
+      },
+    });
+    expect(effectiveFacing(scene, "c1")).toBe("back");
+  });
+
+  it("defaults to front for an unknown device", () => {
+    expect(effectiveFacing(makeScene([], {}), "nope")).toBe("front");
   });
 });
