@@ -566,39 +566,145 @@ _Tasks to be elaborated when we reach this Epic._
   you write a jack into_, so the mixed-face problem dissolves (no `ioFace` per-port resolver needed; an
   earlier sketch of that resolver is superseded). The audio interface that forces this is 5.7's proving
   device. Further fidelity corner cases accrue here as they surface.
-- **Story 5.7** — Per-device faceplate UIs: each device authors its own look & feel. Today the web draws
-  every device through **one generic, flow-based renderer** (`Panel.svelte`: flexbox controls in
-  exposed-param order, flexbox In/Out jack groups) dressed by a thin `skin.ts` (3 faceplate finishes +
-  knob caps + a **per-device** `ioFace`). That can't express real gear — controls positioned relative to
-  their jacks, a big centre monitor knob, section legends ("MONITOR", "LINE OUTPUTS"), brand identity
-  (Focusrite red chassis/border, a "Teletronix" wordmark), or **mixed-face I/O** (front instrument inputs,
-  rear line/MIDI/USB). **Settled approach (component-based, not a coordinate/layout-data model):** a device
-  optionally registers **its own Svelte component** as its faceplate, composing the shared skeuomorphic
-  **widget vocabulary** (`Knob`/`Fader`/`Switch`/`Jack`/`Meter`) and the design-system **`--ae-*` tokens**,
-  but arranging them with **its own scoped CSS** (grid/flex/absolute; absolute px is safe — the world's
-  single zoom transform scales it). The generic `Panel` stays the **fallback** for un-authored gear, so
-  nothing existing changes. This honors the layer rule unchanged — the **Rust catalog stays specs-only**
-  (params/ports/readouts/form-factor by id; no layout vocabulary, per the Story 4.2 decision that rejected
-  descriptor layout fields); the device component references those **ids** and the web owns all
-  appearance. Why component over a normalized-coordinate map: full CSS expressiveness, free-form
-  text/legends/logos as plain HTML, Svelte's automatic per-component style scoping, and the front/back
-  **face problem simply dissolves** (a jack's face = which snippet it's written in — retiring the 5.6
-  `ioFace` resolver sketch). Thin plumbing to build: a **device-UI registry** (`typeId → component`, else
-  `Panel` — mirrors `skin.ts`/`focus.ts`), a **`DeviceHandle` context** (packages App's existing
-  per-device `valueFor`/`readingFor`/`onParam`) so a faceplate binds by id with no `postMessage` plumbing,
-  **bound wrappers** (`Control`/`Socket`/`Reading` — reference an id, pick the widget by descriptor
-  `kind`, keep `Jack`'s `data-jack` anchor measurement working wherever placed), and a **`Chassis`**
-  primitive owning the shared bezel + 3-D flip so a device authors only face _contents_. The same
-  registry generalizes the **focus surface** (a device can register a richer/larger surface — a console,
-  a DAW/touch display — reusing the same handle + widgets), superseding `focus.ts`'s two hardcoded kinds.
-  Consistency guardrails (against N bespoke snowflakes): shared widgets + a few **layout primitives**
-  (`Section`/`Legend`/`ButtonCluster`/`Silkscreen`) + token-only colors/type, and a **mount test per
-  registered device** asserting it references only valid ids and places every param/port (the web mirror
-  of the Rust `catalog_aligns_with_exposed_face` guard). **Proving device: a simplified Focusrite Scarlett
-  8i6** (rides in with 5.1) — front combo inputs with per-channel gain + INST/AIR/PAD clusters, centre
-  monitor knob, headphones; rear line outs, MIDI DIN, S/PDIF, USB, power; red chassis/border carried into
-  the top-down floor-plan tile too. Build the plumbing + spike the 8i6 end-to-end, judge whether it "feels
-  right" zoomed in, then generalize.
+- **Story 5.7** — Per-device faceplate UIs: each device authors its own look & feel. 🚧 **In progress —
+  planned to task level in the elaborated block below.**
+
+### Story 5.7 — Per-device faceplate UIs — 🚧 **In progress**
+
+_Goal:_ Give the web layer a way for **each device to author its own faceplate** — real look-and-feel per
+device — while the engine/`devices` catalog stays specs-only. Today every device is drawn by **one
+generic, flow-based renderer** (`web/src/widgets/Panel.svelte`: flexbox controls in exposed-param order,
+flexbox In/Out jack groups) dressed by a thin `skin.ts` (three faceplate finishes + knob caps + a
+**per-device** `ioFace`). That cannot express real gear: controls positioned relative to their jacks, a
+big centre monitor knob, section legends ("MONITOR", "LINE OUTPUTS"), brand identity (a red Focusrite
+chassis, a "Teletronix" wordmark), or **mixed-face I/O** (front instrument inputs, rear line/MIDI/USB).
+Anchors to PROJECT_PLAN §4 (device/port domain model) and §7 (UI a pure consumer of the published engine
+API), and to the Epic-4 settled layer rule (the **catalog owns which ports/params exist**; the **web owns
+how they're drawn**). Proven end-to-end on a **simplified Focusrite Scarlett 8i6** — the first mixed-face,
+branded device.
+
+_Watch out:_
+
+- **Layer rule, unchanged.** The Rust catalog gains **no layout vocabulary** (positions/faces/colours) —
+  the Story 4.2 decision that rejected descriptor layout fields still holds. A faceplate references
+  params/ports/readouts **by id**; all appearance lives in the web component. A task that wants a Rust
+  layout field is a bug, not a shortcut.
+- **No cosmetic controls.** A faceplate can only draw controls that map to **real params** (the
+  power-as-control ethos: "don't flag what should emerge"). The 8i6's front switches must back onto real
+  engine state — hence the `MicPreamp` node — not fake toggles.
+- **Hot-path contract on the new node.** `MicPreamp::process` stays zero-alloc, panic-free,
+  denormal-flushed. The hi-Z switch changes an input **impedance value** feeding the local-solve divider
+  (a value change, not a topology edit — no recompile); phantom is a declared electrical-state param read
+  in `process` but currently without signal consequence (see design notes). Determinism unaffected (no
+  new RNG).
+- **Fallback parity.** After the `Chassis` refactor, the generic `Panel` (every un-authored device) must
+  render and flip **identically** to today — verified in-browser. The registry defaults to `Panel`, so
+  nothing existing changes silently.
+- **Signal-type split intact.** The 8i6's internal AD/DA are the only analog↔digital bridges (§5); its
+  "USB" is modeled as digital ports, not a magic passthrough.
+- **`$state.snapshot` at the worklet boundary still holds** — the `DeviceHandle` only repackages App's
+  existing `set_param` path; no new `postMessage` shape.
+
+_Design notes (settled at planning):_
+
+- **Component over coordinate-map (the headline decision).** A device optionally registers **its own
+  Svelte component** as its faceplate, composing the shared skeuomorphic widgets
+  (`Knob`/`Fader`/`Switch`/`Jack`/`Meter`) + design-system `--ae-*` tokens but arranging them with **its
+  own scoped CSS** (grid/flex/absolute; absolute px is safe — the world's single zoom transform scales
+  it). _Rejected: a normalized-coordinate / layout-data model_ (`paramId→{x,y}` on the skin) — a component
+  gives full CSS expressiveness, free-form text/legends/logos as plain HTML, Svelte's automatic
+  per-component style scoping, and it makes the **front/back-face problem dissolve** (a jack's face = which
+  snippet it is written in — retiring the Story 5.6 `ioFace`-resolver sketch). The generic `Panel` stays
+  the **fallback** for un-authored gear.
+- **Plumbing.** A **device-UI registry** (`typeId → component`, else `Panel`; mirrors
+  `skin.ts`/`focus.ts`); a **`DeviceHandle` context** packaging App's existing per-device
+  `valueFor`/`readingFor`/`onParam` so a faceplate binds by id with no `postMessage` plumbing; **bound
+  wrappers** `Control`/`Socket`/`Reading` (reference an id, pick the widget by descriptor `kind`, keep
+  `Jack`'s `data-jack` anchor measurement working wherever placed); a **`Chassis`** primitive owning the
+  shared bezel + 3-D flip (and setting the handle context) so a device authors only face _contents_. The
+  generic `Panel` is **rebuilt on `Chassis`** (one flip implementation). _Rejected: leaving `Panel`
+  untouched_ (two flip impls to keep in sync).
+- **`MicPreamp` engine node — honest backing for the front controls.** A new node (gain, powered,
+  phantom, hi-Z) so the 8i6's INST/48V switches are real, not cosmetic. **hi-Z (INST)** switches the input
+  **impedance** into the existing `InputZ`/`divider_gain` local solve — a genuinely emergent loading
+  effect. Like the cable R·C (inaudible into today's low-Z sources **by design**), its audible payoff is
+  **latent until Epic 5's hi-Z sources** (guitar pickups) exist — real physics, deferred consequence, not
+  a flag. **48V (phantom)** is a real electrical-state param asserted on the input; its consequence
+  (powering a condenser mic) **emerges with Epic 5 condenser mics** — declared and read, currently without
+  signal effect, documented as a deliberate latency (the cable-R·C precedent), _not_ a cosmetic toggle.
+  **AIR (high-shelf) and PAD (attenuation) are deferred to 5.1** (more preamp physics) — the faceplate
+  omits what isn't yet real. _Rejected: extending the generic `GainStage`_ (leaks mic-pre concepts into a
+  node `gain_stage`/`channel_strip` share); _rejected: cosmetic INST/48V toggles_ (ethos).
+- **`scarlett_8i6` catalog entry — minimal but honest.** Multi-node chassis reusing existing nodes: 2×
+  `MicPreamp` → 2× `AdConverter` (the digital "USB send"); a digital "USB return" → `DaConverter` →
+  monitor + phones gain stages → analog outs; MIDI in/out via `EventThru`. Exposed face: **front** = 2
+  combo inputs + a headphone out; **back** = line outs, digital send/return, MIDI, power. _Known
+  simplifications (not bugs):_ USB is modeled as separate per-lane digital ports (our connector model is
+  mono-per-lane; one-connector-many-channels is a 5.6 fidelity case), and **S/PDIF is deferred** (only
+  real ports get jacks).
+- **Focus via the registry (generalized — decision 2a).** The registry replaces the hardcoded `typeId ===
+  "synth_voice"` (Screen) and `surface === "console"` branches in **both** render sites (in-world `item`
+  and the focus overlay); a custom faceplate renders in the focus overlay too. Focusability = **has a
+  registered focus surface** OR **is playable** (an events input ⇒ keybed, still derived — retiring
+  `focus.ts`'s hardcoded `FocusSurface` kinds); `Console` becomes `channel_strip`'s registered focus
+  component and the synth's ADSR `Screen` its registered embellishment. The keybed is still appended for
+  instruments and the global-keyboard retirement (Story 4.8) is preserved. A larger bespoke focus surface
+  (a DAW/touch display) is now expressible but **built only when a device needs it**.
+- **Brand identity.** `skin.ts` gains an `accent`/`chassis` colour; the 8i6 faceplate reads it for its
+  border/chassis via scoped CSS + tokens, and the **top-down floor-plan tile** (App's `item` snippet,
+  `.plan-tile`, currently plain `--ae-bg-chip`) reads it too — so the red chassis shows from above. One
+  value, both views.
+- **Consistency guardrails (against N bespoke snowflakes).** Shared widgets + a small set of **layout
+  primitives** (`Section`/`Legend`/`ButtonCluster`/`Silkscreen`, extracted while building the 8i6) +
+  token-only colours/type. A **Vitest mount test per registered faceplate** asserts it references only
+  **valid ids** and **places every param/port** — the web mirror of the Rust
+  `catalog_aligns_with_exposed_face` guard.
+
+- **Task 5.7.1 — `MicPreamp` engine node.** New `engine` node with params gain (Knob), powered (Switch),
+  phantom (Switch), hi-Z/INST (Switch). hi-Z selects the input impedance feeding `divider_gain`; phantom
+  is a declared electrical-state param (no signal effect yet, documented). Hot-path clean
+  (zero-alloc/panic-free/denormal-flush). _Done:_ engine tests green including a **hand-calc oracle** —
+  line-Z vs inst-Z divider loss against a constructed high-output-impedance source, the number computed in
+  a comment (§9); default values leave a unity/quiet identity; `cargo wasm` portability holds.
+- **Task 5.7.2 — `scarlett_8i6` catalog entry (`devices`).** Multi-node entry (2× MicPreamp → 2× AD;
+  digital return → DA → monitor/phones gains; MIDI `EventThru`) with UI metadata (labels/kinds/connectors)
+  positionally aligned to the exposed face. _Done:_ `catalog_aligns_with_exposed_face` +
+  `descriptors_carry_engine_truth` pass; an `instantiate` test pins the multi-node port/param remap (as
+  `channel_strip` does); the descriptor serializes camelCase; the device renders (via the **generic
+  Panel**, pre-faceplate) in-browser.
+- **Task 5.7.3 — Faceplate plumbing + `Chassis` + `Panel` refactor.** Add the `DeviceHandle` context, the
+  `Chassis` primitive (bezel + flip + sets context), and the `Control`/`Socket`/`Reading` bound wrappers;
+  **rebuild the generic `Panel` on `Chassis`** using the wrappers. _Done:_ every existing device renders
+  and flips **identically** (fallback parity), knobs/faders/switches/jacks still drive the engine and
+  patch; `pnpm check`/`typecheck`/`build` green; verified in-browser.
+- **Task 5.7.4 — Device-UI registry + both render sites + focus generalization.** `device-ui.ts` registry
+  (`typeId → component`, else `Panel`); wire it into the in-world `item` snippet **and** the focus overlay,
+  replacing the hardcoded synth-Screen and console branches; rework `focus.ts` so focusability =
+  registered-focus-surface ∨ playable, with `Console` and the synth `Screen` registered. Keybed still
+  appended for instruments. _Done:_ synth (in-world + focus + keybed) and `channel_strip` (Console focus)
+  behave as before, now via the registry; no hardcoded `typeId`/`surface` branches remain in App's render
+  sites; in-browser parity.
+- **Task 5.7.5 — `Scarlett8i6.svelte` faceplate + brand + primitives + guardrail.** The bespoke component:
+  **front** (2 combo inputs with gain knobs + INST/48V switches, monitor + phones knobs, headphone jack)
+  and **back** (line outs, digital send/return, MIDI, power) laid out in scoped CSS; red chassis via a new
+  `skin.accent`, threaded to the faceplate border **and** the top-down `.plan-tile`. Extract the
+  `Section`/`Legend`/`ButtonCluster`/`Silkscreen` primitives and any new widget (a labeled toggle button /
+  indicator LED) it needs. Add the **Vitest mount-test guardrail** (valid-ids + full param/port coverage
+  per registered faceplate). _Done:_ zoomed in, the 8i6 reads as a simplified Focusrite — mixed front/back
+  I/O, red chassis (in elevation **and** top view), section legends — its controls drive the live engine
+  and its jacks patch with correct cable anchors; the mount test passes; full Rust gate + web
+  `check`/`typecheck`/`test`/`build` green; verified in-browser by eye.
+
+_Validate:_ un-authored devices render/flip **identically** through the generic `Panel` fallback (rebuilt
+on `Chassis`); the **Scarlett 8i6** renders as a bespoke faceplate with **mixed-face I/O**, **red chassis**
+in both the wall elevation and the top-down plan, and **section legends**, its controls driving the live
+engine and its jacks patching with correct cable anchors; **INST** switches a real input impedance
+(hand-calc oracle in the `MicPreamp` test) and **48V** is a real declared electrical-state param (latent
+consequence, documented); the **focus overlay** renders custom faceplates (and `Console` for
+`channel_strip`) via the registry with the synth keybed intact; the **mount-test guardrail** proves every
+registered faceplate references only valid ids and places all params/ports; the **layer rule holds** (no
+layout vocabulary on the Rust descriptor); the full Rust gate (`cargo fmt --check && cargo lint && cargo
+test && cargo wasm && cargo docs`) plus web `check`/`typecheck`/`test`/`build` pass; verified in-browser.
 
 _Decision — ground-loop hum should become emergent from grounding topology (deferred to this Epic)._
 Today (Story 1.5) `Cable::with_hum` is a **manual** injection — the user asserts "a ground loop exists
