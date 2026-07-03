@@ -33,9 +33,9 @@
 //! nodes' smoothed `params()` are user-facing. Field names are camelCase on the JS side.
 
 use engine::{
-    AdConverter, BitDepth, DaConverter, DigitalMeter, Domain, EqBand, GainStage, Graph, InputZ,
-    Node, NodeId, Ohms, ParamId, ReadoutId, SampleRate, Speaker, SynthVoice, ThreeBandEq, Volts,
-    VuMeter,
+    AdConverter, BitDepth, DaConverter, DigitalMeter, Domain, EqBand, EventThru, GainStage, Graph,
+    InputZ, Node, NodeId, Ohms, ParamId, ReadoutId, SampleRate, Speaker, SynthVoice, ThreeBandEq,
+    Volts, VuMeter,
 };
 use serde::Serialize;
 
@@ -327,6 +327,34 @@ const CATALOG: &[CatalogEntry] = &[
             label: "Out",
             kind: PortKind::Instrument,
             connector: Connector::QuarterInch,
+        }],
+        readouts: &[],
+    },
+    // A standalone MIDI controller: a keybed with no sound of its own that *produces* a performance
+    // and forwards it to MIDI-OUT (an `EventThru` — the identity event processor). Its MIDI-IN is the
+    // open, host-fed input a human plays via the focus surface (or another controller patches into);
+    // the cable from MIDI-OUT to a synth's MIDI-IN is the events connection the UI drives. No sound,
+    // no params — pure event plumbing.
+    CatalogEntry {
+        type_id: "midi_controller",
+        name: "MIDI Controller",
+        form_factor: FormFactor::Desktop {
+            width_mm: 800.0,
+            height_mm: 80.0,
+            depth_mm: 250.0,
+        },
+        nodes: &[|| Box::new(EventThru::new(64))],
+        internal: &[],
+        params: &[],
+        inputs: &[PortUi {
+            label: "MIDI In",
+            kind: PortKind::Midi,
+            connector: Connector::Din5,
+        }],
+        outputs: &[PortUi {
+            label: "MIDI Out",
+            kind: PortKind::Midi,
+            connector: Connector::Din5,
         }],
         readouts: &[],
     },

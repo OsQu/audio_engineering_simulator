@@ -30,8 +30,8 @@ pub use level::{
 };
 pub use node::{
     AdConverter, BalancedDriver, BalancedReceiver, Compressor, CondenserMic, DaConverter,
-    DcBlocker, DigitalMeter, EqBand, GainStage, Node, PassiveSum, Speaker, SynthVoice, TestSource,
-    ThreeBandEq, VuMeter,
+    DcBlocker, DigitalMeter, EqBand, EventThru, GainStage, Node, PassiveSum, Speaker, SynthVoice,
+    TestSource, ThreeBandEq, VuMeter,
 };
 pub use noise::NoiseDensity;
 pub use param::{ParamDecl, ParamHandle, ParamId, ParamQueue, Params};

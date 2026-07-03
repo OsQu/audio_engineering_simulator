@@ -15,8 +15,8 @@
 
 use engine::{
     AnalogRate, BalancedDriver, BalancedReceiver, Cable, DcBlocker, EventMessage, EventQueue,
-    Farads, GainStage, Graph, InputZ, NoiseDensity, Ohms, ParamQueue, PassiveSum, SynthVoice,
-    TestSource, VoltageBuffer, Volts, compile,
+    EventThru, Farads, GainStage, Graph, InputZ, NoiseDensity, Ohms, ParamQueue, PassiveSum,
+    SynthVoice, TestSource, VoltageBuffer, Volts, compile,
 };
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -136,13 +136,19 @@ fn voice_with_events_and_params_is_allocation_free() {
     // The full input path: a synth voice driven by the event lane (note on/off) and a smoothed
     // control param (level), through `process_io`. Covers what `process()` alone can't — event
     // delivery into a lane, the voice consuming the Events lane, and the param de-zipper advance —
-    // all of which must stay off the allocator on the hot path.
+    // all of which must stay off the allocator on the hot path. The events reach the voice through
+    // an `EventThru` controller (host-fed open input → routed edge → voice), so the pass-through's
+    // per-block `copy_from` is covered by the no-alloc check too.
     let block = 64;
     let mut g = Graph::new();
+    let ctrl = g.add(EventThru::new(64));
     let voice = g.add(SynthVoice::new(Volts::new(1.0), Ohms::new(150.0)));
+    g.connect_ideal(ctrl, 0, voice, 0);
     g.set_output(voice, 0);
     let mut sched = compile(g, block, rate(), 0).expect("valid voice chain");
-    let ev = sched.event_input(voice, 0).expect("open event input");
+    let ev = sched
+        .event_input(ctrl, 0)
+        .expect("the controller's open event input");
     let level = sched.param(voice, SynthVoice::LEVEL).expect("level param");
 
     // Queue events spread across several blocks and a couple of param moves — all pre-allocated,
