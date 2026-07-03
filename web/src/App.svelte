@@ -5,7 +5,7 @@
   // skeuomorphic panel widgets land in Story 4.2.3. Generic by device id throughout.
 
   import type { CableType, DeviceDescriptor, ParamDescriptor, PortDomain, PortKind } from "./catalog";
-  import { descriptorFor, isPlayable } from "./catalog";
+  import { descriptorFor } from "./catalog";
   import { focusSurfaceFor, isFocusable } from "./focus";
   import {
     type ControlMessage,
@@ -18,6 +18,7 @@
   import { cablePathData, cableTypeIdFor } from "./connections";
   import type { ConnectVerdict } from "./connections";
   import type { Connection, Patch, PortRef } from "./scene";
+  import { DEFAULT_VELOCITY } from "./notes";
   import { defaultScene, loadScene, type Scene, saveScene, setSceneParam } from "./scene-store";
   import {
     deviceById,
@@ -38,6 +39,7 @@
   import * as placement from "./placement";
   import * as sceneOps from "./scene-ops";
   import { type Room, type Wall } from "./spatial";
+  import Keybed from "./widgets/Keybed.svelte";
   import Panel from "./widgets/Panel.svelte";
   import Screen from "./widgets/Screen.svelte";
   import Vu from "./widgets/Vu.svelte";
@@ -102,13 +104,6 @@
   // persist on save. Re-seeded from the scene whenever it's (re)loaded.
   let paramValues = $state<Record<string, number>>({});
 
-  // The playable instrument (first device whose descriptor has an event input) drives the keyboard.
-  const synthDevice = $derived(
-    scene.patch.devices.find((d) => {
-      const desc = descriptorFor(catalog, d.typeId);
-      return desc ? isPlayable(desc) : false;
-    }),
-  );
   const key = params.key;
 
   // The current value of a device-local param (live override else descriptor default), bound to the map.
@@ -368,6 +363,40 @@
     if (focusedDevice !== null) focusSurfaceEl?.focus();
   });
 
+  // --- Playing the focused instrument (note input follows focus) ------------------------------------
+  // The device a keyboard/MIDI/on-screen note plays: the focused device iff it's an instrument (a
+  // keybed surface), else null. A plain string|null so the wireKeyboard effect below only re-runs when
+  // the *target* changes — turning a knob (which mutates the scene) doesn't re-attach the listener.
+  const keyboardTarget = $derived.by((): string | null => {
+    if (focusedDevice === null) return null;
+    const dev = deviceById(scene, focusedDevice);
+    const desc = dev ? descriptorFor(catalog, dev.typeId) : undefined;
+    return dev && desc && focusSurfaceFor(desc) === "instrument" ? dev.id : null;
+  });
+  // Notes currently sounding, for the keybed highlight — fed by every source (mouse, QWERTY, MIDI) so
+  // the on-screen keys light up whichever way you play.
+  let heldNotes = $state<number[]>([]);
+  // Route one note-on/off to the focused instrument: update the held set (for the highlight) and post
+  // it to the worklet. A no-op when nothing playable is focused or the engine isn't up yet.
+  function playNote(on: boolean, note: number, velocity: number = DEFAULT_VELOCITY): void {
+    const device = keyboardTarget;
+    if (device === null || !send) return;
+    if (on) {
+      if (!heldNotes.includes(note)) heldNotes = [...heldNotes, note];
+      send({ type: "noteOn", device, note, velocity });
+    } else {
+      heldNotes = heldNotes.filter((n) => n !== note);
+      send({ type: "noteOff", device, note });
+    }
+  }
+  // Capture the computer keyboard **only while an instrument is focused** (attach on focus, detach on
+  // unfocus — the effect re-runs just when keyboardTarget changes). Web MIDI is wired once at start-up
+  // (below); both feed playNote, which targets the focused instrument.
+  $effect(() => {
+    if (keyboardTarget === null) return;
+    return wireKeyboard(playNote);
+  });
+
   // Set (or clear, `""` ⇒ ideal wire) the cable type on a connection, then hot-swap — the cable's R·C
   // is baked into the edge at compile, so changing it rebuilds the engine.
   function setCableType(c: Connection, typeId: string): void {
@@ -456,12 +485,11 @@
           ready = true;
           paramValues = params.seedParamValues(scene, catalog);
           params.pushParams(sendFn, scene, catalog, paramValues); // match the engine to the scene from the start
-          if (synthDevice) {
-            wireKeyboard(sendFn, synthDevice.id);
-            wireMidi(sendFn, synthDevice.id, (m) => {
-              midiStatus = m;
-            });
-          }
+          // Request Web MIDI once (the permission); the note target follows focus via playNote. The
+          // computer keyboard is wired per-focus by the effect above, not here.
+          wireMidi((on, note, velocity) => playNote(on, note, velocity), (m) => {
+            midiStatus = m;
+          });
         },
         },
         volume,
@@ -986,7 +1014,21 @@
                 valueFor={(id) => paramValue(f.device.id, f.desc, id)}
                 readingFor={(id) => readingFor(f.device.id, id)}
                 onParam={(p, v) => onParamInput(f.device.id, p, v)}
-              />
+              >
+                {#if f.device.typeId === "synth_voice"}
+                  <Screen
+                    attackMs={paramValue(f.device.id, f.desc, 1)}
+                    decayMs={paramValue(f.device.id, f.desc, 2)}
+                    sustain={paramValue(f.device.id, f.desc, 3)}
+                    releaseMs={paramValue(f.device.id, f.desc, 4)}
+                  />
+                {/if}
+              </Panel>
+              {#if f.surface === "instrument"}
+                <!-- The keybed = the device's open events input, drawn on-screen. Notes host-inject into
+                     the focused instrument (its own if open, else through a patched controller). -->
+                <Keybed held={heldNotes} onNote={playNote} />
+              {/if}
             </div>
           </div>
         </div>
@@ -1535,7 +1577,9 @@
      view has room, so let it grow. */
   .focus-body {
     display: flex;
-    justify-content: center;
+    flex-direction: column;
+    align-items: center;
+    gap: 1.2rem;
   }
   .focus-body :global(.panel) {
     width: 100%;

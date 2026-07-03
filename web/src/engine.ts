@@ -9,6 +9,7 @@
 // engine. Keyboard + Web MIDI are wired here onto the same `send`.
 
 import type { CableType, DeviceDescriptor } from "./catalog";
+import { clampOctave, DEFAULT_VELOCITY, noteForKey, octaveShiftFor } from "./notes";
 import type { Patch } from "./scene";
 
 /** The messages the worklet maps onto SceneEngine, all addressed by device id. */
@@ -182,67 +183,72 @@ export async function startEngine(
   };
 }
 
-// --- Keyboard: one octave of a piano over the QWERTY home rows ------------------------------------
+// --- Keyboard + Web MIDI note capture -------------------------------------------------------------
+//
+// Both surfaces *detect* note-on/off and hand them to a `NoteSink`; neither knows **which** device
+// plays. The caller (App) routes each note to the currently-focused instrument (Story 4.8), so
+// capture follows focus instead of being bolted to one synth at startup. The QWERTY note layout +
+// octave logic live in notes.ts.
 
-// White keys on A–K, black keys on the W/E/T/Y/U row above — the de-facto layout (Ableton, many
-// soft synths).
-const KEY_SEMITONES: Record<string, number> = {
-  a: 0, // C
-  w: 1, // C#
-  s: 2, // D
-  e: 3, // D#
-  d: 4, // E
-  f: 5, // F
-  t: 6, // F#
-  g: 7, // G
-  y: 8, // G#
-  h: 9, // A
-  u: 10, // A#
-  j: 11, // B
-  k: 12, // C (octave up)
-};
-const C4 = 60; // MIDI note for the base octave's C
-const VELOCITY = 100;
+/** A note event from a keyboard/controller: on/off, MIDI note, and velocity (0 / ignored for off). */
+export type NoteSink = (on: boolean, note: number, velocity: number) => void;
 
-/** Map the computer keyboard to note-on/off on `device`, suppressing auto-repeat; Z/X shift octave. */
-export function wireKeyboard(send: (msg: ControlMessage) => void, device: string): void {
+/** Whether keystrokes should be treated as text — a form control (a knob's range input, a select, a
+ *  field) has focus — so typing to adjust a control doesn't also play notes. */
+function editingText(): boolean {
+  const el = document.activeElement;
+  if (!(el instanceof HTMLElement)) return false;
+  return (
+    el.tagName === "INPUT" ||
+    el.tagName === "SELECT" ||
+    el.tagName === "TEXTAREA" ||
+    el.isContentEditable
+  );
+}
+
+/** Capture the computer keyboard as a keybed: A–K + the black-key row play notes, Z/X transpose the
+ *  octave, auto-repeat is suppressed, and keystrokes are ignored while a form control has focus.
+ *  Returns a **detach** function — the caller attaches it only while an instrument surface is open,
+ *  and detaching releases anything still held so a note can't hang past the surface closing. */
+export function wireKeyboard(onNote: NoteSink): () => void {
   let octave = 0; // shifted by Z/X, in octaves
   const held = new Set<number>(); // MIDI notes currently down, to suppress key-repeat re-triggers
 
-  const noteFor = (key: string): number | null => {
-    const semis = KEY_SEMITONES[key];
-    return semis === undefined ? null : C4 + 12 * octave + semis;
-  };
-
-  window.addEventListener("keydown", (e) => {
-    if (e.repeat || e.metaKey || e.ctrlKey || e.altKey) return;
+  const onKeyDown = (e: KeyboardEvent): void => {
+    if (e.repeat || e.metaKey || e.ctrlKey || e.altKey || editingText()) return;
     const key = e.key.toLowerCase();
-    if (key === "z" || key === "x") {
-      octave = Math.max(-3, Math.min(3, octave + (key === "z" ? -1 : 1)));
+    const shift = octaveShiftFor(key);
+    if (shift !== null) {
+      octave = clampOctave(octave + shift);
       return;
     }
-    const note = noteFor(key);
+    const note = noteForKey(key, octave);
     if (note === null || held.has(note)) return;
     held.add(note);
-    send({ type: "noteOn", device, note, velocity: VELOCITY });
-  });
+    onNote(true, note, DEFAULT_VELOCITY);
+  };
 
-  window.addEventListener("keyup", (e) => {
-    const note = noteFor(e.key.toLowerCase());
+  const onKeyUp = (e: KeyboardEvent): void => {
+    const note = noteForKey(e.key, octave);
     if (note === null || !held.has(note)) return;
     held.delete(note);
-    send({ type: "noteOff", device, note });
-  });
+    onNote(false, note, 0);
+  };
+
+  window.addEventListener("keydown", onKeyDown);
+  window.addEventListener("keyup", onKeyUp);
+  return () => {
+    for (const note of held) onNote(false, note, 0); // release held notes on unfocus
+    held.clear();
+    window.removeEventListener("keydown", onKeyDown);
+    window.removeEventListener("keyup", onKeyUp);
+  };
 }
 
-// --- Web MIDI: the same note path, fed by a hardware controller. ----------------------------------
-
-/** Request Web MIDI access and route note-on/off from every input through `send`, onto `device`. */
-export function wireMidi(
-  send: (msg: ControlMessage) => void,
-  device: string,
-  onStatus: (message: string) => void,
-): void {
+/** Request Web MIDI access **once** (the permission) and route every input's note-on/off to `onNote`.
+ *  The *target* device is the caller's concern (it follows focus), so this only decodes + forwards —
+ *  access is not re-requested when focus moves. */
+export function wireMidi(onNote: NoteSink, onStatus: (message: string) => void): void {
   const nav = navigator as Navigator & {
     requestMIDIAccess?: () => Promise<MIDIAccess>;
   };
@@ -255,7 +261,7 @@ export function wireMidi(
       const attach = (): void => {
         const names: string[] = [];
         for (const input of access.inputs.values()) {
-          input.onmidimessage = (e) => handleMidi(send, device, e.data);
+          input.onmidimessage = (e) => handleMidi(onNote, e.data);
           names.push(input.name ?? "unknown");
         }
         onStatus(names.length ? `MIDI: ${names.join(", ")}` : "MIDI: no inputs connected");
@@ -270,18 +276,11 @@ export function wireMidi(
 }
 
 /** Decode a raw MIDI message and forward note-on/off — note-on with velocity 0 means note-off. */
-function handleMidi(
-  send: (msg: ControlMessage) => void,
-  device: string,
-  data: Uint8Array | null,
-): void {
+function handleMidi(onNote: NoteSink, data: Uint8Array | null): void {
   if (!data || data.length < 3) return;
   const status = data[0] & 0xf0; // strip the channel nibble
   const note = data[1];
   const velocity = data[2];
-  if (status === 0x90 && velocity > 0) {
-    send({ type: "noteOn", device, note, velocity });
-  } else if (status === 0x80 || (status === 0x90 && velocity === 0)) {
-    send({ type: "noteOff", device, note });
-  }
+  if (status === 0x90 && velocity > 0) onNote(true, note, velocity);
+  else if (status === 0x80 || (status === 0x90 && velocity === 0)) onNote(false, note, 0);
 }
