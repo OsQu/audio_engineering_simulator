@@ -27,8 +27,8 @@ use engine::{
 };
 
 use crate::catalog::{
-    BuiltDevice, Connector, DeviceDescriptor, PortDescriptor, PortDirection, connectors_compatible,
-    descriptors, instantiate,
+    BuiltDevice, Connector, DeviceConfig, DeviceDescriptor, PortDescriptor, PortDirection,
+    connectors_compatible, descriptors, instantiate,
 };
 use crate::scene::{Patch, PortRef};
 
@@ -286,11 +286,13 @@ pub fn build_patch(
     // 1. Instantiate every device, keyed by its (unique) scene id.
     let mut devices: BTreeMap<String, BuiltDevice> = BTreeMap::new();
     for device in &patch.devices {
-        let built =
-            instantiate(&device.type_id, &mut graph).ok_or_else(|| BuildError::UnknownType {
+        let config = DeviceConfig::new(&device.config);
+        let built = instantiate(&device.type_id, &config, &mut graph).ok_or_else(|| {
+            BuildError::UnknownType {
                 id: device.id.clone(),
                 type_id: device.type_id.clone(),
-            })?;
+            }
+        })?;
         match devices.entry(device.id.clone()) {
             Entry::Occupied(_) => {
                 return Err(BuildError::DuplicateDevice {
@@ -471,6 +473,7 @@ mod tests {
             id: id.into(),
             type_id: type_id.into(),
             params: vec![],
+            config: vec![],
         }
     }
 
@@ -707,9 +710,9 @@ mod tests {
     }
 
     /// A device-level param group resolves, through `build_patch`, to **all** its target handles: the
-    /// 8i6's single Power control (exposed param id 4, after the four gains) drives every stage's
-    /// `powered` — seven handles from one id — while an ungrouped gain drives exactly one. This is the
-    /// plumbing the wasm `set_param` fans a single value over.
+    /// 8i6's single Power control (exposed param id 8, after the preamps' gain/pad/air and the two
+    /// monitor/phones gains) drives every stage's `powered` — seven handles from one id — while an
+    /// ungrouped gain drives exactly one. This is the plumbing the wasm `set_param` fans a value over.
     #[test]
     fn device_power_group_fans_out_to_every_stage() {
         let patch = Patch {
@@ -722,7 +725,7 @@ mod tests {
         };
         let scene = build_patch(&patch, BLOCK_LEN, rate(), 0).expect("8i6 patch builds");
         assert_eq!(
-            scene.param("if", 4).len(),
+            scene.param("if", 8).len(),
             7,
             "the Power group drives all seven stages"
         );
@@ -731,6 +734,58 @@ mod tests {
             1,
             "an ungrouped gain drives exactly one stage"
         );
+    }
+
+    /// The INST/hi-Z structural config toggles a preamp's input impedance, which the loading divider
+    /// bakes at compile — so the *same* patch, built with `inst1` off vs on, yields a **different**
+    /// connection loss on a high-output-impedance source feeding preamp 1. A synth (≈1 Ω Zout) is too
+    /// stiff to show it, so this drives the preamp through a lossy cable (its series R stands in for a
+    /// high source impedance): line-Z (10 kΩ) loads it hard; inst-Z (1.5 MΩ) barely at all.
+    #[test]
+    fn inst_config_changes_the_baked_loading_divider() {
+        let patch = |inst: f32| Patch {
+            devices: vec![
+                device("synth", "synth_voice"),
+                DeviceInstance {
+                    id: "if".into(),
+                    type_id: "scarlett_8i6".into(),
+                    params: vec![],
+                    config: vec![crate::scene::ConfigSetting {
+                        key: "inst1".into(),
+                        value: inst,
+                    }],
+                },
+            ],
+            // synth out → preamp 1 in, through a 10 kΩ cable so the input impedance matters.
+            connections: vec![Connection {
+                from: PortRef {
+                    device: "synth".into(),
+                    port: 0,
+                },
+                to: PortRef {
+                    device: "if".into(),
+                    port: 0,
+                },
+                cable: Some(crate::scene::CableSpec {
+                    resistance_ohms: 10_000.0,
+                    capacitance_farads: 0.0,
+                }),
+            }],
+            output: PortRef {
+                device: "if".into(),
+                port: 2,
+            },
+        };
+        let loss = |inst: f32| {
+            build_patch(&patch(inst), BLOCK_LEN, rate(), 0)
+                .expect("builds")
+                .connection_loading_loss(0)
+                .expect("analog connection has a loss")
+        };
+        let line = loss(0.0); // 10 kΩ input: divider ≈ 10k/(1+10k+10k) ≈ 0.5 ⇒ ≈ −6 dB
+        let inst = loss(1.0); // 1.5 MΩ input: divider ≈ 1.5M/(1+10k+1.5M) ≈ 0.993 ⇒ ≈ −0.06 dB
+        assert!(line < -5.0, "line-Z loads the source hard, got {line} dB");
+        assert!(inst > -0.2, "inst-Z barely loads it, got {inst} dB");
     }
 
     /// A cabled connection assembles (the cable's R·C rides the edge). Smoke test that the cable path

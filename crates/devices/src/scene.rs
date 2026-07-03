@@ -50,6 +50,24 @@ pub struct DeviceInstance {
     /// Param values to apply after build. Omitted ⇒ the device keeps its construction defaults.
     #[serde(default)]
     pub params: Vec<ParamSetting>,
+    /// **Structural** config values, by key (e.g. a preamp's `"inst1"` hi-Z toggle). Unlike a
+    /// `ParamSetting` (a smoothed runtime value), a config selects *how the device is built* — its
+    /// node topology or a baked electrical value — so a change recompiles (the UI rebuilds the patch).
+    /// Omitted ⇒ the device builds with its catalog defaults.
+    #[serde(default)]
+    pub config: Vec<ConfigSetting>,
+}
+
+/// A value for one of a device's **structural** config keys (matches `ConfigDescriptor.key`). A
+/// scalar — a toggle is `0.0`/`1.0`. Applied at *build* (it selects which node/impedance is
+/// constructed), not smoothed at runtime; changing one recompiles.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ConfigSetting {
+    /// Structural config key (matches `ConfigDescriptor.key`).
+    pub key: String,
+    /// Value selecting the structural choice; a toggle is `0.0` (off) / `1.0` (on).
+    pub value: f32,
 }
 
 /// A value for one of a device's smoothed control params, addressed by the exposed param id — its
@@ -115,11 +133,17 @@ mod tests {
                     id: "synth".into(),
                     type_id: "synth_voice".into(),
                     params: vec![ParamSetting { id: 0, value: 1.0 }],
+                    // A config setting too, so the round-trip / camelCase oracles cover the field.
+                    config: vec![ConfigSetting {
+                        key: "inst1".into(),
+                        value: 1.0,
+                    }],
                 },
                 DeviceInstance {
                     id: "spk".into(),
                     type_id: "speaker".into(),
                     params: vec![],
+                    config: vec![],
                 },
             ],
             connections: vec![Connection {
@@ -182,6 +206,7 @@ mod tests {
         let device: DeviceInstance =
             serde_json::from_str(r#"{"id":"a","typeId":"speaker"}"#).expect("params defaults");
         assert!(device.params.is_empty());
+        assert!(device.config.is_empty(), "config defaults to empty");
 
         let conn: Connection = serde_json::from_str(
             r#"{"from":{"device":"a","port":0},"to":{"device":"b","port":0}}"#,

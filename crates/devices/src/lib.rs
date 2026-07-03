@@ -19,7 +19,10 @@ mod scene;
 pub use build::{BuildError, BuiltScene, build_patch};
 pub use cables::{CableType, cable_types};
 pub use catalog::{
-    BuiltDevice, Connector, DeviceDescriptor, ParamDescriptor, ParamKind, PortDescriptor,
-    PortDirection, PortDomain, PortKind, connectors_compatible, descriptors, instantiate,
+    BuiltDevice, ConfigDescriptor, ConfigKind, Connector, DeviceConfig, DeviceDescriptor,
+    ParamDescriptor, ParamKind, PortDescriptor, PortDirection, PortDomain, PortKind,
+    connectors_compatible, descriptors, instantiate,
 };
-pub use scene::{CableSpec, Connection, DeviceInstance, ParamSetting, Patch, PortRef};
+pub use scene::{
+    CableSpec, ConfigSetting, Connection, DeviceInstance, ParamSetting, Patch, PortRef,
+};

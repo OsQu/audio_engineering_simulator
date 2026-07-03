@@ -32,12 +32,42 @@
 //! **Construction config is fixed per type:** builders bake realistic electrical values; only the
 //! nodes' smoothed `params()` are user-facing. Field names are camelCase on the JS side.
 
+use crate::scene::ConfigSetting;
 use engine::{
     AdConverter, BitDepth, DaConverter, DigitalMeter, Domain, EqBand, EventThru, GainStage, Graph,
-    InputZ, Node, NodeId, Ohms, ParamId, ReadoutId, SampleRate, Speaker, SynthVoice, ThreeBandEq,
-    Volts, VuMeter,
+    InputZ, MicPreamp, Node, NodeId, Ohms, ParamId, ReadoutId, SampleRate, Speaker, SynthVoice,
+    ThreeBandEq, Volts, VuMeter,
 };
 use serde::Serialize;
+
+/// A device's **structural config** at build time — the `(key → scalar)` view a catalog node builder
+/// reads to select which node/impedance to construct (e.g. a preamp's `"inst1"` hi-Z toggle). Wraps
+/// the scene's [`ConfigSetting`]s; unknown keys fall back to the builder's default. Unlike a param
+/// (smoothed at runtime), config is consumed once, at build — changing it recompiles.
+pub struct DeviceConfig<'a> {
+    settings: &'a [ConfigSetting],
+}
+
+impl<'a> DeviceConfig<'a> {
+    /// A view over a device instance's config settings.
+    #[must_use]
+    pub fn new(settings: &'a [ConfigSetting]) -> Self {
+        Self { settings }
+    }
+
+    /// The empty config — every key falls back to its default. Used to build a device's descriptor
+    /// (the exposed face is config-independent) and by config-free devices.
+    pub const EMPTY: DeviceConfig<'static> = DeviceConfig { settings: &[] };
+
+    /// The value for `key`, or `default` if the instance didn't set it.
+    #[must_use]
+    pub fn get_or(&self, key: &str, default: f32) -> f32 {
+        self.settings
+            .iter()
+            .find(|c| c.key == key)
+            .map_or(default, |c| c.value)
+    }
+}
 
 /// The fixed converter clock + word length the catalog's digital devices are built at — the same
 /// 48 kHz / 16-bit as the canonical patch (`M = 384 kHz / 48 kHz = 8` against the analog rate).
@@ -62,6 +92,32 @@ pub struct DeviceDescriptor {
     /// The device's scalar readouts (meter values the host reads back), in exposed-id order. Empty
     /// for a device that measures nothing.
     pub readouts: Vec<ReadoutDescriptor>,
+    /// The device's **structural** config toggles (e.g. a preamp's INST/hi-Z), which the UI renders
+    /// and whose change triggers a rebuild. Empty for a device with no structural options.
+    pub configs: Vec<ConfigDescriptor>,
+}
+
+/// One structural config option: its key, a UI label, the control kind, and the default value the
+/// device builds with when unset. Hand-authored per catalog entry.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ConfigDescriptor {
+    /// Structural config key — what a `ConfigSetting` addresses.
+    pub key: String,
+    /// Display label (e.g. "Inst 1").
+    pub label: String,
+    /// Suggested control widget for the structural toggle.
+    pub kind: ConfigKind,
+    /// Value the device builds with when the instance leaves this key unset.
+    pub default: f32,
+}
+
+/// Suggested control widget for a structural config option.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum ConfigKind {
+    /// A two-state structural switch (`0.0` / `1.0`) — e.g. a preamp's INST/hi-Z.
+    Toggle,
 }
 
 /// A device's physical form factor and size — intrinsic **content** (as fixed as its impedance),
@@ -230,6 +286,10 @@ struct InternalEdge {
     to_port: usize,
 }
 
+/// A node builder: constructs one engine node from the device's structural [`DeviceConfig`]. Most
+/// ignore the config; a config-driven builder reads a key to pick an impedance or topology.
+type NodeBuilder = fn(&DeviceConfig) -> Box<dyn Node>;
+
 /// One device type in the catalog — the single place a device is defined. Bundles its identity, its
 /// **node builders** + **internal edges** (the chassis), and the **UI metadata** for its panel. The
 /// metadata is positionally aligned to the *exposed* face (open ports in node order; all params
@@ -239,9 +299,9 @@ struct CatalogEntry {
     name: &'static str,
     /// Physical form factor + size — intrinsic content, hand-authored like the labels.
     form_factor: FormFactor,
-    /// The internal node(s), in order; each builds one engine node with fixed config. Length 1 is the
-    /// single-node case.
-    nodes: &'static [fn() -> Box<dyn Node>],
+    /// The internal node(s), in order; each is a [`NodeBuilder`] constructing one engine node from the
+    /// device's structural config. Length 1 is the single-node case.
+    nodes: &'static [NodeBuilder],
     /// Edges wiring the internal nodes. Empty for a single-node device.
     internal: &'static [InternalEdge],
     /// One per **ungrouped** exposed param (node params not captured by a group, concatenated in node
@@ -259,12 +319,25 @@ struct CatalogEntry {
     /// One per *exposed* readout (all node readouts, concatenated in node order). Empty for a device
     /// that measures nothing.
     readouts: &'static [ReadoutUi],
+    /// Structural config toggles the device offers (INST/hi-Z etc.), read by the node builders and
+    /// surfaced to the UI via the descriptor. Empty for a device with no structural options.
+    configs: &'static [ConfigUi],
 }
 
 struct ParamUi {
     label: &'static str,
     unit: &'static str,
     kind: ParamKind,
+}
+
+/// A hand-authored structural config option (the entry's counterpart to a [`ConfigDescriptor`]).
+struct ConfigUi {
+    key: &'static str,
+    label: &'static str,
+    kind: ConfigKind,
+    /// Value the device builds with when the instance leaves this key unset — must match what the
+    /// node builder passes to [`DeviceConfig::get_or`] for this key.
+    default: f32,
 }
 
 /// A **device-level param group**: one exposed control bound to N node params that are driven
@@ -293,6 +366,29 @@ struct ReadoutUi {
     unit: &'static str,
 }
 
+/// The 8i6 preamp input impedances. Line-level (default) keeps today's 10 kΩ; instrument/hi-Z (INST
+/// engaged) is ~1.5 MΩ so a high-output-impedance pickup isn't loaded down. The choice is baked into
+/// the loading divider at compile, so it's a structural config (a toggle recompiles), not a param.
+const PREAMP_LINE_Z_OHMS: f32 = 10_000.0;
+const PREAMP_INST_Z_OHMS: f32 = 1_500_000.0;
+
+/// Build one 8i6 preamp — a [`MicPreamp`] whose input impedance is selected by the `inst_key`
+/// structural toggle (`>= 0.5` ⇒ instrument/hi-Z, else line). Its default (`0.0` = line) reproduces
+/// the pre-INST 10 kΩ behavior.
+fn scarlett_preamp(cfg: &DeviceConfig, inst_key: &str) -> Box<dyn Node> {
+    let z_ohms = if cfg.get_or(inst_key, 0.0) >= 0.5 {
+        PREAMP_INST_Z_OHMS
+    } else {
+        PREAMP_LINE_Z_OHMS
+    };
+    Box::new(MicPreamp::new(
+        1.0,
+        Volts::new(10.0),
+        InputZ::new(Ohms::new(z_ohms)),
+        Ohms::new(150.0),
+    ))
+}
+
 /// The device catalog: every type the UI can place, builders + descriptor together. Each entry's
 /// `params`/`inputs`/`outputs` lengths must match its exposed face — `catalog_aligns_with_exposed_face`
 /// guards it (the `zip` in `describe` would otherwise silently truncate).
@@ -305,7 +401,7 @@ const CATALOG: &[CatalogEntry] = &[
             height_mm: 90.0,
             depth_mm: 300.0,
         },
-        nodes: &[|| Box::new(SynthVoice::new(Volts::new(1.0), Ohms::new(1.0)))],
+        nodes: &[|_cfg| Box::new(SynthVoice::new(Volts::new(1.0), Ohms::new(1.0)))],
         internal: &[],
         params: &[
             ParamUi {
@@ -351,6 +447,7 @@ const CATALOG: &[CatalogEntry] = &[
             connector: Connector::QuarterInch,
         }],
         readouts: &[],
+        configs: &[],
     },
     // A standalone MIDI controller: a keybed with no sound of its own that *produces* a performance
     // and forwards it to MIDI-OUT (an `EventThru` — the identity event processor). Its MIDI-IN is the
@@ -365,7 +462,7 @@ const CATALOG: &[CatalogEntry] = &[
             height_mm: 80.0,
             depth_mm: 250.0,
         },
-        nodes: &[|| Box::new(EventThru::new(64))],
+        nodes: &[|_cfg| Box::new(EventThru::new(64))],
         internal: &[],
         params: &[],
         param_groups: &[],
@@ -380,12 +477,13 @@ const CATALOG: &[CatalogEntry] = &[
             connector: Connector::Din5,
         }],
         readouts: &[],
+        configs: &[],
     },
     CatalogEntry {
         type_id: "gain_stage",
         name: "Gain Stage",
         form_factor: FormFactor::Rackmount { rack_units: 1 },
-        nodes: &[|| {
+        nodes: &[|_cfg| {
             Box::new(GainStage::new(
                 1.0,
                 Volts::new(10.0),
@@ -418,12 +516,13 @@ const CATALOG: &[CatalogEntry] = &[
             connector: Connector::QuarterInch,
         }],
         readouts: &[],
+        configs: &[],
     },
     CatalogEntry {
         type_id: "three_band_eq",
         name: "3-Band EQ",
         form_factor: FormFactor::Rackmount { rack_units: 1 },
-        nodes: &[|| {
+        nodes: &[|_cfg| {
             Box::new(ThreeBandEq::new(
                 SampleRate::new(HOST_RATE_HZ),
                 BitDepth::new(BITS),
@@ -448,12 +547,13 @@ const CATALOG: &[CatalogEntry] = &[
             connector: Connector::Digital,
         }],
         readouts: &[],
+        configs: &[],
     },
     CatalogEntry {
         type_id: "ad_converter",
         name: "AD Converter",
         form_factor: FormFactor::Rackmount { rack_units: 1 },
-        nodes: &[|| {
+        nodes: &[|_cfg| {
             Box::new(AdConverter::new(
                 SampleRate::new(HOST_RATE_HZ),
                 BitDepth::new(BITS),
@@ -480,12 +580,13 @@ const CATALOG: &[CatalogEntry] = &[
             connector: Connector::Digital,
         }],
         readouts: &[],
+        configs: &[],
     },
     CatalogEntry {
         type_id: "da_converter",
         name: "DA Converter",
         form_factor: FormFactor::Rackmount { rack_units: 1 },
-        nodes: &[|| {
+        nodes: &[|_cfg| {
             Box::new(DaConverter::new(
                 SampleRate::new(HOST_RATE_HZ),
                 BitDepth::new(BITS),
@@ -512,6 +613,7 @@ const CATALOG: &[CatalogEntry] = &[
             connector: Connector::QuarterInch,
         }],
         readouts: &[],
+        configs: &[],
     },
     CatalogEntry {
         type_id: "speaker",
@@ -521,7 +623,7 @@ const CATALOG: &[CatalogEntry] = &[
             height_mm: 380.0,
             depth_mm: 300.0,
         },
-        nodes: &[|| Box::new(Speaker::new(1.0, InputZ::new(Ohms::new(10_000.0))))],
+        nodes: &[|_cfg| Box::new(Speaker::new(1.0, InputZ::new(Ohms::new(10_000.0))))],
         internal: &[],
         params: &[],
         param_groups: &[],
@@ -539,6 +641,7 @@ const CATALOG: &[CatalogEntry] = &[
             connector: Connector::QuarterInch,
         }],
         readouts: &[],
+        configs: &[],
     },
     // The minimal **multi-node** device, proving the chassis seam: two analog gain stages in series
     // (input gain → output gain) behind one logical device. The internal edge hides stage 0's output
@@ -551,7 +654,7 @@ const CATALOG: &[CatalogEntry] = &[
         name: "Channel Strip",
         form_factor: FormFactor::Rackmount { rack_units: 2 },
         nodes: &[
-            || {
+            |_cfg| {
                 Box::new(GainStage::new(
                     1.0,
                     Volts::new(10.0),
@@ -559,7 +662,7 @@ const CATALOG: &[CatalogEntry] = &[
                     Ohms::new(150.0),
                 ))
             },
-            || {
+            |_cfg| {
                 Box::new(GainStage::new(
                     1.0,
                     Volts::new(10.0),
@@ -610,6 +713,7 @@ const CATALOG: &[CatalogEntry] = &[
             connector: Connector::QuarterInch,
         }],
         readouts: &[],
+        configs: &[],
     },
     // A voltage-native VU meter — bridging inline analog meter (unity passthrough). Its two readouts
     // ride the node→host lane: the ballistic VU reading and the block peak in dBu. The analog half of
@@ -618,7 +722,7 @@ const CATALOG: &[CatalogEntry] = &[
         type_id: "vu_meter",
         name: "VU Meter",
         form_factor: FormFactor::Rackmount { rack_units: 1 },
-        nodes: &[|| Box::new(VuMeter::new())],
+        nodes: &[|_cfg| Box::new(VuMeter::new())],
         internal: &[],
         params: &[],
         param_groups: &[],
@@ -642,6 +746,7 @@ const CATALOG: &[CatalogEntry] = &[
                 unit: "dBu",
             },
         ],
+        configs: &[],
     },
     // A digital level meter — inline passthrough on a digital channel, reporting peak and RMS in
     // dBFS. Placed after the AD, it's the digital half of the across-converter gain-staging story.
@@ -649,7 +754,7 @@ const CATALOG: &[CatalogEntry] = &[
         type_id: "digital_meter",
         name: "Digital Meter",
         form_factor: FormFactor::Rackmount { rack_units: 1 },
-        nodes: &[|| {
+        nodes: &[|_cfg| {
             Box::new(DigitalMeter::new(
                 SampleRate::new(HOST_RATE_HZ),
                 BitDepth::new(BITS),
@@ -678,6 +783,7 @@ const CATALOG: &[CatalogEntry] = &[
                 unit: "dBFS",
             },
         ],
+        configs: &[],
     },
     // A simplified Focusrite Scarlett 8i6 — the first **mixed-face, multi-I/O** interface (Story 5.7),
     // built entirely from existing nodes (no new engine node). Two mic/instrument preamps each feed an
@@ -698,23 +804,11 @@ const CATALOG: &[CatalogEntry] = &[
         // Node order fixes the exposed-face order (open ports + concatenated params, in node order):
         // 0,1 preamps · 2,3 their ADs · 4 the DA · 5,6 monitor + headphone amps · 7 MIDI thru.
         nodes: &[
-            || {
-                Box::new(GainStage::new(
-                    1.0,
-                    Volts::new(10.0),
-                    InputZ::new(Ohms::new(10_000.0)),
-                    Ohms::new(150.0),
-                ))
-            },
-            || {
-                Box::new(GainStage::new(
-                    1.0,
-                    Volts::new(10.0),
-                    InputZ::new(Ohms::new(10_000.0)),
-                    Ohms::new(150.0),
-                ))
-            },
-            || {
+            // The two mic/instrument preamps: `MicPreamp`s whose INST/hi-Z input impedance is picked
+            // from the device config (`inst1`/`inst2`). PAD + AIR ride as their runtime params.
+            |cfg| scarlett_preamp(cfg, "inst1"),
+            |cfg| scarlett_preamp(cfg, "inst2"),
+            |_cfg| {
                 Box::new(AdConverter::new(
                     SampleRate::new(HOST_RATE_HZ),
                     BitDepth::new(BITS),
@@ -722,7 +816,7 @@ const CATALOG: &[CatalogEntry] = &[
                     Ohms::new(1_000_000.0),
                 ))
             },
-            || {
+            |_cfg| {
                 Box::new(AdConverter::new(
                     SampleRate::new(HOST_RATE_HZ),
                     BitDepth::new(BITS),
@@ -730,7 +824,7 @@ const CATALOG: &[CatalogEntry] = &[
                     Ohms::new(1_000_000.0),
                 ))
             },
-            || {
+            |_cfg| {
                 Box::new(DaConverter::new(
                     SampleRate::new(HOST_RATE_HZ),
                     BitDepth::new(BITS),
@@ -738,7 +832,7 @@ const CATALOG: &[CatalogEntry] = &[
                     Ohms::new(150.0),
                 ))
             },
-            || {
+            |_cfg| {
                 Box::new(GainStage::new(
                     1.0,
                     Volts::new(10.0),
@@ -746,7 +840,7 @@ const CATALOG: &[CatalogEntry] = &[
                     Ohms::new(150.0),
                 ))
             },
-            || {
+            |_cfg| {
                 Box::new(GainStage::new(
                     1.0,
                     Volts::new(10.0),
@@ -754,7 +848,7 @@ const CATALOG: &[CatalogEntry] = &[
                     Ohms::new(150.0),
                 ))
             },
-            || Box::new(EventThru::new(64)),
+            |_cfg| Box::new(EventThru::new(64)),
         ],
         // preamp→AD (×2), then the DA fans out to both the monitor and the headphone amp.
         internal: &[
@@ -783,9 +877,11 @@ const CATALOG: &[CatalogEntry] = &[
                 to_port: 0,
             },
         ],
-        // Ungrouped params, exposed in node order — just the four gains (each stage's `powered` is
-        // captured by the Power group below and hidden from this walk): preamp 1, preamp 2, monitor,
-        // headphone. Exposed param ids: 0 Gain 1 · 1 Gain 2 · 2 Monitor · 3 Phones · 4 Power.
+        // Ungrouped params, exposed in node order (each stage's `powered` is captured by the Power
+        // group below and hidden from this walk). The two preamps each expose gain + PAD + AIR
+        // switches (INST/hi-Z is a structural config, not here); the monitor + phones amps expose gain.
+        // Exposed param ids: 0 Gain 1 · 1 Pad 1 · 2 Air 1 · 3 Gain 2 · 4 Pad 2 · 5 Air 2 · 6 Monitor ·
+        // 7 Phones · 8 Power.
         params: &[
             ParamUi {
                 label: "Gain 1",
@@ -793,9 +889,29 @@ const CATALOG: &[CatalogEntry] = &[
                 kind: ParamKind::Knob,
             },
             ParamUi {
+                label: "Pad 1",
+                unit: "",
+                kind: ParamKind::Switch,
+            },
+            ParamUi {
+                label: "Air 1",
+                unit: "",
+                kind: ParamKind::Switch,
+            },
+            ParamUi {
                 label: "Gain 2",
                 unit: "×",
                 kind: ParamKind::Knob,
+            },
+            ParamUi {
+                label: "Pad 2",
+                unit: "",
+                kind: ParamKind::Switch,
+            },
+            ParamUi {
+                label: "Air 2",
+                unit: "",
+                kind: ParamKind::Switch,
             },
             ParamUi {
                 label: "Monitor",
@@ -809,8 +925,9 @@ const CATALOG: &[CatalogEntry] = &[
             },
         ],
         // One device-level power switch — a real 8i6 is a single powered unit. It gates every stage's
-        // `powered`: both preamps (id 1), both ADs and the DA (id 0), and the monitor + phones amps
-        // (id 1). An "off" device is silent on *both* analog outs and the USB sends (the AD gate).
+        // `powered`: both preamps (MicPreamp id 1), both ADs and the DA (id 0), and the monitor +
+        // phones amps (GainStage id 1). An "off" device is silent on *both* analog outs and the USB
+        // sends (the AD gate).
         param_groups: &[ParamGroup {
             ui: ParamUi {
                 label: "Power",
@@ -818,8 +935,8 @@ const CATALOG: &[CatalogEntry] = &[
                 kind: ParamKind::Switch,
             },
             targets: &[
-                (0, GainStage::POWERED),
-                (1, GainStage::POWERED),
+                (0, MicPreamp::POWERED),
+                (1, MicPreamp::POWERED),
                 (2, AdConverter::POWERED),
                 (3, AdConverter::POWERED),
                 (4, DaConverter::POWERED),
@@ -881,6 +998,23 @@ const CATALOG: &[CatalogEntry] = &[
             },
         ],
         readouts: &[],
+        // INST/hi-Z per preamp: a structural toggle selecting the channel's input impedance (line
+        // vs instrument), read by the preamp builders. Default off (line-level), reproducing today's
+        // behavior. AIR/PAD are runtime *params* on the preamp, not structural configs.
+        configs: &[
+            ConfigUi {
+                key: "inst1",
+                label: "Inst 1",
+                kind: ConfigKind::Toggle,
+                default: 0.0,
+            },
+            ConfigUi {
+                key: "inst2",
+                label: "Inst 2",
+                kind: ConfigKind::Toggle,
+                default: 0.0,
+            },
+        ],
     },
 ];
 
@@ -952,8 +1086,8 @@ fn entry(type_id: &str) -> Option<&'static CatalogEntry> {
 /// Build a device's nodes and compute its exposed face by convention: an input/output port is exposed
 /// when no internal edge consumes it (open ports, in node order); every node param is exposed,
 /// concatenated in node order. Cold path; the node-building cost is negligible.
-fn expand(entry: &CatalogEntry) -> Expansion {
-    let nodes: Vec<Box<dyn Node>> = entry.nodes.iter().map(|build| build()).collect();
+fn expand(entry: &CatalogEntry, config: &DeviceConfig) -> Expansion {
+    let nodes: Vec<Box<dyn Node>> = entry.nodes.iter().map(|build| build(config)).collect();
     let mut inputs = Vec::new();
     let mut outputs = Vec::new();
     let mut params = Vec::new();
@@ -1037,12 +1171,15 @@ fn expand(entry: &CatalogEntry) -> Expansion {
     }
 }
 
-/// Expand the device type `type_id` into `g`: add its node(s), wire its internal edges, and return the
-/// instance map (device-level ports/params → concrete `(NodeId, …)`). `None` if the type is unknown.
+/// Expand the device type `type_id` (built with structural `config`) into `g`: add its node(s), wire
+/// its internal edges, and return the instance map (device-level ports/params → concrete
+/// `(NodeId, …)`). `None` if the type is unknown.
 ///
-/// The chassis-seam primitive: `build_patch` calls this per device, then uses the returned
-/// [`BuiltDevice`] to remap inter-device connections and resolve control handles.
-pub fn instantiate(type_id: &str, g: &mut Graph) -> Option<BuiltDevice> {
+/// The chassis-seam primitive: `build_patch` calls this per device with the instance's config, then
+/// uses the returned [`BuiltDevice`] to remap inter-device connections and resolve control handles.
+/// The exposed face is config-independent (a config changes baked values/topology, not which
+/// ports/params exist), so the returned map is stable across config choices.
+pub fn instantiate(type_id: &str, config: &DeviceConfig, g: &mut Graph) -> Option<BuiltDevice> {
     let entry = entry(type_id)?;
     let Expansion {
         nodes,
@@ -1050,7 +1187,7 @@ pub fn instantiate(type_id: &str, g: &mut Graph) -> Option<BuiltDevice> {
         outputs,
         params,
         readouts,
-    } = expand(entry);
+    } = expand(entry, config);
 
     let node_ids: Vec<NodeId> = nodes.into_iter().map(|node| g.add_boxed(node)).collect();
     for edge in entry.internal {
@@ -1089,7 +1226,8 @@ pub fn descriptors() -> Vec<DeviceDescriptor> {
 
 /// Build one descriptor: numeric param fields + port domains from the exposed face, labels from the entry.
 fn describe(entry: &CatalogEntry) -> DeviceDescriptor {
-    let face = expand(entry);
+    // The exposed face is config-independent, so the descriptor is built with the empty config.
+    let face = expand(entry, &DeviceConfig::EMPTY);
 
     // Params, exposed (position) order — the id is the position, matching how the host addresses a
     // param (`BuiltScene::param(device, id)` indexes the exposed handle vec), not the node-local
@@ -1159,6 +1297,18 @@ fn describe(entry: &CatalogEntry) -> DeviceDescriptor {
         })
         .collect();
 
+    // Structural config toggles, straight from the entry (hand-authored; no engine truth to derive).
+    let configs = entry
+        .configs
+        .iter()
+        .map(|c| ConfigDescriptor {
+            key: c.key.to_owned(),
+            label: c.label.to_owned(),
+            kind: c.kind,
+            default: c.default,
+        })
+        .collect();
+
     DeviceDescriptor {
         type_id: entry.type_id.to_owned(),
         name: entry.name.to_owned(),
@@ -1166,6 +1316,7 @@ fn describe(entry: &CatalogEntry) -> DeviceDescriptor {
         params,
         ports,
         readouts,
+        configs,
     }
 }
 
@@ -1180,7 +1331,7 @@ mod tests {
     #[test]
     fn catalog_aligns_with_exposed_face() {
         for entry in CATALOG {
-            let face = expand(entry);
+            let face = expand(entry, &DeviceConfig::EMPTY);
             // The exposed param face is the ungrouped UIs ++ one entry per group.
             assert_eq!(
                 entry.params.len() + entry.param_groups.len(),
@@ -1216,7 +1367,11 @@ mod tests {
     #[test]
     fn catalog_group_targets_carry_identical_decls() {
         for entry in CATALOG {
-            let nodes: Vec<Box<dyn Node>> = entry.nodes.iter().map(|build| build()).collect();
+            let nodes: Vec<Box<dyn Node>> = entry
+                .nodes
+                .iter()
+                .map(|build| build(&DeviceConfig::EMPTY))
+                .collect();
             for group in entry.param_groups {
                 let decl_of = |&(ni, id): &(usize, ParamId)| {
                     *nodes[ni]
@@ -1266,7 +1421,7 @@ mod tests {
     #[test]
     fn descriptors_carry_engine_truth() {
         for entry in CATALOG {
-            let face = expand(entry);
+            let face = expand(entry, &DeviceConfig::EMPTY);
             let desc = describe(entry);
 
             for (i, (pd, ep)) in desc.params.iter().zip(&face.params).enumerate() {
@@ -1328,7 +1483,8 @@ mod tests {
     #[test]
     fn multi_node_device_expands_and_maps() {
         let mut g = Graph::new();
-        let strip = instantiate("channel_strip", &mut g).expect("channel_strip is in the catalog");
+        let strip = instantiate("channel_strip", &DeviceConfig::EMPTY, &mut g)
+            .expect("channel_strip is in the catalog");
 
         assert_eq!(strip.nodes.len(), 2, "two internal nodes");
         assert_eq!(g.connection_count(), 1, "one internal edge wired");
@@ -1355,7 +1511,8 @@ mod tests {
     #[test]
     fn single_node_device_is_identity() {
         let mut g = Graph::new();
-        let spk = instantiate("speaker", &mut g).expect("speaker is in the catalog");
+        let spk = instantiate("speaker", &DeviceConfig::EMPTY, &mut g)
+            .expect("speaker is in the catalog");
 
         assert_eq!(spk.nodes.len(), 1);
         assert_eq!(g.connection_count(), 0, "no internal edges");
@@ -1368,13 +1525,14 @@ mod tests {
     /// amps), and its exposed face maps to the right `(NodeId, …)` in node order. This pins the
     /// non-trivial remap the faceplate relies on: device inputs are preamp 1/2, the DA's digital
     /// return, and MIDI-in; device outputs are the two AD sends, the monitor + headphone analog outs,
-    /// and MIDI-out; and the exposed params are the four gains (preamp 1/2, monitor, phones) plus one
-    /// **Power group** that fans out to every stage's `powered` — both preamps, both ADs, the DA, and
-    /// the monitor + phones amps (seven targets from one control).
+    /// and MIDI-out; and the exposed params are, in node order, each `MicPreamp`'s gain/pad/air, then
+    /// the monitor + phones gains, then one **Power group** that fans out to every stage's `powered`
+    /// — both preamps, both ADs, the DA, and the monitor + phones amps (seven targets from one control).
     #[test]
     fn scarlett_8i6_expands_with_mixed_face_io() {
         let mut g = Graph::new();
-        let dev = instantiate("scarlett_8i6", &mut g).expect("scarlett_8i6 is in the catalog");
+        let dev = instantiate("scarlett_8i6", &DeviceConfig::EMPTY, &mut g)
+            .expect("scarlett_8i6 is in the catalog");
 
         assert_eq!(dev.nodes.len(), 8, "eight internal nodes");
         assert_eq!(
@@ -1405,17 +1563,21 @@ mod tests {
                 (dev.nodes[7], 0),
             ]
         );
-        // Exposed params: the four ungrouped gains (each stage's GAIN, ParamId 0) in node order —
-        // preamp 1/2 then monitor + phones — followed by the single Power group. The group's seven
-        // targets are every stage's `powered`: preamps (id 1), both ADs + the DA (id 0), monitor +
-        // phones (id 1). Each gain is a single-target vec; Power is a seven-target vec.
+        // Exposed params, ungrouped in node order then the group. Each preamp (MicPreamp) exposes its
+        // GAIN (0), PAD (2), AIR (3) — POWERED (1) is captured by the group; the monitor + phones
+        // GainStages expose GAIN (0). Then the Power group's seven targets: preamps' POWERED (id 1),
+        // both ADs + the DA (id 0), monitor + phones POWERED (id 1).
         assert_eq!(
             dev.params,
             vec![
-                vec![(dev.nodes[0], ParamId(0))],
-                vec![(dev.nodes[1], ParamId(0))],
-                vec![(dev.nodes[5], ParamId(0))],
-                vec![(dev.nodes[6], ParamId(0))],
+                vec![(dev.nodes[0], ParamId(0))], // Gain 1
+                vec![(dev.nodes[0], ParamId(2))], // Pad 1
+                vec![(dev.nodes[0], ParamId(3))], // Air 1
+                vec![(dev.nodes[1], ParamId(0))], // Gain 2
+                vec![(dev.nodes[1], ParamId(2))], // Pad 2
+                vec![(dev.nodes[1], ParamId(3))], // Air 2
+                vec![(dev.nodes[5], ParamId(0))], // Monitor
+                vec![(dev.nodes[6], ParamId(0))], // Phones
                 vec![
                     (dev.nodes[0], ParamId(1)),
                     (dev.nodes[1], ParamId(1)),
@@ -1424,7 +1586,7 @@ mod tests {
                     (dev.nodes[4], ParamId(0)),
                     (dev.nodes[5], ParamId(1)),
                     (dev.nodes[6], ParamId(1)),
-                ],
+                ], // Power
             ]
         );
     }
@@ -1434,7 +1596,7 @@ mod tests {
     #[test]
     fn unknown_type_does_not_instantiate() {
         let mut g = Graph::new();
-        assert!(instantiate("does_not_exist", &mut g).is_none());
+        assert!(instantiate("does_not_exist", &DeviceConfig::EMPTY, &mut g).is_none());
         assert_eq!(g.node_count(), 0, "nothing added for an unknown type");
     }
 
@@ -1463,6 +1625,10 @@ mod tests {
         // Ports carry their physical connector, serialized camelCase.
         assert!(json.contains("connector"));
         assert!(json.contains("quarterInch"));
+        // Structural config toggles serialize (the 8i6's INST keys) — the web renders them.
+        assert!(json.contains("configs"));
+        assert!(json.contains("inst1"));
+        assert!(json.contains("toggle"), "ConfigKind serializes camelCase");
     }
 
     /// Connector compatibility is same-connector only (TS/TRS already unified as `QuarterInch`); a
@@ -1562,7 +1728,8 @@ mod tests {
     #[test]
     fn meter_readouts_map_to_nodes() {
         let mut g = Graph::new();
-        let vu = instantiate("vu_meter", &mut g).expect("vu_meter is in the catalog");
+        let vu = instantiate("vu_meter", &DeviceConfig::EMPTY, &mut g)
+            .expect("vu_meter is in the catalog");
         assert_eq!(vu.nodes.len(), 1);
         assert_eq!(
             vu.readouts,

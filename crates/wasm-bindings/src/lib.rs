@@ -412,6 +412,7 @@ mod tests {
             id: id.into(),
             type_id: type_id.into(),
             params: vec![],
+            config: vec![],
         }
     }
 
