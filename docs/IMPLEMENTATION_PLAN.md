@@ -561,13 +561,44 @@ _Tasks to be elaborated when we reach this Epic._
   exist** (specs), the **web owns how they're drawn** (look & feel). _First known case — mixed-face I/O:_
   Story 4.8's `skin.ioFace` is **per-device** (a whole device's jacks on one face — `back` default,
   `front` for the MIDI controller). Real gear splits them — an audio interface puts **hi-Z instrument
-  inputs on the front** and line/digital/word-clock on the back. Planned generalization (design sketched,
-  **not built** — no device needs it yet): `ioFace` becomes a per-port resolver `(port) => front|back`
-  (naturally keyed off the port's signal-class `kind`, since hi-Z = instrument-kind) plus a
-  `controlsFace`, and `Panel` renders each face as _the controls (if it's the controls-face) **plus** the
-  jacks assigned to that face_ — subsuming today's controls-front/jacks-back and the controller's
-  all-front. Build it **with** the first device that needs it (rides in with 5.1's audio interface), not
-  before. Further fidelity corner cases accrue here as they surface.
+  inputs on the front** and line/digital/word-clock on the back. **Resolution: Story 5.7** — once a
+  device authors its own faceplate as a Svelte component, face assignment is simply _which face's markup
+  you write a jack into_, so the mixed-face problem dissolves (no `ioFace` per-port resolver needed; an
+  earlier sketch of that resolver is superseded). The audio interface that forces this is 5.7's proving
+  device. Further fidelity corner cases accrue here as they surface.
+- **Story 5.7** — Per-device faceplate UIs: each device authors its own look & feel. Today the web draws
+  every device through **one generic, flow-based renderer** (`Panel.svelte`: flexbox controls in
+  exposed-param order, flexbox In/Out jack groups) dressed by a thin `skin.ts` (3 faceplate finishes +
+  knob caps + a **per-device** `ioFace`). That can't express real gear — controls positioned relative to
+  their jacks, a big centre monitor knob, section legends ("MONITOR", "LINE OUTPUTS"), brand identity
+  (Focusrite red chassis/border, a "Teletronix" wordmark), or **mixed-face I/O** (front instrument inputs,
+  rear line/MIDI/USB). **Settled approach (component-based, not a coordinate/layout-data model):** a device
+  optionally registers **its own Svelte component** as its faceplate, composing the shared skeuomorphic
+  **widget vocabulary** (`Knob`/`Fader`/`Switch`/`Jack`/`Meter`) and the design-system **`--ae-*` tokens**,
+  but arranging them with **its own scoped CSS** (grid/flex/absolute; absolute px is safe — the world's
+  single zoom transform scales it). The generic `Panel` stays the **fallback** for un-authored gear, so
+  nothing existing changes. This honors the layer rule unchanged — the **Rust catalog stays specs-only**
+  (params/ports/readouts/form-factor by id; no layout vocabulary, per the Story 4.2 decision that rejected
+  descriptor layout fields); the device component references those **ids** and the web owns all
+  appearance. Why component over a normalized-coordinate map: full CSS expressiveness, free-form
+  text/legends/logos as plain HTML, Svelte's automatic per-component style scoping, and the front/back
+  **face problem simply dissolves** (a jack's face = which snippet it's written in — retiring the 5.6
+  `ioFace` resolver sketch). Thin plumbing to build: a **device-UI registry** (`typeId → component`, else
+  `Panel` — mirrors `skin.ts`/`focus.ts`), a **`DeviceHandle` context** (packages App's existing
+  per-device `valueFor`/`readingFor`/`onParam`) so a faceplate binds by id with no `postMessage` plumbing,
+  **bound wrappers** (`Control`/`Socket`/`Reading` — reference an id, pick the widget by descriptor
+  `kind`, keep `Jack`'s `data-jack` anchor measurement working wherever placed), and a **`Chassis`**
+  primitive owning the shared bezel + 3-D flip so a device authors only face _contents_. The same
+  registry generalizes the **focus surface** (a device can register a richer/larger surface — a console,
+  a DAW/touch display — reusing the same handle + widgets), superseding `focus.ts`'s two hardcoded kinds.
+  Consistency guardrails (against N bespoke snowflakes): shared widgets + a few **layout primitives**
+  (`Section`/`Legend`/`ButtonCluster`/`Silkscreen`) + token-only colors/type, and a **mount test per
+  registered device** asserting it references only valid ids and places every param/port (the web mirror
+  of the Rust `catalog_aligns_with_exposed_face` guard). **Proving device: a simplified Focusrite Scarlett
+  8i6** (rides in with 5.1) — front combo inputs with per-channel gain + INST/AIR/PAD clusters, centre
+  monitor knob, headphones; rear line outs, MIDI DIN, S/PDIF, USB, power; red chassis/border carried into
+  the top-down floor-plan tile too. Build the plumbing + spike the 8i6 end-to-end, judge whether it "feels
+  right" zoomed in, then generalize.
 
 _Decision — ground-loop hum should become emergent from grounding topology (deferred to this Epic)._
 Today (Story 1.5) `Cable::with_hum` is a **manual** injection — the user asserts "a ground loop exists
