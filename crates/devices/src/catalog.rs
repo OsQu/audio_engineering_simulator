@@ -638,6 +638,208 @@ const CATALOG: &[CatalogEntry] = &[
             },
         ],
     },
+    // A simplified Focusrite Scarlett 8i6 — the first **mixed-face, multi-I/O** interface (Story 5.7),
+    // built entirely from existing nodes (no new engine node). Two mic/instrument preamps each feed an
+    // AD converter (the digital "USB send"); a digital "USB return" drives a DA whose analog monitor bus
+    // fans out to a line output and a headphone amp; MIDI passes through. The device's exposed face is
+    // deliberately split across two chassis faces by the web faceplate: the **front** carries the two
+    // combo inputs + the headphone out, the **back** carries line/USB/MIDI (and, as params, power).
+    // INST/AIR/PAD/48V are intentionally **absent** — none is honestly modelable in today's engine
+    // (see `docs/IMPROVEMENTS.md` and the Story 5.7 design notes); the faceplate omits, never fakes, them.
+    CatalogEntry {
+        type_id: "scarlett_8i6",
+        name: "Scarlett 8i6",
+        form_factor: FormFactor::Desktop {
+            width_mm: 210.0,
+            height_mm: 50.0,
+            depth_mm: 150.0,
+        },
+        // Node order fixes the exposed-face order (open ports + concatenated params, in node order):
+        // 0,1 preamps · 2,3 their ADs · 4 the DA · 5,6 monitor + headphone amps · 7 MIDI thru.
+        nodes: &[
+            || {
+                Box::new(GainStage::new(
+                    1.0,
+                    Volts::new(10.0),
+                    InputZ::new(Ohms::new(10_000.0)),
+                    Ohms::new(150.0),
+                ))
+            },
+            || {
+                Box::new(GainStage::new(
+                    1.0,
+                    Volts::new(10.0),
+                    InputZ::new(Ohms::new(10_000.0)),
+                    Ohms::new(150.0),
+                ))
+            },
+            || {
+                Box::new(AdConverter::new(
+                    SampleRate::new(HOST_RATE_HZ),
+                    BitDepth::new(BITS),
+                    Volts::new(1.0),
+                    Ohms::new(1_000_000.0),
+                ))
+            },
+            || {
+                Box::new(AdConverter::new(
+                    SampleRate::new(HOST_RATE_HZ),
+                    BitDepth::new(BITS),
+                    Volts::new(1.0),
+                    Ohms::new(1_000_000.0),
+                ))
+            },
+            || {
+                Box::new(DaConverter::new(
+                    SampleRate::new(HOST_RATE_HZ),
+                    BitDepth::new(BITS),
+                    Volts::new(1.0),
+                    Ohms::new(150.0),
+                ))
+            },
+            || {
+                Box::new(GainStage::new(
+                    1.0,
+                    Volts::new(10.0),
+                    InputZ::new(Ohms::new(10_000.0)),
+                    Ohms::new(150.0),
+                ))
+            },
+            || {
+                Box::new(GainStage::new(
+                    1.0,
+                    Volts::new(10.0),
+                    InputZ::new(Ohms::new(10_000.0)),
+                    Ohms::new(150.0),
+                ))
+            },
+            || Box::new(EventThru::new(64)),
+        ],
+        // preamp→AD (×2), then the DA fans out to both the monitor and the headphone amp.
+        internal: &[
+            InternalEdge {
+                from_node: 0,
+                from_port: 0,
+                to_node: 2,
+                to_port: 0,
+            },
+            InternalEdge {
+                from_node: 1,
+                from_port: 0,
+                to_node: 3,
+                to_port: 0,
+            },
+            InternalEdge {
+                from_node: 4,
+                from_port: 0,
+                to_node: 5,
+                to_port: 0,
+            },
+            InternalEdge {
+                from_node: 4,
+                from_port: 0,
+                to_node: 6,
+                to_port: 0,
+            },
+        ],
+        // Params, exposed in node order: preamp 1 (gain, power), preamp 2, monitor, headphone.
+        params: &[
+            ParamUi {
+                label: "Gain 1",
+                unit: "×",
+                kind: ParamKind::Knob,
+            },
+            ParamUi {
+                label: "Power 1",
+                unit: "",
+                kind: ParamKind::Switch,
+            },
+            ParamUi {
+                label: "Gain 2",
+                unit: "×",
+                kind: ParamKind::Knob,
+            },
+            ParamUi {
+                label: "Power 2",
+                unit: "",
+                kind: ParamKind::Switch,
+            },
+            ParamUi {
+                label: "Monitor",
+                unit: "×",
+                kind: ParamKind::Knob,
+            },
+            ParamUi {
+                label: "Monitor Power",
+                unit: "",
+                kind: ParamKind::Switch,
+            },
+            ParamUi {
+                label: "Phones",
+                unit: "×",
+                kind: ParamKind::Knob,
+            },
+            ParamUi {
+                label: "Phones Power",
+                unit: "",
+                kind: ParamKind::Switch,
+            },
+        ],
+        // Open inputs in node order: the two preamp inputs (front combo jacks), the DA's digital
+        // "USB return", and the MIDI in.
+        inputs: &[
+            PortUi {
+                label: "In 1",
+                kind: PortKind::Instrument,
+                connector: Connector::QuarterInch,
+            },
+            PortUi {
+                label: "In 2",
+                kind: PortKind::Instrument,
+                connector: Connector::QuarterInch,
+            },
+            PortUi {
+                label: "USB In",
+                kind: PortKind::Digital,
+                connector: Connector::Digital,
+            },
+            PortUi {
+                label: "MIDI In",
+                kind: PortKind::Midi,
+                connector: Connector::Din5,
+            },
+        ],
+        // Open outputs in node order: the two AD "USB sends", the monitor line out, the headphone
+        // out (drawn on the front), and the MIDI out.
+        outputs: &[
+            PortUi {
+                label: "USB 1",
+                kind: PortKind::Digital,
+                connector: Connector::Digital,
+            },
+            PortUi {
+                label: "USB 2",
+                kind: PortKind::Digital,
+                connector: Connector::Digital,
+            },
+            PortUi {
+                label: "Line Out",
+                kind: PortKind::Line,
+                connector: Connector::QuarterInch,
+            },
+            PortUi {
+                label: "Phones",
+                kind: PortKind::Line,
+                connector: Connector::QuarterInch,
+            },
+            PortUi {
+                label: "MIDI Out",
+                kind: PortKind::Midi,
+                connector: Connector::Din5,
+            },
+        ],
+        readouts: &[],
+    },
 ];
 
 /// A built device's footprint in a graph: its engine nodes and the resolved maps from device-level
@@ -1027,6 +1229,64 @@ mod tests {
         assert_eq!(spk.outputs, vec![(spk.nodes[0], 0)]);
     }
 
+    /// The Scarlett 8i6 — the mixed-face interface — expands into its eight internal nodes wired by
+    /// four internal edges (two preamp→AD, plus the DA **fanning out** to the monitor and headphone
+    /// amps), and its exposed face maps to the right `(NodeId, …)` in node order. This pins the
+    /// non-trivial remap the faceplate relies on: device inputs are preamp 1/2, the DA's digital
+    /// return, and MIDI-in; device outputs are the two AD sends, the monitor + headphone analog outs,
+    /// and MIDI-out; and the eight params resolve to the two preamps then the monitor + headphone
+    /// stages (the AD/DA/MIDI nodes contribute none).
+    #[test]
+    fn scarlett_8i6_expands_with_mixed_face_io() {
+        let mut g = Graph::new();
+        let dev = instantiate("scarlett_8i6", &mut g).expect("scarlett_8i6 is in the catalog");
+
+        assert_eq!(dev.nodes.len(), 8, "eight internal nodes");
+        assert_eq!(
+            g.connection_count(),
+            4,
+            "four internal edges (2 preamp→AD, DA fanned to monitor + phones)"
+        );
+
+        // Inputs, in node order: preamp 1/2 inputs, the DA's digital return, MIDI-in.
+        assert_eq!(
+            dev.inputs,
+            vec![
+                (dev.nodes[0], 0),
+                (dev.nodes[1], 0),
+                (dev.nodes[4], 0),
+                (dev.nodes[7], 0),
+            ]
+        );
+        // Outputs, in node order: the two AD sends, the monitor + headphone analog outs, MIDI-out —
+        // the monitor and phones being *distinct* exposed outputs is the DA fan-out made visible.
+        assert_eq!(
+            dev.outputs,
+            vec![
+                (dev.nodes[2], 0),
+                (dev.nodes[3], 0),
+                (dev.nodes[5], 0),
+                (dev.nodes[6], 0),
+                (dev.nodes[7], 0),
+            ]
+        );
+        // Params, concatenated in node order — only the four GainStages contribute (gain, power each),
+        // so device params 4..8 resolve to the *monitor* and *headphone* nodes, not the preamps.
+        assert_eq!(
+            dev.params,
+            vec![
+                (dev.nodes[0], ParamId(0)),
+                (dev.nodes[0], ParamId(1)),
+                (dev.nodes[1], ParamId(0)),
+                (dev.nodes[1], ParamId(1)),
+                (dev.nodes[5], ParamId(0)),
+                (dev.nodes[5], ParamId(1)),
+                (dev.nodes[6], ParamId(0)),
+                (dev.nodes[6], ParamId(1)),
+            ]
+        );
+    }
+
     /// An unknown type id has no entry — `instantiate` returns `None` (no nodes added), the lookup
     /// `build_patch` relies on to reject a bad `typeId` cleanly.
     #[test]
@@ -1051,6 +1311,7 @@ mod tests {
             "channel_strip",
             "vu_meter",
             "digital_meter",
+            "scarlett_8i6",
         ] {
             assert!(json.contains(type_id), "catalog missing {type_id}");
         }
