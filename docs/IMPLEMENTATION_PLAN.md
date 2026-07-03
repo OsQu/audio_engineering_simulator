@@ -1133,15 +1133,20 @@ _Design notes (settled at planning):_
   legible `BuildError` on the status line and the cable **snaps back** — no broken patch, no audio-thread
   panic.
 
-*Known limitation — connector *kind* is not enforced (TODO, follow-up):* connection legality currently
-checks only the **carrier domain** (analog / digital / events), so **any analog jack accepts any other**
-— a TRS output patches into an XLR input, a speaker binding-post into a line jack, etc. In the real world
-connectors are physically specific. The `kind` (mic / line / instrument / speaker / digital / midi)
-already rides every `PortDescriptor` and `CableType`, so the fix is additive: extend `evaluateConnection`
-(and the cable picker) with a **connector-compatibility rule** — either exact-kind match or a small
-compatibility table (e.g. TRS↔TRS, XLR↔XLR, with sanctioned adapters), and pick the cable's connectors
-from the endpoints. This is a UI/legality refinement (no engine change — the engine validates by domain);
-schedule it as a 4.4 follow-up or a small Epic-5 wiring-realism item.
+*Connector enforcement — done (post-4.4 improvement, 2026-07-03):* originally connection legality checked
+only the **carrier domain**, so any analog jack accepted any other (a TRS output into an XLR input). This
+was resolved by introducing a **`Connector`** enum (the *physical shape* — `quarterInch` unifying TS/TRS,
+`xlr`, `speakon`, `din5`, `digital`), authored per port + cable in the `devices` catalog and **distinct
+from the signal-class `kind`** (so a level/signal mismatch stays emergent; only shape mismatch is
+rejected). Compatibility is same-connector-only. It is enforced **authoritatively in `build_patch`**
+(`BuildError::ConnectorMismatch`, checked *within* a domain so a cross-domain wire stays the engine's
+`DomainMismatch`) and **mirrored in the UI** (`evaluateConnection`, domain-then-connector precedence);
+the cable picker + default-cable pick are filtered to connector-fitting presets. This refines the earlier
+"engine validates by domain, connector is UI-only" decision: connector shape is now a genuine hard
+constraint in the **`devices` content layer**, while the engine *core* stays domain-only and portable.
+The rejection path has no build-level integration test yet (today's catalog is all-¼" analog, so no
+same-domain connector-diverse pair exists) — it's covered by `connectors_compatible` + the TS
+`evaluateConnection` mirror, with the Rust integration test arriving alongside Epic-5 XLR/speakON gear.
 
 - **Task 4.4.1 — Cable catalog (content) + UI exposure + hand-calc oracle.** A `CABLES` table in `devices`
   of named cable presets (`type_id`, label, connector `kind`, series R + shunt C; the seam for
@@ -1236,8 +1241,8 @@ the engine rewires via the proven 4.1 `loadPatch` hot-swap; the only new Rust is
   header no longer steals height). (2) The **pull-out clearance step was removed** (flip is now direct;
   scene `SCHEMA_VERSION` 4→5, no migration). (3) **Rack frames restacked** below the cable underlay so a
   cable between two rack units stays visible.
-- **Known limitations (recorded):** connector **`kind` is not enforced** — any analog jack accepts any
-  other (TRS↔XLR) — a UI-legality follow-up noted in the design notes above; a **fan-out drag from an
+- **Known limitations (recorded):** ~connector **`kind` is not enforced**~ **now enforced** via a physical
+  `Connector` model (see the design note above, 2026-07-03); a **fan-out drag from an
   already-connected output** is blocked by its own cable's hit-path (delete the cable to re-patch); the
   **snake bundle** is minimal (per-cable stubs sharing a room label); the cable effect is **inaudible by
   design** with today's low-Z sources.
