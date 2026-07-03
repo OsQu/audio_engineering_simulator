@@ -6,6 +6,7 @@
 
 import {
   type CableType,
+  type Connector,
   type DeviceDescriptor,
   descriptorFor,
   type PortDomain,
@@ -41,9 +42,37 @@ export function connectionKind(scene: Scene, catalog: DeviceDescriptor[], c: Con
   return desc?.ports.find((p) => p.direction === "output" && p.id === c.from.port)?.kind ?? "line";
 }
 
+// The physical connector of a connection (from its output port). Both ends share it — legality requires
+// compatible connectors — so this is the axis the cable picker filters on and the default cable matches.
+// `null` when the output port can't be resolved.
+export function connectionConnector(
+  scene: Scene,
+  catalog: DeviceDescriptor[],
+  c: Connection,
+): Connector | null {
+  const dev = deviceById(scene, c.from.device);
+  const desc = dev ? descriptorFor(catalog, dev.typeId) : undefined;
+  return (
+    desc?.ports.find((p) => p.direction === "output" && p.id === c.from.port)?.connector ?? null
+  );
+}
+
+// The cable presets that physically fit `c` — those whose connector matches the connection's ports.
+// The inspector picker offers only these (you can't plug an XLR cable into a ¼" jack).
+export function cablesFor(
+  scene: Scene,
+  catalog: DeviceDescriptor[],
+  cables: CableType[],
+  c: Connection,
+): CableType[] {
+  const connector = connectionConnector(scene, catalog, c);
+  return connector === null ? [] : cables.filter((ct) => ct.connector === connector);
+}
+
 // Apply a legal verdict to the patch: drop the replaced edge (fan-in is illegal, so a new cable into an
-// occupied input replaces its source), add the new one. A fresh **analog** connection gets a transparent
-// default cable (the first preset); digital/event stay ideal. **Caller must hot-swap.**
+// occupied input replaces its source), add the new one. A fresh **analog** connection gets the default
+// cable **matching its connector** (the shortest/least-lossy preset of that connector, since the catalog
+// is ordered that way) — not always the ¼" patch cable; digital/event stay ideal. **Caller must hot-swap.**
 export function commitCable(
   scene: Scene,
   catalog: DeviceDescriptor[],
@@ -57,8 +86,10 @@ export function commitCable(
     conns = conns.filter((c) => connKey(c) !== rk);
   }
   const conn: Connection = { from: v.connection.from, to: v.connection.to };
-  if (connectionDomain(scene, catalog, conn) === "analog" && cables[0])
-    conn.cable = cableSpec(cables[0]);
+  if (connectionDomain(scene, catalog, conn) === "analog") {
+    const cable = cablesFor(scene, catalog, cables, conn)[0];
+    if (cable) conn.cable = cableSpec(cable);
+  }
   scene.patch.connections = [...conns, conn];
 }
 

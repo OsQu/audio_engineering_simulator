@@ -6,6 +6,7 @@ import type { Connection } from "../src/scene";
 import {
   addDevice,
   addSpace,
+  cablesFor,
   commitCable,
   connectionDomain,
   connKey,
@@ -66,6 +67,7 @@ const CABLES: CableType[] = [
     typeId: "trs",
     label: "TRS 6 m",
     kind: "line",
+    connector: "quarterInch",
     lengthM: 6,
     resistanceOhms: 50,
     capacitanceFarads: 1e-9,
@@ -74,6 +76,7 @@ const CABLES: CableType[] = [
     typeId: "long",
     label: "TRS 30 m",
     kind: "line",
+    connector: "quarterInch",
     lengthM: 30,
     resistanceOhms: 250,
     capacitanceFarads: 5e-9,
@@ -187,6 +190,48 @@ describe("commitCable", () => {
     commitCable(scene, CATALOG, CABLES, v);
     // old amp1→amp2 gone, new amp3→amp2 in
     expect(scene.patch.connections.map(connKey)).toEqual(["amp3:0->amp2:0"]);
+  });
+});
+
+describe("connector-aware cable selection", () => {
+  const analogConn: Connection = {
+    from: { device: "amp1", port: 0 },
+    to: { device: "amp2", port: 0 },
+  };
+  // An XLR cable listed *first*, ahead of the two ¼" presets — it must be skipped for a ¼" connection.
+  const mixedCables: CableType[] = [
+    {
+      typeId: "xlr",
+      label: "XLR 3 m",
+      kind: "mic",
+      connector: "xlr",
+      lengthM: 3,
+      resistanceOhms: 1,
+      capacitanceFarads: 1e-10,
+    },
+    ...CABLES,
+  ];
+  const twoAmps = () =>
+    makeScene({
+      devices: [
+        { id: "amp1", typeId: "amp" },
+        { id: "amp2", typeId: "amp" },
+      ],
+    });
+
+  it("cablesFor keeps only presets whose connector matches the connection's ports (¼\")", () => {
+    const fit = cablesFor(twoAmps(), CATALOG, mixedCables, analogConn);
+    expect(fit.map((c) => c.typeId)).toEqual(["trs", "long"]); // the XLR cable is excluded
+  });
+
+  it("commitCable assigns the first *matching* preset, not the first overall", () => {
+    const scene = twoAmps();
+    commitCable(scene, CATALOG, mixedCables, { ok: true, connection: analogConn, replaces: null });
+    // trs (first ¼" preset), not the XLR that leads the list.
+    expect(scene.patch.connections[0].cable).toEqual({
+      resistanceOhms: 50,
+      capacitanceFarads: 1e-9,
+    });
   });
 });
 

@@ -330,6 +330,11 @@
     const i = scene.patch.connections.findIndex((c) => connKey(c) === selectedCableKey);
     return i >= 0 ? (losses[i] ?? null) : null;
   });
+  // The cable presets that physically fit the selected connection (matching connector) — the picker
+  // offers only these, so you can't put an XLR cable on a ¼" link.
+  const cablesForSelected = $derived.by((): CableType[] =>
+    selectedConn ? sceneOps.cablesFor(scene, catalog, cables, selectedConn) : [],
+  );
 
   // Set (or clear, `""` ⇒ ideal wire) the cable type on a connection, then hot-swap — the cable's R·C
   // is baked into the edge at compile, so changing it rebuilds the engine.
@@ -878,7 +883,7 @@
                 onchange={(e) => selectedConn && setCableType(selectedConn, e.currentTarget.value)}
               >
                 <option value="">Ideal wire</option>
-                {#each cables as ct (ct.typeId)}
+                {#each cablesForSelected as ct (ct.typeId)}
                   <option value={ct.typeId}>{ct.label}</option>
                 {/each}
               </select>
