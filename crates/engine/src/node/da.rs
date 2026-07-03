@@ -3,7 +3,7 @@
 use super::Node;
 use crate::electrical::{Ohms, OutputZ};
 use crate::fir::{Interpolator, kaiser_beta};
-use crate::param::Params;
+use crate::param::{ParamDecl, ParamId, Params};
 use crate::port::{AudioFormat, DigitalFace, InputPort, OutputPort};
 use crate::signal::{AnalogRate, BitDepth, Lane, SampleRate, Volts};
 
@@ -38,11 +38,25 @@ pub struct DaConverter {
     reference: f64,
     /// The reconstruction interpolator, built at [`prepare`](Node::prepare) once the factor is known.
     interp: Option<Interpolator>,
+    /// The declared control params: [`POWERED`](Self::POWERED).
+    param_decls: [ParamDecl; 1],
     inputs: [InputPort; 1],
     outputs: [OutputPort; 1],
 }
 
 impl DaConverter {
+    /// Power switch (`0` = off, `1` = on). A powered-off converter **drives nothing** — its analog
+    /// output is gated to silence. The smoothed value de-clicks the on/off transition, so a toggle is
+    /// glitch-free without being a structural graph edit. Defaults on (`1.0`). The one declared
+    /// param, so its id is 0. Its decl is deliberately **identical** (range/default/smooth) to
+    /// [`GainStage::POWERED`](super::GainStage::POWERED) and
+    /// [`AdConverter::POWERED`](super::AdConverter::POWERED) so a
+    /// device-level power group can bind all three from one control.
+    pub const POWERED: ParamId = ParamId(0);
+
+    /// De-click glide for the power switch — matches [`GainStage`](super::GainStage)'s.
+    const POWER_SMOOTH_MS: f32 = 5.0;
+
     /// A DA reading `rate` / `bits` samples, emitting `reference` peak volts at full scale, with
     /// output impedance `z_out`. Uses a steep default reconstruction filter.
     ///
@@ -60,6 +74,13 @@ impl DaConverter {
             recon_taps: DEFAULT_RECON_TAPS,
             reference: f64::from(reference),
             interp: None,
+            param_decls: [ParamDecl {
+                id: Self::POWERED,
+                default: 1.0,
+                min: 0.0,
+                max: 1.0,
+                smooth_ms: Self::POWER_SMOOTH_MS,
+            }],
             inputs: [DigitalFace::new(AudioFormat::new(rate, bits, 1)).into()],
             outputs: [OutputZ::new(z_out).into()],
         }
@@ -88,6 +109,10 @@ impl Node for DaConverter {
         &self.outputs
     }
 
+    fn params(&self) -> &[ParamDecl] {
+        &self.param_decls
+    }
+
     fn prepare(&mut self, rate: AnalogRate) {
         // Interpolation factor M = analog rate / digital rate. The integer-divide and block-length
         // constraints were already validated when `compile` sized this DA's input lane.
@@ -105,7 +130,7 @@ impl Node for DaConverter {
         self.interp.as_ref().map_or(0.0, Interpolator::group_delay)
     }
 
-    fn process(&mut self, _params: &Params, inputs: &[Lane], outputs: &mut [Lane]) {
+    fn process(&mut self, params: &Params, inputs: &[Lane], outputs: &mut [Lane]) {
         let src = inputs[0].sample().as_slice();
         let out = outputs[0].voltage_mut().as_mut_slice();
 
@@ -115,9 +140,13 @@ impl Node for DaConverter {
         }
 
         // 2. De-calibrate: full scale ±1.0 → ±reference volts. Linear, so it commutes with stage 1.
+        //    Then 3. gate by `powered` (last, like `GainStage`). The output is analog-rate, so the
+        //    smoothed gate is read per-sample with `value_at(i)` directly (no `i·M` — the AD's
+        //    concern), matching the once-per-block smoother advance for a click-free transition.
         let reference = self.reference;
-        for v in out.iter_mut() {
-            *v = (f64::from(*v) * reference) as f32;
+        for (i, v) in out.iter_mut().enumerate() {
+            let powered = params.value_at_or(Self::POWERED, i, 1.0);
+            *v = (f64::from(*v) * reference) as f32 * powered;
         }
     }
 }
@@ -198,6 +227,29 @@ mod tests {
         let amp = tone_amplitude(&out[800..], 1_000.0, hi());
         let expected_peak = dbu_to_volts(4.0).get() * std::f32::consts::SQRT_2; // ≈ 1.737 V
         assert_relative_eq!(amp, expected_peak, epsilon = 0.02);
+    }
+
+    #[test]
+    fn powered_off_drives_silence() {
+        // A settled power gate at 0 zeroes the analog output — the monitor/phones-silence check.
+        use crate::param::{Params, Smoother};
+        let mut da = DaConverter::new(lo(), BitDepth::new(24), Volts::new(10.0), Ohms::new(150.0));
+        da.prepare(hi());
+        let inp = [Lane::Sample(SampleBuffer::from_samples(
+            vec![0.5_f32; 960],
+            lo(),
+            BitDepth::new(24),
+            ClockDomainId::SINGLE,
+        ))];
+        let mut out = [Lane::Voltage(VoltageBuffer::zeros(960 * 8, hi()))];
+        // POWERED (id 0) settled at 0: value_at(i) == 0 for all i.
+        let smoothers = [Smoother::new(0.0, 0.0, 1.0, 1.0)];
+        let params = Params::new(&smoothers);
+        da.process(&params, &inp, &mut out);
+        assert!(
+            out[0].voltage().as_slice().iter().all(|&v| v == 0.0),
+            "a powered-off DA must drive exact silence"
+        );
     }
 
     #[test]

@@ -27,8 +27,8 @@ function faceplateSource(file: string): string {
 describe("Scarlett 8i6 faceplate places its full exposed face", () => {
   const placed = placedIds(faceplateSource("Scarlett8i6.svelte"));
 
-  it("places every param exactly once (2 preamp gains + monitor + phones, and 4 power switches)", () => {
-    expect(placed.params).toEqual([0, 1, 2, 3, 4, 5, 6, 7]);
+  it("places every param exactly once (Gain 1/2, Monitor, Phones, and the single device Power switch)", () => {
+    expect(placed.params).toEqual([0, 1, 2, 3, 4]);
   });
   it("places every input exactly once (2 combo inputs, USB return, MIDI in)", () => {
     expect(placed.inputs).toEqual([0, 1, 2, 3]);

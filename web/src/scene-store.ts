@@ -12,9 +12,10 @@ import type { Patch } from "./scene";
 import type { Room, Vec3, Wall } from "./spatial";
 
 /** Current save-format version. A saved scene at any other version is discarded (no migration). Bumped
- *  to 10 when the default scene gained a standalone MIDI controller pre-patched to the synth (Story
- *  4.8): a stale v9 save lacks the controller + its events cable, so it's discarded rather than kept. */
-export const SCHEMA_VERSION = 10;
+ *  to 11 when the 8i6's exposed param face collapsed from 8 (per-stage gain+power) to 5 (four gains +
+ *  one device-level Power group) in Task 5.7.5: a stale v10 save's 8i6 `ParamSetting` ids no longer map,
+ *  so it's discarded rather than mis-applied. */
+export const SCHEMA_VERSION = 11;
 
 /** A space (room) in the studio — a UI grouping over the one engine graph (the engine never knows
  *  about rooms). A space is a **rectangular room**: gear stands against one of four walls, each an

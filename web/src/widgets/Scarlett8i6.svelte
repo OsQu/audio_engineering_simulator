@@ -3,7 +3,8 @@
   // (Story 5.7). It composes the shared bound widgets (Control/Socket) inside Chassis with its own scoped
   // CSS, and lays its I/O across BOTH faces: the **front** carries the two combo inputs with their gain
   // knobs plus the monitor + headphone controls and the headphone jack; the **back** carries the line
-  // out, the USB send/return, MIDI, and the per-stage power switches. The signature red chassis comes
+  // out, the USB send/return, MIDI, and the single power switch (a Rust param group over every stage's
+  // `powered`). The signature red chassis comes
   // from the skin `accent` (Chassis outline + top-view tile). Faces are just which snippet a jack is
   // written in — no per-port face resolver. INST/AIR/PAD/48V are intentionally omitted (not honestly
   // modelable yet — see docs/IMPROVEMENTS.md). Exposed ids come from the Rust `scarlett_8i6` entry.
@@ -32,7 +33,7 @@
         <Socket dir="input" id={0} />
       </div>
       <div class="channel">
-        <Control id={2} cap="dark" />
+        <Control id={1} cap="dark" />
         <Legend text="Gain 2" />
         <Socket dir="input" id={1} />
       </div>
@@ -40,13 +41,13 @@
       <!-- Monitor: the big centre knob. -->
       <div class="section monitor">
         <Legend text="Monitor" />
-        <div class="big"><Control id={4} cap="dark" /></div>
+        <div class="big"><Control id={2} cap="dark" /></div>
       </div>
 
       <!-- Headphones: level + the front headphone jack. -->
       <div class="section">
         <Legend text="◎ Phones" />
-        <Control id={6} cap="dark" />
+        <Control id={3} cap="dark" />
         <Socket dir="output" id={3} />
       </div>
 
@@ -77,12 +78,8 @@
       </div>
       <div class="section">
         <Legend text="Power" />
-        <div class="row power">
-          <Control id={1} />
-          <Control id={3} />
-          <Control id={5} />
-          <Control id={7} />
-        </div>
+        <!-- One switch for the whole unit — a real 8i6 is a single powered device (Rust param group). -->
+        <Control id={4} />
       </div>
     </div>
   {/snippet}
@@ -115,9 +112,6 @@
     flex-direction: row;
     align-items: center;
     gap: clamp(2px, 1.5cqw, 0.5rem);
-  }
-  .row.power {
-    gap: clamp(2px, 1cqw, 0.35rem);
   }
   /* The monitor knob reads as the hero control. */
   .big {

@@ -3,7 +3,7 @@
 use super::Node;
 use crate::electrical::{InputZ, Ohms};
 use crate::fir::{Decimator, kaiser_beta};
-use crate::param::Params;
+use crate::param::{ParamDecl, ParamId, Params};
 use crate::port::{AudioFormat, DigitalFace, InputPort, OutputPort};
 use crate::rng::Rng;
 use crate::signal::{AnalogRate, BitDepth, Lane, SampleRate, Volts};
@@ -46,11 +46,28 @@ pub struct AdConverter {
     decimator: Option<Decimator>,
     /// The seeded dither stream, installed at [`seed`](Node::seed). `None` ⇒ undithered.
     dither: Option<Rng>,
+    /// Decimation factor `M = analog / digital`, set at [`prepare`](Node::prepare); the power gate
+    /// (a smoothed, analog-rate param) is sampled at `i·M` for the `i`-th digital output sample.
+    m: usize,
+    /// The declared control params: [`POWERED`](Self::POWERED).
+    param_decls: [ParamDecl; 1],
     inputs: [InputPort; 1],
     outputs: [OutputPort; 1],
 }
 
 impl AdConverter {
+    /// Power switch (`0` = off, `1` = on). A powered-off converter **produces nothing** — its
+    /// output is gated to digital silence. The smoothed value de-clicks the on/off transition, so a
+    /// toggle is glitch-free without being a structural graph edit. Defaults on (`1.0`). The one
+    /// declared param, so its id is 0. Its decl is deliberately **identical** (range/default/smooth)
+    /// to [`GainStage::POWERED`](super::GainStage::POWERED) and
+    /// [`DaConverter::POWERED`](super::DaConverter::POWERED) so a
+    /// device-level power group can bind all three from one control.
+    pub const POWERED: ParamId = ParamId(0);
+
+    /// De-click glide for the power switch — matches [`GainStage`](super::GainStage)'s.
+    const POWER_SMOOTH_MS: f32 = 5.0;
+
     /// An AD sampling at `rate` / `bits`, with `reference` peak volts at full scale, presenting
     /// input impedance `z_in`. Uses a steep default anti-alias filter.
     ///
@@ -70,6 +87,14 @@ impl AdConverter {
             delta: bits.step(1.0),
             decimator: None,
             dither: None,
+            m: 1,
+            param_decls: [ParamDecl {
+                id: Self::POWERED,
+                default: 1.0,
+                min: 0.0,
+                max: 1.0,
+                smooth_ms: Self::POWER_SMOOTH_MS,
+            }],
             inputs: [InputZ::new(z_in).into()],
             outputs: [DigitalFace::new(AudioFormat::new(rate, bits, 1)).into()],
         }
@@ -98,10 +123,15 @@ impl Node for AdConverter {
         &self.outputs
     }
 
+    fn params(&self) -> &[ParamDecl] {
+        &self.param_decls
+    }
+
     fn prepare(&mut self, rate: AnalogRate) {
         // Decimation factor M = analog rate / digital rate. The integer-divide and block-length
         // constraints were already validated when `compile` sized this AD's output lane.
         let m = (rate.as_hz() / self.rate.as_hz()).round().max(1.0) as usize;
+        self.m = m;
         self.decimator = Some(Decimator::lowpass(
             self.aa_taps,
             m,
@@ -119,7 +149,7 @@ impl Node for AdConverter {
         self.decimator.as_ref().map_or(0.0, Decimator::group_delay)
     }
 
-    fn process(&mut self, _params: &Params, inputs: &[Lane], outputs: &mut [Lane]) {
+    fn process(&mut self, params: &Params, inputs: &[Lane], outputs: &mut [Lane]) {
         let src = inputs[0].voltage().as_slice();
         let out = outputs[0].sample_mut().as_mut_slice();
 
@@ -129,22 +159,32 @@ impl Node for AdConverter {
         }
 
         // 2. + 3. Normalize by the reference, clamp at full scale, dither, and quantize — in place.
-        let (inv_ref, delta) = (self.inv_ref, self.delta);
+        //     Then 4. gate by `powered` (last, like `GainStage`, so an off converter is exact digital
+        //     silence — dither included). The gate is a smoothed **analog-rate** param, so the `i`-th
+        //     digital output sample reads it at analog offset `i·M`: uniform sampling that spans the
+        //     block and lines up with the once-per-block smoother advance (reading `value_at(i)` on
+        //     the short digital buffer would sample only the block's first `M`-th and click on the
+        //     boundary). The 5 ms glide is far slower than the AA filter span, so this is exact.
+        let (inv_ref, delta, m) = (self.inv_ref, self.delta, self.m);
         match &mut self.dither {
             Some(rng) => {
-                for s in out.iter_mut() {
+                for (i, s) in out.iter_mut().enumerate() {
                     let norm = (f64::from(*s) * inv_ref).clamp(-1.0, 1.0);
                     // TPDF (±1 LSB): the sum of two ±½-LSB uniform draws.
                     let d = (f64::from(rng.next_f32_unit()) - 0.5 + f64::from(rng.next_f32_unit())
                         - 0.5)
                         * delta;
-                    *s = (((norm + d) / delta).round() * delta).clamp(-1.0, 1.0) as f32;
+                    let q = (((norm + d) / delta).round() * delta).clamp(-1.0, 1.0);
+                    let powered = f64::from(params.value_at_or(Self::POWERED, i * m, 1.0));
+                    *s = (q * powered) as f32;
                 }
             }
             None => {
-                for s in out.iter_mut() {
+                for (i, s) in out.iter_mut().enumerate() {
                     let norm = (f64::from(*s) * inv_ref).clamp(-1.0, 1.0);
-                    *s = ((norm / delta).round() * delta).clamp(-1.0, 1.0) as f32;
+                    let q = ((norm / delta).round() * delta).clamp(-1.0, 1.0);
+                    let powered = f64::from(params.value_at_or(Self::POWERED, i * m, 1.0));
+                    *s = (q * powered) as f32;
                 }
             }
         }
@@ -228,6 +268,35 @@ mod tests {
         assert!(
             out[480..].iter().all(|&s| (s - 0.5).abs() < 1e-3),
             "DC at half the reference should read 0.5 full-scale"
+        );
+    }
+
+    #[test]
+    fn powered_off_produces_digital_silence() {
+        // A settled power gate at 0 zeroes the output exactly — dither included — so an "off"
+        // converter feeds nothing downstream (the USB-send silence check).
+        use crate::param::{Params, Smoother};
+        let bits = BitDepth::new(24);
+        let mut ad = AdConverter::new(lo(), bits, Volts::new(10.0), Ohms::new(1e6));
+        ad.prepare(hi());
+        ad.seed(Rng::from_seed(3));
+        let inp = [Lane::Voltage(VoltageBuffer::from_volts(
+            vec![5.0_f32; 7_680],
+            hi(),
+        ))];
+        let mut out = [Lane::Sample(SampleBuffer::zeros(
+            7_680 / 8,
+            lo(),
+            bits,
+            ClockDomainId::SINGLE,
+        ))];
+        // POWERED (id 0) settled at 0: current == target == 0 ⇒ value_at(i) == 0.
+        let smoothers = [Smoother::new(0.0, 0.0, 1.0, 1.0)];
+        let params = Params::new(&smoothers);
+        ad.process(&params, &inp, &mut out);
+        assert!(
+            out[0].sample().as_slice().iter().all(|&s| s == 0.0),
+            "a powered-off AD must emit exact digital silence"
         );
     }
 

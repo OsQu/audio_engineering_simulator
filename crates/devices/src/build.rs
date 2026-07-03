@@ -101,8 +101,10 @@ impl From<CompileError> for BuildError {
 /// [`param`](Self::param) / [`event_input`](Self::event_input). Built by [`build_patch`].
 pub struct BuiltScene {
     schedule: Schedule,
-    /// device id → its `ParamHandle`s, indexed by **device-level param id**.
-    params: BTreeMap<String, Vec<ParamHandle>>,
+    /// device id → its `ParamHandle`s, indexed by **device-level param id**. Each param id maps to a
+    /// *slice* of handles: one for an ungrouped param, N for a device-level param group (a value set
+    /// on that id fans out to every handle).
+    params: BTreeMap<String, Vec<Vec<ParamHandle>>>,
     /// device id → its (first) event input, for note routing. Absent for devices with no event input.
     events: BTreeMap<String, EventInputId>,
     /// device id → its `ReadoutHandle`s, indexed by **device-level readout id**. Absent for devices
@@ -137,14 +139,19 @@ impl BuiltScene {
         &self.schedule
     }
 
-    /// Resolve `(device, device-level param id)` to its [`ParamHandle`] for smoothed control, or
-    /// `None` if the device or param id is unknown.
+    /// Resolve `(device, device-level param id)` to the [`ParamHandle`]s it drives for smoothed
+    /// control — one for an ungrouped param, several for a device-level param group (a device power
+    /// switch). Empty if the device or param id is unknown. The host sets one value on **all** of them.
     #[must_use]
-    pub fn param(&self, device: &str, param_id: u32) -> Option<ParamHandle> {
-        self.params
+    pub fn param(&self, device: &str, param_id: u32) -> &[ParamHandle] {
+        match self
+            .params
             .get(device)
             .and_then(|handles| handles.get(param_id as usize))
-            .copied()
+        {
+            Some(handles) => handles,
+            None => &[],
+        }
     }
 
     /// Resolve `device` to its event input (for note-on/off), or `None` if it has none.
@@ -378,13 +385,20 @@ pub fn build_patch(
     let mut readouts = BTreeMap::new();
     for device in &patch.devices {
         let built = &devices[&device.id];
-        let handles: Vec<ParamHandle> = built
+        // Each exposed param resolves to one or more `ParamHandle`s (one per group target); the host
+        // fans a single value out to all of them.
+        let handles: Vec<Vec<ParamHandle>> = built
             .params
             .iter()
-            .map(|&(node, id)| {
-                schedule
-                    .param(node, id)
-                    .expect("a freshly built device's param resolves in its own schedule")
+            .map(|targets| {
+                targets
+                    .iter()
+                    .map(|&(node, id)| {
+                        schedule
+                            .param(node, id)
+                            .expect("a freshly built device's param resolves in its own schedule")
+                    })
+                    .collect()
             })
             .collect();
         params.insert(device.id.clone(), handles);
@@ -605,7 +619,10 @@ mod tests {
     #[test]
     fn resolved_param_handle_controls_its_node() {
         let mut scene = build_patch(&canonical_patch(), BLOCK_LEN, rate(), 0).expect("builds");
-        let level = scene.param("synth", 0).expect("synth has param 0 (LEVEL)");
+        let level = *scene
+            .param("synth", 0)
+            .first()
+            .expect("synth has param 0 (LEVEL)");
 
         let ev = scene.event_input("synth").expect("synth event input");
         let mut events = EventQueue::with_capacity(4);
@@ -642,13 +659,13 @@ mod tests {
     }
 
     /// Control resolution is total: unknown device, unknown param id, and a no-event device all return
-    /// `None` rather than panicking.
+    /// an empty handle slice / `None` rather than panicking.
     #[test]
     fn control_resolution_is_total() {
         let scene = build_patch(&canonical_patch(), BLOCK_LEN, rate(), 0).expect("builds");
-        assert!(scene.param("synth", 0).is_some());
-        assert!(scene.param("synth", 99).is_none(), "param id out of range");
-        assert!(scene.param("nope", 0).is_none(), "unknown device");
+        assert!(!scene.param("synth", 0).is_empty());
+        assert!(scene.param("synth", 99).is_empty(), "param id out of range");
+        assert!(scene.param("nope", 0).is_empty(), "unknown device");
         assert!(scene.event_input("synth").is_some());
         assert!(
             scene.event_input("spk").is_none(),
@@ -682,11 +699,38 @@ mod tests {
         let mut scene = build_patch(&patch, BLOCK_LEN, rate(), 0).expect("multi-node patch builds");
         // The strip exposes each stage's gain + power, concatenated in node order: device params
         // 0..=3 (in_gain, in_power, out_gain, out_power); 4 is past the face.
-        assert!(scene.param("strip", 0).is_some());
-        assert!(scene.param("strip", 3).is_some());
-        assert!(scene.param("strip", 4).is_none());
+        assert!(!scene.param("strip", 0).is_empty());
+        assert!(!scene.param("strip", 3).is_empty());
+        assert!(scene.param("strip", 4).is_empty());
         let sounding = peak_after_note(&mut scene, "synth", 32);
         assert!(sounding > 0.05, "audible through the strip, got {sounding}");
+    }
+
+    /// A device-level param group resolves, through `build_patch`, to **all** its target handles: the
+    /// 8i6's single Power control (exposed param id 4, after the four gains) drives every stage's
+    /// `powered` — seven handles from one id — while an ungrouped gain drives exactly one. This is the
+    /// plumbing the wasm `set_param` fans a single value over.
+    #[test]
+    fn device_power_group_fans_out_to_every_stage() {
+        let patch = Patch {
+            devices: vec![device("if", "scarlett_8i6")],
+            connections: vec![],
+            output: PortRef {
+                device: "if".into(),
+                port: 2, // the monitor line out (analog)
+            },
+        };
+        let scene = build_patch(&patch, BLOCK_LEN, rate(), 0).expect("8i6 patch builds");
+        assert_eq!(
+            scene.param("if", 4).len(),
+            7,
+            "the Power group drives all seven stages"
+        );
+        assert_eq!(
+            scene.param("if", 0).len(),
+            1,
+            "an ungrouped gain drives exactly one stage"
+        );
     }
 
     /// A cabled connection assembles (the cable's R·C rides the edge). Smoke test that the cable path

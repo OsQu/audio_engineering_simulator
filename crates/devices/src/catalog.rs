@@ -244,8 +244,14 @@ struct CatalogEntry {
     nodes: &'static [fn() -> Box<dyn Node>],
     /// Edges wiring the internal nodes. Empty for a single-node device.
     internal: &'static [InternalEdge],
-    /// One per *exposed* param (all node params, concatenated in node order).
+    /// One per **ungrouped** exposed param (node params not captured by a group, concatenated in node
+    /// order). Grouped params are hidden from this positional walk; the groups' UIs live in
+    /// [`param_groups`](Self::param_groups). The exposed param face is `params` ++ `param_groups`.
     params: &'static [ParamUi],
+    /// Device-level param **groups**: each binds one exposed control to N node params driven together
+    /// (e.g. a single power switch over every stage's `powered`). Appended to the exposed param face
+    /// after the ungrouped params, in declaration order. Empty for a device with no grouped controls.
+    param_groups: &'static [ParamGroup],
     /// One per *exposed* input port (open inputs, in node order).
     inputs: &'static [PortUi],
     /// One per *exposed* output port (open outputs, in node order).
@@ -259,6 +265,21 @@ struct ParamUi {
     label: &'static str,
     unit: &'static str,
     kind: ParamKind,
+}
+
+/// A **device-level param group**: one exposed control bound to N node params that are driven
+/// together as a single value. The device-crate concept sitting above the strictly-per-node engine
+/// (`node.rs`'s layering doc keeps the engine per-node) — a real interface's single bus-power state
+/// maps to a `powered` gate on every stage. The bound node params are **hidden** from the positional
+/// param walk (the same convention as a port consumed by an [`InternalEdge`]); the group appears once
+/// on the exposed face. Every target must carry an **identical** decl (range/default/smooth), from
+/// which the descriptor's range/default derive — `catalog_group_targets_carry_identical_decls` guards
+/// it.
+struct ParamGroup {
+    /// The single exposed control's UI (label/unit/kind).
+    ui: ParamUi,
+    /// The node params it binds: `(node index in `nodes`, node-local `ParamId`)`.
+    targets: &'static [(usize, ParamId)],
 }
 
 struct PortUi {
@@ -318,6 +339,7 @@ const CATALOG: &[CatalogEntry] = &[
                 kind: ParamKind::Switch,
             },
         ],
+        param_groups: &[],
         inputs: &[PortUi {
             label: "MIDI",
             kind: PortKind::Midi,
@@ -346,6 +368,7 @@ const CATALOG: &[CatalogEntry] = &[
         nodes: &[|| Box::new(EventThru::new(64))],
         internal: &[],
         params: &[],
+        param_groups: &[],
         inputs: &[PortUi {
             label: "MIDI In",
             kind: PortKind::Midi,
@@ -383,6 +406,7 @@ const CATALOG: &[CatalogEntry] = &[
                 kind: ParamKind::Switch,
             },
         ],
+        param_groups: &[],
         inputs: &[PortUi {
             label: "In",
             kind: PortKind::Line,
@@ -412,6 +436,7 @@ const CATALOG: &[CatalogEntry] = &[
         }],
         internal: &[],
         params: &[],
+        param_groups: &[],
         inputs: &[PortUi {
             label: "In",
             kind: PortKind::Digital,
@@ -437,7 +462,13 @@ const CATALOG: &[CatalogEntry] = &[
             ))
         }],
         internal: &[],
-        params: &[],
+        // The converter's `powered` gate — a standalone AD exposes it as one power switch.
+        params: &[ParamUi {
+            label: "Power",
+            unit: "",
+            kind: ParamKind::Switch,
+        }],
+        param_groups: &[],
         inputs: &[PortUi {
             label: "Analog In",
             kind: PortKind::Line,
@@ -463,7 +494,13 @@ const CATALOG: &[CatalogEntry] = &[
             ))
         }],
         internal: &[],
-        params: &[],
+        // The converter's `powered` gate — a standalone DA exposes it as one power switch.
+        params: &[ParamUi {
+            label: "Power",
+            unit: "",
+            kind: ParamKind::Switch,
+        }],
+        param_groups: &[],
         inputs: &[PortUi {
             label: "Digital In",
             kind: PortKind::Digital,
@@ -487,6 +524,7 @@ const CATALOG: &[CatalogEntry] = &[
         nodes: &[|| Box::new(Speaker::new(1.0, InputZ::new(Ohms::new(10_000.0))))],
         internal: &[],
         params: &[],
+        param_groups: &[],
         inputs: &[PortUi {
             label: "In",
             kind: PortKind::Speaker,
@@ -560,6 +598,7 @@ const CATALOG: &[CatalogEntry] = &[
                 kind: ParamKind::Switch,
             },
         ],
+        param_groups: &[],
         inputs: &[PortUi {
             label: "In",
             kind: PortKind::Line,
@@ -582,6 +621,7 @@ const CATALOG: &[CatalogEntry] = &[
         nodes: &[|| Box::new(VuMeter::new())],
         internal: &[],
         params: &[],
+        param_groups: &[],
         inputs: &[PortUi {
             label: "In",
             kind: PortKind::Line,
@@ -617,6 +657,7 @@ const CATALOG: &[CatalogEntry] = &[
         }],
         internal: &[],
         params: &[],
+        param_groups: &[],
         inputs: &[PortUi {
             label: "In",
             kind: PortKind::Digital,
@@ -742,7 +783,9 @@ const CATALOG: &[CatalogEntry] = &[
                 to_port: 0,
             },
         ],
-        // Params, exposed in node order: preamp 1 (gain, power), preamp 2, monitor, headphone.
+        // Ungrouped params, exposed in node order — just the four gains (each stage's `powered` is
+        // captured by the Power group below and hidden from this walk): preamp 1, preamp 2, monitor,
+        // headphone. Exposed param ids: 0 Gain 1 · 1 Gain 2 · 2 Monitor · 3 Phones · 4 Power.
         params: &[
             ParamUi {
                 label: "Gain 1",
@@ -750,19 +793,9 @@ const CATALOG: &[CatalogEntry] = &[
                 kind: ParamKind::Knob,
             },
             ParamUi {
-                label: "Power 1",
-                unit: "",
-                kind: ParamKind::Switch,
-            },
-            ParamUi {
                 label: "Gain 2",
                 unit: "×",
                 kind: ParamKind::Knob,
-            },
-            ParamUi {
-                label: "Power 2",
-                unit: "",
-                kind: ParamKind::Switch,
             },
             ParamUi {
                 label: "Monitor",
@@ -770,21 +803,30 @@ const CATALOG: &[CatalogEntry] = &[
                 kind: ParamKind::Knob,
             },
             ParamUi {
-                label: "Monitor Power",
-                unit: "",
-                kind: ParamKind::Switch,
-            },
-            ParamUi {
                 label: "Phones",
                 unit: "×",
                 kind: ParamKind::Knob,
             },
-            ParamUi {
-                label: "Phones Power",
+        ],
+        // One device-level power switch — a real 8i6 is a single powered unit. It gates every stage's
+        // `powered`: both preamps (id 1), both ADs and the DA (id 0), and the monitor + phones amps
+        // (id 1). An "off" device is silent on *both* analog outs and the USB sends (the AD gate).
+        param_groups: &[ParamGroup {
+            ui: ParamUi {
+                label: "Power",
                 unit: "",
                 kind: ParamKind::Switch,
             },
-        ],
+            targets: &[
+                (0, GainStage::POWERED),
+                (1, GainStage::POWERED),
+                (2, AdConverter::POWERED),
+                (3, AdConverter::POWERED),
+                (4, DaConverter::POWERED),
+                (5, GainStage::POWERED),
+                (6, GainStage::POWERED),
+            ],
+        }],
         // Open inputs in node order: the two preamp inputs (front combo jacks), the DA's digital
         // "USB return", and the MIDI in.
         inputs: &[
@@ -857,8 +899,10 @@ pub struct BuiltDevice {
     pub inputs: Vec<(NodeId, usize)>,
     /// Device output port id → `(node, node output port)`.
     pub outputs: Vec<(NodeId, usize)>,
-    /// Device param id → `(node, node ParamId)`.
-    pub params: Vec<(NodeId, ParamId)>,
+    /// Device param id → the `(node, node ParamId)` target(s) it drives. One target for an ungrouped
+    /// param; N for a device-level param group (e.g. a power switch over every stage) — the host fans
+    /// one value out to all of them.
+    pub params: Vec<Vec<(NodeId, ParamId)>>,
     /// Device readout id → `(node, node ReadoutId)`, in exposed (position) order — the node→host
     /// mirror of `params`, resolved to `ReadoutHandle`s via `Schedule::readout(node, id)`.
     pub readouts: Vec<(NodeId, ReadoutId)>,
@@ -872,11 +916,11 @@ struct ExposedPort {
     domain: Domain,
 }
 
-/// One exposed param: which internal node + `ParamId` it is, plus the decl's range/default (engine
-/// truth, copied so the descriptor needn't re-introspect).
+/// One exposed param: the `(node index, ParamId)` target(s) it drives, plus the decl's range/default
+/// (engine truth, copied so the descriptor needn't re-introspect). An ungrouped param has exactly one
+/// target; a [`ParamGroup`] has N (all carrying the same decl, so one range/default describes them).
 struct ExposedParam {
-    node: usize,
-    id: ParamId,
+    targets: Vec<(usize, ParamId)>,
     min: f32,
     max: f32,
     default: f32,
@@ -943,13 +987,20 @@ fn expand(entry: &CatalogEntry) -> Expansion {
             }
         }
         for decl in node.params() {
-            params.push(ExposedParam {
-                node: ni,
-                id: decl.id,
-                min: decl.min,
-                max: decl.max,
-                default: decl.default,
-            });
+            // A param captured by a group is hidden from the positional walk (like a port an
+            // internal edge consumes); it's driven via the appended group entry instead.
+            let grouped = entry
+                .param_groups
+                .iter()
+                .any(|g| g.targets.contains(&(ni, decl.id)));
+            if !grouped {
+                params.push(ExposedParam {
+                    targets: vec![(ni, decl.id)],
+                    min: decl.min,
+                    max: decl.max,
+                    default: decl.default,
+                });
+            }
         }
         for decl in node.readouts() {
             readouts.push(ExposedReadout {
@@ -957,6 +1008,24 @@ fn expand(entry: &CatalogEntry) -> Expansion {
                 id: decl.id,
             });
         }
+    }
+
+    // Append one exposed param per group, after the ungrouped walk, in declaration order. Its
+    // range/default derive from the group's first target's decl — every target must carry an
+    // identical decl (`catalog_group_targets_carry_identical_decls` proves it), so any target agrees.
+    for group in entry.param_groups {
+        let (ni, id) = group.targets[0];
+        let decl = nodes[ni]
+            .params()
+            .iter()
+            .find(|d| d.id == id)
+            .expect("a param group targets a param its node declares");
+        params.push(ExposedParam {
+            targets: group.targets.to_vec(),
+            min: decl.min,
+            max: decl.max,
+            default: decl.default,
+        });
     }
 
     Expansion {
@@ -996,7 +1065,15 @@ pub fn instantiate(type_id: &str, g: &mut Graph) -> Option<BuiltDevice> {
     Some(BuiltDevice {
         inputs: inputs.iter().map(|p| (node_ids[p.node], p.port)).collect(),
         outputs: outputs.iter().map(|p| (node_ids[p.node], p.port)).collect(),
-        params: params.iter().map(|p| (node_ids[p.node], p.id)).collect(),
+        params: params
+            .iter()
+            .map(|p| {
+                p.targets
+                    .iter()
+                    .map(|&(ni, id)| (node_ids[ni], id))
+                    .collect()
+            })
+            .collect(),
         readouts: readouts.iter().map(|r| (node_ids[r.node], r.id)).collect(),
         nodes: node_ids,
     })
@@ -1018,10 +1095,16 @@ fn describe(entry: &CatalogEntry) -> DeviceDescriptor {
     // param (`BuiltScene::param(device, id)` indexes the exposed handle vec), not the node-local
     // `ParamId`. For a multi-node device the two differ: `channel_strip`'s stages both expose
     // `ParamId` 0/1, so node-local ids would collide at `[0,1,0,1]` and misaddress the second stage.
+    // The UI list is the ungrouped labels ++ the group labels, in the same order `expand` lays out
+    // the exposed face (ungrouped in node order, then groups in declaration order).
+    let param_ui = entry
+        .params
+        .iter()
+        .chain(entry.param_groups.iter().map(|g| &g.ui));
     let params = face
         .params
         .iter()
-        .zip(entry.params)
+        .zip(param_ui)
         .enumerate()
         .map(|(i, (p, ui))| ParamDescriptor {
             id: i as u32,
@@ -1098,8 +1181,9 @@ mod tests {
     fn catalog_aligns_with_exposed_face() {
         for entry in CATALOG {
             let face = expand(entry);
+            // The exposed param face is the ungrouped UIs ++ one entry per group.
             assert_eq!(
-                entry.params.len(),
+                entry.params.len() + entry.param_groups.len(),
                 face.params.len(),
                 "{} params",
                 entry.type_id
@@ -1122,6 +1206,56 @@ mod tests {
                 "{} readouts",
                 entry.type_id
             );
+        }
+    }
+
+    /// Every target of a param group must carry an **identical** decl (range/default/smooth) — the
+    /// descriptor derives the group's exposed range/default from the first target, so a mismatch would
+    /// silently misreport the others. An authoring guard (e.g. the 8i6's Power group over `GainStage`,
+    /// `AdConverter`, and `DaConverter` `powered` params, which are deliberately declared identical).
+    #[test]
+    fn catalog_group_targets_carry_identical_decls() {
+        for entry in CATALOG {
+            let nodes: Vec<Box<dyn Node>> = entry.nodes.iter().map(|build| build()).collect();
+            for group in entry.param_groups {
+                let decl_of = |&(ni, id): &(usize, ParamId)| {
+                    *nodes[ni]
+                        .params()
+                        .iter()
+                        .find(|d| d.id == id)
+                        .unwrap_or_else(|| {
+                            panic!("{} group targets a missing param", entry.type_id)
+                        })
+                };
+                let first = decl_of(&group.targets[0]);
+                for target in group.targets {
+                    let d = decl_of(target);
+                    assert_eq!(
+                        d.min.to_bits(),
+                        first.min.to_bits(),
+                        "{} min",
+                        entry.type_id
+                    );
+                    assert_eq!(
+                        d.max.to_bits(),
+                        first.max.to_bits(),
+                        "{} max",
+                        entry.type_id
+                    );
+                    assert_eq!(
+                        d.default.to_bits(),
+                        first.default.to_bits(),
+                        "{} default",
+                        entry.type_id
+                    );
+                    assert_eq!(
+                        d.smooth_ms.to_bits(),
+                        first.smooth_ms.to_bits(),
+                        "{} smooth_ms",
+                        entry.type_id
+                    );
+                }
+            }
         }
     }
 
@@ -1204,14 +1338,14 @@ mod tests {
         assert_eq!(strip.outputs, vec![(strip.nodes[1], 0)]);
 
         // Each stage's gain (ParamId 0) + power (ParamId 1) exposed, in node order — device params
-        // 2/3 map to the *second* node.
+        // 2/3 map to the *second* node. No groups, so each exposed param is a single target.
         assert_eq!(
             strip.params,
             vec![
-                (strip.nodes[0], ParamId(0)),
-                (strip.nodes[0], ParamId(1)),
-                (strip.nodes[1], ParamId(0)),
-                (strip.nodes[1], ParamId(1)),
+                vec![(strip.nodes[0], ParamId(0))],
+                vec![(strip.nodes[0], ParamId(1))],
+                vec![(strip.nodes[1], ParamId(0))],
+                vec![(strip.nodes[1], ParamId(1))],
             ]
         );
     }
@@ -1234,8 +1368,9 @@ mod tests {
     /// amps), and its exposed face maps to the right `(NodeId, …)` in node order. This pins the
     /// non-trivial remap the faceplate relies on: device inputs are preamp 1/2, the DA's digital
     /// return, and MIDI-in; device outputs are the two AD sends, the monitor + headphone analog outs,
-    /// and MIDI-out; and the eight params resolve to the two preamps then the monitor + headphone
-    /// stages (the AD/DA/MIDI nodes contribute none).
+    /// and MIDI-out; and the exposed params are the four gains (preamp 1/2, monitor, phones) plus one
+    /// **Power group** that fans out to every stage's `powered` — both preamps, both ADs, the DA, and
+    /// the monitor + phones amps (seven targets from one control).
     #[test]
     fn scarlett_8i6_expands_with_mixed_face_io() {
         let mut g = Graph::new();
@@ -1270,19 +1405,26 @@ mod tests {
                 (dev.nodes[7], 0),
             ]
         );
-        // Params, concatenated in node order — only the four GainStages contribute (gain, power each),
-        // so device params 4..8 resolve to the *monitor* and *headphone* nodes, not the preamps.
+        // Exposed params: the four ungrouped gains (each stage's GAIN, ParamId 0) in node order —
+        // preamp 1/2 then monitor + phones — followed by the single Power group. The group's seven
+        // targets are every stage's `powered`: preamps (id 1), both ADs + the DA (id 0), monitor +
+        // phones (id 1). Each gain is a single-target vec; Power is a seven-target vec.
         assert_eq!(
             dev.params,
             vec![
-                (dev.nodes[0], ParamId(0)),
-                (dev.nodes[0], ParamId(1)),
-                (dev.nodes[1], ParamId(0)),
-                (dev.nodes[1], ParamId(1)),
-                (dev.nodes[5], ParamId(0)),
-                (dev.nodes[5], ParamId(1)),
-                (dev.nodes[6], ParamId(0)),
-                (dev.nodes[6], ParamId(1)),
+                vec![(dev.nodes[0], ParamId(0))],
+                vec![(dev.nodes[1], ParamId(0))],
+                vec![(dev.nodes[5], ParamId(0))],
+                vec![(dev.nodes[6], ParamId(0))],
+                vec![
+                    (dev.nodes[0], ParamId(1)),
+                    (dev.nodes[1], ParamId(1)),
+                    (dev.nodes[2], ParamId(0)),
+                    (dev.nodes[3], ParamId(0)),
+                    (dev.nodes[4], ParamId(0)),
+                    (dev.nodes[5], ParamId(1)),
+                    (dev.nodes[6], ParamId(1)),
+                ],
             ]
         );
     }

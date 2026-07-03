@@ -147,7 +147,9 @@ fn initial_params(patch: &Patch, scene: &BuiltScene) -> Vec<(ParamHandle, f32)> 
     let mut out = Vec::new();
     for device in &patch.devices {
         for setting in &device.params {
-            if let Some(handle) = scene.param(&device.id, setting.id) {
+            // One id may bind several handles (a device-level param group, e.g. power); each gets
+            // the saved value.
+            for &handle in scene.param(&device.id, setting.id) {
                 out.push((handle, setting.value));
             }
         }
@@ -285,7 +287,12 @@ impl SceneEngine {
     /// the engine's `Smoother` de-zippers it — so *not* `AudioParam`). A no-op if the device/param is
     /// unknown in the live scene. Off the hot path — JS calls it on slider input.
     pub fn set_param(&mut self, device: &str, param_id: u32, value: f32) {
-        if let Some(handle) = self.current.param(device, param_id) {
+        // A param id may resolve to several handles — a device-level param group (e.g. the 8i6's
+        // single power switch driving every stage's `powered`). Fan the one value out to all of them.
+        // Copy the (few, Copy) handles first so the immutable scene borrow is dropped before the
+        // mutable `push_param`; off the hot path, so the small alloc is fine.
+        let handles = self.current.param(device, param_id).to_vec();
+        for handle in handles {
             self.push_param(handle, value);
         }
     }
