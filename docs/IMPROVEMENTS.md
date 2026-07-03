@@ -8,6 +8,7 @@
   - We can have a MIDI keyboard that sends midi events or if it's synth with a keyboard, it accepts the events
   - Devices can have "focus" mode, where you click them (not all, but synths, consoles etc that require more control) and dependning on the device it does different stuff. Keyboards could go to this virtual keyboard mode
   - This is probably a stand alone story
+  - PLANNED as **Story 4.8 — Device focus mode + the interaction seam** in `IMPLEMENTATION_PLAN.md` (design recorded; tasks/branch later)
 - ~Create a proper drawer for catalog, and don't show them inline~ DONE
   - Click catalog button -> Drawer opens where you click the device
 - ~Hide the volume and "save load reload" under a menu.~ DONE
