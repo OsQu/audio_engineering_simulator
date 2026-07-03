@@ -31,6 +31,37 @@ export interface DeviceHandle {
   readout(id: number): ReadoutDescriptor | undefined;
 }
 
+/** The reactive props any faceplate receives that a handle reads from — the id → engine closures plus
+ *  the descriptor slices. A structural subset of `DeviceUiProps`, so a faceplate can pass its raw props. */
+export interface HandleSource {
+  device: string;
+  params: ParamDescriptor[];
+  ports: PortDescriptor[];
+  readouts?: ReadoutDescriptor[];
+  valueFor: (id: number) => number;
+  readingFor?: (id: number) => number;
+  onParam: (p: ParamDescriptor, value: number) => void;
+}
+
+/** Build a `DeviceHandle` from a faceplate's (reactive) props. Every method reads `src` at call time, so
+ *  passing the raw `$props()` object keeps it live — the handle object itself is stable (built once). */
+export function makeHandle(src: HandleSource): DeviceHandle {
+  return {
+    get device() {
+      return src.device;
+    },
+    value: (id) => src.valueFor(id),
+    set: (id, v) => {
+      const p = src.params.find((x) => x.id === id);
+      if (p) src.onParam(p, v);
+    },
+    reading: (id) => src.readingFor?.(id) ?? -120,
+    param: (id) => src.params.find((x) => x.id === id),
+    port: (dir, id) => src.ports.find((x) => x.direction === dir && x.id === id),
+    readout: (id) => (src.readouts ?? []).find((x) => x.id === id),
+  };
+}
+
 /** Context key for the device handle — a Symbol so it can't collide with any string-keyed context. */
 const DEVICE_HANDLE = Symbol("device-handle");
 

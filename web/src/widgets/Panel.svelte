@@ -4,9 +4,9 @@
   // `Reading` per readout; the **back** carries the I/O `Socket`s (inputs then outputs). The shared
   // `Chassis` owns the bezel + 3-D flip (driven by `flipped`) and publishes the `DeviceHandle` to context,
   // so the bound widgets bind to the live engine by id — this component just arranges them.
-  import type { Snippet } from "svelte";
+  import { type Snippet, untrack } from "svelte";
   import type { ParamDescriptor, PortDescriptor, ReadoutDescriptor } from "../catalog";
-  import type { DeviceHandle } from "../device-handle";
+  import { makeHandle } from "../device-handle";
   import { capFor, skinFor } from "../skin";
   import Chassis from "./Chassis.svelte";
   import Control from "./Control.svelte";
@@ -34,48 +34,23 @@
     /** Optional per-device front-panel embellishment (e.g. the synth's ADSR screen). */
     children?: Snippet;
   }
-  let {
-    device,
-    typeId,
-    name,
-    params,
-    ports,
-    readouts = [],
-    flipped = false,
-    valueFor,
-    readingFor,
-    onParam,
-    children,
-  }: Props = $props();
+  // Kept as a whole (not destructured) so the reactive object flows into makeHandle, whose methods read
+  // it at call time — the handle stays live without re-creating it.
+  let props: Props = $props();
 
-  const skin = $derived(skinFor(typeId));
-  const inputs = $derived(ports.filter((p) => p.direction === "input"));
-  const outputs = $derived(ports.filter((p) => p.direction === "output"));
-
-  // The live-engine bridge the bound widgets (Control/Socket/Reading) read from context. Methods read
-  // the reactive props at call time, so the handle object is built once yet always current; `device`
-  // is a getter for the same reason. Ids are the descriptor's exposed ids.
-  const handle: DeviceHandle = {
-    get device() {
-      return device;
-    },
-    value: (id) => valueFor(id),
-    set: (id, v) => {
-      const p = params.find((x) => x.id === id);
-      if (p) onParam(p, v);
-    },
-    reading: (id) => readingFor?.(id) ?? -120,
-    param: (id) => params.find((x) => x.id === id),
-    port: (dir, id) => ports.find((x) => x.direction === dir && x.id === id),
-    readout: (id) => readouts.find((x) => x.id === id),
-  };
+  const skin = $derived(skinFor(props.typeId));
+  const inputs = $derived(props.ports.filter((p) => p.direction === "input"));
+  const outputs = $derived(props.ports.filter((p) => p.direction === "output"));
+  const readouts = $derived(props.readouts ?? []);
+  // makeHandle reads the (stable) props object lazily, so capture it once; untrack documents that.
+  const handle = makeHandle(untrack(() => props));
 </script>
 
-<Chassis {handle} {flipped} finish={skin.finish} {name}>
+<Chassis {handle} flipped={props.flipped} finish={skin.finish} name={props.name}>
   {#snippet front()}
-    {#if params.length > 0}
+    {#if props.params.length > 0}
       <div class="controls">
-        {#each params as p (p.id)}
+        {#each props.params as p (p.id)}
           <Control id={p.id} cap={capFor(skin, p.id)} />
         {/each}
       </div>
@@ -90,8 +65,8 @@
         {/each}
       </div>
     {/if}
-    {#if children}
-      <div class="screen-slot">{@render children()}</div>
+    {#if props.children}
+      <div class="screen-slot">{@render props.children()}</div>
     {/if}
   {/snippet}
 

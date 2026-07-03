@@ -53,7 +53,8 @@
     width: 100%;
     height: 100%;
     box-sizing: border-box;
-    border: 1px solid var(--ae-line-hard);
+    /* Chassis outline: a device's brand accent when it sets one (Focusrite red), else the neutral edge. */
+    border: 1px solid var(--ae-accent, var(--ae-line-hard));
     border-radius: 8px;
     /* Dark chassis; the faceplate finish lives on the front face (below), so the
        panel's own background reads as the thin bezel around the faceplate. */

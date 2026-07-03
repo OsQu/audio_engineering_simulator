@@ -14,6 +14,7 @@ import type { Component } from "svelte";
 import type { ParamDescriptor, PortDescriptor, ReadoutDescriptor } from "./catalog";
 import Console from "./widgets/Console.svelte";
 import Panel from "./widgets/Panel.svelte";
+import Scarlett8i6 from "./widgets/Scarlett8i6.svelte";
 import SynthVoice from "./widgets/SynthVoice.svelte";
 
 /** The props every faceplate/focus-surface component accepts — the same shape `App` feeds `Panel`
@@ -38,6 +39,7 @@ export interface DeviceUiProps {
 /** In-world faceplates by type; a device without one falls back to the generic `Panel`. */
 const FACEPLATES: Record<string, Component<DeviceUiProps>> = {
   synth_voice: SynthVoice,
+  scarlett_8i6: Scarlett8i6,
 };
 
 /** The faceplate component for a device type — its own, or the generic `Panel`. */

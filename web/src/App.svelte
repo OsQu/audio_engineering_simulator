@@ -8,6 +8,7 @@
   import { descriptorFor, isPlayable } from "./catalog";
   import { deviceUi, focusUi } from "./device-ui";
   import { isFocusable } from "./focus";
+  import { skinFor } from "./skin";
   import {
     type ControlMessage,
     healthSummary,
@@ -890,7 +891,10 @@
             {@const rack = rackById(scene, itemId)}
             {@const device = deviceById(scene, itemId)}
             {@const desc = device ? descriptorFor(catalog, device.typeId) : undefined}
-            <div class="plan-tile" class:rack={!!rack}>
+            <!-- A device's brand accent (the skin's chassis colour) rims its floor tile, so a red
+                 Focusrite reads as red from directly above too — one value, both views. -->
+            {@const accent = device ? skinFor(device.typeId).accent : undefined}
+            <div class="plan-tile" class:rack={!!rack} style:--tile-accent={accent}>
               <span>{rack ? `${rack.id} · ${rack.slots}U` : (desc?.name ?? itemId)}</span>
             </div>
           {:else if isRack(scene, itemId)}
@@ -1223,7 +1227,8 @@
     justify-content: center;
     text-align: center;
     padding: 2px;
-    border: 1px solid var(--ae-line-hard);
+    /* A device's brand accent rims the tile when its skin sets one, else the neutral edge. */
+    border: 1px solid var(--tile-accent, var(--ae-line-hard));
     border-radius: 4px;
     background: var(--ae-bg-chip);
     color: var(--ae-text-strong);

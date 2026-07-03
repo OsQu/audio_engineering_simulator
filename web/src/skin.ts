@@ -25,6 +25,9 @@ export interface DeviceSkin {
   cap: CapFinish;
   /** Optional per-param cap override, keyed by the device-local param id. */
   caps?: Record<number, CapFinish>;
+  /** Optional brand accent (a CSS colour) — the chassis outline in every view (the faceplate border and
+   *  the top-down floor-plan tile). Undefined ⇒ the neutral chassis edge. */
+  accent?: string;
 }
 
 /** Fallback for any device type without an explicit skin. */
@@ -38,6 +41,8 @@ const SKINS: Record<string, DeviceSkin> = {
   three_band_eq: { finish: "grey", cap: "dark" },
   ad_converter: { finish: "black", cap: "chrome" },
   da_converter: { finish: "black", cap: "chrome" },
+  // The Focusrite Scarlett look: a black faceplate with the signature red chassis (border + top-view tile).
+  scarlett_8i6: { finish: "black", cap: "dark", accent: "#e6362b" },
 };
 
 /** The skin for a device type (falls back to a neutral slate skin). */
