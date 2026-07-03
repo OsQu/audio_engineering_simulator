@@ -4,10 +4,10 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ---
 
-## 1. Current state
+## 1. The crates
 
-Epics 1–3 are complete and **Story 4.1** has landed; **Story 4.2** (skeuomorphic device panels) is the
-next thing to build (see `IMPLEMENTATION_PLAN.md`). What exists:
+`IMPLEMENTATION_PLAN.md` is the authoritative source for story/epic progress and what's next — don't
+duplicate that state here. The workspace layout:
 
 - **`crates/engine`** — the headless voltage engine: units/buffers, electrical local-solve, FIR
   converters, the `Node`/`Graph`/`compile`/`Schedule` core, the AD/DA + carrier seam, DSP nodes, and
@@ -19,8 +19,7 @@ next thing to build (see `IMPLEMENTATION_PLAN.md`). What exists:
 - **`crates/wasm-bindings`** — `SceneEngine` (the real-time, scene-driven surface the AudioWorklet
   drains) + the `catalog`/`parse_patch` JS bridge.
 - **`crates/harness`** — native offline WAV render driver + a terminal waveform-plot demo binary.
-- **`web/`** — the Vite + TypeScript browser harness that hosts the engine in an AudioWorklet (Epic 4's
-  base; gains Svelte in Story 4.2).
+- **`web/`** — the Vite + TypeScript + Svelte browser harness that hosts the engine in an AudioWorklet.
 
 ### Commands
 
