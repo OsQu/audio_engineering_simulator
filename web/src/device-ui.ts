@@ -17,6 +17,8 @@ import type {
   PortDescriptor,
   ReadoutDescriptor,
 } from "./catalog";
+import Computer from "./widgets/Computer.svelte";
+import ComputerMixer from "./widgets/ComputerMixer.svelte";
 import Console from "./widgets/Console.svelte";
 import FocusriteControl from "./widgets/FocusriteControl.svelte";
 import Panel from "./widgets/Panel.svelte";
@@ -51,6 +53,7 @@ export interface DeviceUiProps {
 const FACEPLATES: Record<string, Component<DeviceUiProps>> = {
   synth_voice: SynthVoice,
   scarlett_8i6: Scarlett8i6,
+  computer: Computer,
 };
 
 /** The faceplate component for a device type — its own, or the generic `Panel`. */
@@ -63,6 +66,7 @@ export function deviceUi(typeId: string): Component<DeviceUiProps> {
 const FOCUS_SURFACES: Record<string, Component<DeviceUiProps>> = {
   channel_strip: Console,
   scarlett_8i6: FocusriteControl,
+  computer: ComputerMixer,
 };
 
 /** The focus-surface component for a device type — its dedicated surface, else its in-world faceplate. */

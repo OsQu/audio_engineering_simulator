@@ -48,28 +48,53 @@ describe("Scarlett 8i6 surfaces place its full exposed face", () => {
   // The registered surfaces for the 8i6, and the ids each covers.
   const faceplate = surfaceSource("Scarlett8i6.svelte");
   const focus = surfaceSource("FocusriteControl.svelte");
-  // The 18-param face: 0 Gain1 · 1 Pad1 · 2 Air1 · 3 Gain2 · 4 Pad2 · 5 Air2 · 6–14 matrix crosspoints
-  // · 15 Monitor · 16 Phones · 17 Power.
-  const CROSSPOINTS = range(6, 14); // rendered as a data grid in the focus surface (non-literal)
+  // The full-8i6 206-param face: 0 Gain1 · 1 Pad1 · 2 Air1 · 3 Gain2 · 4 Pad2 · 5 Air2 · 6 Phones1 ·
+  // 7 Phones2 · 8–203 matrix crosspoints (14×14) · 204 Monitor · 205 Power.
+  const CROSSPOINTS = range(8, 203); // rendered as a data grid (RoutingGrid) in the focus surface
 
   it("covers every param across faceplate ∪ focus (literal) ∪ the declared crosspoint grid", () => {
     const covered = uniqSorted([
-      ...literalParamIds(faceplate), // gains 0/3, monitor 15, phones 16, power 17
+      ...literalParamIds(faceplate), // gains 0/3, phones 6/7, monitor 204, power 205
       ...literalParamIds(focus), // pad/air 1,2,4,5
-      ...CROSSPOINTS, // 6–14, declared (data-rendered grid)
+      ...CROSSPOINTS, // 8–203, declared (data-rendered grid)
     ]);
-    expect(covered).toEqual(range(0, 17));
+    expect(covered).toEqual(range(0, 205));
   });
 
-  it("places every input exactly once on the faceplate (2 combo inputs, USB return, MIDI in)", () => {
-    expect(portIds(faceplate, "input")).toEqual([0, 1, 2, 3]);
+  it("places every input exactly once on the faceplate (2 combo, 4 line, S/PDIF, USB, MIDI)", () => {
+    expect(portIds(faceplate, "input")).toEqual([0, 1, 2, 3, 4, 5, 6, 7, 8]);
   });
 
-  it("places every output exactly once on the faceplate (2 USB sends, line out, phones, MIDI out)", () => {
-    expect(portIds(faceplate, "output")).toEqual([0, 1, 2, 3, 4]);
+  it("places every output exactly once on the faceplate (USB, S/PDIF, 4 line, 2 phones, MIDI)", () => {
+    expect(portIds(faceplate, "output")).toEqual([0, 1, 2, 3, 4, 5, 6, 7, 8]);
   });
 
   it("covers both INST structural config keys in the focus surface", () => {
     expect(configKeys(focus)).toEqual(["inst1", "inst2"]);
+  });
+});
+
+describe("Computer surfaces place its full exposed face", () => {
+  const faceplate = surfaceSource("Computer.svelte");
+  const focus = surfaceSource("ComputerMixer.svelte");
+  // The computer's 48-param face is entirely the 8×6 send→return loopback crosspoints, data-rendered by
+  // RoutingGrid on the focus surface (the DAW mixer); the faceplate places no params (just meters + jacks).
+  const CROSSPOINTS = range(0, 47);
+
+  it("covers every param via the declared crosspoint grid on the focus surface", () => {
+    const covered = uniqSorted([
+      ...literalParamIds(faceplate), // none — the faceplate is meters + jacks only
+      ...literalParamIds(focus), // none — the grid is data-rendered
+      ...CROSSPOINTS, // 0–47, declared (RoutingGrid)
+    ]);
+    expect(covered).toEqual(range(0, 47));
+  });
+
+  it("places the USB input (the 8-lane send) on the faceplate", () => {
+    expect(portIds(faceplate, "input")).toEqual([0]);
+  });
+
+  it("places the USB output (the 6-lane return) on the faceplate", () => {
+    expect(portIds(faceplate, "output")).toEqual([0]);
   });
 });

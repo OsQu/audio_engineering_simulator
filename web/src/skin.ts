@@ -43,6 +43,8 @@ const SKINS: Record<string, DeviceSkin> = {
   da_converter: { finish: "black", cap: "chrome" },
   // The Focusrite Scarlett look: a black faceplate with the signature red chassis (border + top-view tile).
   scarlett_8i6: { finish: "black", cap: "dark", accent: "#e6362b" },
+  // The computer — a neutral slate box (it's a plain USB peer, not a piece of studio metal).
+  computer: { finish: "slate", cap: "dark" },
 };
 
 /** The skin for a device type (falls back to a neutral slate skin). */
