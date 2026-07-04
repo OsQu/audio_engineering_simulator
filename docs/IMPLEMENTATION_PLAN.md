@@ -905,11 +905,11 @@ again within seconds.
   engine/UI plumbing out of the `App.svelte` monolith into a shared session layer both views consume
   (`SceneSession` + `PatchController`). Pure refactor — the scene view behaves **identically** (the
   Story's validate gate). This is the load-bearing story; the workbench is only as solid as this seam.
-- **Story 6.2 — Route + workbench shell.** The app's first URL routing (`/devices/<typeId>` vs the
-  scene view; Vite dev serves deep links already). Suspended-context boot to get the catalog pre-
-  gesture, resume-on-interaction. The bench stage: mm grid + rack-unit (44.45 mm) ruler sized from the
-  descriptor's form factor, **both faces rendered simultaneously**, live params/meters through the
-  session layer. Unknown `typeId` → a catalog index page.
+- **Story 6.2 — Route + workbench shell.** — 🚧 **In progress** (elaborated below). The app's first URL
+  routing (`/devices/<typeId>` vs the scene view), a suspended-context boot that gets the catalog pre-
+  gesture (resume-on-interaction), and a **dedicated** bench stage: mm grid + rack-unit ruler from the
+  descriptor's form factor, both faces rendered simultaneously, live params/meters through the shared
+  session. Device-only (silent) — the rig lands in 6.3. Unknown `typeId` → a catalog index page.
 - **Story 6.3 — Test rig + URL-persisted temp scene.** Auto-generate a default rig from the
   descriptor's ports: synth → analog/events inputs, an auto-provided **monitor chain** (DA inserted
   when tapping digital outs → speaker) with a **listen selector** for multi-output devices; freeform
@@ -1012,3 +1012,98 @@ engine session, scene/param/config lanes, note routing, and patching glue all li
 session modules that a second view root can construct; `App.svelte` retains only scene-view UI state;
 no Rust or `postMessage` changes; `pnpm run check && pnpm run typecheck && pnpm run test &&
 pnpm run build` green.
+
+### Story 6.2 — Route + workbench shell — 🚧 **In progress**
+
+_Goal:_ Stand up the **second view root** — a single-device workbench at `/devices/<typeId>` — on top of
+the Story-6.1 session seam. This Story delivers the app's first URL routing, a suspended-context engine
+boot so the catalog is available *before* any user gesture, and a **dedicated** bench stage that renders
+one device (both faces, on a real-dimensions grid) with its params/config/meters driven live through the
+*same* `SceneSession` the scene view uses. It is deliberately **device-only and silent** — no sound
+source, monitor chain, or patching yet (that is the 6.3 rig). Anchors to PROJECT_PLAN §7 (UI a pure
+consumer of the engine API): the workbench is a second consumer of the identical session surface, not a
+forked copy of App's glue.
+
+_Watch out:_
+
+- **One plumbing path, two views (the Epic's load-bearing constraint).** The bench must consume the same
+  `SceneSession` + faceplate widgets as the scene view. We chose a *dedicated* stage (not `WorldView`
+  reuse), so the burden shifts onto 6.3: the stage must expose a **`WorldApi`-shaped surface**
+  (`clientToSurface`/`worldToSurface`) and drive the **existing `PatchController` + `cable-view.ts`** when
+  patching lands — never a second cable/anchor implementation. Design the stage in 6.2 with that seam in
+  mind even though no cable is drawn yet.
+- **Catalog only exists after the engine builds.** The worklet posts `ready` (with the catalog) from its
+  **constructor**, but *only after* `new SceneEngine(patch)` succeeds (`processor.js` ~896) — a bad patch
+  throws and no catalog arrives. So the workbench cannot validate an arbitrary `<typeId>` before booting:
+  it must boot a **known-good bootstrap scene** first, then resolve the requested type against the catalog
+  that comes back.
+- **Autoplay policy is a hard constraint.** `new AudioContext()` before a gesture starts *suspended*; the
+  worklet still instantiates and posts `ready`/catalog (verified — constructor-posted, not from
+  `process()`), so the catalog arrives with no audio. `resume()` must wait for the first interaction. The
+  current `startEngine` couples `await audio.resume()` into bring-up (`engine.ts` ~176) — that must be
+  decoupled (the 6.1 "known deferral").
+- **Layer rule holds.** The catalog gains no workbench vocabulary; the bench reads `typeId`, `formFactor`,
+  `ports`, `params`, `readouts` as a pure consumer.
+- **Scope guard.** No rig/source/monitor, no patching UI, no URL-persisted scene (all 6.3); no debug panel
+  or `wasm:watch` hot loop (6.4). Just route + suspended boot + stage + params/meters.
+
+_Design notes (settled at planning):_
+
+- **Dedicated Workbench stage, not `WorldView` reuse.** A purpose-built flat bench (mm grid + rack-U
+  ruler, both faces side by side) sized from the descriptor's `formFactor` (`rackmount rackUnits ×
+  RACK_UNIT_MM` / `desktop widthMm×heightMm`). Renders `deviceUi(typeId)` **twice** — `flipped=false`
+  (front) and `flipped=true` (back) — reusing the identical faceplate widget + session props
+  (`valueFor`/`onParam`/`configFor`/`onConfig`/`readingFor`). _Rejected: reuse `WorldView`_ — its
+  room/wall/spatial ctx is a poor fit for one bolted-down device, and forcing a "bench mode" into it
+  muddies the scene view. The cost of the dedicated stage is the 6.3 patching seam (above), accepted.
+- **Boot a known-good bootstrap scene to harvest the catalog, then resolve `typeId`.** Boot suspended on a
+  minimal valid `synth_voice` scene (guaranteed to build) → catalog arrives → look up `<typeId>` in it:
+  **valid** → `hotSwap` to the device's minimal scene (the device + an output tap on its first output
+  port, or port 0 if none); **unknown** → render the catalog **index page** (the catalog's device names,
+  each linking to `/devices/<typeId>`). One boot path, catalog always arrives, `hotSwap` already exists.
+  _Rejected: a main-thread catalog bridge_ (a second wasm instance just for `catalog()`) — unneeded since
+  the suspended constructor already delivers it (the Epic watch-out's fallback, not triggered). _Rejected:
+  optimistic per-device boot_ — a bogus `typeId` throws with no catalog, so the index page would need a
+  bootstrap fallback anyway; always-bootstrap is the single path.
+- **`session.resume()` + a no-auto-resume `start()`.** `startEngine` stops calling `audio.resume()`
+  itself; `EngineControl` gains `resume()`, surfaced as `session.resume()`. The scene view calls
+  `session.resume()` from its start button (still one gesture — behavior identical); the workbench resumes
+  on first interaction. One bring-up path both views share. _Rejected: a workbench-only suspended variant_
+  — two bring-up paths to keep in sync.
+- **Hand-rolled router (no dependency).** A tiny `Root` reads `location.pathname`: `/devices/<typeId>` →
+  `Workbench`, else → `App` (scene view). `main.ts` mounts `Root`; navigation uses `pushState` +
+  a `popstate` listener. _Rejected: a routing library_ — a new dependency for a two-route split; the
+  repo's lean-deps posture and the fact that 6.3's URL scene already leans on `replaceState` favor
+  hand-rolling.
+- **Known simplification (not a bug):** the bench is **silent** in 6.2 — meters read the floor with no
+  signal driving the device. That is expected; audibility is the 6.3 rig's job.
+
+- **Task 6.2.1 — Hand-rolled router + `Root` split.** New `Root.svelte` (or a `router.ts` + `Root`) that
+  routes `location.pathname` → `App` (scene view, default) vs a stub `Workbench`; `main.ts` mounts `Root`.
+  A `navigate(path)` helper (`pushState`) + `popstate` handling for back/forward. Confirm Vite dev serves
+  deep links (`/devices/x`). _Done:_ `/` shows the scene view unchanged; `/devices/<anything>` mounts the
+  stub workbench; browser back/forward switches views; web gate green.
+- **Task 6.2.2 — Decouple `resume()`; `session.resume()` + suspended boot.** Remove the unconditional
+  `await audio.resume()` from `startEngine`; add `resume()` to `EngineControl` and `session.resume()`.
+  Scene view's start button calls `session.start(...)` then `session.resume()` (behavior identical). Add a
+  session bring-up that leaves the context suspended. _Done:_ scene view starts + plays exactly as before;
+  a suspended boot receives `ready`/catalog with **no audio** until `resume()`; verified in-browser.
+- **Task 6.2.3 — Workbench bring-up: bootstrap boot + `typeId` resolution + index.** The `Workbench`
+  constructs its own `SceneSession`, boots suspended on the `synth_voice` bootstrap, resumes on first
+  interaction. On catalog arrival, resolve the route's `<typeId>`: valid → `hotSwap` to the minimal
+  single-device scene; unknown → a **catalog index** listing catalog devices (links to `/devices/<id>`).
+  _Done:_ `/devices/scarlett_8i6` boots (silent) with the catalog present and the 8i6 as the live scene;
+  `/devices/bogus` shows the index; clicking an index entry routes + swaps to that device; in-browser.
+- **Task 6.2.4 — The bench stage: grid + ruler + both faces + live params/meters.** The dedicated stage:
+  mm grid + rack-U (44.45 mm) ruler sized from `formFactor`; render the faceplate twice (front + back) via
+  `deviceUi`, wired to the session (`valueFor`/`onParam`/`configFor`/`onConfig`/`readingFor`). Structure
+  the stage so a `WorldApi`-shaped surface can be exposed for 6.3 patching (no cables drawn yet). _Done:_
+  the 8i6 renders both faces on a correctly-scaled grid; knobs/switches drive params (live) and config
+  (recompiles); meters update from the session; in-browser.
+
+_Validate:_ `localhost:5173/devices/scarlett_8i6` renders the device on a mm/rack-U grid (both faces),
+with all params/config drivable and readouts live through the shared `SceneSession`; the suspended boot
+delivers the catalog **before** any gesture and audio resumes on first interaction; an unknown `typeId`
+lands on the catalog index; the **scene view still behaves identically** (no regression from the router /
+`resume()` decoupling); no new dependency; `pnpm run check && pnpm run typecheck && pnpm run test &&
+pnpm run build` green. (Rig, patching, and the URL-persisted scene are 6.3.)
