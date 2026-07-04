@@ -21,24 +21,28 @@ const out = (
   port = 0,
   domain: Endpoint["domain"] = "analog",
   connector: Endpoint["connector"] = "quarterInch",
+  channels = 1,
 ): Endpoint => ({
   device,
   port,
   direction: "output",
   domain,
   connector,
+  channels,
 });
 const inp = (
   device: string,
   port = 0,
   domain: Endpoint["domain"] = "analog",
   connector: Endpoint["connector"] = "quarterInch",
+  channels = 1,
 ): Endpoint => ({
   device,
   port,
   direction: "input",
   domain,
   connector,
+  channels,
 });
 const conn = (fromDev: string, fromPort: number, toDev: string, toPort: number): Connection => ({
   from: { device: fromDev, port: fromPort },
@@ -111,6 +115,40 @@ describe("evaluateConnection — legality", () => {
       [],
     );
     expect(v.ok).toBe(true);
+  });
+
+  it('accepts a ¼" or XLR plug into a combo jack (the interface front input)', () => {
+    const q = evaluateConnection(
+      out("synth", 0, "analog", "quarterInch"),
+      inp("if", 0, "analog", "combo"),
+      [],
+    );
+    expect(q.ok).toBe(true);
+    const x = evaluateConnection(
+      out("mic", 0, "analog", "xlr"),
+      inp("if", 0, "analog", "combo"),
+      [],
+    );
+    expect(x.ok).toBe(true);
+  });
+
+  it("accepts a matching multichannel digital edge (8-wide USB → 8-wide USB)", () => {
+    const v = evaluateConnection(
+      out("if", 0, "digital", "usb", 8),
+      inp("comp", 0, "digital", "usb", 8),
+      [],
+    );
+    expect(v.ok).toBe(true);
+  });
+
+  it("rejects a digital edge whose channel counts differ (8-wide → 2-wide)", () => {
+    const v = evaluateConnection(
+      out("if", 0, "digital", "usb", 8),
+      inp("comp", 0, "digital", "usb", 2),
+      [],
+    );
+    expect(v.ok).toBe(false);
+    if (!v.ok) expect(v.reason).toMatch(/channel/);
   });
 
   it("rejects a device patched to itself (self-cycle)", () => {

@@ -15,6 +15,10 @@
 <div class="jack" data-kind={port.kind} data-domain={port.domain} title={`${port.kind} · ${port.domain}`}>
   <!-- `data-jack` = "device:direction:portId" — the cable overlay measures this element's centre. -->
   <span class="connector" data-jack={`${device}:${port.direction}:${port.id}`}></span>
+  {#if port.channels > 1}
+    <!-- One jack carries many channels (a multichannel digital connector) — badge the lane count. -->
+    <span class="lanes" title={`${port.channels} channels`}>×{port.channels}</span>
+  {/if}
   <span class="label">{port.label}</span>
 </div>
 
@@ -22,11 +26,27 @@
   /* Sizes scale with the chassis (`cqh` against the `.content` size container) but cap at the original
      rem, so a thin 1U rack unit shrinks its jacks to fit while larger devices look unchanged. */
   .jack {
+    position: relative;
     display: flex;
     flex-direction: column;
     align-items: center;
     gap: clamp(1px, 3cqh, 0.2rem);
     min-width: 0;
+  }
+  /* Lane-count badge for a multichannel connector, pinned to the connector's top-right corner. */
+  .lanes {
+    position: absolute;
+    top: -0.15rem;
+    right: -0.15rem;
+    padding: 0 0.2rem;
+    border-radius: 0.5rem;
+    background: var(--ae-signal-digital);
+    color: var(--ae-bg-panel, #000);
+    font-family: var(--ae-font-ui);
+    font-size: clamp(4px, 12cqh, 0.5rem);
+    font-weight: 700;
+    line-height: 1.4;
+    pointer-events: none;
   }
   .connector {
     width: clamp(6px, 34cqh, 1.5rem);

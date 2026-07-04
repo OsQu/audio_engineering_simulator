@@ -35,6 +35,9 @@ export interface Endpoint {
   /** Physical connector shape — must match the other end within a domain (an XLR won't seat in a ¼"
    *  jack). Mirrors the `build_patch` connector check. */
   connector: Connector;
+  /** Lane count (digital channels). A digital connection needs equal counts on both ends — an 8-wide
+   *  send can't feed a 2-wide return. Mirrors `build_patch`'s `ChannelCountMismatch`. */
+  channels: number;
 }
 
 /** The verdict on a proposed connection. On success it carries the **oriented** `Connection`
@@ -104,6 +107,15 @@ export function evaluateConnection(
   // pair is reported as a domain mismatch), mirroring `build_patch`'s domain-then-connector order.
   if (!connectorsCompatible(out.connector, inp.connector)) {
     return { ok: false, reason: `connector mismatch: ${out.connector} → ${inp.connector}` };
+  }
+
+  // A digital link must carry the same channel count on both ends (an 8-wide send can't feed a 2-wide
+  // return). Mirrors the engine's `LaneCountMismatch` / `build_patch`'s `ChannelCountMismatch`.
+  if (out.domain === "digital" && out.channels !== inp.channels) {
+    return {
+      ok: false,
+      reason: `channel-count mismatch: ${out.channels}ch → ${inp.channels}ch`,
+    };
   }
 
   // A device feeding its own input is a self-cycle.

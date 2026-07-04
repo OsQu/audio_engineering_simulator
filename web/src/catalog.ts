@@ -68,6 +68,9 @@ export interface PortDescriptor {
   label: string;
   direction: PortDirection;
   domain: PortDomain;
+  /** Lane count — digital **channels** (1 mono, N for a multichannel connector), analog conductors
+   *  (1/2), 1 for events. Engine truth (the port's `lane_count`). Jacks with `channels > 1` get a badge. */
+  channels: number;
   kind: PortKind;
   /** Physical connector shape — the hard constraint on what may plug in (see {@link Connector}). */
   connector: Connector;
@@ -97,16 +100,28 @@ export type PortDomain = "analog" | "digital" | "events";
 export type PortKind = "mic" | "line" | "instrument" | "speaker" | "digital" | "midi";
 
 /** The **physical connector shape** a port (or cable end) presents — the hard constraint on what can
- *  plug into what (mirrors the Rust `Connector`; `quarterInch` unifies TS/TRS). Two ports may only be
- *  joined when their connectors {@link connectorsCompatible match}; a signal-class/level mismatch is
- *  *not* rejected (that stays emergent from the voltage physics). Authoritatively enforced in
- *  `build_patch`; mirrored here for live patching feedback. */
-export type Connector = "quarterInch" | "xlr" | "speakon" | "din5" | "digital";
+ *  plug into what (mirrors the Rust `Connector`; `quarterInch` unifies TS/TRS). `combo` is the XLR+TRS
+ *  combo jack on an interface's front input; `usb`/`spdif` are specific digital connectors, `digital`
+ *  the generic one. Two ports may only be joined when their connectors {@link connectorsCompatible
+ *  match}; a signal-class/level mismatch is *not* rejected (that stays emergent from the voltage
+ *  physics). Authoritatively enforced in `build_patch`; mirrored here for live patching feedback. */
+export type Connector =
+  | "quarterInch"
+  | "xlr"
+  | "combo"
+  | "speakon"
+  | "din5"
+  | "digital"
+  | "usb"
+  | "spdif";
 
-/** Whether two connectors can be physically joined — same-connector only (TS/TRS already unified as
- *  `quarterInch`). Mirrors the Rust `connectors_compatible`. */
+/** Whether two connectors can be physically joined. Same-connector always fits; the one asymmetric
+ *  case is the **combo** jack, which accepts an XLR or a ¼" plug (either direction). Everything else is
+ *  equality. Mirrors the Rust `connectors_compatible`. */
 export function connectorsCompatible(a: Connector, b: Connector): boolean {
-  return a === b;
+  const comboMates = (x: Connector, y: Connector): boolean =>
+    x === "combo" && (y === "xlr" || y === "quarterInch");
+  return a === b || comboMates(a, b) || comboMates(b, a);
 }
 
 /** A cable type the UI offers when wiring an analog connection — a realistic R·C preset (physical
