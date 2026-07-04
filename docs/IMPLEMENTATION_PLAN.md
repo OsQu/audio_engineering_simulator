@@ -915,7 +915,13 @@ again within seconds.
   when tapping digital outs → speaker) with a **listen selector** for multi-output devices; freeform
   repatching on top (same patching state machine). The rig + param overrides + listen selection
   serialize compressed into the URL query (path = `typeId`), debounced `replaceState`, versioned +
-  regenerate-on-mismatch.
+  regenerate-on-mismatch. **Also here — bench stage-surface upgrade:** 6.2.4 gave the `BenchStage` plain
+  wheel-zoom (reactive px/mm) + scrollbar pan; 6.3 needs a `WorldApi`-shaped surface anyway (a
+  `clientToSurface` that divides out the zoom, to measure jack anchors + draw cables via the shared
+  `PatchController`/`cable-view`). Build that as a transform-based pan/zoom surface and, in the same pass,
+  bring the zoom to **scene-side parity** — cursor-anchored zoom + drag-to-pan (a sibling pan-backdrop so
+  operating a control never pans), and a fit/reset — reusing WorldView's `onWheel`/`fit` math. (Doing the
+  transform surface and the patching surface together avoids building the bench surface twice.)
 - **Story 6.4 — Debug surface + the hot loop.** A bench debug panel: every param (value + descriptor
   range), every readout, engine health (overruns, worst render ms, event/param drops), connection
   losses, config-vs-param distinction (recompiles made visible), and a seed control for deterministic
