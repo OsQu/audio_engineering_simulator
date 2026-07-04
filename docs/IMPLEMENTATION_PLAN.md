@@ -29,8 +29,8 @@ routinely changes its shape.
 
 **Detail gradient (concretely):** Epics 1–4 are built — their completed Stories carry full design
 notes and per-task delivery records, now **archived to `EPIC_<N>_NOTES.md`** with only a summary kept
-here (Epic 4's one deferred Story, 4.7, keeps its coarse sketch). **Epic 5 stays at Story level** — its
-Tasks get written when we reach them. Don't over-plan work whose shape the earlier work will change.
+here (Epic 4's one deferred Story, 4.7, keeps its coarse sketch). **Epics 5 and 6 stay at Story level** —
+their Tasks get written when we reach them. Don't over-plan work whose shape the earlier work will change.
 
 **Branch convention:** one branch per **Story**, `e<epic>-s<story>/<short-story-slug>`,
 e.g. `e1-s2/electrical-primitives`. Its Tasks are commits on that branch; PR (or
@@ -863,3 +863,63 @@ connectivity pass over a side-graph, plus an emergent runtime consequence — ne
   _Prerequisites:_ the carrier/clock seam and `ClockDomainId` stamp (Story 1.6); multiple digital
   devices and the fractional resampler (this Epic). ROI is high here (multi-device digital sync is the
   heart of the lesson), nil before.
+
+---
+
+## Epic 6 — Device Workbench (developer tooling)
+
+**Goal:** a focused single-device development view at `/devices/<device_id>` — the place where devices
+are built, tested, and debugged as Epic 5 grows the catalog. One device on a real-dimensions grid,
+front **and** back faces visible, instantly patchable to a sound source and a monitor, every param and
+meter exposed, and a temp scene that lives **in the URL** so the Rust-rebuild → page-reload loop
+restores itself with zero scene management.
+
+This is the first epic that is not a `PROJECT_PLAN.md` §9 roadmap stage — it is developer tooling in
+service of Stage 5 breadth (every new 5.1 device gets built against this bench). It shares Epic 5's
+ordering freedom: its stories can interleave with Epic 5 work.
+
+**Exit criteria:** open `localhost:5173/devices/scarlett_8i6` → the device renders on a mm grid (both
+faces), pre-patched to a synth source and a monitor chain; audio plays after one gesture; all params
+are drivable and all readouts/health visible; repatching and param tweaks persist to the URL; editing
+engine Rust + `pnpm run wasm` reloads the page and the bench restores itself from the URL, audible
+again within seconds.
+
+**Watch-outs:**
+
+- **One plumbing path, two views.** The workbench must consume the *same* extracted session layer,
+  widgets, and patching machinery as the scene view — never a forked copy of App's glue. If the
+  workbench needs something App has, extract it; don't duplicate it.
+- **Layer rule holds even for dev tooling.** The catalog gains no workbench vocabulary; the bench is a
+  pure consumer of descriptors (`typeId`, ports, params, readouts, form factor).
+- **The URL scene is disposable by design.** Versioned like the scene store; on mismatch, regenerate
+  the default rig — never migrate. Write with debounced `replaceState` (no history spam), compressed.
+- **Autoplay policy is a hard constraint.** The catalog must be available *before* any user gesture
+  (planned resolution: start the engine with the AudioContext suspended — the worklet instantiates and
+  posts `ready`/catalog without audio; `resume()` on first interaction. Verify early; fall back to a
+  main-thread catalog bridge if suspended instantiation doesn't hold).
+- **Bootstrap sources with the synth.** A proper bench signal generator (sine/sweep/noise/DC, settable
+  level + Zout) is deliberately deferred — it's an Epic-5-style device addition, not a bench
+  prerequisite (candidate Story 6.4).
+
+- **Story 6.1 — Engine-session extraction.** Pull the engine/UI plumbing out of the `App.svelte`
+  monolith into a shared session layer both views consume: engine lifecycle (`startEngine`/stop/
+  hot-swap), param seeding + pushing, readout/health/losses state, note routing, and the patching
+  adapters + jack measurement glue. Pure refactor — the scene view must behave **identically** (the
+  Story's validate gate). This is the load-bearing story; the workbench is only as solid as this seam.
+- **Story 6.2 — Route + workbench shell.** The app's first URL routing (`/devices/<typeId>` vs the
+  scene view; Vite dev serves deep links already). Suspended-context boot to get the catalog pre-
+  gesture, resume-on-interaction. The bench stage: mm grid + rack-unit (44.45 mm) ruler sized from the
+  descriptor's form factor, **both faces rendered simultaneously**, live params/meters through the
+  session layer. Unknown `typeId` → a catalog index page.
+- **Story 6.3 — Test rig + URL-persisted temp scene.** Auto-generate a default rig from the
+  descriptor's ports: synth → analog/events inputs, an auto-provided **monitor chain** (DA inserted
+  when tapping digital outs → speaker) with a **listen selector** for multi-output devices; freeform
+  repatching on top (same patching state machine). The rig + param overrides + listen selection
+  serialize compressed into the URL query (path = `typeId`), debounced `replaceState`, versioned +
+  regenerate-on-mismatch.
+- **Story 6.4 — Debug surface + the hot loop.** A bench debug panel: every param (value + descriptor
+  range), every readout, engine health (overruns, worst render ms, event/param drops), connection
+  losses, config-vs-param distinction (recompiles made visible), and a seed control for deterministic
+  noise comparisons. Close the dev loop: a `wasm:watch` script (rebuild on Rust save → Vite full
+  reload → URL restore → auto-resume). Candidate stretch: the bench **signal generator** device if the
+  synth proves too blunt an oracle.
