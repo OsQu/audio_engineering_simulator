@@ -67,6 +67,11 @@ export interface EngineControl {
   /** Set the monitor (listening) volume: a Web Audio gain after the engine, before the speakers.
    *  Purely how loud it is in your headphones — it does not touch the modeled signal or the meter. */
   setVolume: (gain: number) => void;
+  /** Resume the AudioContext so audio flows. Bring-up leaves the context **suspended** — the worklet
+   *  still instantiates and posts `ready`/catalog with no sound (so the catalog is available before any
+   *  user gesture, per the Epic-6 autoplay policy) — so this must be called from a user gesture to hear
+   *  anything. The scene view calls it from its start button; the workbench from the first interaction. */
+  resume: () => Promise<void>;
 }
 
 /** Callbacks the host drives as the worklet reports back. */
@@ -173,13 +178,17 @@ export async function startEngine(
   monitor.gain.value = Math.max(0, initialVolume);
   node.connect(monitor);
   monitor.connect(audio.destination);
-  await audio.resume();
+  // The context is left **suspended** — the worklet still instantiates and posts `ready`/catalog above
+  // (the catalog is available before any gesture, per the Epic-6 autoplay policy). Audio starts only when
+  // the caller `resume()`s from a user gesture. (The scene view resumes right after start; the workbench
+  // on first interaction.)
   handlers.onStatus("node created — initializing engine in worklet…");
 
   return {
     setVolume: (gain: number): void => {
       monitor.gain.value = Math.max(0, gain);
     },
+    resume: (): Promise<void> => audio.resume(),
   };
 }
 

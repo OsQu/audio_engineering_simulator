@@ -339,16 +339,19 @@
   const addRack = (): void => sceneOps.addRack(layout(), placedItems);
   const removeRack = (id: string): void => sceneOps.removeRack(scene, id);
 
-  // Bring the engine up (session-owned lifecycle, incl. param seeding), then finish bring-up with the
-  // pieces still living view-side this task: request Web MIDI. Note routing / MIDI fold in during 6.1.3.
-  function start(): void {
-    session.start(() => {
+  // The start button: bring the engine up (session-owned lifecycle, incl. param seeding), request Web
+  // MIDI, then resume the AudioContext — the button click *is* the user gesture, so audio flows
+  // immediately, same as before the suspended-boot split (the workbench, by contrast, boots on load and
+  // resumes on its first interaction).
+  async function start(): Promise<void> {
+    await session.start(() => {
       // Request Web MIDI once (the permission); the note target follows focus via playNote. The
       // computer keyboard is wired per-focus by the effect above, not here.
       wireMidi((on, note, velocity) => playNote(on, note, velocity), (m) => {
         session.midiStatus = m;
       });
     });
+    await session.resume();
   }
 
   // Scene save/load/reload live on the session; App wraps load to resync its own view state (the

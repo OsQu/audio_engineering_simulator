@@ -75,6 +75,8 @@ export class SceneSession {
   // --- Monitor volume -----------------------------------------------------------------------------
   volume = $state(loadVolume());
   #setVolume: ((gain: number) => void) | null = null;
+  // Resume the (suspended) AudioContext — must be called from a user gesture (see `resume`).
+  #resume: (() => Promise<void>) | null = null;
 
   constructor(initialScene: Scene) {
     this.scene = initialScene;
@@ -88,6 +90,13 @@ export class SceneSession {
     this.volume = v;
     this.#setVolume?.(v);
     localStorage.setItem(VOLUME_KEY, String(v));
+  }
+
+  // Resume the AudioContext so audio flows. `start()` leaves it suspended (the catalog still arrives) —
+  // this must be called from a user gesture. The scene view calls it right after start (its start button
+  // is the gesture); the workbench calls it on the first interaction. A no-op before the engine is up.
+  async resume(): Promise<void> {
+    await this.#resume?.();
   }
 
   // Route one note-on/off to an explicit target device: update the held set (for the highlight) and
@@ -176,8 +185,9 @@ export class SceneSession {
 
   // Bring the engine up: instantiate the worklet with the current patch + monitor volume, wire the
   // streaming callbacks to this session's state, and on `ready` seed + push the param values so the
-  // engine matches the scene from the start. `onReady` lets the view root finish bring-up with the
-  // pieces still living view-side this task (note routing / MIDI) — those fold in during 6.1.3.
+  // engine matches the scene from the start. Leaves the AudioContext **suspended** — call `resume()`
+  // from a user gesture to hear anything. `onReady` lets the view root finish bring-up with its own
+  // view-side pieces (e.g. the scene view requests Web MIDI there).
   async start(
     onReady: (r: ReadyMessage, send: (msg: ControlMessage) => void) => void,
   ): Promise<void> {
@@ -216,6 +226,7 @@ export class SceneSession {
         this.volume,
       );
       this.#setVolume = control.setVolume;
+      this.#resume = control.resume;
     } catch (err) {
       this.status = `error: ${err}`;
       this.started = false;
