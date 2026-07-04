@@ -1,28 +1,22 @@
 <script lang="ts">
-  // The harness shell, now in Svelte 5. It owns the authoritative scene and the reactive UI state;
-  // the engine/worklet bring-up and control transport live in engine.ts. Controls are rendered
+  // The harness shell, now in Svelte 5. The authoritative scene, engine lifecycle, and control lanes
+  // live on the SceneSession (session.svelte.ts); App owns the scene-view UI state and consumes the
+  // session throughout. The engine/worklet bring-up and control transport live in engine.ts. Controls are rendered
   // **from the fetched device catalog** (not hardcoded ids) — a generic stepping stone; the
   // skeuomorphic panel widgets land in Story 4.2.3. Generic by device id throughout.
 
-  import type { CableType, DeviceDescriptor, ParamDescriptor, PortDomain, PortKind } from "./catalog";
-  import { configDefault, descriptorFor, isPlayable } from "./catalog";
+  import type { CableType, DeviceDescriptor, PortDomain, PortKind } from "./catalog";
+  import { descriptorFor, isPlayable } from "./catalog";
   import { deviceUi, focusUi } from "./device-ui";
   import { isFocusable } from "./focus";
   import { skinFor } from "./skin";
   import { wireKeyboard, wireMidi } from "./engine";
   import { SceneSession } from "./session.svelte";
+  import { PatchController } from "./patch-controller.svelte";
   import { cablePathData, cableTypeIdFor } from "./connections";
-  import type { ConnectVerdict } from "./connections";
-  import type { Connection, Patch, PortRef } from "./scene";
+  import type { Connection, PortRef } from "./scene";
   import { DEFAULT_VELOCITY } from "./notes";
-  import {
-    defaultScene,
-    loadScene,
-    type Scene,
-    saveScene,
-    setSceneConfig,
-    setSceneParam,
-  } from "./scene-store";
+  import { defaultScene, loadScene } from "./scene-store";
   import {
     deviceById,
     effectiveFacing,
@@ -35,10 +29,6 @@
     type ViewCtx,
   } from "./projection";
   import * as cableView from "./cable-view";
-  import { measureJacks as measureJacksDom } from "./jack-anchors";
-  import * as params from "./params";
-  import * as patching from "./patching";
-  import type { JackHit, PatchState } from "./patching";
   import * as placement from "./placement";
   import * as sceneOps from "./scene-ops";
   import { type Room, type Wall } from "./spatial";
@@ -48,10 +38,25 @@
   import type { WorldApi } from "./widgets/WorldView.svelte";
 
   // The engine session: the view-agnostic consumer surface over the worklet engine (engine lifecycle,
-  // live readout state, monitor volume). App constructs one and reads it throughout; the Story-6.2
-  // workbench will construct its own. Scene, param/config lanes, note routing, and patching move onto
-  // it over the rest of Story 6.1.
-  const session = new SceneSession();
+  // live readout state, monitor volume, the authoritative scene + param/config lanes). App constructs
+  // one — seeding the scene from a saved one if present, else the default studio — and reads it
+  // throughout; the Story-6.2 workbench will construct its own (seeding from the URL in 6.3). Note
+  // routing and patching move onto it over the rest of Story 6.1.
+  const session = new SceneSession(loadScene() ?? defaultScene());
+
+  // A reactive view of the session's scene: reads track it, and a `session.load()` reassignment
+  // re-derives, so every `scene.*` read below stays live without App owning the state. App never
+  // reassigns it — the scene lane lives on the session now.
+  const scene = $derived(session.scene);
+
+  // The patch controller: the pointer/drag patching glue (drag + click-to-pick + cross-view pending,
+  // the measured jack-anchor store, commit/disconnect/setCableType). App delegates its window pointer
+  // handlers to it; the Story-6.2 workbench will drive the identical machinery.
+  const patch = new PatchController(session);
+  // A reactive, read-only view of the in-flight patch, so the template can narrow `{#if dragCable}` on a
+  // plain identifier (member-access narrowing across a block isn't reliable). App never assigns it —
+  // the drag state lives on the controller; use `patch.cancel()` to drop it.
+  const dragCable = $derived(patch.dragCable);
 
   // Format a reading: off-scale (near the floor) shows a dash.
   const fmtReading = (v: number): string => (v <= -55 ? "—" : v.toFixed(1));
@@ -64,29 +69,9 @@
     (e.currentTarget as HTMLElement | null)?.closest("details")?.removeAttribute("open");
   }
 
-  // The page's authoritative scene: a saved one if present, else the default studio. The plain
-  // `initialScene` const lets both `scene` and `currentSpace` seed from the same value without one
-  // $state initializer reading another (which would only capture its initial value).
-  const initialScene = loadScene() ?? defaultScene();
-  let scene = $state<Scene>(initialScene);
-
-  // Live control-param values, keyed `device:paramId`, mirrored into the scene on change so they
-  // persist on save. Re-seeded from the scene whenever it's (re)loaded.
-  let paramValues = $state<Record<string, number>>({});
-
-  const key = params.key;
-
-  // The current value of a device-local param (live override else descriptor default), bound to the map.
-  const paramValue = (deviceId: string, desc: DeviceDescriptor, id: number): number =>
-    params.paramValue(paramValues, deviceId, desc, id);
-
-  // A plain (non-proxied) deep copy of the patch for crossing to the worklet: `$state` wraps the
-  // scene in a reactive Proxy, which `postMessage` cannot structured-clone (DataCloneError).
-  const plainPatch = (): Patch => $state.snapshot(scene.patch);
-
   // --- The spatial world ---------------------------------------------------------------------------
   // The space (room) currently shown; switching changes the rendered/interactable set.
-  let currentSpace = $state(initialScene.ui.spaces[0]?.id ?? "");
+  let currentSpace = $state(session.scene.ui.spaces[0]?.id ?? "");
   // The view within the current space: one of the four wall elevations, or the top-down floor plan.
   // "top" lands in Story 4.6.4; the wall elevations render here.
   let currentView = $state<Wall | "top">("front");
@@ -119,21 +104,12 @@
   // A stable key for a connection (its two endpoints), for the {#each} in the cable overlay.
   const connKey = sceneOps.connKey;
 
-  // Measured jack-connector centres in surface space, keyed "device:direction:port" (from each jack's
-  // `data-jack` attribute), each tagged with the chassis face it sits on. Populated by measureJacks after
-  // layout; lets a cable anchor at the real socket when its jack is on the shown face, falling back to a
-  // chassis-centre estimate otherwise.
-  let jackAnchors = $state<Record<string, cableView.JackAnchor>>({});
-
-  // Re-measure jack anchors into surface space (the DOM work lives in jack-anchors.ts); the $effect
-  // below schedules it on layout changes.
-  const measureJacks = (): void => {
-    if (worldApi) jackAnchors = measureJacksDom(worldApi);
-  };
-
-  // Re-measure when layout-affecting state changes (placement / flip / space / catalog / api ready).
-  // Pan/zoom needn't trigger it — surface-local coords are invariant. Measure after paint, and again
-  // once the 0.45s flip transition has settled (so a just-flipped back reports its final jack positions).
+  // Re-measure jack anchors (the store lives on the patch controller). This layout-dependent trigger
+  // stays view-side: re-measure when layout-affecting state changes (placement / flip / space / catalog
+  // / api ready). Pan/zoom needn't trigger it — surface-local coords are invariant. Measure after paint,
+  // and again once the 0.45s flip transition has settled (so a just-flipped back reports its final jack
+  // positions).
+  const measureJacks = (): void => patch.measure(worldApi);
   $effect(() => {
     void session.ready;
     void currentSpace;
@@ -157,7 +133,8 @@
     ref: PortRef,
     direction: "input" | "output",
     api: WorldApi,
-  ): { x: number; y: number } | null => cableView.cableAnchor(layout(), jackAnchors, ref, direction, api);
+  ): { x: number; y: number } | null =>
+    cableView.cableAnchor(layout(), patch.jackAnchors, ref, direction, api);
 
   // Both of a cable's ends resolved to surface points (with the back-shown chassis clamp applied) — the
   // single geometry source shared by the z-2 lead and its overlay chassis patch, so the two copies trace
@@ -166,7 +143,7 @@
     c: Connection,
     api: WorldApi,
   ): { a: { x: number; y: number }; b: { x: number; y: number } } | null =>
-    cableView.cableEndpoints(layout(), jackAnchors, c, api);
+    cableView.cableEndpoints(layout(), patch.jackAnchors, c, api);
 
   // A device's chassis rect in surface coords — the clip region for a front-plugged lead's overlay patch.
   const deviceSurfaceRect = (id: string, api: WorldApi): cableView.SurfaceRect | null =>
@@ -183,7 +160,7 @@
 
   // Whether a cable end plugs into a visible front socket that the panel occludes (→ draw a chassis patch).
   const tipPatchEnd = (ref: PortRef, direction: "input" | "output"): boolean =>
-    cableView.tipPatchEnd(layout(), jackAnchors, ref, direction);
+    cableView.tipPatchEnd(layout(), patch.jackAnchors, ref, direction);
 
   const inView = (id: string): boolean => cableView.inView(layout(), id);
   const bothInView = (c: Connection): boolean => cableView.bothInView(layout(), c);
@@ -215,14 +192,8 @@
   }
 
   // --- Patching (drag or click-to-pick) -------------------------------------------------------------
-  // An in-progress patch from a source jack: the source end + its anchor, the moving free end (surface
-  // coords), and — when hovering a candidate jack — the verdict so we can colour the cable + commit.
-  // `mode` is "drag" while the pointer is held (same-view patching), or "pending" after a *click* — a
-  // held cable that survives a wall/room switch, so you can complete a **cross-view** patch by clicking
-  // the source jack, turning to the other wall/room, and clicking the destination jack.
-  let dragCable = $state<PatchState>(null);
-  // Pointer-down bookkeeping to tell a click (→ pending pick) from a drag (moved past a small threshold).
-  let cableDown = { x: 0, y: 0, moved: false };
+  // The drag/pointer machinery lives on the patch controller (constructed above); App delegates its
+  // window handlers to it and reads `dragCable` (the alias above) for the rubber-band + banner.
 
   // The display name of the pending patch's source device (for the "patching from…" banner).
   const pendingSourceName = $derived.by((): string | null => {
@@ -231,59 +202,6 @@
     return (dev && descriptorFor(session.catalog, dev.typeId)?.name) || dragCable.source.device;
   });
 
-  // Resolve a `data-jack` key into the JackHit the pure transitions need (endpoint + measured anchor),
-  // or null if it doesn't name a real, resolvable port.
-  const jackHitOf = (key: string | undefined | null): JackHit | null => {
-    if (!key) return null;
-    const endpoint = patching.endpointFromJackKey(scene, session.catalog, key);
-    return endpoint ? { key, endpoint, anchor: jackAnchors[key] ?? null } : null;
-  };
-  const patchDeps = () => ({ connections: scene.patch.connections });
-
-  // The patching handlers are thin adapters: they read the DOM into a JackHit + surface coords, keep the
-  // click-vs-drag threshold bookkeeping, call the pure transition, assign its state, and on a returned
-  // `commit` verdict commit the cable (which hot-swaps). See patching.ts for the transition semantics.
-  function onCablePointerDown(e: PointerEvent): void {
-    if (!worldApi) return;
-    // A pending cable's second press: only record the point; onCablePointerUp resolves click-vs-pan.
-    if (dragCable?.mode === "pending") {
-      cableDown = { x: e.clientX, y: e.clientY, moved: false };
-      return;
-    }
-    const hit = jackHitOf((e.target as HTMLElement | null)?.closest<HTMLElement>("[data-jack]")?.dataset.jack);
-    if (!hit || !hit.anchor) return; // only a measured jack can start a drag
-    e.preventDefault();
-    cableDown = { x: e.clientX, y: e.clientY, moved: false };
-    dragCable = patching.pointerDown(dragCable, hit).state;
-  }
-
-  function onCablePointerMove(e: PointerEvent): void {
-    if (!dragCable || !worldApi) return;
-    // Track whether the active press has moved past the click threshold — but only while a button is
-    // held (`e.buttons`), so a pending cable's buttonless cursor-follow is never mistaken for a pan.
-    if (e.buttons !== 0 && !cableDown.moved) {
-      if (Math.hypot(e.clientX - cableDown.x, e.clientY - cableDown.y) > 4) cableDown.moved = true;
-    }
-    const cursor = worldApi.clientToSurface(e.clientX, e.clientY);
-    const srcAnchor = jackAnchors[patching.jackKeyOf(dragCable.source)] ?? null;
-    const hit = jackHitOf(
-      document.elementFromPoint(e.clientX, e.clientY)?.closest<HTMLElement>("[data-jack]")?.dataset.jack,
-    );
-    dragCable = patching.pointerMove(dragCable, hit, cursor, srcAnchor, patchDeps());
-  }
-
-  function onCablePointerUp(e: PointerEvent): void {
-    if (!dragCable) return;
-    // The pending second-click needs the jack under the release point; drag-release uses the last verdict.
-    const hit =
-      dragCable.mode === "pending" && !cableDown.moved
-        ? jackHitOf(document.elementFromPoint(e.clientX, e.clientY)?.closest<HTMLElement>("[data-jack]")?.dataset.jack)
-        : null;
-    const res = patching.pointerUp(dragCable, hit, !cableDown.moved, patchDeps());
-    if (res.commit) commitCable(res.commit);
-    dragCable = res.state;
-  }
-
   // Esc closes the focus overlay first, else cancels an in-progress patch (drag or pending).
   function onGlobalKey(e: KeyboardEvent): void {
     if (e.key !== "Escape") return;
@@ -291,26 +209,19 @@
       focusedDevice = null;
       return;
     }
-    if (dragCable) dragCable = patching.cancel();
+    if (dragCable) patch.cancel();
   }
 
-  // Connection introspection + edits are pure scene-ops; App wraps them to bind scene/catalog/cables
-  // and to hot-swap the engine after any edit that changes the runnable patch.
+  // Connection introspection is pure scene-ops; App binds scene/catalog for cable rendering + the inspector.
   const connectionDomain = (c: Connection): PortDomain | null =>
     sceneOps.connectionDomain(scene, session.catalog, c);
   const connectionKind = (c: Connection): PortKind => sceneOps.connectionKind(scene, session.catalog, c);
 
-  function commitCable(v: ConnectVerdict): void {
-    sceneOps.commitCable(scene, session.catalog, session.cables, v);
-    hotSwap();
-  }
-
-  // Remove a cable (from the inspector) and hot-swap; drop the inspector selection if it was this one.
+  // Remove a cable (from the inspector): drop the inspector selection if it was this one, then let the
+  // controller disconnect + hot-swap. (commit / setCableType are called straight off the controller.)
   function disconnect(c: Connection): void {
-    const k = connKey(c);
-    sceneOps.disconnect(scene, c);
-    if (selectedCableKey === k) selectedCableKey = null;
-    hotSwap();
+    if (selectedCableKey === connKey(c)) selectedCableKey = null;
+    patch.disconnect(c);
   }
 
   // --- Cable inspector (select a cable to change its type / disconnect it) --------------------------
@@ -376,22 +287,13 @@
     if (!dev || !desc || !isPlayable(desc)) return null;
     return eventsInputDriven(dev.id, desc) ? null : dev.id;
   });
-  // Notes currently sounding, for the keybed highlight — fed by every source (mouse, QWERTY, MIDI) so
-  // the on-screen keys light up whichever way you play.
-  let heldNotes = $state<number[]>([]);
-  // Route one note-on/off to the focused instrument: update the held set (for the highlight) and post
-  // it to the worklet. A no-op when nothing playable is focused or the engine isn't up yet.
+  // Route a note to the focused instrument: resolve the view-side target (keyboardTarget), then delegate
+  // to the session's target-explicit playNote (which owns heldNotes + the worklet post). A no-op when
+  // nothing playable is focused. Fed by every source (mouse, QWERTY, MIDI); heldNotes drives the keybed
+  // highlight whichever way you play.
   function playNote(on: boolean, note: number, velocity: number = DEFAULT_VELOCITY): void {
-    const device = keyboardTarget;
-    const send = session.send;
-    if (device === null || !send) return;
-    if (on) {
-      if (!heldNotes.includes(note)) heldNotes = [...heldNotes, note];
-      send({ type: "noteOn", device, note, velocity });
-    } else {
-      heldNotes = heldNotes.filter((n) => n !== note);
-      send({ type: "noteOff", device, note });
-    }
+    if (keyboardTarget === null) return;
+    session.playNote(keyboardTarget, on, note, velocity);
   }
   // Capture the computer keyboard **only while an instrument is focused** (attach on focus, detach on
   // unfocus — the effect re-runs just when keyboardTarget changes). Web MIDI is wired once at start-up
@@ -400,13 +302,6 @@
     if (keyboardTarget === null) return;
     return wireKeyboard(playNote);
   });
-
-  // Set (or clear, `""` ⇒ ideal wire) the cable type on a connection, then hot-swap — the cable's R·C
-  // is baked into the edge at compile, so changing it rebuilds the engine.
-  function setCableType(c: Connection, typeId: string): void {
-    sceneOps.setCableType(scene, session.cables, c, typeId);
-    hotSwap();
-  }
 
   // Thin adapters over placement.ts, handed to the world layer as the drag legality + commit hooks.
   // Both build the layout ctx inline (so reads stay reactive) and pass the already-derived placedItems.
@@ -427,60 +322,27 @@
   const toggleRackFlip = (id: string): void => sceneOps.toggleRackFlip(scene, id);
   const unmount = (id: string): void => sceneOps.unmount(scene, id);
 
-  // A knob move touches all three param lanes at once — the live map (UI), the scene (for save), and the
-  // engine (live) — so keep them in sync in this one visible place; they mustn't drift apart.
-  function onParamInput(device: string, p: ParamDescriptor, value: number): void {
-    paramValues[key(device, p.id)] = value;
-    setSceneParam(scene, device, p.id, value);
-    session.send?.({ type: "param", device, paramId: p.id, value });
-  }
-
-  // A structural config's current value in the scene, falling back to the descriptor's build default —
-  // the mirror of `paramValue` for the (recompile-on-change) config lane.
-  const configValue = (deviceId: string, desc: DeviceDescriptor, key: string): number => {
-    const set = deviceById(scene, deviceId)?.config?.find((c) => c.key === key);
-    return set?.value ?? configDefault(desc, key);
-  };
-
-  // A structural config toggle (INST/hi-Z): unlike a knob, this changes how the device is *built*, so it
-  // edits the scene and rebuilds the engine (the same hot-swap repatching uses) rather than a live param.
-  function onConfigInput(device: string, key: string, value: number): void {
-    setSceneConfig(scene, device, key, value);
-    hotSwap();
-  }
-
-  // A structural edit → rebuild the engine from the new patch (compile + ScheduleSlot hot-swap, in the
-  // worklet, the Story 4.1 path) and re-apply param values. Edits are rare gestures, so the off-block
-  // compile cost is acceptable; the live audio thread swaps at a block boundary.
-  function hotSwap(): void {
-    const send = session.send;
-    if (!send) return;
-    send({ type: "loadPatch", patch: plainPatch() });
-    paramValues = params.seedParamValues(scene, session.catalog);
-    params.pushParams(send, scene, session.catalog, paramValues);
-  }
+  // The param/config lanes (paramValue/onParamInput, configValue/onConfigInput) and hotSwap live on the
+  // session now — App just calls session.* from the faceplate props and the scene-editing wrappers.
 
   // Add gear (rebuilds the engine) / a rack (UI furniture, no rebuild); remove either. Thin wrappers
   // over scene-ops — addDevice/removeDevice hot-swap, the rack ops don't (per the plan's table).
   function addDevice(typeId: string): void {
     sceneOps.addDevice(layout(), placedItems, typeId);
-    hotSwap();
+    session.hotSwap();
   }
   function removeDevice(id: string): void {
     if (focusedDevice === id) focusedDevice = null;
     sceneOps.removeDevice(scene, id);
-    hotSwap();
+    session.hotSwap();
   }
   const addRack = (): void => sceneOps.addRack(layout(), placedItems);
   const removeRack = (id: string): void => sceneOps.removeRack(scene, id);
 
-  // Bring the engine up (session-owned lifecycle), then finish bring-up with the pieces still living
-  // view-side this task: seed + push the param values, and request Web MIDI. `plainPatch` and param
-  // seeding fold into the session in 6.1.2; note routing / MIDI in 6.1.3.
+  // Bring the engine up (session-owned lifecycle, incl. param seeding), then finish bring-up with the
+  // pieces still living view-side this task: request Web MIDI. Note routing / MIDI fold in during 6.1.3.
   function start(): void {
-    session.start(plainPatch(), (r, sendFn) => {
-      paramValues = params.seedParamValues(scene, r.catalog);
-      params.pushParams(sendFn, scene, r.catalog, paramValues); // match the engine to the scene from the start
+    session.start(() => {
       // Request Web MIDI once (the permission); the note target follows focus via playNote. The
       // computer keyboard is wired per-focus by the effect above, not here.
       wireMidi((on, note, velocity) => playNote(on, note, velocity), (m) => {
@@ -489,37 +351,22 @@
     });
   }
 
-  function saveCurrent(): void {
-    saveScene(scene);
-    session.status = "scene saved";
-  }
-
+  // Scene save/load/reload live on the session; App wraps load to resync its own view state (the
+  // current space) to the freshly-loaded scene's spaces.
+  const saveCurrent = (): void => session.save();
   function loadSaved(): void {
-    const loaded = loadScene();
-    if (!loaded) {
-      session.status = "no saved scene";
-      return;
-    }
-    scene = loaded;
-    currentSpace = loaded.ui.spaces[0]?.id ?? "";
-    paramValues = params.seedParamValues(scene, session.catalog);
-    session.send?.({ type: "loadPatch", patch: plainPatch() }); // hot-swap the engine to the saved scene
-    session.status = "scene loaded";
+    if (session.load()) currentSpace = session.scene.ui.spaces[0]?.id ?? "";
   }
-
-  function reload(): void {
-    session.send?.({ type: "loadPatch", patch: plainPatch() }); // re-apply current scene — proves glitch-free swap
-    session.status = "scene reloaded (hot-swap)";
-  }
+  const reload = (): void => session.reload();
 </script>
 
 <!-- Cable-drag pointer tracking: a jack press starts a cable; move/up run globally so the drag keeps
      working past the jack. WorldView's own pan/device-drag handlers stay inert (no jack ⇒ no cable drag,
      and no device drag/pan is active during a cable drag). -->
 <svelte:window
-  onpointerdown={onCablePointerDown}
-  onpointermove={onCablePointerMove}
-  onpointerup={onCablePointerUp}
+  onpointerdown={(e) => patch.pointerDown(e, worldApi)}
+  onpointermove={(e) => patch.pointerMove(e, worldApi)}
+  onpointerup={(e) => patch.pointerUp(e)}
   onkeydown={onGlobalKey}
 />
 
@@ -945,11 +792,11 @@
                 readouts={desc.readouts}
                 configs={desc.configs}
                 flipped={effectiveFacing(scene, device.id) === "back"}
-                valueFor={(id) => paramValue(device.id, desc, id)}
+                valueFor={(id) => session.paramValue(device.id, desc, id)}
                 readingFor={(id) => session.readingFor(device.id, id)}
-                onParam={(p, v) => onParamInput(device.id, p, v)}
-                configFor={(k) => configValue(device.id, desc, k)}
-                onConfig={(k, v) => onConfigInput(device.id, k, v)}
+                onParam={(p, v) => session.onParamInput(device.id, p, v)}
+                configFor={(k) => session.configValue(device.id, desc, k)}
+                onConfig={(k, v) => session.onConfigInput(device.id, k, v)}
               />
             {/if}
           {/if}
@@ -961,7 +808,7 @@
              another wall/room and click a destination jack to complete (Esc / Cancel to drop it). -->
         <div class="patch-banner">
           Patching from <strong>{pendingSourceName}</strong> — click a destination jack
-          <button type="button" onclick={() => (dragCable = null)}>Cancel</button>
+          <button type="button" onclick={() => patch.cancel()}>Cancel</button>
         </div>
       {/if}
 
@@ -977,7 +824,7 @@
               Type
               <select
                 value={cableTypeIdFor(session.cables, selectedConn.cable)}
-                onchange={(e) => selectedConn && setCableType(selectedConn, e.currentTarget.value)}
+                onchange={(e) => selectedConn && patch.setCableType(selectedConn, e.currentTarget.value)}
               >
                 <option value="">Ideal wire</option>
                 {#each cablesForSelected as ct (ct.typeId)}
@@ -1041,16 +888,16 @@
                 ports={f.desc.ports}
                 readouts={f.desc.readouts}
                 configs={f.desc.configs}
-                valueFor={(id) => paramValue(f.device.id, f.desc, id)}
+                valueFor={(id) => session.paramValue(f.device.id, f.desc, id)}
                 readingFor={(id) => session.readingFor(f.device.id, id)}
-                onParam={(p, v) => onParamInput(f.device.id, p, v)}
-                configFor={(k) => configValue(f.device.id, f.desc, k)}
-                onConfig={(k, v) => onConfigInput(f.device.id, k, v)}
+                onParam={(p, v) => session.onParamInput(f.device.id, p, v)}
+                configFor={(k) => session.configValue(f.device.id, f.desc, k)}
+                onConfig={(k, v) => session.onConfigInput(f.device.id, k, v)}
               />
               {#if isPlayable(f.desc)}
                 <!-- The keybed = the device's open events input, drawn on-screen. Disabled when the input
                      is cable-driven (a patched controller performs it instead — host notes are a no-op). -->
-                <Keybed held={heldNotes} onNote={playNote} disabled={eventsInputDriven(f.device.id, f.desc)} />
+                <Keybed held={session.heldNotes} onNote={playNote} disabled={eventsInputDriven(f.device.id, f.desc)} />
               {/if}
             </div>
           </div>
