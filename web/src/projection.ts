@@ -101,10 +101,13 @@ export function deviceRect(ctx: LayoutCtx, deviceId: string, typeId: string): Re
 }
 
 // The items to render, for the current view. In a **wall elevation**: rack frames (behind) then that
-// wall's devices (on top), with `z` interleaving them with the cable layer (z 2) by facing so a
-// continuous cable occludes right. In the **top-down plan**: the whole room's racks + free-standing gear
-// as floor footprints (mounted gear is hidden inside its rack; cables aren't drawn — no visible jacks
-// from above).
+// wall's devices (on top), with `z` interleaving them with the cable layer (z 2) so a continuous cable
+// occludes right: a **back-shown** device sits *below* the cables (z 1) so a lead reaches its rear
+// sockets, a **front-shown** one *above* (z 3) so cables tuck behind its panel. A cable plugged into a
+// visible front socket is occluded near the plug; the renderer redraws a short lead-tip above the panel
+// (see `tipPatchEnd`) so the plug still reads as seated. In the **top-down plan**: the whole room's
+// racks + free-standing gear as floor footprints (mounted gear is hidden inside its rack; cables aren't
+// drawn — no visible jacks from above).
 export function placedItemsFor(ctx: LayoutCtx): PlacedItem[] {
   const { scene, space } = ctx;
   if (ctx.view === "top") {

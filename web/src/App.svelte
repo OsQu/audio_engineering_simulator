@@ -148,6 +148,8 @@
   const view = (): ViewCtx => ({ space: currentSpace, view: currentView, wall: currentWall, room });
   const layout = (): LayoutCtx => ({ ...view(), scene, catalog });
 
+  // Devices interleave with the single cable layer by facing: a back-shown unit sits below it (z 1), a
+  // front-shown one above (z 3). See placedItemsFor.
   const placedItems = $derived.by((): PlacedItem[] => placedItemsFor(layout()));
 
   // --- Patch cables --------------------------------------------------------------------------------
@@ -156,8 +158,8 @@
 
   // Measured jack-connector centres in surface space, keyed "device:direction:port" (from each jack's
   // `data-jack` attribute), each tagged with the chassis face it sits on. Populated by measureJacks after
-  // layout; lets a cable anchor at the real socket when its jack is on the shown face, falling back to the
-  // chassis edge otherwise.
+  // layout; lets a cable anchor at the real socket when its jack is on the shown face, falling back to a
+  // chassis-centre estimate otherwise.
   let jackAnchors = $state<Record<string, cableView.JackAnchor>>({});
 
   // Re-measure jack anchors into surface space (the DOM work lives in jack-anchors.ts); the $effect
@@ -194,11 +196,31 @@
     api: WorldApi,
   ): { x: number; y: number } | null => cableView.cableAnchor(layout(), jackAnchors, ref, direction, api);
 
+  // Both of a cable's ends resolved to surface points (with the back-shown chassis clamp applied) — the
+  // single geometry source shared by the z-2 lead and its overlay chassis patch, so the two copies trace
+  // the exact same path. `null` when either end is off-view (that connection draws as a portal instead).
+  const cableEnds = (
+    c: Connection,
+    api: WorldApi,
+  ): { a: { x: number; y: number }; b: { x: number; y: number } } | null =>
+    cableView.cableEndpoints(layout(), jackAnchors, c, api);
+
+  // A device's chassis rect in surface coords — the clip region for a front-plugged lead's overlay patch.
+  const deviceSurfaceRect = (id: string, api: WorldApi): cableView.SurfaceRect | null =>
+    cableView.deviceSurfaceRect(layout(), id, api);
+
   // Cable occlusion is handled by z-order, not by the cable: a single continuous lead is drawn in the
-  // cable layer (z 2), and each device sits above or below it by facing (see placedItems' `z`) — a
-  // back-facing device (visible sockets) below, a front-facing one above. So a cable plugs into a visible
-  // socket yet tucks behind a hidden panel, with no split. (A faceplate may place jacks on either face;
-  // cableAnchor anchors precisely only at jacks on the shown face — see its face-match rule.)
+  // cable layer (z 2), and each device sits above or below it (see placedItems' `z`) — a back-shown unit
+  // *below* (a lead reaches its rear sockets), a front-shown one *above* (cables tuck behind its panel).
+  // A cable plugged into a *visible front socket* is then occluded by the panel above it; tipPatchEnd flags
+  // those ends so the overlay redraws the lead clipped to the chassis rect (see the tipPatch snippet), so
+  // the portion the panel hides paints back over it. A back-shown device's hidden-face estimate is clamped
+  // to its chassis edge inside cableEnds, so a lead to a now-hidden socket stops at the silhouette rather
+  // than dangling mid-panel.
+
+  // Whether a cable end plugs into a visible front socket that the panel occludes (→ draw a chassis patch).
+  const tipPatchEnd = (ref: PortRef, direction: "input" | "output"): boolean =>
+    cableView.tipPatchEnd(layout(), jackAnchors, ref, direction);
 
   const inView = (id: string): boolean => cableView.inView(layout(), id);
   const bothInView = (c: Connection): boolean => cableView.bothInView(layout(), c);
@@ -678,10 +700,9 @@
            click-to-disconnect (its pointer events go off during a drag so `elementFromPoint` can see the
            jack beneath). Drawn once, in the single cable layer; the devices' `z` handle the occlusion. -->
       {#snippet oneCable(c: Connection, api: WorldApi)}
-        {@const a = cableAnchor(c.from, "output", api)}
-        {@const b = cableAnchor(c.to, "input", api)}
-        {#if a && b}
-          {@const d = cablePathData(a, b)}
+        {@const ends = cableEnds(c, api)}
+        {#if ends}
+          {@const d = cablePathData(ends.a, ends.b)}
           {@const kind = connectionKind(c)}
           <path class="cable-shadow" {d} />
           <path
@@ -703,6 +724,35 @@
               if (e.key === "Enter" || e.key === " ") selectedCableKey = connKey(c);
             }}
           ></path>
+        {/if}
+      {/snippet}
+
+      <!-- A chassis patch: the same cable, redrawn in the overlay (z 5, above the panels) but clipped to
+           the socket's device rect, so the stretch the front panel occludes (plug + the lead across the
+           chassis) paints back over it, continuous to the panel edge (the rest stays in the z-2 cable
+           layer). Reuses oneCable's exact resolved endpoints + colours so patch and cable coincide; no
+           hit-path (the z-2 lead owns click-to-select). The clip id derives from the connection key + end,
+           sanitised to a valid, unique SVG id. -->
+      {#snippet tipPatch(c: Connection, ref: PortRef, direction: "input" | "output", api: WorldApi)}
+        {@const ends = cableEnds(c, api)}
+        {@const rect = deviceSurfaceRect(ref.device, api)}
+        {#if ends && rect}
+          {@const d = cablePathData(ends.a, ends.b)}
+          {@const kind = connectionKind(c)}
+          {@const clipId = `tip-${connKey(c).replace(/[^a-zA-Z0-9]/g, "-")}-${direction}`}
+          <clipPath id={clipId} clipPathUnits="userSpaceOnUse">
+            <rect x={rect.x} y={rect.y} width={rect.width} height={rect.height} />
+          </clipPath>
+          <g clip-path={`url(#${clipId})`}>
+            <path class="cable-shadow" {d} />
+            <path
+              class="cable-core"
+              data-signal={kind}
+              class:selected={connKey(c) === selectedCableKey}
+              {d}
+            />
+            <path class="cable-highlight" data-signal={kind} {d} />
+          </g>
         {/if}
       {/snippet}
 
@@ -767,7 +817,8 @@
       >
         {#snippet cables(api)}
           <!-- Every cable with both ends in this view, drawn once as a continuous lead. The devices' z
-               (set in placedItems by facing) decides which panels each cable passes in front of vs behind. -->
+               (set in placedItems by whether a cable ends on their shown face) decides which panels each
+               cable passes in front of vs behind. -->
           {#each scene.patch.connections.filter(bothInView) as c (connKey(c))}
             {@render oneCable(c, api)}
           {/each}
@@ -800,6 +851,18 @@
               <text class="plan-wall" x={tr.x - 24} y={(bl.y + tr.y) / 2} text-anchor="end">Right</text>
             </g>
           {/if}
+          <!-- Chassis patches: for each in-view cable end plugged into a visible front socket (occluded by
+               the panel above the z-2 cable layer), redraw the lead clipped to that device's chassis rect,
+               so the panel-hidden stretch paints back over the panel. Drawn before the portals/rubber-band
+               so those stay on top. -->
+          {#each scene.patch.connections.filter(bothInView) as c (connKey(c))}
+            {#if tipPatchEnd(c.from, "output")}
+              {@render tipPatch(c, c.from, "output", api)}
+            {/if}
+            {#if tipPatchEnd(c.to, "input")}
+              {@render tipPatch(c, c.to, "input", api)}
+            {/if}
+          {/each}
           <!-- On top of everything: cross-view portal stubs and the drag rubber-band while patching. -->
           {#each scene.patch.connections.filter(oneInView) as c (connKey(c))}
             {@render onePortal(c, api)}

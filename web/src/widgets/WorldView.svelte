@@ -9,10 +9,14 @@
    *  `bind:api`) so cables can be placed/measured in the surface's own space without touching the
    *  pan/zoom transform or the room height. Surface-local coords are pan/zoom-invariant.
    *  - `worldToSurface`: world mm (x right, y **up** from the floor) → surface-local (y **down** from top).
-   *  - `clientToSurface`: a viewport client point (e.g. a measured DOM rect) → surface-local. */
+   *  - `clientToSurface`: a viewport client point (e.g. a measured DOM rect) → surface-local.
+   *  - `measureRoot`: the transformed surface element, the root to scope a jack DOM sweep to (so a
+   *    duplicate faceplate rendered *outside* the world — e.g. the device-focus overlay — can't clobber
+   *    real anchors). `null` until the surface mounts. */
   export interface WorldApi {
     worldToSurface: (worldX: number, worldY: number) => SurfacePoint;
     clientToSurface: (clientX: number, clientY: number) => SurfacePoint;
+    measureRoot: () => HTMLElement | null;
   }
 </script>
 
@@ -41,9 +45,9 @@
     /** Background furniture (e.g. a rack frame). A styling hook; stacking is set via `z`. */
     background?: boolean;
     /** Stacking order (CSS z-index). The parent sets it per item to interleave items with the single
-     *  cable layer (z 2): a device showing its **back** sits *below* the cables (they plug into its
-     *  visible sockets), one facing **front** sits *above* them (cables tuck behind its panel). A rack
-     *  frame sits at the bottom. Defaults to 2. */
+     *  cable layer (z 2): a **back-shown** device sits *below* the cables (z 1) so a lead reaches its
+     *  rear sockets, a **front-shown** one *above* (z 3) so cables tuck behind its panel. A rack frame
+     *  sits at the bottom. Defaults to 2. */
     z?: number;
   }
 
@@ -122,7 +126,7 @@
     if (!r) return { x: 0, y: 0 };
     return { x: (clientX - r.left) / zoom, y: (clientY - r.top) / zoom };
   };
-  const worldApi: WorldApi = { worldToSurface, clientToSurface };
+  const worldApi: WorldApi = { worldToSurface, clientToSurface, measureRoot: () => surface ?? null };
   // Expose the converters to the parent (for jack measurement outside the overlay snippet).
   $effect(() => {
     api = worldApi;

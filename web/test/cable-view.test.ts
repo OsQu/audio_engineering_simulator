@@ -2,12 +2,15 @@ import { describe, expect, it } from "vitest";
 import {
   bothInView,
   cableAnchor,
+  cableEndpoints,
+  deviceSurfaceRect,
   inView,
   oneInView,
   otherEndLabel,
   PORTAL_LEN,
   portalKey,
   portalOffset,
+  tipPatchEnd,
 } from "../src/cable-view";
 import type { DeviceDescriptor } from "../src/catalog";
 import type { LayoutCtx } from "../src/projection";
@@ -173,7 +176,8 @@ describe("cableAnchor", () => {
 
   it("hidden-face jack: ignores a measured anchor on the away face and estimates instead", () => {
     // Back is shown, but this jack was measured on the front (hidden) face — its centre is mirrored under
-    // rotateY(180deg), so it must be ignored and the chassis-edge estimate used instead.
+    // rotateY(180deg), so it must be ignored and the interior chassis estimate used instead.
+    // deviceRect = {x:0,y:0,w:200,h:100}; output wx = 200·0.62 = 124, wy = 100·0.45 = 45
     const scene = makeScene({ a: place("s1", "front", "back") });
     const anchors = { "a:output:0": { x: 9, y: 9, face: "front" as const } };
     expect(cableAnchor(ctxOf(scene), anchors, ref("a"), "output", idApi)).toEqual({
@@ -209,5 +213,111 @@ describe("cableAnchor", () => {
   it("is null when the device isn't in the shown view (drawn as a portal instead)", () => {
     const scene = makeScene({ a: place("s1", "back") });
     expect(cableAnchor(ctxOf(scene, "front"), {}, ref("a"), "output", idApi)).toBeNull();
+  });
+});
+
+describe("tipPatchEnd", () => {
+  const ref = (device: string, port = 0) => ({ device, port });
+
+  it("is true for a measured front-face jack on a front-shown device (occluded by its panel)", () => {
+    const scene = makeScene({ a: place("s1", "front", "front") });
+    const anchors = { "a:input:0": { x: 3, y: 4, face: "front" as const } };
+    expect(tipPatchEnd(ctxOf(scene), anchors, ref("a"), "input")).toBe(true);
+  });
+
+  it("is false on a back-shown device (it already sits below the cables — nothing to patch over)", () => {
+    const scene = makeScene({ a: place("s1", "front", "back") });
+    const anchors = { "a:output:0": { x: 9, y: 9, face: "back" as const } };
+    expect(tipPatchEnd(ctxOf(scene), anchors, ref("a"), "output")).toBe(false);
+  });
+
+  it("is false when the jack isn't measured yet (the end anchors to an estimate, no visible socket)", () => {
+    const scene = makeScene({ a: place("s1", "front", "front") });
+    expect(tipPatchEnd(ctxOf(scene), {}, ref("a"), "input")).toBe(false);
+  });
+
+  it("is false for a jack measured on the hidden (away) face of a front-shown device", () => {
+    const scene = makeScene({ a: place("s1", "front", "front") });
+    const anchors = { "a:input:0": { x: 3, y: 4, face: "back" as const } };
+    expect(tipPatchEnd(ctxOf(scene), anchors, ref("a"), "input")).toBe(false);
+  });
+
+  it("is false when the device isn't in the shown view", () => {
+    const scene = makeScene({ a: place("s1", "back", "front") });
+    const anchors = { "a:input:0": { x: 3, y: 4, face: "front" as const } };
+    expect(tipPatchEnd(ctxOf(scene, "front"), anchors, ref("a"), "input")).toBe(false);
+  });
+});
+
+describe("deviceSurfaceRect", () => {
+  it("returns the device's chassis rect in surface coords (top-left origin)", () => {
+    const scene = makeScene({ a: place("s1", "front", "front") });
+    // deviceRect(front) = {x:0,y:0,w:200,h:100}; idApi passes coords through → the same box, y-down.
+    expect(deviceSurfaceRect(ctxOf(scene), "a", idApi)).toEqual({
+      x: 0,
+      y: 0,
+      width: 200,
+      height: 100,
+    });
+  });
+
+  it("is null when the device has no rect (not placed / unknown id)", () => {
+    const scene = makeScene({ a: place("s1", "front") });
+    expect(deviceSurfaceRect(ctxOf(scene), "ghost", idApi)).toBeNull();
+  });
+});
+
+describe("cableEndpoints — back-shown chassis clamp", () => {
+  const conn = (from: string, to: string): Connection => ({
+    from: { device: from, port: 0 },
+    to: { device: to, port: 0 },
+  });
+  // Two devices on the front wall, 200×100 each: `dst` at the origin (rect x∈[0,200]), `src` at x=400
+  // (rect x∈[400,600]) — non-overlapping, so src's estimate lands outside dst's rect.
+  const twoScene = (dstFacing: "front" | "back") =>
+    makeScene({
+      dst: { ...place("s1", "front", dstFacing), position: { x: 0, y: 0, z: 0 } },
+      src: { ...place("s1", "front", "front"), position: { x: 400, y: 0, z: 0 } },
+    });
+
+  it("clamps a back-shown device's hidden-face estimate to the chassis edge toward the other end", () => {
+    // dst back-shown, unmeasured input → estimate wx=200·0.38=76, wy=100·0.45=45 ⇒ {76,45}, inside dst's
+    // rect x∈[0,200] y∈[0,100]. src output estimate = 400+200·0.62=524, y=45 ⇒ {524,45} (the "other" end).
+    // Segment {76,45}→{524,45} exits dst's rect at the right edge x=200 (t=124/448), y=45 ⇒ {200,45}.
+    const ends = cableEndpoints(ctxOf(twoScene("back")), {}, conn("src", "dst"), idApi);
+    expect(ends?.b).toEqual({ x: 200, y: 45 });
+    // src is front-shown → sits above the cables, so its estimate end is left unclamped.
+    expect(ends?.a).toEqual({ x: 524, y: 45 });
+  });
+
+  it("does not clamp a front-shown device's estimate (it sits above the cables, hiding the estimate)", () => {
+    // Same layout, dst front-shown: its input estimate {76,45} is kept as-is.
+    const ends = cableEndpoints(ctxOf(twoScene("front")), {}, conn("src", "dst"), idApi);
+    expect(ends?.b).toEqual({ x: 76, y: 45 });
+  });
+
+  it("keeps the estimate when the other end is inside the same rect (degenerate overlap, no crossing)", () => {
+    // Both devices at the origin → src output estimate {124,45} lands inside dst's rect x∈[0,200] y∈[0,100],
+    // so the segment from dst's input estimate {76,45} toward it never crosses the boundary ⇒ unchanged.
+    const scene = makeScene({
+      dst: place("s1", "front", "back"),
+      src: place("s1", "front", "front"),
+    });
+    const ends = cableEndpoints(ctxOf(scene), {}, conn("src", "dst"), idApi);
+    expect(ends?.b).toEqual({ x: 76, y: 45 });
+  });
+
+  it("uses the precise socket (no clamp) when the jack is measured on the shown back face", () => {
+    const anchors = { "dst:input:0": { x: 9, y: 9, face: "back" as const } };
+    const ends = cableEndpoints(ctxOf(twoScene("back")), anchors, conn("src", "dst"), idApi);
+    expect(ends?.b).toEqual({ x: 9, y: 9, face: "back" });
+  });
+
+  it("is null when an end is off-view (a portal stub, not a continuous cable)", () => {
+    const scene = makeScene({
+      dst: place("s1", "front", "back"),
+      src: place("s1", "back", "front"),
+    });
+    expect(cableEndpoints(ctxOf(scene, "front"), {}, conn("src", "dst"), idApi)).toBeNull();
   });
 });
