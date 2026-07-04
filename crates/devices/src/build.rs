@@ -28,7 +28,7 @@ use engine::{
 
 use crate::catalog::{
     BuiltDevice, Connector, DeviceConfig, DeviceDescriptor, PortDescriptor, PortDirection,
-    connectors_compatible, descriptors, instantiate,
+    PortDomain, connectors_compatible, descriptors, instantiate,
 };
 use crate::scene::{Patch, PortRef};
 
@@ -56,6 +56,15 @@ pub enum BuildError {
         from_connector: Connector,
         to_connector: Connector,
     },
+    /// Two digital ports carry different **channel counts** (e.g. an 8-wide USB send into a 2-wide
+    /// return) — no wire bridges the mismatch. The devices-layer mirror of the engine's
+    /// [`CompileError::LaneCountMismatch`], surfaced here for a legible, pre-compile error.
+    ChannelCountMismatch {
+        from: String,
+        to: String,
+        from_channels: u16,
+        to_channels: u16,
+    },
     /// The engine rejected the assembled graph (domain mismatch, cycle, indivisible rate, …).
     Compile(CompileError),
 }
@@ -82,6 +91,15 @@ impl fmt::Display for BuildError {
             } => write!(
                 f,
                 "incompatible connectors: {from:?} ({from_connector:?}) -> {to:?} ({to_connector:?})"
+            ),
+            Self::ChannelCountMismatch {
+                from,
+                to,
+                from_channels,
+                to_channels,
+            } => write!(
+                f,
+                "digital channel-count mismatch: {from:?} ({from_channels} ch) -> {to:?} ({to_channels} ch)"
             ),
             Self::Compile(e) => write!(f, "compile error: {e:?}"),
         }
@@ -323,10 +341,9 @@ pub fn build_patch(
         let (from_node, from_port) = resolve_output(&devices, &conn.from)?;
         let (to_node, to_port) = resolve_input(&devices, &conn.to)?;
 
-        // Connector-shape compatibility — a hard mechanical constraint (an XLR won't seat in a ¼"
-        // jack), checked only *within* a carrier domain: a cross-domain wire is the engine's
-        // `DomainMismatch` at compile (below), mirroring the UI's domain-then-connector precedence.
-        // Both ports resolved above, so the descriptors are present.
+        // Same-domain physical-fit checks (a cross-domain wire is the engine's `DomainMismatch` at
+        // compile below, mirroring the UI's domain-then-connector precedence). Both ports resolved
+        // above, so the descriptors are present.
         if let (Some(fp), Some(tp)) = (
             port_descriptor(
                 &descs,
@@ -343,14 +360,28 @@ pub fn build_patch(
                 conn.to.port,
             ),
         ) && fp.domain == tp.domain
-            && !connectors_compatible(fp.connector, tp.connector)
         {
-            return Err(BuildError::ConnectorMismatch {
-                from: conn.from.device.clone(),
-                to: conn.to.device.clone(),
-                from_connector: fp.connector,
-                to_connector: tp.connector,
-            });
+            // Connector-shape compatibility — a hard mechanical constraint (an XLR won't seat in a ¼"
+            // jack).
+            if !connectors_compatible(fp.connector, tp.connector) {
+                return Err(BuildError::ConnectorMismatch {
+                    from: conn.from.device.clone(),
+                    to: conn.to.device.clone(),
+                    from_connector: fp.connector,
+                    to_connector: tp.connector,
+                });
+            }
+            // A digital link must carry the same number of channels on both ends (an 8-wide send can't
+            // feed a 2-wide return). The engine enforces this too (`LaneCountMismatch`); surfacing it
+            // here gives a legible, pre-compile error that the web mirror can also show live.
+            if fp.domain == PortDomain::Digital && fp.channels != tp.channels {
+                return Err(BuildError::ChannelCountMismatch {
+                    from: conn.from.device.clone(),
+                    to: conn.to.device.clone(),
+                    from_channels: fp.channels,
+                    to_channels: tp.channels,
+                });
+            }
         }
 
         connection_edges.push(graph.connection_count());

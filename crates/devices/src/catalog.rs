@@ -172,6 +172,10 @@ pub struct PortDescriptor {
     pub direction: PortDirection,
     /// Carrier domain (analog voltage / digital audio / events) — from the node's port face.
     pub domain: PortDomain,
+    /// Lane count — the port's [`lane_count`](engine::InputPort::lane_count): digital **channels**
+    /// (1 mono, N for a multichannel connector), analog conductors (1 unbalanced, 2 balanced), 1 for
+    /// events. Engine truth (derived, can't drift). The UI badges a digital jack with `channels > 1`.
+    pub channels: u16,
     /// Connector kind for the UI (mic/line/instrument/speaker/digital/MIDI jack styling).
     pub kind: PortKind,
     /// Physical connector shape — the hard constraint on what may plug in (see [`Connector`]).
@@ -241,8 +245,10 @@ pub enum PortKind {
 ///
 /// Deliberately coarse and extensible — only the connectors today's catalog needs. `QuarterInch`
 /// unifies TS and TRS: they share the same jack (a TS plug seats in a TRS socket, just unbalanced), so
-/// they are one connector here. `Xlr`/`Speakon`/`Digital` are carried forward for gear that lands in
-/// Epic 5 (balanced mics, power amps, multi-format digital).
+/// they are one connector here. `Combo` is the XLR+TRS combo jack real interfaces use for their front
+/// inputs — it physically accepts an XLR *or* a ¼" plug, so it's compatible with both. `Digital` stays
+/// the generic digital connector for abstract lab converters; `Usb`/`Spdif` are the specific physical
+/// digital connectors an interface presents.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub enum Connector {
@@ -250,20 +256,32 @@ pub enum Connector {
     QuarterInch,
     /// 3-pin XLR — balanced mic / line.
     Xlr,
+    /// XLR+TRS **combo** jack — accepts an XLR or a ¼" plug (an interface's front input).
+    Combo,
     /// speakON / binding-post speaker connector.
     Speakon,
     /// 5-pin DIN — MIDI (events domain).
     Din5,
-    /// A digital-audio connector (one entry for now; SPDIF/ADAT/AES split lands in Epic 5).
+    /// A generic digital-audio connector (abstract lab converters/EQ/meters).
     Digital,
+    /// USB — the interface↔computer multichannel digital link.
+    Usb,
+    /// S/PDIF (RCA coax) — a stereo digital in/out on an interface.
+    Spdif,
 }
 
-/// Whether two connectors can be physically joined. The whole rule: they must be the *same* connector
-/// (TS/TRS are already unified under [`Connector::QuarterInch`]). Adapters/hybrid leads (XLR↔TRS) are
-/// out of scope. Domain compatibility is a *separate* check the engine owns at compile.
+/// Whether two connectors can be physically joined. Same-connector is always fine; the one asymmetric
+/// case is the **combo** jack, which physically accepts an XLR *or* a ¼" plug — so `Combo` is
+/// compatible with [`Xlr`](Connector::Xlr) and [`QuarterInch`](Connector::QuarterInch) (and itself).
+/// Everything else is equality (TS/TRS already unified under `QuarterInch`; other adapters/hybrid leads
+/// are out of scope). Domain + digital channel-count compatibility are *separate* checks.
 #[must_use]
 pub fn connectors_compatible(a: Connector, b: Connector) -> bool {
-    a == b
+    // A combo jack mates with an XLR or a ¼" plug, in either direction.
+    let combo_mates = |x: Connector, y: Connector| {
+        x == Connector::Combo && matches!(y, Connector::Xlr | Connector::QuarterInch)
+    };
+    a == b || combo_mates(a, b) || combo_mates(b, a)
 }
 
 impl From<Domain> for PortDomain {
@@ -950,17 +968,17 @@ const CATALOG: &[CatalogEntry] = &[
             PortUi {
                 label: "In 1",
                 kind: PortKind::Instrument,
-                connector: Connector::QuarterInch,
+                connector: Connector::Combo,
             },
             PortUi {
                 label: "In 2",
                 kind: PortKind::Instrument,
-                connector: Connector::QuarterInch,
+                connector: Connector::Combo,
             },
             PortUi {
                 label: "USB In",
                 kind: PortKind::Digital,
-                connector: Connector::Digital,
+                connector: Connector::Usb,
             },
             PortUi {
                 label: "MIDI In",
@@ -974,12 +992,12 @@ const CATALOG: &[CatalogEntry] = &[
             PortUi {
                 label: "USB 1",
                 kind: PortKind::Digital,
-                connector: Connector::Digital,
+                connector: Connector::Usb,
             },
             PortUi {
                 label: "USB 2",
                 kind: PortKind::Digital,
-                connector: Connector::Digital,
+                connector: Connector::Usb,
             },
             PortUi {
                 label: "Line Out",
@@ -1048,6 +1066,8 @@ struct ExposedPort {
     node: usize,
     port: usize,
     domain: Domain,
+    /// The port's lane count (digital channels / analog conductors / 1 for events), from the face.
+    channels: u16,
 }
 
 /// One exposed param: the `(node index, ParamId)` target(s) it drives, plus the decl's range/default
@@ -1104,6 +1124,7 @@ fn expand(entry: &CatalogEntry, config: &DeviceConfig) -> Expansion {
                     node: ni,
                     port,
                     domain: face.domain(),
+                    channels: face.lane_count() as u16,
                 });
             }
         }
@@ -1117,6 +1138,7 @@ fn expand(entry: &CatalogEntry, config: &DeviceConfig) -> Expansion {
                     node: ni,
                     port,
                     domain: face.domain(),
+                    channels: face.lane_count() as u16,
                 });
             }
         }
@@ -1265,6 +1287,7 @@ fn describe(entry: &CatalogEntry) -> DeviceDescriptor {
             label: ui.label.to_owned(),
             direction: PortDirection::Input,
             domain: p.domain.into(),
+            channels: p.channels,
             kind: ui.kind,
             connector: ui.connector,
         });
@@ -1278,6 +1301,7 @@ fn describe(entry: &CatalogEntry) -> DeviceDescriptor {
             label: ui.label.to_owned(),
             direction: PortDirection::Output,
             domain: p.domain.into(),
+            channels: p.channels,
             kind: ui.kind,
             connector: ui.connector,
         });
@@ -1450,6 +1474,8 @@ mod tests {
                     "{} input domain",
                     entry.type_id
                 );
+                // Channels are the port's lane count — engine truth, derived not retyped.
+                assert_eq!(pd.channels, ep.channels, "{} input channels", entry.type_id);
             }
         }
     }
@@ -1622,24 +1648,42 @@ mod tests {
         // camelCase field names are the wire contract (matches the TS mirror).
         assert!(json.contains("typeId"));
         assert!(json.contains("readouts"));
-        // Ports carry their physical connector, serialized camelCase.
+        // Ports carry their physical connector + channel count, serialized camelCase.
         assert!(json.contains("connector"));
         assert!(json.contains("quarterInch"));
+        assert!(json.contains("channels"));
+        // The 8i6's front inputs are combo jacks; its USB ports use the USB connector.
+        assert!(json.contains("combo"));
+        assert!(json.contains("usb"));
         // Structural config toggles serialize (the 8i6's INST keys) — the web renders them.
         assert!(json.contains("configs"));
         assert!(json.contains("inst1"));
         assert!(json.contains("toggle"), "ConfigKind serializes camelCase");
     }
 
-    /// Connector compatibility is same-connector only (TS/TRS already unified as `QuarterInch`); a
-    /// signal-class difference is *not* what's checked here — only the physical shape.
+    /// Connector compatibility is same-connector, plus the **combo** jack mating with an XLR or a ¼"
+    /// plug (either direction). A signal-class difference isn't what's checked here — only physical fit.
     #[test]
-    fn connectors_compatible_is_same_connector_only() {
+    fn connectors_compatible_matrix() {
+        // Same connector always fits.
         assert!(connectors_compatible(
             Connector::QuarterInch,
             Connector::QuarterInch
         ));
         assert!(connectors_compatible(Connector::Xlr, Connector::Xlr));
+        assert!(connectors_compatible(Connector::Combo, Connector::Combo));
+        // Combo accepts XLR and ¼", symmetrically.
+        assert!(connectors_compatible(Connector::Combo, Connector::Xlr));
+        assert!(connectors_compatible(Connector::Xlr, Connector::Combo));
+        assert!(connectors_compatible(
+            Connector::Combo,
+            Connector::QuarterInch
+        ));
+        assert!(connectors_compatible(
+            Connector::QuarterInch,
+            Connector::Combo
+        ));
+        // Non-combo mismatches still reject; the digital split is equality (USB ≠ S/PDIF ≠ generic).
         assert!(!connectors_compatible(
             Connector::QuarterInch,
             Connector::Xlr
@@ -1648,6 +1692,9 @@ mod tests {
             Connector::Speakon,
             Connector::QuarterInch
         ));
+        assert!(!connectors_compatible(Connector::Usb, Connector::Spdif));
+        assert!(!connectors_compatible(Connector::Usb, Connector::Digital));
+        assert!(!connectors_compatible(Connector::Combo, Connector::Usb));
     }
 
     /// Ports carry an authored physical connector, distinct from their signal-class `kind`: the synth's
