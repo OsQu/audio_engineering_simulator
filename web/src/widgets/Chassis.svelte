@@ -41,8 +41,8 @@
   <!-- Flip card: both faces share one grid cell, so the flipper sizes to the taller face — no manual
        height sync. preserve-3d + per-face backface-visibility hides whichever face is turned away. -->
   <div class="flipper" class:flipped>
-    <div class="face front" aria-hidden={flipped}>{@render front()}</div>
-    <div class="face back" aria-hidden={!flipped}>{@render back()}</div>
+    <div class="face front" data-face="front" aria-hidden={flipped}>{@render front()}</div>
+    <div class="face back" data-face="back" aria-hidden={!flipped}>{@render back()}</div>
   </div>
 </section>
 

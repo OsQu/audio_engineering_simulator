@@ -155,9 +155,10 @@
   const connKey = sceneOps.connKey;
 
   // Measured jack-connector centres in surface space, keyed "device:direction:port" (from each jack's
-  // `data-jack` attribute). Populated by measureJacks after layout; lets a cable anchor at the real
-  // socket when a device's back is shown, falling back to the chassis edge otherwise.
-  let jackAnchors = $state<Record<string, { x: number; y: number }>>({});
+  // `data-jack` attribute), each tagged with the chassis face it sits on. Populated by measureJacks after
+  // layout; lets a cable anchor at the real socket when its jack is on the shown face, falling back to the
+  // chassis edge otherwise.
+  let jackAnchors = $state<Record<string, cableView.JackAnchor>>({});
 
   // Re-measure jack anchors into surface space (the DOM work lives in jack-anchors.ts); the $effect
   // below schedules it on layout changes.
@@ -196,7 +197,8 @@
   // Cable occlusion is handled by z-order, not by the cable: a single continuous lead is drawn in the
   // cable layer (z 2), and each device sits above or below it by facing (see placedItems' `z`) — a
   // back-facing device (visible sockets) below, a front-facing one above. So a cable plugs into a visible
-  // back socket yet tucks behind a front panel, with no split. (Sockets are back-mounted today.)
+  // socket yet tucks behind a hidden panel, with no split. (A faceplate may place jacks on either face;
+  // cableAnchor anchors precisely only at jacks on the shown face — see its face-match rule.)
 
   const inView = (id: string): boolean => cableView.inView(layout(), id);
   const bothInView = (c: Connection): boolean => cableView.bothInView(layout(), c);

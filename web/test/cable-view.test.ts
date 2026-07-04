@@ -144,15 +144,42 @@ describe("cableAnchor", () => {
     expect(cableAnchor(ctxOf(scene), {}, ref("a"), "input", idApi)).toEqual({ x: 76, y: 45 });
   });
 
-  it("back-facing: anchors at the measured socket when available", () => {
+  it("back-facing: anchors at the measured socket when its face is the shown (back) face", () => {
     const scene = makeScene({ a: place("s1", "front", "back") });
-    const anchors = { "a:output:0": { x: 9, y: 9 } };
-    expect(cableAnchor(ctxOf(scene), anchors, ref("a"), "output", idApi)).toEqual({ x: 9, y: 9 });
+    const anchors = { "a:output:0": { x: 9, y: 9, face: "back" as const } };
+    expect(cableAnchor(ctxOf(scene), anchors, ref("a"), "output", idApi)).toEqual({
+      x: 9,
+      y: 9,
+      face: "back",
+    });
   });
 
   it("back-facing but unmeasured: falls back to the chassis estimate", () => {
     const scene = makeScene({ a: place("s1", "front", "back") });
     expect(cableAnchor(ctxOf(scene), {}, ref("a"), "output", idApi)).toEqual({ x: 124, y: 45 });
+  });
+
+  it("front-face jack: anchors at the measured socket when the front face is shown", () => {
+    // A faceplate (e.g. the Scarlett) can place a jack on the front face. Front is shown, the jack's
+    // measured face matches → anchor precisely at it rather than the mid-chassis estimate.
+    const scene = makeScene({ a: place("s1", "front", "front") });
+    const anchors = { "a:input:0": { x: 3, y: 4, face: "front" as const } };
+    expect(cableAnchor(ctxOf(scene), anchors, ref("a"), "input", idApi)).toEqual({
+      x: 3,
+      y: 4,
+      face: "front",
+    });
+  });
+
+  it("hidden-face jack: ignores a measured anchor on the away face and estimates instead", () => {
+    // Back is shown, but this jack was measured on the front (hidden) face — its centre is mirrored under
+    // rotateY(180deg), so it must be ignored and the chassis-edge estimate used instead.
+    const scene = makeScene({ a: place("s1", "front", "back") });
+    const anchors = { "a:output:0": { x: 9, y: 9, face: "front" as const } };
+    expect(cableAnchor(ctxOf(scene), anchors, ref("a"), "output", idApi)).toEqual({
+      x: 124,
+      y: 45,
+    });
   });
 
   it("rack-mounted: anchors at the measured socket when the *rack* is turned to back (own facing stays front)", () => {
@@ -171,10 +198,11 @@ describe("cableAnchor", () => {
         slots: 8,
       },
     ];
-    const anchors = { "a:output:0": { x: 9, y: 9 } };
+    const anchors = { "a:output:0": { x: 9, y: 9, face: "back" as const } };
     expect(cableAnchor(ctxOf(scene, "back"), anchors, ref("a"), "output", idApi)).toEqual({
       x: 9,
       y: 9,
+      face: "back",
     });
   });
 

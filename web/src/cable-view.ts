@@ -6,11 +6,17 @@
 import { deviceById, deviceRect, effectiveFacing, type LayoutCtx } from "./projection";
 import type { Connection, PortRef } from "./scene";
 import { connKey } from "./scene-ops";
-import type { Scene } from "./scene-store";
+import type { DeviceFacing, Scene } from "./scene-store";
 import type { Wall } from "./spatial";
 import type { WorldApi } from "./widgets/WorldView.svelte";
 
 export type Pt = { x: number; y: number };
+
+// A measured jack anchor: its surface-local centre plus which face (front/back) of the chassis it sits
+// on. Keeping `x`/`y` at the top level (not nested) makes this structurally a `Pt`, so a jack anchor can
+// be used wherever a `Pt` is expected. `face` lets the renderer tell a jack on the *shown* face (anchor
+// precisely) from one on the hidden face (its measured centre is mirrored under rotateY(180deg)).
+export type JackAnchor = Pt & { face: DeviceFacing };
 
 // A jack's measurement key, "device:direction:port" (matches each jack's `data-jack` attribute).
 export const jackKey = (device: string, direction: "input" | "output", port: number): string =>
@@ -64,17 +70,21 @@ export function portalOffset(
   );
 }
 
-// The surface-local anchor for one end of a cable. When the device's **back** is shown, anchor at the
-// measured socket centre; otherwise (front-facing, or not yet measured) fall back to the chassis edge
-// (output → right, input → left, spread by port index). `null` when the device isn't in the shown space
-// — a cross-space end is drawn as a portal, not a continuous cable.
+// The surface-local anchor for one end of a cable. A faceplate can place a jack on **either** face, so
+// the question is "is this jack on the currently-shown face?", not "is the device flipped?". When the
+// jack's measured face matches the device's shown (effective) facing, anchor at the measured socket
+// centre; otherwise (jack on the hidden face, or not yet measured) fall back to the chassis-edge estimate
+// (output → right, input → left). `null` when the device isn't in the shown space — a cross-space end is
+// drawn as a portal, not a continuous cable.
 //
 // Facing is the **effective** facing (rack-aware): a rack-mounted unit shows whichever side its rack is
 // turned to, so a flipped rack exposes its gear's back sockets even though each unit's own `facing` stays
-// "front" — anchor at the measured sockets, not the front-panel estimate.
+// "front". A jack on the hidden face still has a layout box (backface-visibility only hides paint), but it
+// sits under rotateY(180deg), so its measured centre is horizontally mirrored — using it would anchor the
+// cable at the wrong place, hence the face-match gate.
 export function cableAnchor(
   ctx: LayoutCtx,
-  jackAnchors: Record<string, Pt>,
+  jackAnchors: Record<string, JackAnchor>,
   ref: PortRef,
   direction: "input" | "output",
   api: WorldApi,
@@ -82,16 +92,15 @@ export function cableAnchor(
   const device = deviceById(ctx.scene, ref.device);
   const place = ctx.scene.ui.placements[ref.device];
   if (!device || !place || !inView(ctx, ref.device)) return null;
-  if (effectiveFacing(ctx.scene, ref.device) === "back") {
-    const jack = jackAnchors[jackKey(ref.device, direction, ref.port)];
-    if (jack) return jack; // precise: the real socket on the shown back panel
-  }
+  const jack = jackAnchors[jackKey(ref.device, direction, ref.port)];
+  // Precise: the real socket, but only when it's on the shown face (its measurement is trustworthy then).
+  if (jack && jack.face === effectiveFacing(ctx.scene, ref.device)) return jack;
   const rect = deviceRect(ctx, ref.device, device.typeId);
   if (!rect) return null;
-  // Front-facing (or not yet measured): the sockets sit centred on the back panel, so estimate near the
-  // chassis centre — nudged toward the signal-flow direction (output right, input left) so the cable
-  // emerges toward its neighbour. This end is drawn *behind* the device (hidden), so a rough estimate is
-  // enough; it just needs to look plausible where it tucks under the edges.
+  // Jack on the hidden face (or not yet measured): estimate near the chassis centre — nudged toward the
+  // signal-flow direction (output right, input left) so the cable emerges toward its neighbour. This end
+  // is drawn *behind* the device (hidden), so a rough estimate is enough; it just needs to look plausible
+  // where it tucks under the edges.
   const wx = rect.x + rect.width * (direction === "output" ? 0.62 : 0.38);
   const wy = rect.y + rect.height * 0.45;
   return api.worldToSurface(wx, wy);
