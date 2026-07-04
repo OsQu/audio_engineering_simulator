@@ -1092,7 +1092,11 @@ _Design notes (settled at planning):_
   constructs its own `SceneSession`, boots suspended on the `synth_voice` bootstrap, resumes on first
   interaction. On catalog arrival, resolve the route's `<typeId>`: valid → `hotSwap` to the minimal
   single-device scene; unknown → a **catalog index** listing catalog devices (links to `/devices/<id>`).
-  _Done:_ `/devices/scarlett_8i6` boots (silent) with the catalog present and the 8i6 as the live scene;
+  The output tap **must be an analog port** (it's rendered as a voltage) — tap the device's first analog
+  output; a digital-only-output device (e.g. the computer) can't be tapped without a DA (the 6.3 monitor
+  chain), so the bench refuses it with a message rather than building a digital-tap scene (which faults the
+  engine — see 6.2.5). _Done:_ `/devices/scarlett_8i6` boots (silent) with the catalog present and the 8i6
+  as the live scene; `/devices/computer` shows the no-analog-output message (engine stays alive);
   `/devices/bogus` shows the index; clicking an index entry routes + swaps to that device; in-browser.
 - **Task 6.2.4 — The bench stage: grid + ruler + both faces + live params/meters.** The dedicated stage:
   mm grid + rack-U (44.45 mm) ruler sized from `formFactor`; render the faceplate twice (front + back) via
@@ -1100,6 +1104,19 @@ _Design notes (settled at planning):_
   the stage so a `WorldApi`-shaped surface can be exposed for 6.3 patching (no cables drawn yet). _Done:_
   the 8i6 renders both faces on a correctly-scaled grid; knobs/switches drive params (live) and config
   (recompiles); meters update from the session; in-browser.
+- **Task 6.2.5 — Engine hardening: reject a non-analog output tap (a hot-path panic-freedom fix).**
+  _Discovered during 6.2.3:_ tapping a **digital** output makes `render_quantum` hit `unreachable` — a
+  **CLAUDE.md §6 non-negotiable violation** (the hot path must be panic-free; fallible validation belongs
+  at `build`/`compile`), and it's **session-fatal** (a wasm trap poisons the worklet instance, so every
+  later call cascades into "recursive use / unsafe aliasing"). The workbench works around it in JS
+  (`analogOutputPort`), but the engine must not depend on callers being careful — especially a *dev bench*
+  where odd patches are the point. Fix: `build_patch` (`crates/devices/src/build.rs`) **validates the
+  output tap resolves to an analog port** and returns a `BuildError` otherwise; `load_patch` already keeps
+  the running scene on a build error, so a bad tap becomes a rejected swap, not a trap. Rust change +
+  `pnpm run wasm` rebuild. _Done:_ a unit test asserts `build_patch` rejects a digital output tap;
+  `render_quantum` can no longer be reached with one; the JS `analogOutputPort` guard stays as the
+  friendlier front-line message; full Rust gate + web gate green. (Once landed, the workbench could tap
+  digital optimistically and fall back gracefully — but the analog-first choice stays for silent 6.2.)
 
 _Validate:_ `localhost:5173/devices/scarlett_8i6` renders the device on a mm/rack-U grid (both faces),
 with all params/config drivable and readouts live through the shared `SceneSession`; the suspended boot
