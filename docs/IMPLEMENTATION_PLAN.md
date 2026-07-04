@@ -566,10 +566,10 @@ _Tasks to be elaborated when we reach this Epic._
   you write a jack into_, so the mixed-face problem dissolves (no `ioFace` per-port resolver needed; an
   earlier sketch of that resolver is superseded). The audio interface that forces this is 5.7's proving
   device. Further fidelity corner cases accrue here as they surface.
-- **Story 5.7** — Per-device faceplate UIs: each device authors its own look & feel. 🚧 **In progress —
-  planned to task level in the elaborated block below.**
+- **Story 5.7** — Per-device faceplate UIs: each device authors its own look & feel. ✅ **Complete**
+  (parts 1 + 2; merged to `main`).
 
-### Story 5.7 — Per-device faceplate UIs — 🚧 **In progress**
+### Story 5.7 — Per-device faceplate UIs — ✅ **Complete**
 
 _Goal:_ Give the web layer a way for **each device to author its own faceplate** — real look-and-feel per
 device — while the engine/`devices` catalog stays specs-only. Today every device is drawn by **one
@@ -583,16 +583,39 @@ API), and to the Epic-4 settled layer rule (the **catalog owns which ports/param
 how they're drawn**). Proven end-to-end on a **simplified Focusrite Scarlett 8i6** — the first mixed-face,
 branded device.
 
-_Progress:_ **Part 1 (tasks 5.7.1–5.7.4) is done and committed** on `e5-s7/per-device-faceplates` — the
-faceplate system (registry + `DeviceHandle`/`Chassis`/bound widgets, generic `Panel` fallback, focus
-generalized) and the reduced proving 8i6. **Part 2 (tasks 5.7.5–5.7.10) is added scope**, surfaced while
-building the 8i6: the engine concepts + fidelity needed to make it (and real interfaces generally) faithful.
-Some part-2 tasks are large (near story-sized — multichannel digital, routing, preamp physics); the
-executor may split any into sub-tasks, but they're tracked here per the decision to finish the 8i6 under
-this Story. The detailed execution plan (settled decisions, code recon, per-task designs) lives in
-[`one_off_plans/story_5_7_part2_plan.md`](./one_off_plans/story_5_7_part2_plan.md); execution order is
-**5.7.5 → 5.7.6 → 5.7.7 → 5.7.9 → 5.7.8 → 5.7.10** (matrix before full I/O, so the expanded 8i6 is
-wired around the matrix once).
+_Done (both parts; merged to `main`):_
+
+- **Part 1 (5.7.1–5.7.4) — the faceplate system.** A device-UI registry (`typeId → component`, else the
+  generic `Panel`), a `DeviceHandle` context + `Chassis` bezel publishing it, **bound widgets**
+  (`Control`/`Socket`/`Reading`/`ConfigSwitch`) that bind by id, focus surfaces generalized per device, and
+  a static **coverage guardrail** (`web/test/faceplate.test.ts`) proving every exposed param/port is placed
+  and only valid ids referenced. Proven on the (then reduced) Focusrite Scarlett 8i6 with its red-chassis
+  brand accent.
+- **Part 2 (5.7.5–5.7.10) — the fidelity needed to make the 8i6 real**, each an engine/devices concept the
+  UI then consumes:
+  - **5.7.5 device-level power** — a catalog **param group** binds one exposed control to N node params;
+    `AdConverter`/`DaConverter` gained a smoothed `powered` gate. One Power switch silences the whole unit.
+  - **5.7.6 preamp physics** — a `MicPreamp` node (PAD −10 dB, AIR high-shelf, INST/hi-Z as a **structural
+    config** that recompiles), plus the scene `config` seam and generic `configs` descriptor; the Focusrite
+    Control focus surface drives them (48V still deferred to the phantom side-graph).
+  - **5.7.7 multichannel digital** — `DigitalMux`/`DigitalDemux`, per-port lane counts on the descriptor, a
+    `Combo` connector, and the first end-to-end N-lane digital coverage.
+  - **5.7.9 runtime routing matrix** — a params-driven `Matrix` node (route/mix/mute per crosspoint, no
+    recompile), surfaced as the data-driven `RoutingGrid` in the focus view.
+  - **5.7.8 full 8i6 + `computer` peer** — the 8i6 grown to the real unit (9 in / 9 out: 2 combo + 4 line +
+    S/PDIF + USB + MIDI; 14×14 matrix; 206-param face), a generated crosspoint-label mechanism (`GridSpec`),
+    and a minimal `computer` USB peer (per-lane send meters + loopback). Closing the monitoring loop through
+    the computer was a graph cycle, so we added a **delayed-edge** primitive (`Graph::connect_delayed`, cut
+    from the topo sort, served from the persistent pool → one block of round-trip latency; the schedule
+    stays a DAG). The default scene is now this playable loop.
+  - **5.7.10 device dimensions** — form factors corrected against real gear (8i6 → 216×47×173 mm; a laptop
+    `computer`; the rest sanity-checked).
+- **Layer rule held throughout:** the Rust catalog gained no layout vocabulary; the web stayed a pure
+  consumer binding by id.
+
+_(The detailed part-2 execution plan and the round-trip-latency design write-up lived in
+`one_off_plans/story_5_7_part2_plan.md` and `one_off_plans/roundtrip_latency_plan.md`; both are retired now
+that the work is captured here.)_
 
 _Watch out:_
 
