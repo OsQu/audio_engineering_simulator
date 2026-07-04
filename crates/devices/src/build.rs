@@ -46,6 +46,11 @@ pub enum BuildError {
     OutputPortOutOfRange { device: String, port: u32 },
     /// A connection's destination names an input port beyond the device's exposed inputs.
     InputPortOutOfRange { device: String, port: u32 },
+    /// The output tap resolves to a **non-analog** port. The engine renders the tap as a voltage, so it
+    /// must be an analog output — a digital (or events) tap would fault the render (`unreachable`), which
+    /// is session-fatal. Rejected here at build so `load_patch` keeps the running scene instead of
+    /// trapping. Tap an analog output, or route the digital output through a DA first (a monitor chain).
+    OutputTapNotAnalog { device: String, port: u32 },
     /// Two **same-domain** ports present incompatible physical connectors (e.g. an XLR jack into a ¼"
     /// jack) — they can't be joined. A hard mechanical constraint, checked before the engine's domain
     /// check (a cross-domain wire is a [`CompileError::DomainMismatch`] instead, mirroring the UI's
@@ -82,6 +87,12 @@ impl fmt::Display for BuildError {
             }
             Self::InputPortOutOfRange { device, port } => {
                 write!(f, "device {device:?} has no input port {port}")
+            }
+            Self::OutputTapNotAnalog { device, port } => {
+                write!(
+                    f,
+                    "output tap {device:?} port {port} is not an analog output"
+                )
             }
             Self::ConnectorMismatch {
                 from,
@@ -413,6 +424,24 @@ pub fn build_patch(
         }
     }
     let (out_node, out_port) = resolve_output(&devices, &patch.output)?;
+    // The output tap is rendered as a voltage, so it must resolve to an **analog** output port. A digital
+    // (or events) tap would fault the engine's render (`unreachable`) — session-fatal — so reject it here
+    // at build; `load_patch` then keeps the running scene rather than trapping. (The port exists — it just
+    // resolved — so its descriptor is present; a missing descriptor can't happen, and falling through in
+    // that impossible case only defers to the pre-existing render behavior.)
+    if let Some(pd) = port_descriptor(
+        &descs,
+        &types,
+        &patch.output.device,
+        PortDirection::Output,
+        patch.output.port,
+    ) && pd.domain != PortDomain::Analog
+    {
+        return Err(BuildError::OutputTapNotAnalog {
+            device: patch.output.device.clone(),
+            port: patch.output.port,
+        });
+    }
     graph.set_output(out_node, out_port);
 
     // 3. Compile (fixed seed → reproducible). Engine validation (domain, cycles, rates) lands here.
@@ -1051,6 +1080,27 @@ mod tests {
         let err = build_patch(&patch, BLOCK_LEN, rate(), 0).unwrap_err();
         assert!(
             matches!(err, BuildError::OutputPortOutOfRange { .. }),
+            "got {err:?}"
+        );
+    }
+
+    /// The output tap must resolve to an **analog** port — it's rendered as a voltage. Tapping a digital
+    /// output (here the AD converter's) is rejected at build, so `load_patch` keeps the running scene
+    /// rather than `render_quantum` faulting on it (an `unreachable`, which is session-fatal). The bench
+    /// and UI steer to analog outputs; this guarantees the engine can never be handed a non-analog tap.
+    #[test]
+    fn non_analog_output_tap_is_rejected() {
+        let patch = Patch {
+            devices: vec![device("ad", "ad_converter")],
+            connections: vec![],
+            output: PortRef {
+                device: "ad".into(),
+                port: 0, // the AD converter's output is digital
+            },
+        };
+        let err = build_patch(&patch, BLOCK_LEN, rate(), 0).unwrap_err();
+        assert!(
+            matches!(err, BuildError::OutputTapNotAnalog { .. }),
             "got {err:?}"
         );
     }
