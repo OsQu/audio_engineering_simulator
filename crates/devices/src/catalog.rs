@@ -902,10 +902,11 @@ const CATALOG: &[CatalogEntry] = &[
     CatalogEntry {
         type_id: "scarlett_8i6",
         name: "Scarlett 8i6",
+        // The real 2nd-gen 8i6: a half-rack-width desktop box, ~216 × 47 × 173 mm (W×H×D).
         form_factor: FormFactor::Desktop {
-            width_mm: 810.0,
-            height_mm: 150.0,
-            depth_mm: 150.0,
+            width_mm: 216.0,
+            height_mm: 47.0,
+            depth_mm: 173.0,
         },
         // Signal-flow layout. Every routing-matrix port is internal (fed by the ADs/demuxes, consumed
         // by the muxes/DAs), so the matrix is placed **last** — its 196 generated crosspoints become the
@@ -1434,11 +1435,11 @@ const CATALOG: &[CatalogEntry] = &[
     CatalogEntry {
         type_id: "computer",
         name: "Computer",
-        // A rough desktop/laptop footprint; the dimensions pass (Task 5.7.10) sets the real size.
+        // A laptop footprint (closed, ~15"): ~350 × 22 × 245 mm (W×H×D) — the studio's DAW host.
         form_factor: FormFactor::Desktop {
             width_mm: 350.0,
-            height_mm: 40.0,
-            depth_mm: 240.0,
+            height_mm: 22.0,
+            depth_mm: 245.0,
         },
         nodes: &[
             |_cfg| {
