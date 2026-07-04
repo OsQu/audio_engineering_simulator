@@ -901,11 +901,10 @@ again within seconds.
   level + Zout) is deliberately deferred — it's an Epic-5-style device addition, not a bench
   prerequisite (candidate Story 6.4).
 
-- **Story 6.1 — Engine-session extraction.** Pull the engine/UI plumbing out of the `App.svelte`
-  monolith into a shared session layer both views consume: engine lifecycle (`startEngine`/stop/
-  hot-swap), param seeding + pushing, readout/health/losses state, note routing, and the patching
-  adapters + jack measurement glue. Pure refactor — the scene view must behave **identically** (the
-  Story's validate gate). This is the load-bearing story; the workbench is only as solid as this seam.
+- **Story 6.1 — Engine-session extraction.** — 🚧 **In progress** (elaborated below). Pull the
+  engine/UI plumbing out of the `App.svelte` monolith into a shared session layer both views consume.
+  Pure refactor — the scene view must behave **identically** (the Story's validate gate). This is the
+  load-bearing story; the workbench is only as solid as this seam.
 - **Story 6.2 — Route + workbench shell.** The app's first URL routing (`/devices/<typeId>` vs the
   scene view; Vite dev serves deep links already). Suspended-context boot to get the catalog pre-
   gesture, resume-on-interaction. The bench stage: mm grid + rack-unit (44.45 mm) ruler sized from the
@@ -923,3 +922,93 @@ again within seconds.
   noise comparisons. Close the dev loop: a `wasm:watch` script (rebuild on Rust save → Vite full
   reload → URL restore → auto-resume). Candidate stretch: the bench **signal generator** device if the
   synth proves too blunt an oracle.
+
+### Story 6.1 — Engine-session extraction — 🚧 **In progress**
+
+_Goal:_ Extract the engine/UI plumbing that today lives as `$state` + closures inside the ~1750-line
+`App.svelte` into a **session layer** any view root can construct — so the Story-6.2 workbench consumes
+the *same* interaction path as the scene view instead of a forked copy (the Epic's "one plumbing path,
+two views" watch-out). Pure refactor: **zero behavior change** in the scene view, no Rust changes, no
+new `postMessage` shapes. Anchors to PROJECT_PLAN §7 (UI a pure consumer of the engine API) — the
+session layer is exactly that consumer surface, factored to be shared.
+
+_Watch out:_
+
+- **Behavior parity is the whole gate.** Every extraction step must leave the scene view pixel- and
+  behavior-identical. Anything ambiguous → keep today's behavior and note it.
+- **Rune modules aren't node-testable here.** Vitest runs `environment: "node"` with no Svelte
+  compilation (`web/vitest.config.ts` — deliberate, per the defer-test-infra stance), so the new
+  `.svelte.ts` classes must stay **thin reactive shells**: decision logic remains in the pure, already-
+  tested modules (`params.ts`, `patching.ts`, `scene-ops.ts`, `cable-view.ts`, `jack-anchors.ts`). A
+  session method that grows real logic should be pushing it into a pure module instead.
+- **Don't entrench the `isPlayable` heuristic.** The keybed refactor (IMPROVEMENTS.md: note plumbing
+  onto `DeviceHandle`, retire `isPlayable` from routing) is *not* this story — but the extraction must
+  not dig it deeper: **target selection** (`keyboardTarget`, the `wireKeyboard` attach effect, `wireMidi`
+  wiring) stays view-side; the session only exposes target-explicit `playNote(device, …)` + `heldNotes`.
+- **`$state.snapshot` at the worklet boundary still holds** — `plainPatch()` moves into the session
+  unchanged; every `postMessage` crossing keeps snapshotting the proxy.
+- **The `$derived`/inline-ctx reactivity trap.** App deliberately rebuilds `ViewCtx`/`LayoutCtx` inline
+  so field reads register as reactive dependencies (the comment at `App.svelte` ~145). Moving state into
+  class fields must preserve that discipline — hoisting a session read into a module-init const captures
+  it stale.
+- **Scope guard: extraction only.** No suspended-context boot (6.2), no stop/teardown (deliberately
+  absent today — "the page lives for the session"; routing in 6.2 is separate page loads, so teardown
+  stays unneeded), no router, no workbench code.
+
+_Design notes (settled at planning):_
+
+- **The session owns the authoritative `Scene`.** `SceneSession` holds `scene` as `$state`; each view
+  root constructs it with an initial scene (App seeds from `loadScene() ?? defaultScene()`; the 6.3
+  workbench will seed from the URL). Param/config/hot-swap lanes live beside the scene they mutate.
+  _Rejected: view-owned scene + accessor callbacks_ — every session method threads through getters and
+  the two views can drift in how they wire it.
+- **A class instance per view root, in the codebase's first `.svelte.ts` rune modules.** `SceneSession`
+  (and the patch controller) are classes with `$state` fields; App constructs them in its script and
+  passes closures down exactly as today (`DeviceUiProps` unchanged). No Svelte context until a child
+  actually needs it. _Rejected: a module-level singleton_ — a hidden global that two view roots would
+  share implicitly and tests couldn't construct fresh.
+- **Full patching extraction, pointer adapters included.** `dragCable` + click-vs-drag bookkeeping,
+  `pointerDown/Move/Up` adapters, `jackHitOf`, the measured jack-anchor store, and
+  commit/disconnect/setCableType move into a `PatchController` bound to the session. The workbench
+  needs the identical ~100 lines of glue in 6.3. _Rejected: ops-only extraction_ — the workbench would
+  re-implement the pointer bookkeeping. The layout-dependent *measurement trigger* (the `$effect` with
+  scene-view dep list) stays view-side; the controller exposes `measure(worldApi)` + the anchor store.
+- **What stays in App (scene-view UI, not session):** spaces/walls/top-view state, placements + racks +
+  portals, the focus overlay + `keyboardTarget` derivation, cable-inspector *selection* (ops are the
+  controller's; App wraps disconnect to also clear its selection), toolbar chrome.
+- **Known deferral (not a bug):** `startEngine` couples `audio.resume()` into start; the 6.2 suspended
+  boot will need a variant. Left untouched here — parity first.
+
+- **Task 6.1.1 — `SceneSession` core: engine lifecycle + readout state.** New `session.svelte.ts` with
+  the class holding `started/ready/status/health/midiStatus/level/readings/losses/catalog/cables/send`,
+  `volume` (+ its localStorage persistence), `start()` wrapping `startEngine`, and `readingFor`. App
+  constructs one and consumes it throughout. _Done:_ scene view starts, meters/health/VU/volume behave
+  identically; web gate green (`pnpm run check && pnpm run typecheck && pnpm run test && pnpm run build`);
+  verified in-browser.
+- **Task 6.1.2 — Scene + param/config lanes into the session.** Move `scene` ownership, `paramValues` +
+  `paramValue`/`onParamInput`, `configValue`/`onConfigInput`, `plainPatch`, `hotSwap`, and
+  save/load/reload into `SceneSession`. App reads `session.scene` everywhere. _Done:_ knob moves reach
+  all three lanes (UI/scene/engine), config toggles recompile, save/load/reload work as before; gate
+  green; in-browser.
+- **Task 6.1.3 — Note routing into the session.** `playNote` becomes target-explicit
+  (`session.playNote(device, on, note, velocity)`) with `heldNotes` on the session; `keyboardTarget`,
+  the `wireKeyboard` attach/detach effect, and `wireMidi` wiring stay in App feeding it. _Done:_ focus
+  keybed, QWERTY capture (attach on focus only, held notes released on detach), and Web MIDI all play
+  exactly as before; gate green; in-browser.
+- **Task 6.1.4 — `PatchController`.** Extract the patching glue per the design note (drag + click-to-
+  pick + cross-view pending, `jackHitOf`, anchor store + `measure(worldApi)`, commitCable/disconnect/
+  setCableType, each hot-swapping via the session). App's window handlers become one-line delegations;
+  the measurement `$effect` stays in App. _Done:_ same-view drag, click-to-pick, cross-view pending
+  patching, cable select/type-change/disconnect, and portal stubs all behave identically; gate green;
+  in-browser.
+- **Task 6.1.5 — Parity sweep + plumbing audit.** Full manual walkthrough of the scene view (start,
+  play via focus + MIDI, patch all three ways, cable inspector, config recompile, save/load/reload,
+  spaces/walls/top, add/remove device/rack, flip/eject, volume persistence) plus an audit that no
+  engine/param/patching `$state` remains in `App.svelte` (only scene-view UI state). _Done:_ walkthrough
+  clean; App is plumbing-free; full web gate green.
+
+_Validate:_ the scene view is **behavior-identical** end to end (the 6.1.5 walkthrough), with the
+engine session, scene/param/config lanes, note routing, and patching glue all living in view-agnostic
+session modules that a second view root can construct; `App.svelte` retains only scene-view UI state;
+no Rust or `postMessage` changes; `pnpm run check && pnpm run typecheck && pnpm run test &&
+pnpm run build` green.
