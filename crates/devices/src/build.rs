@@ -741,9 +741,10 @@ mod tests {
     }
 
     /// A device-level param group resolves, through `build_patch`, to **all** its target handles: the
-    /// 8i6's single Power control (exposed param id 8, after the preamps' gain/pad/air and the two
-    /// monitor/phones gains) drives every stage's `powered` — seven handles from one id — while an
-    /// ungrouped gain drives exactly one. This is the plumbing the wasm `set_param` fans a value over.
+    /// 8i6's single Power control (exposed param id 17, after the preamps' gain/pad/air, the matrix's
+    /// nine crosspoints, and the two monitor/phones gains) drives every stage's `powered` — seven
+    /// handles from one id — while an ungrouped gain drives exactly one. This is the plumbing the wasm
+    /// `set_param` fans a value over.
     #[test]
     fn device_power_group_fans_out_to_every_stage() {
         let patch = Patch {
@@ -756,7 +757,7 @@ mod tests {
         };
         let scene = build_patch(&patch, BLOCK_LEN, rate(), 0).expect("8i6 patch builds");
         assert_eq!(
-            scene.param("if", 8).len(),
+            scene.param("if", 17).len(),
             7,
             "the Power group drives all seven stages"
         );

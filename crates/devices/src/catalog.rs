@@ -35,8 +35,8 @@
 use crate::scene::ConfigSetting;
 use engine::{
     AdConverter, BitDepth, DaConverter, DigitalMeter, Domain, EqBand, EventThru, GainStage, Graph,
-    InputZ, MicPreamp, Node, NodeId, Ohms, ParamId, ReadoutId, SampleRate, Speaker, SynthVoice,
-    ThreeBandEq, Volts, VuMeter,
+    InputZ, Matrix, MicPreamp, Node, NodeId, Ohms, ParamId, ReadoutId, SampleRate, Speaker,
+    SynthVoice, ThreeBandEq, Volts, VuMeter,
 };
 use serde::Serialize;
 
@@ -803,14 +803,13 @@ const CATALOG: &[CatalogEntry] = &[
         ],
         configs: &[],
     },
-    // A simplified Focusrite Scarlett 8i6 — the first **mixed-face, multi-I/O** interface (Story 5.7),
-    // built entirely from existing nodes (no new engine node). Two mic/instrument preamps each feed an
-    // AD converter (the digital "USB send"); a digital "USB return" drives a DA whose analog monitor bus
-    // fans out to a line output and a headphone amp; MIDI passes through. The device's exposed face is
-    // deliberately split across two chassis faces by the web faceplate: the **front** carries the two
-    // combo inputs + the headphone out, the **back** carries line/USB/MIDI (and, as params, power).
-    // INST/AIR/PAD/48V are intentionally **absent** — none is honestly modelable in today's engine
-    // (see `docs/IMPROVEMENTS.md` and the Story 5.7 design notes); the faceplate omits, never fakes, them.
+    // A simplified Focusrite Scarlett 8i6 — the first **mixed-face, multi-I/O** interface (Story 5.7).
+    // Two `MicPreamp`s (gain + PAD + AIR, INST/hi-Z via structural config) each feed an AD; the two ADs
+    // and a "USB return" feed a 3×3 routing **matrix**; the matrix's two "USB send" outputs go to the
+    // computer and its third output drives a DA whose analog monitor bus fans out to a line output and a
+    // headphone amp; MIDI passes through. The web faceplate splits the exposed face across two chassis
+    // faces (front: combo inputs + phones; back: line/USB/MIDI + power), and the routing matrix is
+    // driven from the Focusrite Control focus surface. 48V/phantom is still omitted (not modeled).
     CatalogEntry {
         type_id: "scarlett_8i6",
         name: "Scarlett 8i6",
@@ -819,8 +818,11 @@ const CATALOG: &[CatalogEntry] = &[
             height_mm: 150.0,
             depth_mm: 150.0,
         },
-        // Node order fixes the exposed-face order (open ports + concatenated params, in node order):
-        // 0,1 preamps · 2,3 their ADs · 4 the DA · 5,6 monitor + headphone amps · 7 MIDI thru.
+        // Node order fixes the exposed-face order (open ports + concatenated params, in node order),
+        // laid out in signal flow so the exposed ports keep their ids across the matrix insertion:
+        // 0,1 preamps · 2,3 their ADs · 4 the routing matrix · 5 the DA · 6,7 monitor + phones amps ·
+        // 8 MIDI thru. The matrix's outputs (USB sends) still walk before the monitor/phones outputs,
+        // so the exposed input/output ids are unchanged from the pre-matrix 8i6 — only params shift.
         nodes: &[
             // The two mic/instrument preamps: `MicPreamp`s whose INST/hi-Z input impedance is picked
             // from the device config (`inst1`/`inst2`). PAD + AIR ride as their runtime params.
@@ -840,6 +842,24 @@ const CATALOG: &[CatalogEntry] = &[
                     BitDepth::new(BITS),
                     Volts::new(1.0),
                     Ohms::new(1_000_000.0),
+                ))
+            },
+            // The routing matrix (Focusrite Control's mixer, simplified to gains). 3 digital ins —
+            // preamp 1's AD, preamp 2's AD, the USB return — × 3 digital outs — USB send 1, USB send 2,
+            // the monitor DA feed. The identity default reproduces the pre-matrix fixed routing
+            // (preamp 1 → USB 1, preamp 2 → USB 2, USB return → monitor), so behavior is unchanged
+            // until the user re-routes in the focus view.
+            |_cfg| {
+                Box::new(Matrix::new(
+                    SampleRate::new(HOST_RATE_HZ),
+                    BitDepth::new(BITS),
+                    3,
+                    3,
+                    vec![
+                        1.0, 0.0, 0.0, // Pre 1 → USB 1
+                        0.0, 1.0, 0.0, // Pre 2 → USB 2
+                        0.0, 0.0, 1.0, // USB return → Monitor
+                    ],
                 ))
             },
             |_cfg| {
@@ -868,7 +888,8 @@ const CATALOG: &[CatalogEntry] = &[
             },
             |_cfg| Box::new(EventThru::new(64)),
         ],
-        // preamp→AD (×2), then the DA fans out to both the monitor and the headphone amp.
+        // preamp → AD (×2) → matrix ins 0/1; matrix out 2 → DA → the monitor + phones amps. The
+        // matrix's in 2 (USB return) and outs 0/1 (USB sends) stay open — the exposed digital face.
         internal: &[
             InternalEdge {
                 from_node: 0,
@@ -883,23 +904,42 @@ const CATALOG: &[CatalogEntry] = &[
                 to_port: 0,
             },
             InternalEdge {
-                from_node: 4,
+                from_node: 2,
                 from_port: 0,
-                to_node: 5,
-                to_port: 0,
+                to_node: 4,
+                to_port: 0, // AD 1 → matrix in 0
+            },
+            InternalEdge {
+                from_node: 3,
+                from_port: 0,
+                to_node: 4,
+                to_port: 1, // AD 2 → matrix in 1
             },
             InternalEdge {
                 from_node: 4,
+                from_port: 2,
+                to_node: 5,
+                to_port: 0, // matrix out 2 (monitor feed) → DA
+            },
+            InternalEdge {
+                from_node: 5,
                 from_port: 0,
                 to_node: 6,
-                to_port: 0,
+                to_port: 0, // DA → monitor amp
+            },
+            InternalEdge {
+                from_node: 5,
+                from_port: 0,
+                to_node: 7,
+                to_port: 0, // DA → phones amp
             },
         ],
         // Ungrouped params, exposed in node order (each stage's `powered` is captured by the Power
-        // group below and hidden from this walk). The two preamps each expose gain + PAD + AIR
-        // switches (INST/hi-Z is a structural config, not here); the monitor + phones amps expose gain.
-        // Exposed param ids: 0 Gain 1 · 1 Pad 1 · 2 Air 1 · 3 Gain 2 · 4 Pad 2 · 5 Air 2 · 6 Monitor ·
-        // 7 Phones · 8 Power.
+        // group below and hidden from this walk). Preamps expose gain + PAD + AIR; the matrix (node 4)
+        // contributes its 3×3 crosspoint grid; the monitor + phones amps expose gain. Exposed param
+        // ids: 0 Gain 1 · 1 Pad 1 · 2 Air 1 · 3 Gain 2 · 4 Pad 2 · 5 Air 2 · 6–14 the nine matrix
+        // crosspoints (row-major: Pre 1/Pre 2/USB-return × USB 1/USB 2/Mon) · 15 Monitor · 16 Phones ·
+        // 17 Power.
         params: &[
             ParamUi {
                 label: "Gain 1",
@@ -931,6 +971,53 @@ const CATALOG: &[CatalogEntry] = &[
                 unit: "",
                 kind: ParamKind::Switch,
             },
+            // The 3×3 routing-matrix crosspoints, row-major (input i → output j). Rendered as a grid in
+            // the Focusrite Control focus surface, not as individual faceplate knobs.
+            ParamUi {
+                label: "Pre 1 → USB 1",
+                unit: "×",
+                kind: ParamKind::Knob,
+            },
+            ParamUi {
+                label: "Pre 1 → USB 2",
+                unit: "×",
+                kind: ParamKind::Knob,
+            },
+            ParamUi {
+                label: "Pre 1 → Mon",
+                unit: "×",
+                kind: ParamKind::Knob,
+            },
+            ParamUi {
+                label: "Pre 2 → USB 1",
+                unit: "×",
+                kind: ParamKind::Knob,
+            },
+            ParamUi {
+                label: "Pre 2 → USB 2",
+                unit: "×",
+                kind: ParamKind::Knob,
+            },
+            ParamUi {
+                label: "Pre 2 → Mon",
+                unit: "×",
+                kind: ParamKind::Knob,
+            },
+            ParamUi {
+                label: "USB → USB 1",
+                unit: "×",
+                kind: ParamKind::Knob,
+            },
+            ParamUi {
+                label: "USB → USB 2",
+                unit: "×",
+                kind: ParamKind::Knob,
+            },
+            ParamUi {
+                label: "USB → Mon",
+                unit: "×",
+                kind: ParamKind::Knob,
+            },
             ParamUi {
                 label: "Monitor",
                 unit: "×",
@@ -943,9 +1030,9 @@ const CATALOG: &[CatalogEntry] = &[
             },
         ],
         // One device-level power switch — a real 8i6 is a single powered unit. It gates every stage's
-        // `powered`: both preamps (MicPreamp id 1), both ADs and the DA (id 0), and the monitor +
-        // phones amps (GainStage id 1). An "off" device is silent on *both* analog outs and the USB
-        // sends (the AD gate).
+        // `powered`: both preamps (MicPreamp id 1), both ADs (id 0), the DA (node 5, id 0), and the
+        // monitor + phones amps (nodes 6/7, GainStage id 1). The matrix has no power gate — an off
+        // device's ADs and DA are already silenced, so its sends and monitor go quiet regardless.
         param_groups: &[ParamGroup {
             ui: ParamUi {
                 label: "Power",
@@ -957,13 +1044,13 @@ const CATALOG: &[CatalogEntry] = &[
                 (1, MicPreamp::POWERED),
                 (2, AdConverter::POWERED),
                 (3, AdConverter::POWERED),
-                (4, DaConverter::POWERED),
-                (5, GainStage::POWERED),
+                (5, DaConverter::POWERED),
                 (6, GainStage::POWERED),
+                (7, GainStage::POWERED),
             ],
         }],
-        // Open inputs in node order: the two preamp inputs (front combo jacks), the DA's digital
-        // "USB return", and the MIDI in.
+        // Open inputs in node order: the two preamp inputs (front combo jacks), the matrix's third
+        // input (the digital "USB return" from the computer), and the MIDI in.
         inputs: &[
             PortUi {
                 label: "In 1",
@@ -986,8 +1073,8 @@ const CATALOG: &[CatalogEntry] = &[
                 connector: Connector::Din5,
             },
         ],
-        // Open outputs in node order: the two AD "USB sends", the monitor line out, the headphone
-        // out (drawn on the front), and the MIDI out.
+        // Open outputs in node order: the matrix's first two outputs (the "USB sends" to the
+        // computer), the monitor line out, the headphone out (drawn on the front), and the MIDI out.
         outputs: &[
             PortUi {
                 label: "USB 1",
@@ -1546,53 +1633,53 @@ mod tests {
         assert_eq!(spk.outputs, vec![(spk.nodes[0], 0)]);
     }
 
-    /// The Scarlett 8i6 — the mixed-face interface — expands into its eight internal nodes wired by
-    /// four internal edges (two preamp→AD, plus the DA **fanning out** to the monitor and headphone
-    /// amps), and its exposed face maps to the right `(NodeId, …)` in node order. This pins the
-    /// non-trivial remap the faceplate relies on: device inputs are preamp 1/2, the DA's digital
-    /// return, and MIDI-in; device outputs are the two AD sends, the monitor + headphone analog outs,
-    /// and MIDI-out; and the exposed params are, in node order, each `MicPreamp`'s gain/pad/air, then
-    /// the monitor + phones gains, then one **Power group** that fans out to every stage's `powered`
-    /// — both preamps, both ADs, the DA, and the monitor + phones amps (seven targets from one control).
+    /// The Scarlett 8i6 — the mixed-face interface — expands into its nine internal nodes wired by
+    /// seven internal edges (two preamp→AD, both ADs → the routing matrix, the matrix's monitor output
+    /// → DA, and the DA **fanning out** to the monitor + phones amps), and its exposed face maps to the
+    /// right `(NodeId, …)` in node order. Pins the non-trivial remap: device inputs are preamp 1/2, the
+    /// matrix's USB return, and MIDI-in; device outputs are the matrix's two USB sends, the monitor +
+    /// phones analog outs, and MIDI-out; the exposed params are each `MicPreamp`'s gain/pad/air, the
+    /// matrix's 3×3 crosspoints, the monitor + phones gains, then one **Power group** over every stage's
+    /// `powered` (the matrix has none).
     #[test]
     fn scarlett_8i6_expands_with_mixed_face_io() {
         let mut g = Graph::new();
         let dev = instantiate("scarlett_8i6", &DeviceConfig::EMPTY, &mut g)
             .expect("scarlett_8i6 is in the catalog");
 
-        assert_eq!(dev.nodes.len(), 8, "eight internal nodes");
+        assert_eq!(dev.nodes.len(), 9, "nine internal nodes (matrix added)");
         assert_eq!(
             g.connection_count(),
-            4,
-            "four internal edges (2 preamp→AD, DA fanned to monitor + phones)"
+            7,
+            "seven internal edges (2 preamp→AD, 2 AD→matrix, matrix→DA, DA fanned to monitor + phones)"
         );
 
-        // Inputs, in node order: preamp 1/2 inputs, the DA's digital return, MIDI-in.
+        // Inputs, in node order: preamp 1/2 inputs, the matrix's USB return (in 2), MIDI-in.
         assert_eq!(
             dev.inputs,
             vec![
                 (dev.nodes[0], 0),
                 (dev.nodes[1], 0),
-                (dev.nodes[4], 0),
-                (dev.nodes[7], 0),
+                (dev.nodes[4], 2),
+                (dev.nodes[8], 0),
             ]
         );
-        // Outputs, in node order: the two AD sends, the monitor + headphone analog outs, MIDI-out —
-        // the monitor and phones being *distinct* exposed outputs is the DA fan-out made visible.
+        // Outputs, in node order: the matrix's two USB sends (out 0/1), the monitor + phones analog
+        // outs, MIDI-out — the matrix outputs still walk before the amps, so the ids are unchanged.
         assert_eq!(
             dev.outputs,
             vec![
-                (dev.nodes[2], 0),
-                (dev.nodes[3], 0),
-                (dev.nodes[5], 0),
+                (dev.nodes[4], 0),
+                (dev.nodes[4], 1),
                 (dev.nodes[6], 0),
                 (dev.nodes[7], 0),
+                (dev.nodes[8], 0),
             ]
         );
-        // Exposed params, ungrouped in node order then the group. Each preamp (MicPreamp) exposes its
-        // GAIN (0), PAD (2), AIR (3) — POWERED (1) is captured by the group; the monitor + phones
-        // GainStages expose GAIN (0). Then the Power group's seven targets: preamps' POWERED (id 1),
-        // both ADs + the DA (id 0), monitor + phones POWERED (id 1).
+        // Exposed params, ungrouped in node order then the group: each preamp's GAIN (0)/PAD (2)/AIR
+        // (3) — POWERED (1) grouped; the matrix's nine crosspoints (ParamId 0..8, on node 4); the
+        // monitor + phones GAIN (0); then the Power group over every `powered` (the matrix has none).
+        let matrix = dev.nodes[4];
         assert_eq!(
             dev.params,
             vec![
@@ -1602,18 +1689,47 @@ mod tests {
                 vec![(dev.nodes[1], ParamId(0))], // Gain 2
                 vec![(dev.nodes[1], ParamId(2))], // Pad 2
                 vec![(dev.nodes[1], ParamId(3))], // Air 2
-                vec![(dev.nodes[5], ParamId(0))], // Monitor
-                vec![(dev.nodes[6], ParamId(0))], // Phones
+                vec![(matrix, ParamId(0))],       // crosspoint Pre1→USB1
+                vec![(matrix, ParamId(1))],       // Pre1→USB2
+                vec![(matrix, ParamId(2))],       // Pre1→Mon
+                vec![(matrix, ParamId(3))],       // Pre2→USB1
+                vec![(matrix, ParamId(4))],       // Pre2→USB2
+                vec![(matrix, ParamId(5))],       // Pre2→Mon
+                vec![(matrix, ParamId(6))],       // USB→USB1
+                vec![(matrix, ParamId(7))],       // USB→USB2
+                vec![(matrix, ParamId(8))],       // USB→Mon
+                vec![(dev.nodes[6], ParamId(0))], // Monitor
+                vec![(dev.nodes[7], ParamId(0))], // Phones
                 vec![
                     (dev.nodes[0], ParamId(1)),
                     (dev.nodes[1], ParamId(1)),
                     (dev.nodes[2], ParamId(0)),
                     (dev.nodes[3], ParamId(0)),
-                    (dev.nodes[4], ParamId(0)),
-                    (dev.nodes[5], ParamId(1)),
+                    (dev.nodes[5], ParamId(0)),
                     (dev.nodes[6], ParamId(1)),
+                    (dev.nodes[7], ParamId(1)),
                 ], // Power
             ]
+        );
+    }
+
+    /// The 8i6's routing matrix defaults to the **identity** — Pre 1 → USB 1, Pre 2 → USB 2, USB
+    /// return → Monitor — reproducing the pre-matrix fixed routing, so behavior is unchanged until the
+    /// user re-routes. The nine crosspoints are exposed params 6..=14 (after the preamp controls); the
+    /// three diagonal cells default to 1.0 and the other six to 0.0.
+    #[test]
+    fn scarlett_8i6_matrix_defaults_to_fixed_routing() {
+        let dev = descriptors()
+            .into_iter()
+            .find(|d| d.type_id == "scarlett_8i6")
+            .expect("scarlett_8i6 is in the catalog");
+        // Exposed crosspoint ids: 6 (0,0) · 7 (0,1) · 8 (0,2) · 9 (1,0) · 10 (1,1) · 11 (1,2) ·
+        // 12 (2,0) · 13 (2,1) · 14 (2,2). Diagonal (6, 10, 14) = unity, the rest muted.
+        let defaults: Vec<f32> = (6..=14).map(|id| dev.params[id].default).collect();
+        assert_eq!(
+            defaults,
+            vec![1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0],
+            "identity routing reproduces the fixed preamp→USB / USB→monitor paths"
         );
     }
 
