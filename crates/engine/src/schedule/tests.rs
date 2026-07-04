@@ -2310,3 +2310,96 @@ mod multichannel_digital {
         );
     }
 }
+
+/// Runtime routing: a [`Matrix`] re-routes inputs → outputs live, via smoothed crosspoint params, with
+/// no recompile — the runtime-switchable-routing seam. Two DC sources feed a 2×1 matrix; moving the
+/// crosspoints swaps which source reaches the (single) output, all through a compiled schedule.
+mod routing_matrix {
+    use super::super::*;
+    use crate::electrical::Ohms;
+    use crate::node::{AdConverter, DaConverter, Matrix, TestSource};
+    use crate::param::ParamQueue;
+    use crate::signal::{BitDepth, SampleRate, Volts};
+
+    fn rate() -> AnalogRate {
+        AnalogRate::new(384_000.0)
+    }
+    fn fs() -> SampleRate {
+        SampleRate::new(48_000.0)
+    }
+    fn bits() -> BitDepth {
+        BitDepth::new(16)
+    }
+
+    #[test]
+    fn a_crosspoint_change_reroutes_the_output_live() {
+        // in0 = 0.5 V, in1 = 0.25 V, each via its own AD into a 2×1 matrix; matrix out → DA → tap.
+        let mut g = Graph::new();
+        let src0 = g.add(TestSource::new(Volts::new(0.5), Ohms::new(1.0)));
+        let ad0 = g.add(AdConverter::new(
+            fs(),
+            bits(),
+            Volts::new(1.0),
+            Ohms::new(1e6),
+        ));
+        let src1 = g.add(TestSource::new(Volts::new(0.25), Ohms::new(1.0)));
+        let ad1 = g.add(AdConverter::new(
+            fs(),
+            bits(),
+            Volts::new(1.0),
+            Ohms::new(1e6),
+        ));
+        // Default routing: out = in0 (crosspoint (0,0) = 1, (1,0) = 0).
+        let mx = g.add(Matrix::new(fs(), bits(), 2, 1, vec![1.0, 0.0]));
+        let da = g.add(DaConverter::new(
+            fs(),
+            bits(),
+            Volts::new(1.0),
+            Ohms::new(150.0),
+        ));
+        g.connect_ideal(src0, 0, ad0, 0);
+        g.connect_ideal(src1, 0, ad1, 0);
+        g.connect_ideal(ad0, 0, mx, 0);
+        g.connect_ideal(ad1, 0, mx, 1);
+        g.connect_ideal(mx, 0, da, 0);
+        g.set_output(da, 0);
+
+        let block = 384;
+        let mut sched = compile(g, block, rate(), 0).expect("routing chain compiles");
+        let c00 = sched
+            .param(mx, Matrix::crosspoint(0, 0, 1))
+            .expect("crosspoint 0→0");
+        let c10 = sched
+            .param(mx, Matrix::crosspoint(1, 0, 1))
+            .expect("crosspoint 1→0");
+
+        // Default: the output carries in0 (0.5 V) after the converters settle.
+        let mut out = VoltageBuffer::zeros(block, rate());
+        for _ in 0..40 {
+            sched.process(&mut out);
+        }
+        let tail0 = &out.as_slice()[block / 2..];
+        assert!(
+            tail0.iter().all(|&v| (v - 0.5).abs() < 1e-2),
+            "default routing carries in0 (0.5 V)"
+        );
+
+        // Re-route to in1 (0.25 V): close (1,0), open... i.e. crosspoint (0,0) → 0, (1,0) → 1. No
+        // recompile — just smoothed param moves; run past the glide.
+        let mut q = ParamQueue::with_capacity(2);
+        q.set(c00, 0.0);
+        q.set(c10, 1.0);
+        for b in 0..40 {
+            if b == 0 {
+                sched.process_with_params(&mut out, &mut q);
+            } else {
+                sched.process(&mut out);
+            }
+        }
+        let tail1 = &out.as_slice()[block / 2..];
+        assert!(
+            tail1.iter().all(|&v| (v - 0.25).abs() < 1e-2),
+            "after the crosspoint move the output carries in1 (0.25 V), no recompile"
+        );
+    }
+}
