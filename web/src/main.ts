@@ -1,4 +1,5 @@
-// Entry point: mount the Svelte app. All UI lives in App.svelte; engine bring-up and the control
+// Entry point: mount the Svelte app. `Root` owns the router and picks the view root by URL — the scene
+// view (App.svelte) or the device workbench (Workbench.svelte); engine bring-up and the control
 // transport live in engine.ts. (The page is the throwaway harness; this infrastructure carries into
 // the real UI — Story 4.2 onward.)
 
@@ -11,9 +12,9 @@ import "./styles/tokens.css";
 // Base layer: applies the room-level tokens (dark background, base text, dark
 // native controls). Must load after tokens.css so the vars exist.
 import "./styles/base.css";
-import App from "./App.svelte";
+import Root from "./Root.svelte";
 
 const target = document.getElementById("app");
 if (!target) throw new Error("missing #app mount point");
 
-export default mount(App, { target });
+export default mount(Root, { target });
