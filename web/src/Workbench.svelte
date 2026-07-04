@@ -6,6 +6,7 @@
   // 6.3) or falling back to the catalog index. Audio resumes on the first interaction. The bench stage
   // (grid + both faces + live params/meters) lands in Task 6.2.4; for now a known device shows a stub.
 
+  import BenchStage from "./BenchStage.svelte";
   import { SceneSession } from "./session.svelte";
   import { analogOutputPort, bootstrapScene, deviceScene } from "./workbench-scene";
 
@@ -59,13 +60,12 @@
   {#if !session.ready}
     <p class="booting">Booting engine… <span class="muted">{session.status}</span></p>
   {:else if requested && tapPort !== undefined}
-    <!-- Stub — the real bench stage (grid + both faces + live params/meters) is Task 6.2.4. -->
     <header class="head">
       <span class="name">{requested.name}</span>
       <span class="muted">{requested.typeId}</span>
       <button type="button" class="back" onclick={() => navigate("/")}>← scene view</button>
     </header>
-    <p class="muted">Device loaded (silent). Bench stage lands in Task 6.2.4.</p>
+    <BenchStage {session} desc={requested} />
   {:else if requested}
     <!-- Known device, but no analog output to tap: needs a DA / monitor chain (Story 6.3). -->
     <header class="head">
