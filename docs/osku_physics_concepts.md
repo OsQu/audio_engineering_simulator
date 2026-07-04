@@ -9,7 +9,7 @@ we're modeling and why*. Use it to skip re-explaining things already covered.
 > open/short extremes, global-vs-local, feedback/algebraic loops, buffering & pushback, and
 > ground loops), cables, filters (one-pole & 2nd-order), poles, filter implementation,
 > distortion, rail clipping, sampling/decimation/aliasing, windowed-sinc FIR, quantization &
-> dither, and group delay/latency — through Epic 3 (real-time).
+> dither, group delay/latency, and round-trip latency (feedback via a one-block delay) — through Epic 5.
 
 ## Contents
 1. [The voltage-native model](#1-the-voltage-native-model)
@@ -691,6 +691,27 @@ three delays share one unit and simply add.)
 buffer (the dominant chunk, measured live), the **note-stamping quantum** (a played note fires at the
 next engine block, ≤ ~2.7 ms — the input-side granularity), and this **signal-path group delay**
 (~0.6 ms). The page reports all three. See `RtEngine::signal_path_latency_ms` and `Decimator::group_delay`.
+
+**Round-trip latency (and why feedback needs a delay).** The group delay above is *signal-path* latency —
+the smearing-free time a signal takes to flow forward through filters. A second, larger kind appears when
+audio leaves the box and comes back: **round-trip latency**. A computer/DAW records what an interface sends
+it, processes it, and plays it back — but its playback is always **one buffer behind** its input (it can't
+emit block *N*'s output until it has *received* block *N*). So a monitoring loop `interface → computer →
+interface → speaker` carries at least one block of delay. This is why hardware interfaces offer
+**zero-latency direct monitoring** (route the input straight to the output *inside* the box, bypassing the
+round-trip) — the DAW path is audibly late.
+
+**In our engine this is structural, not cosmetic.** The schedule is a **DAG** processed once per block, so a
+loop with no delay is an unsolvable same-block cycle (`out` would depend on `in` which depends on `out`) —
+the compiler rejects it (`CompileError::Cycle`). The way to make a loop *legal* is to put a **one-block
+delay** on it: the delayed edge delivers *last* block's value, breaking the same-block dependency. Mechanically
+(engine side): a **delayed edge** is cut from the topological sort (so it no longer forms a cycle) and its
+copy runs *before* the block's node steps, reading the producer's **persistent** output buffer — which still
+holds last block's samples until the producer overwrites it. No stateful "delay node" is needed; the buffer
+pool *is* the one-block register. This is exactly a **unit delay** (`z⁻¹`) — the fundamental primitive that
+makes any feedback loop (a DAW round-trip, an IIR filter, a delay/reverb tail) computable one block, or one
+sample, at a time. The physics we model: a real device with input→output latency; the invariant we keep: the
+*schedule* stays acyclic — feedback is expressed as **bounded latency**, never a same-block solve.
 
 > **Want (Oskari):** a from-scratch crash course on **phase** as its own session — what phase actually
 > is, a filter's phase response, **phase delay vs. group delay**, linear vs. nonlinear phase and the

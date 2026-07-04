@@ -74,6 +74,10 @@ export interface PortDescriptor {
   kind: PortKind;
   /** Physical connector shape — the hard constraint on what may plug in (see {@link Connector}). */
   connector: Connector;
+  /** A **round-trip-latency** output: an edge from it carries one block of latency (a computer/DAW's
+   *  playback trails its input). The build wires such edges delayed, letting a monitoring loop through
+   *  the device close without a cycle. `false` for inputs and ordinary outputs. */
+  delayed: boolean;
 }
 
 /** One scalar readout: engine truth (id) + UI label/unit. The host reads its live value back by

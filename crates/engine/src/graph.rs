@@ -7,9 +7,12 @@
 //!
 //! Connections are recorded as given; **all validation happens at compile** (the doctrine:
 //! validation and error reporting live in graph construction and `compile`, never the hot
-//! path). The engine solves connections **locally** (no global nodal solve), so the graph is
-//! a DAG — a cycle is a wiring mistake the compiler rejects rather than a feedback path to
-//! solve.
+//! path). The engine solves connections **locally** (no global nodal solve), so the *scheduled*
+//! graph is a DAG — a same-block cycle is a wiring mistake the compiler rejects rather than a
+//! feedback path to solve. The one escape hatch is [`Graph::connect_delayed`]: a **delayed edge**
+//! carries one block of latency, is cut from the topological sort, and so may close a loop (a
+//! round-trip through a latent device — an interface ↔ DAW monitoring loop) without a same-block
+//! feedback solve. The invariant holds: the schedule stays acyclic; only bounded latency is added.
 
 use crate::electrical::Cable;
 use crate::node::Node;
@@ -32,6 +35,12 @@ pub(crate) struct Edge {
     pub(crate) to_node: NodeId,
     pub(crate) to_port: usize,
     pub(crate) cable: Option<Cable>,
+    /// A **delayed** edge carries one block of latency: it is cut from the topological sort (so a loop
+    /// containing it is *not* a scheduling cycle — the schedule stays a strict DAG) and its copy runs
+    /// **before** the per-block step loop, reading the producer's *persistent* output buffer, which at
+    /// that moment still holds **last block's** value. This is how a round-trip through a latent device
+    /// (an interface ↔ DAW loop) is expressed without a same-block feedback solve — see `compile`.
+    pub(crate) delayed: bool,
 }
 
 /// A patch: a set of nodes and the connections between them, plus the designated output.
@@ -68,7 +77,7 @@ impl Graph {
     /// Connect `from`'s output port `out_port` to `to`'s input port `in_port` with an ideal
     /// wire (no cable). Recorded as-is; validated at compile.
     pub fn connect_ideal(&mut self, from: NodeId, out_port: usize, to: NodeId, in_port: usize) {
-        self.push_edge(from, out_port, to, in_port, None);
+        self.push_edge(from, out_port, to, in_port, None, false);
     }
 
     /// Connect through a [`Cable`] — its series resistance joins the loading divider and its
@@ -81,7 +90,17 @@ impl Graph {
         in_port: usize,
         cable: Cable,
     ) {
-        self.push_edge(from, out_port, to, in_port, Some(cable));
+        self.push_edge(from, out_port, to, in_port, Some(cable), false);
+    }
+
+    /// Connect with **one block of latency** (an ideal wire otherwise). The edge is cut from the
+    /// schedule's topological sort — so it can close a loop without forming a cycle — and delivers the
+    /// producer's *previous*-block output. This is the round-trip-latency seam: a device that is a
+    /// latency source (a computer/DAW, whose playback trails its input by a buffer) wires its output
+    /// through this, letting the classic interface → DAW → interface monitoring loop build. The
+    /// electrical model is an ideal digital copy (round-trip latency, not analog loading).
+    pub fn connect_delayed(&mut self, from: NodeId, out_port: usize, to: NodeId, in_port: usize) {
+        self.push_edge(from, out_port, to, in_port, None, true);
     }
 
     /// Designate the graph's output tap: output port `out_port` of `node` is what the
@@ -116,6 +135,7 @@ impl Graph {
         to: NodeId,
         to_port: usize,
         cable: Option<Cable>,
+        delayed: bool,
     ) {
         self.edges.push(Edge {
             from_node: from,
@@ -123,6 +143,7 @@ impl Graph {
             to_node: to,
             to_port,
             cable,
+            delayed,
         });
     }
 }

@@ -2403,3 +2403,180 @@ mod routing_matrix {
         );
     }
 }
+
+/// **Delayed edges** — the round-trip-latency seam. A delayed edge is cut from the topological sort (so
+/// it can close a loop without making the schedule cyclic) and delivers the producer's *previous*-block
+/// output (its copy runs before the step loop, reading the persistent output pool). These oracles pin
+/// the two guarantees: a loop with a delayed edge compiles (an undelayed one still errors), and the
+/// delay is *exactly one block*.
+mod delayed_edges {
+    use super::super::*;
+    use crate::electrical::{InputZ, Ohms, OutputZ};
+    use crate::param::Params;
+    use crate::port::{InputPort, OutputPort};
+
+    fn rate() -> AnalogRate {
+        AnalogRate::new(384_000.0)
+    }
+
+    /// An analog passthrough: out = in (one conductor). Enough to route a signal around a loop.
+    struct Pass {
+        inputs: [InputPort; 1],
+        outputs: [OutputPort; 1],
+    }
+    impl Pass {
+        fn new() -> Self {
+            Self {
+                inputs: [InputZ::new(Ohms::new(1e9)).into()],
+                outputs: [OutputZ::new(Ohms::new(1.0)).into()],
+            }
+        }
+    }
+    impl Node for Pass {
+        fn inputs(&self) -> &[InputPort] {
+            &self.inputs
+        }
+        fn outputs(&self) -> &[OutputPort] {
+            &self.outputs
+        }
+        fn process(&mut self, _p: &Params, inputs: &[Lane], outputs: &mut [Lane]) {
+            let src = inputs[0].voltage().as_slice();
+            let dst = outputs[0].voltage_mut().as_mut_slice();
+            dst.copy_from_slice(src);
+        }
+    }
+
+    /// An accumulator: out = in + 1 V per block. With a delayed self-loop (out → in) it integrates,
+    /// adding exactly 1 V each block — a feedback loop that only exists because the edge is delayed.
+    struct Accumulator {
+        inputs: [InputPort; 1],
+        outputs: [OutputPort; 1],
+    }
+    impl Accumulator {
+        fn new() -> Self {
+            Self {
+                inputs: [InputZ::new(Ohms::new(1e9)).into()],
+                outputs: [OutputZ::new(Ohms::new(1.0)).into()],
+            }
+        }
+    }
+    impl Node for Accumulator {
+        fn inputs(&self) -> &[InputPort] {
+            &self.inputs
+        }
+        fn outputs(&self) -> &[OutputPort] {
+            &self.outputs
+        }
+        fn process(&mut self, _p: &Params, inputs: &[Lane], outputs: &mut [Lane]) {
+            let src = inputs[0].voltage().as_slice();
+            let dst = outputs[0].voltage_mut().as_mut_slice();
+            for (o, &i) in dst.iter_mut().zip(src) {
+                *o = i + 1.0;
+            }
+        }
+    }
+
+    /// A source whose per-block output steps up by 10 V each block (block 1 → 10, block 2 → 20, …), so
+    /// a one-block lag is visible in the value itself.
+    struct BlockRamp {
+        level: f32,
+        outputs: [OutputPort; 1],
+    }
+    impl BlockRamp {
+        fn new() -> Self {
+            Self {
+                level: 0.0,
+                outputs: [OutputZ::new(Ohms::new(1.0)).into()],
+            }
+        }
+    }
+    impl Node for BlockRamp {
+        fn inputs(&self) -> &[InputPort] {
+            &[]
+        }
+        fn outputs(&self) -> &[OutputPort] {
+            &self.outputs
+        }
+        fn process(&mut self, _p: &Params, _inputs: &[Lane], outputs: &mut [Lane]) {
+            self.level += 10.0;
+            for v in outputs[0].voltage_mut().as_mut_slice() {
+                *v = self.level;
+            }
+        }
+    }
+
+    /// A two-node loop `A → B → A` errors when both edges are ideal (an unbreakable same-block cycle),
+    /// but **compiles** when the back edge is delayed — the delayed edge is cut from the sort.
+    #[test]
+    fn a_delayed_edge_breaks_a_cycle_an_ideal_one_does_not() {
+        let ideal = {
+            let mut g = Graph::new();
+            let a = g.add(Pass::new());
+            let b = g.add(Pass::new());
+            g.connect_ideal(a, 0, b, 0);
+            g.connect_ideal(b, 0, a, 0);
+            g.set_output(b, 0);
+            compile(g, 8, rate(), 0)
+        };
+        assert_eq!(
+            ideal.err(),
+            Some(CompileError::Cycle),
+            "ideal loop is a cycle"
+        );
+
+        let mut g = Graph::new();
+        let a = g.add(Pass::new());
+        let b = g.add(Pass::new());
+        g.connect_ideal(a, 0, b, 0);
+        g.connect_delayed(b, 0, a, 0); // the back edge carries a block of latency
+        g.set_output(b, 0);
+        assert!(
+            compile(g, 8, rate(), 0).is_ok(),
+            "a delayed back edge breaks the cycle"
+        );
+    }
+
+    /// A delayed self-loop turns an `out = in + 1` node into an integrator: each block reads *last*
+    /// block's output, so after N blocks the output is exactly N V — proof the loop runs and the delay
+    /// is one block (a two-block delay would lag, a zero-block one would be a cycle).
+    #[test]
+    fn a_delayed_self_loop_accumulates_one_block_at_a_time() {
+        let mut g = Graph::new();
+        let acc = g.add(Accumulator::new());
+        g.connect_delayed(acc, 0, acc, 0);
+        g.set_output(acc, 0);
+        let mut sched = compile(g, 8, rate(), 0).expect("delayed self-loop compiles");
+
+        let mut out = VoltageBuffer::zeros(8, rate());
+        for expected in 1..=6 {
+            sched.process(&mut out);
+            let v = out.as_slice()[0];
+            assert!(
+                (v - expected as f32).abs() < 1e-6,
+                "block {expected}: accumulated {v} V, expected {expected}"
+            );
+        }
+    }
+
+    /// A delayed edge from a per-block ramp source delivers the *previous* block's value: the tap reads
+    /// 0 (initial), then 10, 20, … — exactly one block behind the source's 10, 20, 30, ….
+    #[test]
+    fn a_delayed_edge_delivers_the_previous_block() {
+        let mut g = Graph::new();
+        let ramp = g.add(BlockRamp::new());
+        let pass = g.add(Pass::new());
+        g.connect_delayed(ramp, 0, pass, 0);
+        g.set_output(pass, 0);
+        let mut sched = compile(g, 8, rate(), 0).expect("compiles");
+
+        let mut out = VoltageBuffer::zeros(8, rate());
+        for expected in [0.0_f32, 10.0, 20.0, 30.0] {
+            sched.process(&mut out);
+            let v = out.as_slice()[0];
+            assert!(
+                (v - expected).abs() < 1e-6,
+                "tap should lag the ramp by one block: got {v}, expected {expected}"
+            );
+        }
+    }
+}

@@ -384,9 +384,22 @@ pub fn build_patch(
             }
         }
 
+        // A **round-trip-latency** output (a computer/DAW's playback, one block behind its input) wires
+        // through a delayed edge, so a monitoring loop *through* it closes without a same-block cycle.
+        // Latency is a digital round-trip, so it overrides any cable (a delayed edge is an ideal copy).
+        let delayed = port_descriptor(
+            &descs,
+            &types,
+            &conn.from.device,
+            PortDirection::Output,
+            conn.from.port,
+        )
+        .is_some_and(|fp| fp.delayed);
+
         connection_edges.push(graph.connection_count());
-        match &conn.cable {
-            Some(cable) => graph.connect_cabled(
+        match (delayed, &conn.cable) {
+            (true, _) => graph.connect_delayed(from_node, from_port, to_node, to_port),
+            (false, Some(cable)) => graph.connect_cabled(
                 from_node,
                 from_port,
                 to_node,
@@ -396,7 +409,7 @@ pub fn build_patch(
                     Farads::new(cable.capacitance_farads),
                 ),
             ),
-            None => graph.connect_ideal(from_node, from_port, to_node, to_port),
+            (false, None) => graph.connect_ideal(from_node, from_port, to_node, to_port),
         }
     }
     let (out_node, out_port) = resolve_output(&devices, &patch.output)?;
@@ -764,6 +777,69 @@ mod tests {
             scene.param("if", 0).len(),
             1,
             "an ungrouped gain drives exactly one stage"
+        );
+    }
+
+    /// The classic playable loop **closes through the computer**: synth → 8i6 (record) → computer
+    /// (loopback) → 8i6 (USB return → monitor) → speaker. The computer's USB output is a **round-trip
+    /// latency** source, so `build_patch` wires the return edge delayed — which is the only reason the
+    /// loop builds at all (an undelayed version is `Err(Compile(Cycle))`, confirmed during design). This
+    /// also exercises a **multichannel digital delayed edge** end-to-end (8-lane send, 6-lane return).
+    /// The monitor is powered on and the 8i6 matrix is left at its identity default (Pre1→USB1 on the
+    /// record side, DAW1→Line1 on the playback side), so the note returns to Line Out 1 and is audible.
+    #[test]
+    fn playable_loop_closes_through_the_computer() {
+        let patch = Patch {
+            devices: vec![
+                device("synth", "synth_voice"),
+                device("if", "scarlett_8i6"),
+                device("computer", "computer"),
+                device("spk", "speaker"),
+            ],
+            connections: vec![
+                conn("synth", 0, "if", 0),    // synth → combo in 1
+                conn("if", 0, "computer", 0), // 8i6 USB send (8ch) → computer USB in
+                conn("computer", 0, "if", 7), // computer USB out (6ch, DELAYED) → 8i6 USB return
+                conn("if", 2, "spk", 0),      // 8i6 Line Out 1 (monitor L) → speaker
+            ],
+            output: PortRef {
+                device: "spk".into(),
+                port: 0,
+            },
+        };
+        // Builds despite the loop — the delayed return edge breaks the cycle.
+        let mut scene =
+            build_patch(&patch, BLOCK_LEN, rate(), 0).expect("the round-trip loop builds");
+
+        // Power the whole 8i6 on (it boots powered-off) and open the monitor; the identity matrix
+        // already routes Pre1→USB1 (record) and DAW1→Line1 (playback), so the loop carries the note.
+        let power: Vec<_> = scene.param("if", 205).to_vec();
+        let monitor: Vec<_> = scene.param("if", 204).to_vec();
+        let ev = scene.event_input("synth").expect("synth event input");
+        let mut events = EventQueue::with_capacity(4);
+        events.push(
+            0,
+            ev,
+            EventMessage::NoteOn {
+                note: NOTE,
+                velocity: 100,
+            },
+        );
+        let mut params = ParamQueue::with_capacity(20);
+        for h in power.iter().chain(monitor.iter()) {
+            params.set(*h, 1.0);
+        }
+        let mut out = VoltageBuffer::zeros(BLOCK_LEN, rate());
+        let mut peak = 0.0_f32;
+        for _ in 0..128 {
+            scene
+                .schedule_mut()
+                .process_io(&mut out, &mut params, &mut events);
+            peak = out.as_slice().iter().fold(peak, |p, &v| p.max(v.abs()));
+        }
+        assert!(
+            peak > 0.01,
+            "the note returns through the computer to the speaker, got {peak}"
         );
     }
 

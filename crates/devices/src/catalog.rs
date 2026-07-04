@@ -180,6 +180,12 @@ pub struct PortDescriptor {
     pub kind: PortKind,
     /// Physical connector shape — the hard constraint on what may plug in (see [`Connector`]).
     pub connector: Connector,
+    /// **Round-trip latency** output: an edge *from* this output carries one block of latency (built
+    /// via [`engine::Graph::connect_delayed`]). Its physical meaning is a device that trails its input
+    /// by a buffer — a computer/DAW, whose playback is one block behind what it records — so a
+    /// monitoring loop *through* it (interface → DAW → interface) can close without a same-block
+    /// feedback cycle. Always `false` for inputs and for ordinary outputs.
+    pub delayed: bool,
 }
 
 /// One scalar readout a device exposes for the host to display (a meter value read back over the
@@ -338,6 +344,11 @@ struct CatalogEntry {
     inputs: &'static [PortUi],
     /// One per *exposed* output port (open outputs, in node order).
     outputs: &'static [PortUi],
+    /// Exposed **output** ids whose edges carry one block of **round-trip latency** (a computer/DAW's
+    /// playback trails its input). `build_patch` wires edges from these via
+    /// [`engine::Graph::connect_delayed`], letting a monitoring loop *through* the device close without
+    /// a cycle. Empty for every ordinary device; only a latency source (the `computer`) lists one.
+    delayed_outputs: &'static [u32],
     /// One per *exposed* readout (all node readouts, concatenated in node order). Empty for a device
     /// that measures nothing.
     readouts: &'static [ReadoutUi],
@@ -523,6 +534,7 @@ const CATALOG: &[CatalogEntry] = &[
             kind: PortKind::Instrument,
             connector: Connector::QuarterInch,
         }],
+        delayed_outputs: &[],
         readouts: &[],
         configs: &[],
     },
@@ -554,6 +566,7 @@ const CATALOG: &[CatalogEntry] = &[
             kind: PortKind::Midi,
             connector: Connector::Din5,
         }],
+        delayed_outputs: &[],
         readouts: &[],
         configs: &[],
     },
@@ -594,6 +607,7 @@ const CATALOG: &[CatalogEntry] = &[
             kind: PortKind::Line,
             connector: Connector::QuarterInch,
         }],
+        delayed_outputs: &[],
         readouts: &[],
         configs: &[],
     },
@@ -626,6 +640,7 @@ const CATALOG: &[CatalogEntry] = &[
             kind: PortKind::Digital,
             connector: Connector::Digital,
         }],
+        delayed_outputs: &[],
         readouts: &[],
         configs: &[],
     },
@@ -660,6 +675,7 @@ const CATALOG: &[CatalogEntry] = &[
             kind: PortKind::Digital,
             connector: Connector::Digital,
         }],
+        delayed_outputs: &[],
         readouts: &[],
         configs: &[],
     },
@@ -694,6 +710,7 @@ const CATALOG: &[CatalogEntry] = &[
             kind: PortKind::Line,
             connector: Connector::QuarterInch,
         }],
+        delayed_outputs: &[],
         readouts: &[],
         configs: &[],
     },
@@ -723,6 +740,7 @@ const CATALOG: &[CatalogEntry] = &[
             kind: PortKind::Speaker,
             connector: Connector::QuarterInch,
         }],
+        delayed_outputs: &[],
         readouts: &[],
         configs: &[],
     },
@@ -796,6 +814,7 @@ const CATALOG: &[CatalogEntry] = &[
             kind: PortKind::Line,
             connector: Connector::QuarterInch,
         }],
+        delayed_outputs: &[],
         readouts: &[],
         configs: &[],
     },
@@ -821,6 +840,7 @@ const CATALOG: &[CatalogEntry] = &[
             kind: PortKind::Line,
             connector: Connector::QuarterInch,
         }],
+        delayed_outputs: &[],
         readouts: &[
             ReadoutUi {
                 label: "VU",
@@ -859,6 +879,7 @@ const CATALOG: &[CatalogEntry] = &[
             kind: PortKind::Digital,
             connector: Connector::Digital,
         }],
+        delayed_outputs: &[],
         readouts: &[
             ReadoutUi {
                 label: "Peak",
@@ -1375,6 +1396,7 @@ const CATALOG: &[CatalogEntry] = &[
                 connector: Connector::Din5,
             },
         ],
+        delayed_outputs: &[],
         readouts: &[],
         // INST/hi-Z per preamp: a structural toggle selecting the channel's input impedance (line
         // vs instrument), read by the preamp builders. Default off (line-level), reproducing today's
@@ -1657,6 +1679,10 @@ const CATALOG: &[CatalogEntry] = &[
             kind: PortKind::Digital,
             connector: Connector::Usb,
         }],
+        // The USB return (output 0) is the DAW's playback — one block behind what it records — so edges
+        // from it are **delayed**: `build_patch` wires them with round-trip latency, letting the
+        // interface → computer → interface monitoring loop close without a same-block cycle.
+        delayed_outputs: &[0],
         // Per-lane send meters, in node order: each meter contributes (Peak, RMS) in decl order.
         readouts: &[
             ReadoutUi {
@@ -1997,6 +2023,7 @@ fn describe(entry: &CatalogEntry) -> DeviceDescriptor {
             channels: p.channels,
             kind: ui.kind,
             connector: ui.connector,
+            delayed: false, // inputs are never a latency source
         });
     let outputs = face
         .outputs
@@ -2011,6 +2038,7 @@ fn describe(entry: &CatalogEntry) -> DeviceDescriptor {
             channels: p.channels,
             kind: ui.kind,
             connector: ui.connector,
+            delayed: entry.delayed_outputs.contains(&(i as u32)),
         });
     let ports = inputs.chain(outputs).collect();
 

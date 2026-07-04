@@ -758,6 +758,17 @@ the larger ones (multichannel digital, routing, preamp physics) may be split int
   Extend the catalog entry (more AD/DA/gain nodes) and place the new I/O on the faceplate (front vs back per
   the real panel). _Done:_ the 8i6's exposed face matches the real unit's I/O count; catalog-alignment +
   `instantiate` remap tests updated; the faceplate places everything (guardrail green); in-browser.
+  - _Also delivered here — the `computer` peer + round-trip latency._ Shipped a minimal `computer` USB peer
+    (8-lane send in, 6-lane return out; per-lane send meters; an 8→6 loopback `Matrix`, default send 1→
+    return 1). Closing the monitoring loop through it (8i6 → computer → 8i6 → speaker) is a graph cycle in
+    the delay-free DAG engine, so added a **delayed-edge** primitive: `Graph::connect_delayed` marks an edge
+    that is **cut from the topological sort** and served from the persistent output pool (its pre-loop copy
+    reads last block's value), giving exactly **one block of round-trip latency** — physically the DAW's
+    playback trailing its input. The `computer` declares its USB output a latency source
+    (`CatalogEntry.delayed_outputs`); `build_patch` wires such edges delayed. **The schedule stays a strict
+    DAG** — feedback is expressed as bounded latency, not a same-block solve. The default scene is now this
+    playable loop. Oracles: a delayed two-node loop compiles (an undelayed one still errors), the delay is
+    exactly one block, and the full 8i6↔computer loop builds and is audible.
 - **Task 5.7.9 — Runtime routing matrix (engine concept + focus-view UI).** Interfaces and mixers route any
   input to any output through an internal **matrix** (the 8i6's is Focusrite Control). We have **no
   runtime-configurable routing** — internal wiring is fixed `InternalEdge`s and inter-device signal is fixed
@@ -776,9 +787,11 @@ the larger ones (multichannel digital, routing, preamp physics) may be split int
 _Validate (part 2):_ the 8i6 is a **faithful** interface — full analog + digital I/O (multichannel USB,
 S/PDIF, rear line ins, line outs), a **single power** control (not per-stage), honest **INST/PAD/AIR** (and
 48V if the phantom side-graph lands here), and a **routing matrix** in its focus view assigning inputs to
-outputs at runtime; device **dimensions** corrected; the full Rust gate (`cargo fmt --check && cargo lint &&
-cargo test && cargo wasm && cargo docs`) plus web `check`/`typecheck`/`test`/`build` pass; verified
-in-browser.
+outputs at runtime; a `computer` USB peer completes the **playable monitoring loop** — sound travels
+mic/synth → preamp → AD → USB → computer → USB return → DA → monitor, closed through a **delayed edge**
+(one block of round-trip latency; the schedule stays a DAG); device **dimensions** corrected; the full Rust
+gate (`cargo fmt --check && cargo lint && cargo test && cargo wasm && cargo docs`) plus web
+`check`/`typecheck`/`test`/`build` pass; verified in-browser.
 
 _Decision — ground-loop hum should become emergent from grounding topology (deferred to this Epic)._
 Today (Story 1.5) `Cable::with_hum` is a **manual** injection — the user asserts "a ground loop exists

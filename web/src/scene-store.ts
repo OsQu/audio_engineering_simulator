@@ -12,10 +12,11 @@ import type { Patch } from "./scene";
 import type { Room, Vec3, Wall } from "./spatial";
 
 /** Current save-format version. A saved scene at any other version is discarded (no migration). Bumped
- *  to 14 in Task 5.7.8: the 8i6 grew to the full unit (9 in / 9 out, a 14×14 matrix) so its exposed
- *  param face is now 206 (crosspoints 8–203, Monitor 204, Power 205) and a new `computer` USB peer
- *  entered the catalog — a stale v13 save's 8i6 param ids no longer map, so it's discarded. */
-export const SCHEMA_VERSION = 14;
+ *  to 15 in Task 5.7.8: the default scene became the round-trip **monitoring loop** through the computer
+ *  (synth → 8i6 → computer → 8i6 → speaker), so a stale v14 save (the earlier placeholder chain) is
+ *  discarded to bring every studio up to the new default. (v14 grew the 8i6 to the full 206-param unit
+ *  and added the `computer` peer.) */
+export const SCHEMA_VERSION = 15;
 
 /** A space (room) in the studio — a UI grouping over the one engine graph (the engine never knows
  *  about rooms). A space is a **rectangular room**: gear stands against one of four walls, each an
@@ -116,88 +117,65 @@ function free(wall: Wall, x: number, z: number): Placement {
   };
 }
 
-/** A rack-mounted placement at `uSlot` of `rackId` on `wall` (its free `position` is where it stands if
- *  unmounted). Mounted gear shares its rack's wall. */
-function mounted(
-  rackId: string,
-  uSlot: number,
-  wall: Wall,
-  freeX: number,
-  freeZ: number,
-): Placement {
-  return {
-    space: CONTROL_ROOM.id,
-    wall,
-    position: { x: freeX, y: 0, z: freeZ },
-    rack: { id: rackId, uSlot },
-    facing: "front",
-  };
-}
-
-/** The default studio: a standalone MIDI controller plays the chain
- * `controller → synth → gain → VU → AD → digital meter → DA → speaker`, tapped at the speaker. The
- * controller's events cable into the synth means you play out of the box by focusing the controller
- * (the synth's own keybed is then edge-driven — see the "driven by MIDI IN" hint). The two meters sit
- * either side of the AD so gain-staging across the converter is visible out of the box: the VU reads
- * the analog level in dBu, the digital meter the same signal in dBFS. The gain stage and meters are
- * unity passthroughs.
+/** The default studio: the classic **interface monitoring loop**, closed through the computer. A MIDI
+ * controller plays a synth into the Scarlett 8i6's first combo input; the 8i6 records it over USB to the
+ * computer (an 8-lane "send", metered per lane), the computer loops it straight back (send 1 → return 1),
+ * and the 8i6 monitors the returning signal out Line Out 1 to the speaker. So the sound travels the full
+ * round-trip **through the computer** — the return edge carries one block of latency (the computer's USB
+ * output is a round-trip-latency source), which is exactly what lets the loop close without a feedback
+ * cycle. The 8i6's routing matrix sits at its identity default (Pre 1 → USB 1 on the record side,
+ * DAW 1 → Line Out 1 on the playback side), and the unit is switched on with its monitor open, so you
+ * play out of the box by focusing the controller (its events cable also drives the synth's keybed).
  *
- * Spatial layout (Story 4.6): the rackmount gain/VU/AD/meter/DA mount in an 8U rack against the **back**
- * wall (z≈0); the synth and speaker (desktop gear) stand along the **front** wall (z near the room's far
- * depth), where the window to the live room is. So the signal chain runs front→back→front — its cables
- * cross walls, drawn as portal stubs in each elevation. The `typeId`s match the `devices` catalog;
- * device ids are what control messages address. */
+ * All five devices are desktop gear standing along the **front** wall (no rack). The `typeId`s match the
+ * `devices` catalog; device ids are what control messages address. */
 export function defaultScene(): Scene {
   const patch: Patch = {
     devices: [
       { id: "ctrl", typeId: "midi_controller" },
       { id: "synth", typeId: "synth_voice" },
-      { id: "gain", typeId: "gain_stage" },
-      { id: "vu", typeId: "vu_meter" },
-      { id: "ad", typeId: "ad_converter" },
-      { id: "dig", typeId: "digital_meter" },
-      { id: "da", typeId: "da_converter" },
+      // The interface is switched on with its monitor open (both are device-level param groups; a real
+      // 8i6 boots powered-off, so the scene turns it on). The routing matrix stays at its identity
+      // default — precisely the record + playback path this loop needs.
+      {
+        id: "if",
+        typeId: "scarlett_8i6",
+        params: [
+          { id: 204, value: 1.0 }, // Monitor level
+          { id: 205, value: 1.0 }, // Power
+        ],
+      },
+      { id: "computer", typeId: "computer" },
       { id: "spk", typeId: "speaker" },
     ],
     connections: [
-      // The controller's MIDI-OUT drives the synth's MIDI-IN — the first events cable, so playing works
-      // out of the box by focusing the controller (this also makes the synth's own input edge-driven).
+      // Controller MIDI-OUT → synth MIDI-IN: play out of the box by focusing the controller.
       { from: { device: "ctrl", port: 0 }, to: { device: "synth", port: 0 } },
-      { from: { device: "synth", port: 0 }, to: { device: "gain", port: 0 } },
-      { from: { device: "gain", port: 0 }, to: { device: "vu", port: 0 } },
-      { from: { device: "vu", port: 0 }, to: { device: "ad", port: 0 } },
-      { from: { device: "ad", port: 0 }, to: { device: "dig", port: 0 } },
-      { from: { device: "dig", port: 0 }, to: { device: "da", port: 0 } },
-      { from: { device: "da", port: 0 }, to: { device: "spk", port: 0 } },
+      // Synth → 8i6 combo input 1 (analog).
+      { from: { device: "synth", port: 0 }, to: { device: "if", port: 0 } },
+      // 8i6 USB send (8-lane) → computer (records + meters the sends).
+      { from: { device: "if", port: 0 }, to: { device: "computer", port: 0 } },
+      // Computer USB return (6-lane) → 8i6 USB return. This edge is *delayed* (the computer declares its
+      // USB output a round-trip-latency source), which is what breaks the otherwise-cyclic loop.
+      { from: { device: "computer", port: 0 }, to: { device: "if", port: 7 } },
+      // 8i6 Line Out 1 (the monitored return) → speaker.
+      { from: { device: "if", port: 2 }, to: { device: "spk", port: 0 } },
     ],
     output: { device: "spk", port: 0 },
   };
 
-  const rackX = 760; // the back-wall rack's world-x
   const frontZ = 2600; // desktop gear stands near the front wall (room depth 3000)
   return {
     schemaVersion: SCHEMA_VERSION,
     ui: {
       spaces: [CONTROL_ROOM],
-      racks: [
-        {
-          id: "rack-1",
-          space: CONTROL_ROOM.id,
-          wall: "back",
-          facing: "front",
-          position: { x: rackX, y: 0, z: 0 },
-          slots: 8,
-        },
-      ],
+      racks: [],
       placements: {
-        ctrl: free("front", 900, frontZ),
-        synth: free("front", 200, frontZ),
-        gain: mounted("rack-1", 0, "back", rackX, 0),
-        vu: mounted("rack-1", 1, "back", rackX, 0),
-        ad: mounted("rack-1", 2, "back", rackX, 0),
-        dig: mounted("rack-1", 3, "back", rackX, 0),
-        da: mounted("rack-1", 4, "back", rackX, 0),
-        spk: free("front", 2800, frontZ),
+        synth: free("front", 300, frontZ),
+        ctrl: free("front", 1100, frontZ),
+        if: free("front", 2000, frontZ),
+        computer: free("front", 2900, frontZ),
+        spk: free("front", 3600, frontZ),
       },
       portals: {},
     },

@@ -13,20 +13,20 @@ describe("scene store", () => {
     expect(scene.ui.spaces.length).toBe(1);
   });
 
-  it("the default scene is a rectangular room with wall-tagged gear (rack on the back wall)", () => {
+  it("the default scene is a rectangular room of front-wall desktop gear (the monitoring loop)", () => {
     const scene = defaultScene();
     const space = scene.ui.spaces[0];
     // A rectangular room, wider than deep → the left/right walls are the shorter sides.
     expect(space.room.width).toBeGreaterThan(space.room.depth);
-    const rack = scene.ui.racks[0];
-    expect(rack.wall).toBe("back");
-    expect(rack.facing).toBe("front"); // the rack starts front-out; turn it around for the rear I/O
-    // Mounted gear inherits its rack's wall (as it inherits the rack's space).
+    // The loop is all desktop gear (8i6 + computer + synth + controller + speaker) — no rack.
+    expect(scene.ui.racks).toEqual([]);
+    // Every device stands against the front wall (where the window to the live room is).
     for (const place of Object.values(scene.ui.placements)) {
-      if (place.rack?.id === rack.id) expect(place.wall).toBe(rack.wall);
+      expect(place.wall).toBe("front");
     }
-    // The synth + speaker stand against the front wall (where the window to the live room is).
-    expect(scene.ui.placements.synth.wall).toBe("front");
+    // The interface, the computer, and the speaker are all present and placed.
+    expect(scene.ui.placements.if.wall).toBe("front");
+    expect(scene.ui.placements.computer.wall).toBe("front");
     expect(scene.ui.placements.spk.wall).toBe("front");
   });
 

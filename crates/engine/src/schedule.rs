@@ -260,6 +260,12 @@ pub struct Schedule {
     nodes: Vec<Box<dyn Node>>,
     input_pool: Vec<Lane>,
     output_pool: Vec<Lane>,
+    /// Copies for **delayed** edges, run **before** `steps` each block. Because they read the
+    /// producer's *persistent* `output_pool` buffer before that producer runs (overwrites it) this
+    /// block, they deliver **last block's** value — one block of latency. This is how a round-trip
+    /// loop is served without a same-block feedback solve; the delayed edges are cut from the topo
+    /// sort, so `steps` stays a strict DAG.
+    delayed_steps: Vec<Step>,
     steps: Vec<Step>,
     /// Index into `output_pool` of the designated output tap.
     out_buf: usize,
@@ -443,6 +449,7 @@ impl Schedule {
             nodes,
             input_pool,
             output_pool,
+            delayed_steps,
             steps,
             out_buf,
             param_store,
@@ -454,7 +461,9 @@ impl Schedule {
             ..
         } = self;
 
-        for step in steps.iter_mut() {
+        // Delayed edges run first (reading the producers' persistent output buffers = last block's
+        // values → one block of latency), then the topo-ordered node/edge steps.
+        for step in delayed_steps.iter_mut().chain(steps.iter_mut()) {
             match step {
                 Step::Node {
                     node,
@@ -671,8 +680,14 @@ pub fn compile(
         }
     }
 
-    // --- 6. Topological order (rejects cycles). ---
-    let deps: Vec<(usize, usize)> = edges.iter().map(|e| (e.from_node.0, e.to_node.0)).collect();
+    // --- 6. Topological order (rejects cycles). **Delayed** edges are excluded from the deps: they
+    //        carry one block of latency (served from the persistent pool, below), so they may close a
+    //        loop without making the *schedule* cyclic. An undelayed cycle is still a wiring error. ---
+    let deps: Vec<(usize, usize)> = edges
+        .iter()
+        .filter(|e| !e.delayed)
+        .map(|e| (e.from_node.0, e.to_node.0))
+        .collect();
     let order = topo::topo_sort(node_count, &deps).ok_or(CompileError::Cycle)?;
 
     // --- 7. Bake each edge's local solve. Edges sharing an output port are one fan-out node:
@@ -815,6 +830,33 @@ pub fn compile(
     for (ei, e) in edges.iter().enumerate() {
         edges_from[e.from_node.0].push(ei);
     }
+    // A closure baking one edge into its per-lane `Step::Edge`s, appended to `dst`.
+    let mut emit_edge = |dst: &mut Vec<Step>, ei: usize| {
+        let e = &edges[ei];
+        let kinds = edge_kinds[ei]
+            .take()
+            .expect("each edge is baked once and emitted once");
+        // Map lane k of the source port to lane k of the destination port.
+        let src_base = out_port_base[e.from_node.0][e.from_port];
+        let dst_base = in_port_base[e.to_node.0][e.to_port];
+        for (k, kind) in kinds.into_iter().enumerate() {
+            dst.push(Step::Edge {
+                src: src_base + k,
+                dst: dst_base + k,
+                kind,
+            });
+        }
+    };
+
+    // Delayed edges first, in edge-index order (deterministic). They run *before* the main loop each
+    // block, reading the producers' persistent output buffers — last block's values.
+    let mut delayed_steps = Vec::new();
+    for (ei, e) in edges.iter().enumerate() {
+        if e.delayed {
+            emit_edge(&mut delayed_steps, ei);
+        }
+    }
+
     let mut steps = Vec::with_capacity(node_count + edges.len());
     for &node in &order {
         steps.push(Step::Node {
@@ -825,20 +867,10 @@ pub fn compile(
             out_len: out_count[node],
         });
         for &ei in &edges_from[node] {
-            let e = &edges[ei];
-            let kinds = edge_kinds[ei]
-                .take()
-                .expect("each edge is baked once and emitted once");
-            // Map lane k of the source port to lane k of the destination port.
-            let src_base = out_port_base[e.from_node.0][e.from_port];
-            let dst_base = in_port_base[e.to_node.0][e.to_port];
-            for (k, kind) in kinds.into_iter().enumerate() {
-                steps.push(Step::Edge {
-                    src: src_base + k,
-                    dst: dst_base + k,
-                    kind,
-                });
+            if edges[ei].delayed {
+                continue; // emitted in the pre-loop pass above
             }
+            emit_edge(&mut steps, ei);
         }
     }
 
@@ -892,6 +924,7 @@ pub fn compile(
         nodes,
         input_pool,
         output_pool,
+        delayed_steps,
         steps,
         out_buf,
         block_len,
