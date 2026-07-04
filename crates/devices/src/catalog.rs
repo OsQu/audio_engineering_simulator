@@ -34,9 +34,9 @@
 
 use crate::scene::ConfigSetting;
 use engine::{
-    AdConverter, BitDepth, DaConverter, DigitalMeter, Domain, EqBand, EventThru, GainStage, Graph,
-    InputZ, Matrix, MicPreamp, Node, NodeId, Ohms, ParamId, ReadoutId, SampleRate, Speaker,
-    SynthVoice, ThreeBandEq, Volts, VuMeter,
+    AdConverter, BitDepth, DaConverter, DigitalDemux, DigitalMeter, DigitalMux, Domain, EqBand,
+    EventThru, GainStage, Graph, InputZ, Matrix, MicPreamp, Node, NodeId, Ohms, ParamId, ReadoutId,
+    SampleRate, Speaker, SynthVoice, ThreeBandEq, Volts, VuMeter,
 };
 use serde::Serialize;
 
@@ -330,6 +330,10 @@ struct CatalogEntry {
     /// (e.g. a single power switch over every stage's `powered`). Appended to the exposed param face
     /// after the ungrouped params, in declaration order. Empty for a device with no grouped controls.
     param_groups: &'static [ParamGroup],
+    /// An optional **generated crosspoint grid** for a routing-matrix node — synthesizes the matrix's
+    /// `inputs × outputs` crosspoint UIs (labels, not hand-authored). Its params are the *trailing*
+    /// ungrouped exposed params, so the matrix must be the entry's last param-contributing node.
+    param_grid: Option<GridSpec>,
     /// One per *exposed* input port (open inputs, in node order).
     inputs: &'static [PortUi],
     /// One per *exposed* output port (open outputs, in node order).
@@ -373,6 +377,31 @@ struct ParamGroup {
     targets: &'static [(usize, ParamId)],
 }
 
+/// A **generated grid of crosspoint param UIs** — the routing matrix's `inputs × outputs` cells,
+/// whose labels (`"{input} → {output}"`) are *synthesized* rather than hand-authored (the full 8i6's
+/// matrix has 196 crosspoints — infeasible as static `ParamUi`s). Row-major (input outer, output
+/// inner), matching [`Matrix`]'s crosspoint id order. The generated entries are the **last ungrouped**
+/// exposed params, so a device using a grid must make its `Matrix` the *last param-contributing node*;
+/// the web focus surface renders them as a grid, deriving rows/cols from the `" → "` labels.
+struct GridSpec {
+    /// Input (row) names, in matrix input order.
+    inputs: &'static [&'static str],
+    /// Output (column) names, in matrix output order.
+    outputs: &'static [&'static str],
+    kind: ParamKind,
+    unit: &'static str,
+}
+
+impl GridSpec {
+    /// The generated `"{input} → {output}"` labels, row-major — one per crosspoint, in matrix
+    /// crosspoint id order.
+    fn labels(&self) -> impl Iterator<Item = String> + '_ {
+        self.inputs
+            .iter()
+            .flat_map(move |i| self.outputs.iter().map(move |o| format!("{i} → {o}")))
+    }
+}
+
 struct PortUi {
     label: &'static str,
     kind: PortKind,
@@ -403,6 +432,35 @@ fn scarlett_preamp(cfg: &DeviceConfig, inst_key: &str) -> Box<dyn Node> {
         1.0,
         Volts::new(10.0),
         InputZ::new(Ohms::new(z_ohms)),
+        Ohms::new(150.0),
+    ))
+}
+
+/// The 8i6's AD/DA/gain building blocks, factored out of the (large) entry. The AD's input impedance
+/// is a parameter: preamp-fed ADs present a high `z_in` (the buffered preamp drives them, so the divider
+/// stays unity), while a **line input** AD presents a realistic line-level impedance the external
+/// source loads against.
+fn scarlett_ad(z_in_ohms: f32) -> Box<dyn Node> {
+    Box::new(AdConverter::new(
+        SampleRate::new(HOST_RATE_HZ),
+        BitDepth::new(BITS),
+        Volts::new(1.0),
+        Ohms::new(z_in_ohms),
+    ))
+}
+fn scarlett_da() -> Box<dyn Node> {
+    Box::new(DaConverter::new(
+        SampleRate::new(HOST_RATE_HZ),
+        BitDepth::new(BITS),
+        Volts::new(1.0),
+        Ohms::new(150.0),
+    ))
+}
+fn scarlett_gain() -> Box<dyn Node> {
+    Box::new(GainStage::new(
+        1.0,
+        Volts::new(10.0),
+        InputZ::new(Ohms::new(10_000.0)),
         Ohms::new(150.0),
     ))
 }
@@ -454,6 +512,7 @@ const CATALOG: &[CatalogEntry] = &[
             },
         ],
         param_groups: &[],
+        param_grid: None,
         inputs: &[PortUi {
             label: "MIDI",
             kind: PortKind::Midi,
@@ -484,6 +543,7 @@ const CATALOG: &[CatalogEntry] = &[
         internal: &[],
         params: &[],
         param_groups: &[],
+        param_grid: None,
         inputs: &[PortUi {
             label: "MIDI In",
             kind: PortKind::Midi,
@@ -523,6 +583,7 @@ const CATALOG: &[CatalogEntry] = &[
             },
         ],
         param_groups: &[],
+        param_grid: None,
         inputs: &[PortUi {
             label: "In",
             kind: PortKind::Line,
@@ -554,6 +615,7 @@ const CATALOG: &[CatalogEntry] = &[
         internal: &[],
         params: &[],
         param_groups: &[],
+        param_grid: None,
         inputs: &[PortUi {
             label: "In",
             kind: PortKind::Digital,
@@ -587,6 +649,7 @@ const CATALOG: &[CatalogEntry] = &[
             kind: ParamKind::Switch,
         }],
         param_groups: &[],
+        param_grid: None,
         inputs: &[PortUi {
             label: "Analog In",
             kind: PortKind::Line,
@@ -620,6 +683,7 @@ const CATALOG: &[CatalogEntry] = &[
             kind: ParamKind::Switch,
         }],
         param_groups: &[],
+        param_grid: None,
         inputs: &[PortUi {
             label: "Digital In",
             kind: PortKind::Digital,
@@ -645,6 +709,7 @@ const CATALOG: &[CatalogEntry] = &[
         internal: &[],
         params: &[],
         param_groups: &[],
+        param_grid: None,
         inputs: &[PortUi {
             label: "In",
             kind: PortKind::Speaker,
@@ -720,6 +785,7 @@ const CATALOG: &[CatalogEntry] = &[
             },
         ],
         param_groups: &[],
+        param_grid: None,
         inputs: &[PortUi {
             label: "In",
             kind: PortKind::Line,
@@ -744,6 +810,7 @@ const CATALOG: &[CatalogEntry] = &[
         internal: &[],
         params: &[],
         param_groups: &[],
+        param_grid: None,
         inputs: &[PortUi {
             label: "In",
             kind: PortKind::Line,
@@ -781,6 +848,7 @@ const CATALOG: &[CatalogEntry] = &[
         internal: &[],
         params: &[],
         param_groups: &[],
+        param_grid: None,
         inputs: &[PortUi {
             label: "In",
             kind: PortKind::Digital,
@@ -818,79 +886,84 @@ const CATALOG: &[CatalogEntry] = &[
             height_mm: 150.0,
             depth_mm: 150.0,
         },
-        // Node order fixes the exposed-face order (open ports + concatenated params, in node order),
-        // laid out in signal flow so the exposed ports keep their ids across the matrix insertion:
-        // 0,1 preamps · 2,3 their ADs · 4 the routing matrix · 5 the DA · 6,7 monitor + phones amps ·
-        // 8 MIDI thru. The matrix's outputs (USB sends) still walk before the monitor/phones outputs,
-        // so the exposed input/output ids are unchanged from the pre-matrix 8i6 — only params shift.
+        // Signal-flow layout. Every routing-matrix port is internal (fed by the ADs/demuxes, consumed
+        // by the muxes/DAs), so the matrix is placed **last** — its 196 generated crosspoints become the
+        // trailing exposed params without disturbing the port face. Node order:
+        //   0,1 preamps · 2,3 preamp ADs · 4–7 line-in ADs (3–6) · 8 S/PDIF-in demux · 9 USB-return
+        //   demux · 10 USB-send mux · 11 S/PDIF-out mux · 12,13 monitor DAs (L/R) · 14,15 monitor amps
+        //   (Line Out 1/2) · 16,17 line-out DAs (3/4) · 18,19 phones amps · 20 MIDI thru · 21 matrix.
         nodes: &[
-            // The two mic/instrument preamps: `MicPreamp`s whose INST/hi-Z input impedance is picked
-            // from the device config (`inst1`/`inst2`). PAD + AIR ride as their runtime params.
             |cfg| scarlett_preamp(cfg, "inst1"),
             |cfg| scarlett_preamp(cfg, "inst2"),
+            |_cfg| scarlett_ad(1_000_000.0), // preamp 1 AD (buffered feed ⇒ high Z, unity divider)
+            |_cfg| scarlett_ad(1_000_000.0), // preamp 2 AD
+            |_cfg| scarlett_ad(10_000.0),    // line in 3 (line-level input impedance)
+            |_cfg| scarlett_ad(10_000.0),    // line in 4
+            |_cfg| scarlett_ad(10_000.0),    // line in 5
+            |_cfg| scarlett_ad(10_000.0),    // line in 6
             |_cfg| {
-                Box::new(AdConverter::new(
+                Box::new(DigitalDemux::new(
                     SampleRate::new(HOST_RATE_HZ),
                     BitDepth::new(BITS),
-                    Volts::new(1.0),
-                    Ohms::new(1_000_000.0),
+                    2,
                 ))
-            },
+            }, // S/PDIF in (2ch)
             |_cfg| {
-                Box::new(AdConverter::new(
+                Box::new(DigitalDemux::new(
                     SampleRate::new(HOST_RATE_HZ),
                     BitDepth::new(BITS),
-                    Volts::new(1.0),
-                    Ohms::new(1_000_000.0),
+                    6,
                 ))
-            },
-            // The routing matrix (Focusrite Control's mixer, simplified to gains). 3 digital ins —
-            // preamp 1's AD, preamp 2's AD, the USB return — × 3 digital outs — USB send 1, USB send 2,
-            // the monitor DA feed. The identity default reproduces the pre-matrix fixed routing
-            // (preamp 1 → USB 1, preamp 2 → USB 2, USB return → monitor), so behavior is unchanged
-            // until the user re-routes in the focus view.
+            }, // USB return (6ch)
             |_cfg| {
+                Box::new(DigitalMux::new(
+                    SampleRate::new(HOST_RATE_HZ),
+                    BitDepth::new(BITS),
+                    8,
+                ))
+            }, // USB send (8ch)
+            |_cfg| {
+                Box::new(DigitalMux::new(
+                    SampleRate::new(HOST_RATE_HZ),
+                    BitDepth::new(BITS),
+                    2,
+                ))
+            }, // S/PDIF out (2ch)
+            |_cfg| scarlett_da(),            // monitor L DA
+            |_cfg| scarlett_da(),            // monitor R DA
+            |_cfg| scarlett_gain(),          // monitor L amp → Line Out 1
+            |_cfg| scarlett_gain(),          // monitor R amp → Line Out 2
+            |_cfg| scarlett_da(),            // line out 3 DA
+            |_cfg| scarlett_da(),            // line out 4 DA
+            |_cfg| scarlett_gain(),          // phones 1 amp
+            |_cfg| scarlett_gain(),          // phones 2 amp
+            |_cfg| Box::new(EventThru::new(64)),
+            // The routing matrix (Focusrite Control's mixer, gains only). 14 ins (2 preamp + 4 line +
+            // 2 S/PDIF + 6 USB return) × 14 outs (8 USB send + 4 line + 2 S/PDIF). Identity default:
+            // input i → output i — hardware inputs to USB sends (record), USB returns to the analog /
+            // S-PDIF outs (playback) — the standard interface routing, so behavior is unchanged until
+            // the user re-routes in the focus view.
+            |_cfg| {
+                let n = 14;
+                let mut d = vec![0.0; n * n];
+                for i in 0..n {
+                    d[i * n + i] = 1.0;
+                }
                 Box::new(Matrix::new(
                     SampleRate::new(HOST_RATE_HZ),
                     BitDepth::new(BITS),
-                    3,
-                    3,
-                    vec![
-                        1.0, 0.0, 0.0, // Pre 1 → USB 1
-                        0.0, 1.0, 0.0, // Pre 2 → USB 2
-                        0.0, 0.0, 1.0, // USB return → Monitor
-                    ],
+                    n,
+                    n,
+                    d,
                 ))
             },
-            |_cfg| {
-                Box::new(DaConverter::new(
-                    SampleRate::new(HOST_RATE_HZ),
-                    BitDepth::new(BITS),
-                    Volts::new(1.0),
-                    Ohms::new(150.0),
-                ))
-            },
-            |_cfg| {
-                Box::new(GainStage::new(
-                    1.0,
-                    Volts::new(10.0),
-                    InputZ::new(Ohms::new(10_000.0)),
-                    Ohms::new(150.0),
-                ))
-            },
-            |_cfg| {
-                Box::new(GainStage::new(
-                    1.0,
-                    Volts::new(10.0),
-                    InputZ::new(Ohms::new(10_000.0)),
-                    Ohms::new(150.0),
-                ))
-            },
-            |_cfg| Box::new(EventThru::new(64)),
         ],
-        // preamp → AD (×2) → matrix ins 0/1; matrix out 2 → DA → the monitor + phones amps. The
-        // matrix's in 2 (USB return) and outs 0/1 (USB sends) stay open — the exposed digital face.
+        // The internal chassis wiring. preamp→AD (×2); the 6 ADs + S/PDIF-in demux (2) + USB-return
+        // demux (6) feed the matrix's 14 inputs; the matrix's 14 outputs feed the USB-send mux (8), the
+        // monitor + line-out DAs (4), and the S/PDIF-out mux (2); each monitor DA fans to its line-out
+        // amp and a phones amp.
         internal: &[
+            // preamp → its AD
             InternalEdge {
                 from_node: 0,
                 from_port: 0,
@@ -903,43 +976,212 @@ const CATALOG: &[CatalogEntry] = &[
                 to_node: 3,
                 to_port: 0,
             },
+            // ADs (preamp 1/2, line 3–6) → matrix ins 0–5
             InternalEdge {
                 from_node: 2,
                 from_port: 0,
-                to_node: 4,
-                to_port: 0, // AD 1 → matrix in 0
+                to_node: 21,
+                to_port: 0,
             },
             InternalEdge {
                 from_node: 3,
                 from_port: 0,
-                to_node: 4,
-                to_port: 1, // AD 2 → matrix in 1
+                to_node: 21,
+                to_port: 1,
             },
             InternalEdge {
                 from_node: 4,
+                from_port: 0,
+                to_node: 21,
+                to_port: 2,
+            },
+            InternalEdge {
+                from_node: 5,
+                from_port: 0,
+                to_node: 21,
+                to_port: 3,
+            },
+            InternalEdge {
+                from_node: 6,
+                from_port: 0,
+                to_node: 21,
+                to_port: 4,
+            },
+            InternalEdge {
+                from_node: 7,
+                from_port: 0,
+                to_node: 21,
+                to_port: 5,
+            },
+            // S/PDIF-in demux (2ch) → matrix ins 6,7
+            InternalEdge {
+                from_node: 8,
+                from_port: 0,
+                to_node: 21,
+                to_port: 6,
+            },
+            InternalEdge {
+                from_node: 8,
+                from_port: 1,
+                to_node: 21,
+                to_port: 7,
+            },
+            // USB-return demux (6ch) → matrix ins 8–13
+            InternalEdge {
+                from_node: 9,
+                from_port: 0,
+                to_node: 21,
+                to_port: 8,
+            },
+            InternalEdge {
+                from_node: 9,
+                from_port: 1,
+                to_node: 21,
+                to_port: 9,
+            },
+            InternalEdge {
+                from_node: 9,
                 from_port: 2,
-                to_node: 5,
-                to_port: 0, // matrix out 2 (monitor feed) → DA
+                to_node: 21,
+                to_port: 10,
             },
             InternalEdge {
-                from_node: 5,
-                from_port: 0,
-                to_node: 6,
-                to_port: 0, // DA → monitor amp
+                from_node: 9,
+                from_port: 3,
+                to_node: 21,
+                to_port: 11,
             },
             InternalEdge {
-                from_node: 5,
-                from_port: 0,
-                to_node: 7,
-                to_port: 0, // DA → phones amp
+                from_node: 9,
+                from_port: 4,
+                to_node: 21,
+                to_port: 12,
             },
+            InternalEdge {
+                from_node: 9,
+                from_port: 5,
+                to_node: 21,
+                to_port: 13,
+            },
+            // matrix outs 0–7 → USB-send mux (8ch)
+            InternalEdge {
+                from_node: 21,
+                from_port: 0,
+                to_node: 10,
+                to_port: 0,
+            },
+            InternalEdge {
+                from_node: 21,
+                from_port: 1,
+                to_node: 10,
+                to_port: 1,
+            },
+            InternalEdge {
+                from_node: 21,
+                from_port: 2,
+                to_node: 10,
+                to_port: 2,
+            },
+            InternalEdge {
+                from_node: 21,
+                from_port: 3,
+                to_node: 10,
+                to_port: 3,
+            },
+            InternalEdge {
+                from_node: 21,
+                from_port: 4,
+                to_node: 10,
+                to_port: 4,
+            },
+            InternalEdge {
+                from_node: 21,
+                from_port: 5,
+                to_node: 10,
+                to_port: 5,
+            },
+            InternalEdge {
+                from_node: 21,
+                from_port: 6,
+                to_node: 10,
+                to_port: 6,
+            },
+            InternalEdge {
+                from_node: 21,
+                from_port: 7,
+                to_node: 10,
+                to_port: 7,
+            },
+            // matrix outs 8–11 → monitor + line-out DAs
+            InternalEdge {
+                from_node: 21,
+                from_port: 8,
+                to_node: 12,
+                to_port: 0,
+            },
+            InternalEdge {
+                from_node: 21,
+                from_port: 9,
+                to_node: 13,
+                to_port: 0,
+            },
+            InternalEdge {
+                from_node: 21,
+                from_port: 10,
+                to_node: 16,
+                to_port: 0,
+            },
+            InternalEdge {
+                from_node: 21,
+                from_port: 11,
+                to_node: 17,
+                to_port: 0,
+            },
+            // matrix outs 12,13 → S/PDIF-out mux (2ch)
+            InternalEdge {
+                from_node: 21,
+                from_port: 12,
+                to_node: 11,
+                to_port: 0,
+            },
+            InternalEdge {
+                from_node: 21,
+                from_port: 13,
+                to_node: 11,
+                to_port: 1,
+            },
+            // monitor DAs fan out to their line-out amp and a phones amp
+            InternalEdge {
+                from_node: 12,
+                from_port: 0,
+                to_node: 14,
+                to_port: 0,
+            }, // mon L → Line Out 1
+            InternalEdge {
+                from_node: 12,
+                from_port: 0,
+                to_node: 18,
+                to_port: 0,
+            }, // mon L → Phones 1
+            InternalEdge {
+                from_node: 13,
+                from_port: 0,
+                to_node: 15,
+                to_port: 0,
+            }, // mon R → Line Out 2
+            InternalEdge {
+                from_node: 13,
+                from_port: 0,
+                to_node: 19,
+                to_port: 0,
+            }, // mon R → Phones 2
         ],
-        // Ungrouped params, exposed in node order (each stage's `powered` is captured by the Power
-        // group below and hidden from this walk). Preamps expose gain + PAD + AIR; the matrix (node 4)
-        // contributes its 3×3 crosspoint grid; the monitor + phones amps expose gain. Exposed param
-        // ids: 0 Gain 1 · 1 Pad 1 · 2 Air 1 · 3 Gain 2 · 4 Pad 2 · 5 Air 2 · 6–14 the nine matrix
-        // crosspoints (row-major: Pre 1/Pre 2/USB-return × USB 1/USB 2/Mon) · 15 Monitor · 16 Phones ·
-        // 17 Power.
+        // Ungrouped hand-authored params, in node order (each stage's `powered` is captured by the
+        // Power group and hidden): the two preamps' gain/pad/air, then the two phones amps' gain. The
+        // matrix's 196 crosspoints are the trailing ungrouped params, **generated** by `param_grid`
+        // below (not hand-authored). Monitor is a group (the stereo monitor pair driven by one knob).
+        // Exposed ids: 0 Gain1 · 1 Pad1 · 2 Air1 · 3 Gain2 · 4 Pad2 · 5 Air2 · 6 Phones1 · 7 Phones2 ·
+        // 8–203 crosspoints · 204 Monitor · 205 Power.
         params: &[
             ParamUi {
                 label: "Gain 1",
@@ -971,86 +1213,72 @@ const CATALOG: &[CatalogEntry] = &[
                 unit: "",
                 kind: ParamKind::Switch,
             },
-            // The 3×3 routing-matrix crosspoints, row-major (input i → output j). Rendered as a grid in
-            // the Focusrite Control focus surface, not as individual faceplate knobs.
             ParamUi {
-                label: "Pre 1 → USB 1",
+                label: "Phones 1",
                 unit: "×",
                 kind: ParamKind::Knob,
             },
             ParamUi {
-                label: "Pre 1 → USB 2",
-                unit: "×",
-                kind: ParamKind::Knob,
-            },
-            ParamUi {
-                label: "Pre 1 → Mon",
-                unit: "×",
-                kind: ParamKind::Knob,
-            },
-            ParamUi {
-                label: "Pre 2 → USB 1",
-                unit: "×",
-                kind: ParamKind::Knob,
-            },
-            ParamUi {
-                label: "Pre 2 → USB 2",
-                unit: "×",
-                kind: ParamKind::Knob,
-            },
-            ParamUi {
-                label: "Pre 2 → Mon",
-                unit: "×",
-                kind: ParamKind::Knob,
-            },
-            ParamUi {
-                label: "USB → USB 1",
-                unit: "×",
-                kind: ParamKind::Knob,
-            },
-            ParamUi {
-                label: "USB → USB 2",
-                unit: "×",
-                kind: ParamKind::Knob,
-            },
-            ParamUi {
-                label: "USB → Mon",
-                unit: "×",
-                kind: ParamKind::Knob,
-            },
-            ParamUi {
-                label: "Monitor",
-                unit: "×",
-                kind: ParamKind::Knob,
-            },
-            ParamUi {
-                label: "Phones",
+                label: "Phones 2",
                 unit: "×",
                 kind: ParamKind::Knob,
             },
         ],
-        // One device-level power switch — a real 8i6 is a single powered unit. It gates every stage's
-        // `powered`: both preamps (MicPreamp id 1), both ADs (id 0), the DA (node 5, id 0), and the
-        // monitor + phones amps (nodes 6/7, GainStage id 1). The matrix has no power gate — an off
-        // device's ADs and DA are already silenced, so its sends and monitor go quiet regardless.
-        param_groups: &[ParamGroup {
-            ui: ParamUi {
-                label: "Power",
-                unit: "",
-                kind: ParamKind::Switch,
-            },
-            targets: &[
-                (0, MicPreamp::POWERED),
-                (1, MicPreamp::POWERED),
-                (2, AdConverter::POWERED),
-                (3, AdConverter::POWERED),
-                (5, DaConverter::POWERED),
-                (6, GainStage::POWERED),
-                (7, GainStage::POWERED),
+        // The routing matrix's crosspoints (node 21, the last param-contributing node): 14 inputs ×
+        // 14 outputs, labels generated as "input → output". Rendered as a grid in Focusrite Control.
+        param_grid: Some(GridSpec {
+            inputs: &[
+                "Pre 1", "Pre 2", "Line 3", "Line 4", "Line 5", "Line 6", "SPDIF L", "SPDIF R",
+                "DAW 1", "DAW 2", "DAW 3", "DAW 4", "DAW 5", "DAW 6",
             ],
-        }],
-        // Open inputs in node order: the two preamp inputs (front combo jacks), the matrix's third
-        // input (the digital "USB return" from the computer), and the MIDI in.
+            outputs: &[
+                "USB 1", "USB 2", "USB 3", "USB 4", "USB 5", "USB 6", "USB 7", "USB 8", "Line 1",
+                "Line 2", "Line 3", "Line 4", "SPDIF L", "SPDIF R",
+            ],
+            kind: ParamKind::Knob,
+            unit: "×",
+        }),
+        // Two groups. **Monitor** — the single monitor-level knob over the stereo monitor pair (both
+        // monitor amps' GAIN). **Power** — the whole unit's power over every stage's `powered`: both
+        // preamps (id 1), the 6 ADs (id 0), the 4 DAs (id 0), and the 4 output amps (id 1). The matrix
+        // has no power gate — an off device's ADs/DAs are already silenced, so every output goes quiet.
+        param_groups: &[
+            ParamGroup {
+                ui: ParamUi {
+                    label: "Monitor",
+                    unit: "×",
+                    kind: ParamKind::Knob,
+                },
+                targets: &[(14, GainStage::GAIN), (15, GainStage::GAIN)],
+            },
+            ParamGroup {
+                ui: ParamUi {
+                    label: "Power",
+                    unit: "",
+                    kind: ParamKind::Switch,
+                },
+                targets: &[
+                    (0, MicPreamp::POWERED),
+                    (1, MicPreamp::POWERED),
+                    (2, AdConverter::POWERED),
+                    (3, AdConverter::POWERED),
+                    (4, AdConverter::POWERED),
+                    (5, AdConverter::POWERED),
+                    (6, AdConverter::POWERED),
+                    (7, AdConverter::POWERED),
+                    (12, DaConverter::POWERED),
+                    (13, DaConverter::POWERED),
+                    (16, DaConverter::POWERED),
+                    (17, DaConverter::POWERED),
+                    (14, GainStage::POWERED),
+                    (15, GainStage::POWERED),
+                    (18, GainStage::POWERED),
+                    (19, GainStage::POWERED),
+                ],
+            },
+        ],
+        // Open inputs in node order: 2 combo (front), 4 line ins (rear), S/PDIF in (2ch), USB return
+        // (6ch), MIDI in.
         inputs: &[
             PortUi {
                 label: "In 1",
@@ -1063,6 +1291,31 @@ const CATALOG: &[CatalogEntry] = &[
                 connector: Connector::Combo,
             },
             PortUi {
+                label: "Line In 3",
+                kind: PortKind::Line,
+                connector: Connector::QuarterInch,
+            },
+            PortUi {
+                label: "Line In 4",
+                kind: PortKind::Line,
+                connector: Connector::QuarterInch,
+            },
+            PortUi {
+                label: "Line In 5",
+                kind: PortKind::Line,
+                connector: Connector::QuarterInch,
+            },
+            PortUi {
+                label: "Line In 6",
+                kind: PortKind::Line,
+                connector: Connector::QuarterInch,
+            },
+            PortUi {
+                label: "S/PDIF In",
+                kind: PortKind::Digital,
+                connector: Connector::Spdif,
+            },
+            PortUi {
                 label: "USB In",
                 kind: PortKind::Digital,
                 connector: Connector::Usb,
@@ -1073,26 +1326,46 @@ const CATALOG: &[CatalogEntry] = &[
                 connector: Connector::Din5,
             },
         ],
-        // Open outputs in node order: the matrix's first two outputs (the "USB sends" to the
-        // computer), the monitor line out, the headphone out (drawn on the front), and the MIDI out.
+        // Open outputs in node order: USB send (8ch), S/PDIF out (2ch), line outs 1–4, phones 1–2
+        // (mirroring the monitor pair, mono), MIDI out.
         outputs: &[
             PortUi {
-                label: "USB 1",
+                label: "USB Out",
                 kind: PortKind::Digital,
                 connector: Connector::Usb,
             },
             PortUi {
-                label: "USB 2",
+                label: "S/PDIF Out",
                 kind: PortKind::Digital,
-                connector: Connector::Usb,
+                connector: Connector::Spdif,
             },
             PortUi {
-                label: "Line Out",
+                label: "Line Out 1",
                 kind: PortKind::Line,
                 connector: Connector::QuarterInch,
             },
             PortUi {
-                label: "Phones",
+                label: "Line Out 2",
+                kind: PortKind::Line,
+                connector: Connector::QuarterInch,
+            },
+            PortUi {
+                label: "Line Out 3",
+                kind: PortKind::Line,
+                connector: Connector::QuarterInch,
+            },
+            PortUi {
+                label: "Line Out 4",
+                kind: PortKind::Line,
+                connector: Connector::QuarterInch,
+            },
+            PortUi {
+                label: "Phones 1",
+                kind: PortKind::Line,
+                connector: Connector::QuarterInch,
+            },
+            PortUi {
+                label: "Phones 2",
                 kind: PortKind::Line,
                 connector: Connector::QuarterInch,
             },
@@ -1342,22 +1615,37 @@ fn describe(entry: &CatalogEntry) -> DeviceDescriptor {
     // param (`BuiltScene::param(device, id)` indexes the exposed handle vec), not the node-local
     // `ParamId`. For a multi-node device the two differ: `channel_strip`'s stages both expose
     // `ParamId` 0/1, so node-local ids would collide at `[0,1,0,1]` and misaddress the second stage.
-    // The UI list is the ungrouped labels ++ the group labels, in the same order `expand` lays out
-    // the exposed face (ungrouped in node order, then groups in declaration order).
-    let param_ui = entry
+    // The UI list is, in the same order `expand` lays out the exposed face (ungrouped in node order,
+    // then groups): the hand-authored ungrouped labels, then the **generated matrix crosspoints** (the
+    // matrix is the last param-contributing node, so its params trail the ungrouped face), then the
+    // group labels. Each entry is `(label, unit, kind)`.
+    let mut param_ui: Vec<(String, String, ParamKind)> = entry
         .params
         .iter()
-        .chain(entry.param_groups.iter().map(|g| &g.ui));
+        .map(|ui| (ui.label.to_owned(), ui.unit.to_owned(), ui.kind))
+        .collect();
+    if let Some(grid) = &entry.param_grid {
+        param_ui.extend(
+            grid.labels()
+                .map(|label| (label, grid.unit.to_owned(), grid.kind)),
+        );
+    }
+    param_ui.extend(
+        entry
+            .param_groups
+            .iter()
+            .map(|g| (g.ui.label.to_owned(), g.ui.unit.to_owned(), g.ui.kind)),
+    );
     let params = face
         .params
         .iter()
         .zip(param_ui)
         .enumerate()
-        .map(|(i, (p, ui))| ParamDescriptor {
+        .map(|(i, (p, (label, unit, kind)))| ParamDescriptor {
             id: i as u32,
-            label: ui.label.to_owned(),
-            unit: ui.unit.to_owned(),
-            kind: ui.kind,
+            label,
+            unit,
+            kind,
             min: p.min,
             max: p.max,
             default: p.default,
@@ -1443,9 +1731,14 @@ mod tests {
     fn catalog_aligns_with_exposed_face() {
         for entry in CATALOG {
             let face = expand(entry, &DeviceConfig::EMPTY);
-            // The exposed param face is the ungrouped UIs ++ one entry per group.
+            // The exposed param face is the ungrouped UIs ++ the generated matrix crosspoints ++ one
+            // entry per group.
+            let grid = entry
+                .param_grid
+                .as_ref()
+                .map_or(0, |g| g.inputs.len() * g.outputs.len());
             assert_eq!(
-                entry.params.len() + entry.param_groups.len(),
+                entry.params.len() + grid + entry.param_groups.len(),
                 face.params.len(),
                 "{} params",
                 entry.type_id
@@ -1633,104 +1926,107 @@ mod tests {
         assert_eq!(spk.outputs, vec![(spk.nodes[0], 0)]);
     }
 
-    /// The Scarlett 8i6 — the mixed-face interface — expands into its nine internal nodes wired by
-    /// seven internal edges (two preamp→AD, both ADs → the routing matrix, the matrix's monitor output
-    /// → DA, and the DA **fanning out** to the monitor + phones amps), and its exposed face maps to the
-    /// right `(NodeId, …)` in node order. Pins the non-trivial remap: device inputs are preamp 1/2, the
-    /// matrix's USB return, and MIDI-in; device outputs are the matrix's two USB sends, the monitor +
-    /// phones analog outs, and MIDI-out; the exposed params are each `MicPreamp`'s gain/pad/air, the
-    /// matrix's 3×3 crosspoints, the monitor + phones gains, then one **Power group** over every stage's
-    /// `powered` (the matrix has none).
+    /// The full Scarlett 8i6 expands into its 22 internal nodes wired by 34 internal edges, and its
+    /// exposed face maps to the right `(NodeId, …)`. This pins the big remap: 9 inputs (2 combo, 4 line,
+    /// S/PDIF, USB return, MIDI-in), 9 outputs (USB send, S/PDIF, 4 line, 2 phones, MIDI-out), and the
+    /// param face — the preamp + phones controls, the 196 matrix crosspoints, the Monitor group, and the
+    /// Power group over all 16 powered stages. The param map is spot-checked at its boundaries (the full
+    /// enumeration would be 206 entries).
     #[test]
     fn scarlett_8i6_expands_with_mixed_face_io() {
         let mut g = Graph::new();
         let dev = instantiate("scarlett_8i6", &DeviceConfig::EMPTY, &mut g)
             .expect("scarlett_8i6 is in the catalog");
+        let n = &dev.nodes;
 
-        assert_eq!(dev.nodes.len(), 9, "nine internal nodes (matrix added)");
-        assert_eq!(
-            g.connection_count(),
-            7,
-            "seven internal edges (2 preamp→AD, 2 AD→matrix, matrix→DA, DA fanned to monitor + phones)"
-        );
+        assert_eq!(n.len(), 22, "22 internal nodes");
+        assert_eq!(g.connection_count(), 34, "34 internal edges");
 
-        // Inputs, in node order: preamp 1/2 inputs, the matrix's USB return (in 2), MIDI-in.
+        // Inputs: 2 preamps, 4 line-in ADs, S/PDIF-in demux, USB-return demux, MIDI-in (in node order).
         assert_eq!(
             dev.inputs,
             vec![
-                (dev.nodes[0], 0),
-                (dev.nodes[1], 0),
-                (dev.nodes[4], 2),
-                (dev.nodes[8], 0),
+                (n[0], 0),
+                (n[1], 0),
+                (n[4], 0),
+                (n[5], 0),
+                (n[6], 0),
+                (n[7], 0),
+                (n[8], 0),
+                (n[9], 0),
+                (n[20], 0),
             ]
         );
-        // Outputs, in node order: the matrix's two USB sends (out 0/1), the monitor + phones analog
-        // outs, MIDI-out — the matrix outputs still walk before the amps, so the ids are unchanged.
+        // Outputs: USB-send mux, S/PDIF-out mux, monitor amps (Line 1/2), line-out DAs (3/4), phones
+        // amps, MIDI-out.
         assert_eq!(
             dev.outputs,
             vec![
-                (dev.nodes[4], 0),
-                (dev.nodes[4], 1),
-                (dev.nodes[6], 0),
-                (dev.nodes[7], 0),
-                (dev.nodes[8], 0),
+                (n[10], 0),
+                (n[11], 0),
+                (n[14], 0),
+                (n[15], 0),
+                (n[16], 0),
+                (n[17], 0),
+                (n[18], 0),
+                (n[19], 0),
+                (n[20], 0),
             ]
         );
-        // Exposed params, ungrouped in node order then the group: each preamp's GAIN (0)/PAD (2)/AIR
-        // (3) — POWERED (1) grouped; the matrix's nine crosspoints (ParamId 0..8, on node 4); the
-        // monitor + phones GAIN (0); then the Power group over every `powered` (the matrix has none).
-        let matrix = dev.nodes[4];
+        // Param face boundaries: 8 hand-authored ungrouped + 196 crosspoints + Monitor + Power = 206.
+        assert_eq!(dev.params.len(), 206);
         assert_eq!(
-            dev.params,
-            vec![
-                vec![(dev.nodes[0], ParamId(0))], // Gain 1
-                vec![(dev.nodes[0], ParamId(2))], // Pad 1
-                vec![(dev.nodes[0], ParamId(3))], // Air 1
-                vec![(dev.nodes[1], ParamId(0))], // Gain 2
-                vec![(dev.nodes[1], ParamId(2))], // Pad 2
-                vec![(dev.nodes[1], ParamId(3))], // Air 2
-                vec![(matrix, ParamId(0))],       // crosspoint Pre1→USB1
-                vec![(matrix, ParamId(1))],       // Pre1→USB2
-                vec![(matrix, ParamId(2))],       // Pre1→Mon
-                vec![(matrix, ParamId(3))],       // Pre2→USB1
-                vec![(matrix, ParamId(4))],       // Pre2→USB2
-                vec![(matrix, ParamId(5))],       // Pre2→Mon
-                vec![(matrix, ParamId(6))],       // USB→USB1
-                vec![(matrix, ParamId(7))],       // USB→USB2
-                vec![(matrix, ParamId(8))],       // USB→Mon
-                vec![(dev.nodes[6], ParamId(0))], // Monitor
-                vec![(dev.nodes[7], ParamId(0))], // Phones
-                vec![
-                    (dev.nodes[0], ParamId(1)),
-                    (dev.nodes[1], ParamId(1)),
-                    (dev.nodes[2], ParamId(0)),
-                    (dev.nodes[3], ParamId(0)),
-                    (dev.nodes[5], ParamId(0)),
-                    (dev.nodes[6], ParamId(1)),
-                    (dev.nodes[7], ParamId(1)),
-                ], // Power
-            ]
+            dev.params[0],
+            vec![(n[0], ParamId(0))],
+            "id 0 = preamp 1 Gain"
         );
+        assert_eq!(
+            dev.params[6],
+            vec![(n[18], ParamId(0))],
+            "id 6 = phones 1 amp Gain"
+        );
+        assert_eq!(
+            dev.params[7],
+            vec![(n[19], ParamId(0))],
+            "id 7 = phones 2 amp Gain"
+        );
+        // Crosspoints 8..=203 are all on the matrix (node 21), ParamId 0..=195, in order.
+        assert_eq!(dev.params[8], vec![(n[21], ParamId(0))], "first crosspoint");
+        assert_eq!(
+            dev.params[203],
+            vec![(n[21], ParamId(195))],
+            "last crosspoint"
+        );
+        // Monitor group (id 204): the two monitor amps' GAIN. Power group (id 205): all 16 `powered`.
+        assert_eq!(
+            dev.params[204],
+            vec![(n[14], ParamId(0)), (n[15], ParamId(0))],
+            "Monitor group over the monitor pair"
+        );
+        assert_eq!(dev.params[205].len(), 16, "Power group over all 16 stages");
     }
 
-    /// The 8i6's routing matrix defaults to the **identity** — Pre 1 → USB 1, Pre 2 → USB 2, USB
-    /// return → Monitor — reproducing the pre-matrix fixed routing, so behavior is unchanged until the
-    /// user re-routes. The nine crosspoints are exposed params 6..=14 (after the preamp controls); the
-    /// three diagonal cells default to 1.0 and the other six to 0.0.
+    /// The 8i6's routing matrix defaults to the **identity** — input i → output i (hardware inputs to
+    /// USB sends, USB returns to the analog / S-PDIF outs) — reproducing the standard fixed routing, so
+    /// behavior is unchanged until the user re-routes. The 196 crosspoints are exposed params 8..=203
+    /// (14×14, after the 8 hand-authored params); the diagonal cells default to 1.0, the rest to 0.0.
     #[test]
     fn scarlett_8i6_matrix_defaults_to_fixed_routing() {
         let dev = descriptors()
             .into_iter()
             .find(|d| d.type_id == "scarlett_8i6")
             .expect("scarlett_8i6 is in the catalog");
-        // Exposed crosspoint ids: 6 (0,0) · 7 (0,1) · 8 (0,2) · 9 (1,0) · 10 (1,1) · 11 (1,2) ·
-        // 12 (2,0) · 13 (2,1) · 14 (2,2). Diagonal (6, 10, 14) = unity, the rest muted.
-        let defaults: Vec<f32> = (6..=14).map(|id| dev.params[id].default).collect();
-        assert_eq!(
-            defaults,
-            vec![1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0],
-            "identity routing reproduces the fixed preamp→USB / USB→monitor paths"
-        );
+        let n = 14;
+        for i in 0..n {
+            for j in 0..n {
+                let id = 8 + i * n + j; // crosspoint (i, j) exposed id
+                let expected = if i == j { 1.0 } else { 0.0 };
+                assert_eq!(
+                    dev.params[id].default, expected,
+                    "crosspoint ({i} → {j}) at id {id}"
+                );
+            }
+        }
     }
 
     /// An unknown type id has no entry — `instantiate` returns `None` (no nodes added), the lookup
