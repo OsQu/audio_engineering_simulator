@@ -11,7 +11,13 @@
 // the faceplate owns *how* it's drawn and references it by id.
 
 import { getContext, setContext } from "svelte";
-import type { ParamDescriptor, PortDescriptor, PortDirection, ReadoutDescriptor } from "./catalog";
+import type {
+  ConfigDescriptor,
+  ParamDescriptor,
+  PortDescriptor,
+  PortDirection,
+  ReadoutDescriptor,
+} from "./catalog";
 
 /** Everything a faceplate (and its bound widgets) needs to bind by id and drive the live engine. */
 export interface DeviceHandle {
@@ -29,6 +35,13 @@ export interface DeviceHandle {
   port(dir: PortDirection, id: number): PortDescriptor | undefined;
   /** The descriptor for a readout id, or `undefined` if absent. */
   readout(id: number): ReadoutDescriptor | undefined;
+  /** Current value of a **structural config** key (falls back to its build default). */
+  config(key: string): number;
+  /** Set a structural config key — edits the scene and triggers a rebuild (recompile), *not* a smoothed
+   *  param set. Use for INST/hi-Z and other build-time toggles. */
+  setConfig(key: string, value: number): void;
+  /** The descriptor for a config key, or `undefined` if the device has no such config. */
+  configDesc(key: string): ConfigDescriptor | undefined;
 }
 
 /** The reactive props any faceplate receives that a handle reads from — the id → engine closures plus
@@ -38,9 +51,12 @@ export interface HandleSource {
   params: ParamDescriptor[];
   ports: PortDescriptor[];
   readouts?: ReadoutDescriptor[];
+  configs?: ConfigDescriptor[];
   valueFor: (id: number) => number;
   readingFor?: (id: number) => number;
   onParam: (p: ParamDescriptor, value: number) => void;
+  configFor?: (key: string) => number;
+  onConfig?: (key: string, value: number) => void;
 }
 
 /** Build a `DeviceHandle` from a faceplate's (reactive) props. Every method reads `src` at call time, so
@@ -59,6 +75,9 @@ export function makeHandle(src: HandleSource): DeviceHandle {
     param: (id) => src.params.find((x) => x.id === id),
     port: (dir, id) => src.ports.find((x) => x.direction === dir && x.id === id),
     readout: (id) => (src.readouts ?? []).find((x) => x.id === id),
+    config: (key) => src.configFor?.(key) ?? 0,
+    setConfig: (key, v) => src.onConfig?.(key, v),
+    configDesc: (key) => (src.configs ?? []).find((x) => x.key === key),
   };
 }
 

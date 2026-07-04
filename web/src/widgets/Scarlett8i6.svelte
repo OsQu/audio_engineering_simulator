@@ -2,18 +2,22 @@
   // A simplified Focusrite Scarlett 8i6 faceplate — the proving device for the per-device UI system
   // (Story 5.7). It composes the shared bound widgets (Control/Socket) inside Chassis with its own scoped
   // CSS, and lays its I/O across BOTH faces: the **front** carries the two combo inputs with their gain
-  // knobs plus the monitor + headphone controls and the headphone jack; the **back** carries the line
-  // out, the USB send/return, MIDI, and the single power switch (a Rust param group over every stage's
-  // `powered`). The signature red chassis comes
-  // from the skin `accent` (Chassis outline + top-view tile). Faces are just which snippet a jack is
-  // written in — no per-port face resolver. INST/AIR/PAD/48V are intentionally omitted (not honestly
-  // modelable yet — see docs/IMPROVEMENTS.md). Exposed ids come from the Rust `scarlett_8i6` entry.
+  // knobs, per-channel INST/AIR/PAD indicator LEDs, and the monitor + headphone controls + headphone
+  // jack; the **back** carries the line out, the USB send/return, MIDI, and the single power switch (a
+  // Rust param group over every stage's `powered`). The signature red chassis comes from the skin
+  // `accent` (Chassis outline + top-view tile). Faces are just which snippet a jack is written in — no
+  // per-port face resolver. INST/AIR/PAD are **software-controlled** on the real 2nd-gen 8i6 (Focusrite
+  // Control): the front panel shows only indicator LEDs — the actual toggles live in the device's focus
+  // surface (FocusriteControl.svelte). 48V is still omitted (phantom not modeled). Exposed ids come from
+  // the Rust `scarlett_8i6` entry: 0 Gain1 · 1 Pad1 · 2 Air1 · 3 Gain2 · 4 Pad2 · 5 Air2 · 6 Monitor ·
+  // 7 Phones · 8 Power; Pad/Air are placed by the focus surface, so the guardrail unions both surfaces.
   import { untrack } from "svelte";
   import type { DeviceUiProps } from "../device-ui";
   import { makeHandle } from "../device-handle";
   import { skinFor } from "../skin";
   import Chassis from "./Chassis.svelte";
   import Control from "./Control.svelte";
+  import Led from "./Led.svelte";
   import Legend from "./Legend.svelte";
   import Socket from "./Socket.svelte";
 
@@ -26,28 +30,40 @@
 <Chassis {handle} flipped={props.flipped} finish={skin.finish} accent={skin.accent}>
   {#snippet front()}
     <div class="front">
-      <!-- Two combo channels: gain knob above its input jack. -->
+      <!-- Two combo channels: gain knob, INST/AIR/PAD indicator LEDs (lit from config/param state;
+           toggled in Focusrite Control), then the input jack. Written out per channel with **literal**
+           ids so the faceplate guardrail can confirm each control/jack is placed and reachable. -->
       <div class="channel">
         <Control id={0} cap="dark" />
         <Legend text="Gain 1" />
+        <div class="leds">
+          <Led on={handle.config("inst1") >= 0.5} label="Inst" />
+          <Led on={handle.value(2) >= 0.5} label="Air" />
+          <Led on={handle.value(1) >= 0.5} label="Pad" />
+        </div>
         <Socket dir="input" id={0} />
       </div>
       <div class="channel">
-        <Control id={1} cap="dark" />
+        <Control id={3} cap="dark" />
         <Legend text="Gain 2" />
+        <div class="leds">
+          <Led on={handle.config("inst2") >= 0.5} label="Inst" />
+          <Led on={handle.value(5) >= 0.5} label="Air" />
+          <Led on={handle.value(4) >= 0.5} label="Pad" />
+        </div>
         <Socket dir="input" id={1} />
       </div>
 
       <!-- Monitor: the big centre knob. -->
       <div class="section monitor">
         <Legend text="Monitor" />
-        <div class="big"><Control id={2} cap="dark" /></div>
+        <div class="big"><Control id={6} cap="dark" /></div>
       </div>
 
       <!-- Headphones: level + the front headphone jack. -->
       <div class="section">
         <Legend text="◎ Phones" />
-        <Control id={3} cap="dark" />
+        <Control id={7} cap="dark" />
         <Socket dir="output" id={3} />
       </div>
 
@@ -79,7 +95,7 @@
       <div class="section">
         <Legend text="Power" />
         <!-- One switch for the whole unit — a real 8i6 is a single powered device (Rust param group). -->
-        <Control id={4} />
+        <Control id={8} />
       </div>
     </div>
   {/snippet}
@@ -112,6 +128,12 @@
     flex-direction: row;
     align-items: center;
     gap: clamp(2px, 1.5cqw, 0.5rem);
+  }
+  /* The per-channel INST/AIR/PAD indicator lamps, in a tight row under the gain legend. */
+  .leds {
+    display: flex;
+    flex-direction: row;
+    gap: clamp(1px, 1cqw, 0.3rem);
   }
   /* The monitor knob reads as the hero control. */
   .big {

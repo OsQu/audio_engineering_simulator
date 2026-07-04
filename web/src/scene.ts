@@ -22,6 +22,9 @@ export interface DeviceInstance {
   typeId: string;
   /** Param values to apply after build. Omit for construction defaults. */
   params?: ParamSetting[];
+  /** Structural config values (e.g. a preamp's `inst1` hi-Z toggle). Consumed at *build* — a change
+   *  recompiles. Omit for the device's catalog defaults. */
+  config?: ConfigSetting[];
 }
 
 /** A value for one of a device's smoothed control params, by exposed param id (its position in the exposed list). */
@@ -29,6 +32,16 @@ export interface ParamSetting {
   /** Exposed param id — its position in the device's exposed param list (matches `ParamDescriptor.id`). */
   id: number;
   /** Target value; clamped to the param's declared range when applied. */
+  value: number;
+}
+
+/** A value for one of a device's structural config keys (matches `ConfigDescriptor.key`). A scalar —
+ *  a toggle is 0/1. Applied at build (selects which node/impedance is constructed), so a change
+ *  recompiles. */
+export interface ConfigSetting {
+  /** Structural config key (matches `ConfigDescriptor.key`). */
+  key: string;
+  /** Value selecting the structural choice; a toggle is 0 (off) / 1 (on). */
   value: number;
 }
 

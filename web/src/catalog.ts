@@ -21,7 +21,25 @@ export interface DeviceDescriptor {
   /** Scalar readouts (meter values read back over the node→host lane), in id order. Empty for a
    *  device that measures nothing. */
   readouts: ReadoutDescriptor[];
+  /** Structural config toggles (e.g. a preamp's INST/hi-Z), which the UI renders and whose change
+   *  triggers a rebuild. Empty for a device with no structural options. */
+  configs: ConfigDescriptor[];
 }
+
+/** One structural config option: a key, a UI label, the control kind, and the value the device builds
+ *  with when unset. Unlike a param (a smoothed runtime value), a config selects *how the device is
+ *  built* — changing it recompiles the patch. */
+export interface ConfigDescriptor {
+  /** Structural config key — what a scene's `ConfigSetting` addresses. */
+  key: string;
+  label: string;
+  kind: ConfigKind;
+  /** Value the device builds with when the instance leaves this key unset. */
+  default: number;
+}
+
+/** Suggested control widget for a structural config option. */
+export type ConfigKind = "toggle";
 
 /** A device's physical form factor and size (content, authored on the Rust catalog). Internally
  *  tagged by `kind`, matching the Rust `#[serde(tag = "kind")]` enum. Rackmount gear occupies U-slots
@@ -125,4 +143,9 @@ export function descriptorFor(
 /** Whether a descriptor presents an event (MIDI/note) input — i.e. it's a playable instrument. */
 export function isPlayable(desc: DeviceDescriptor): boolean {
   return desc.ports.some((p) => p.domain === "events" && p.direction === "input");
+}
+
+/** The build-time default for a structural config key, or `0` if the device has no such config. */
+export function configDefault(desc: DeviceDescriptor, key: string): number {
+  return desc.configs.find((c) => c.key === key)?.default ?? 0;
 }

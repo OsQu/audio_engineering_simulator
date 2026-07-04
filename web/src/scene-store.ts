@@ -12,10 +12,10 @@ import type { Patch } from "./scene";
 import type { Room, Vec3, Wall } from "./spatial";
 
 /** Current save-format version. A saved scene at any other version is discarded (no migration). Bumped
- *  to 11 when the 8i6's exposed param face collapsed from 8 (per-stage gain+power) to 5 (four gains +
- *  one device-level Power group) in Task 5.7.5: a stale v10 save's 8i6 `ParamSetting` ids no longer map,
- *  so it's discarded rather than mis-applied. */
-export const SCHEMA_VERSION = 11;
+ *  to 12 in Task 5.7.6: the 8i6's preamps became `MicPreamp`s, so its exposed param face grew to 9
+ *  (per-channel gain/pad/air + monitor/phones + Power) and it gained `inst1`/`inst2` structural config
+ *  — a stale v11 save's 8i6 param ids no longer map, so it's discarded rather than mis-applied. */
+export const SCHEMA_VERSION = 12;
 
 /** A space (room) in the studio — a UI grouping over the one engine graph (the engine never knows
  *  about rooms). A space is a **rectangular room**: gear stands against one of four walls, each an
@@ -249,4 +249,15 @@ export function setSceneParam(scene: Scene, device: string, paramId: number, val
   const existing = dev.params.find((p) => p.id === paramId);
   if (existing) existing.value = value;
   else dev.params.push({ id: paramId, value });
+}
+
+/** Set a device's **structural config** value in the scene, creating the entry if needed. Unlike a
+ * param, this changes how the device is *built*, so the caller must rebuild the engine (hot-swap). */
+export function setSceneConfig(scene: Scene, device: string, key: string, value: number): void {
+  const dev = scene.patch.devices.find((d) => d.id === device);
+  if (!dev) return;
+  dev.config ??= [];
+  const existing = dev.config.find((c) => c.key === key);
+  if (existing) existing.value = value;
+  else dev.config.push({ key, value });
 }

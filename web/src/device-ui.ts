@@ -11,8 +11,14 @@
 // maps a focusable type to its surface component.
 
 import type { Component } from "svelte";
-import type { ParamDescriptor, PortDescriptor, ReadoutDescriptor } from "./catalog";
+import type {
+  ConfigDescriptor,
+  ParamDescriptor,
+  PortDescriptor,
+  ReadoutDescriptor,
+} from "./catalog";
 import Console from "./widgets/Console.svelte";
+import FocusriteControl from "./widgets/FocusriteControl.svelte";
 import Panel from "./widgets/Panel.svelte";
 import Scarlett8i6 from "./widgets/Scarlett8i6.svelte";
 import SynthVoice from "./widgets/SynthVoice.svelte";
@@ -29,11 +35,16 @@ export interface DeviceUiProps {
   params: ParamDescriptor[];
   ports: PortDescriptor[];
   readouts?: ReadoutDescriptor[];
+  configs?: ConfigDescriptor[];
   /** Whether the back panel faces the operator. */
   flipped?: boolean;
   valueFor: (id: number) => number;
   readingFor?: (id: number) => number;
   onParam: (p: ParamDescriptor, value: number) => void;
+  /** Current value of a structural config key (build default if unset). */
+  configFor?: (key: string) => number;
+  /** Set a structural config key — edits the scene and rebuilds the engine (recompile). */
+  onConfig?: (key: string, value: number) => void;
 }
 
 /** In-world faceplates by type; a device without one falls back to the generic `Panel`. */
@@ -51,6 +62,7 @@ export function deviceUi(typeId: string): Component<DeviceUiProps> {
  *  `DEDICATED_FOCUS_SURFACES` (the focusability authority). A type not listed reuses its faceplate. */
 const FOCUS_SURFACES: Record<string, Component<DeviceUiProps>> = {
   channel_strip: Console,
+  scarlett_8i6: FocusriteControl,
 };
 
 /** The focus-surface component for a device type — its dedicated surface, else its in-world faceplate. */

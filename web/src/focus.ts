@@ -9,7 +9,7 @@ import { type DeviceDescriptor, isPlayable } from "./catalog";
  *  focusability authority for non-playable devices; the matching typeId → component map is
  *  `FOCUS_SURFACES` in device-ui.ts (keep the two in sync). A playable device (an events input) already
  *  earns a keybed surface for free, so this table lists only the exceptions. */
-const DEDICATED_FOCUS_SURFACES: ReadonlySet<string> = new Set(["channel_strip"]);
+const DEDICATED_FOCUS_SURFACES: ReadonlySet<string> = new Set(["channel_strip", "scarlett_8i6"]);
 
 /** Whether a device opens a focus surface when clicked: a playable device gets a keybed (derived from
  *  its events input, so no per-type list to maintain), and a listed type opens its dedicated surface. */

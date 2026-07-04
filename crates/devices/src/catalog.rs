@@ -797,8 +797,8 @@ const CATALOG: &[CatalogEntry] = &[
         type_id: "scarlett_8i6",
         name: "Scarlett 8i6",
         form_factor: FormFactor::Desktop {
-            width_mm: 210.0,
-            height_mm: 50.0,
+            width_mm: 810.0,
+            height_mm: 150.0,
             depth_mm: 150.0,
         },
         // Node order fixes the exposed-face order (open ports + concatenated params, in node order):

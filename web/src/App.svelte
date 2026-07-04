@@ -5,7 +5,7 @@
   // skeuomorphic panel widgets land in Story 4.2.3. Generic by device id throughout.
 
   import type { CableType, DeviceDescriptor, ParamDescriptor, PortDomain, PortKind } from "./catalog";
-  import { descriptorFor, isPlayable } from "./catalog";
+  import { configDefault, descriptorFor, isPlayable } from "./catalog";
   import { deviceUi, focusUi } from "./device-ui";
   import { isFocusable } from "./focus";
   import { skinFor } from "./skin";
@@ -21,7 +21,14 @@
   import type { ConnectVerdict } from "./connections";
   import type { Connection, Patch, PortRef } from "./scene";
   import { DEFAULT_VELOCITY } from "./notes";
-  import { defaultScene, loadScene, type Scene, saveScene, setSceneParam } from "./scene-store";
+  import {
+    defaultScene,
+    loadScene,
+    type Scene,
+    saveScene,
+    setSceneConfig,
+    setSceneParam,
+  } from "./scene-store";
   import {
     deviceById,
     effectiveFacing,
@@ -438,6 +445,20 @@
     paramValues[key(device, p.id)] = value;
     setSceneParam(scene, device, p.id, value);
     send?.({ type: "param", device, paramId: p.id, value });
+  }
+
+  // A structural config's current value in the scene, falling back to the descriptor's build default —
+  // the mirror of `paramValue` for the (recompile-on-change) config lane.
+  const configValue = (deviceId: string, desc: DeviceDescriptor, key: string): number => {
+    const set = deviceById(scene, deviceId)?.config?.find((c) => c.key === key);
+    return set?.value ?? configDefault(desc, key);
+  };
+
+  // A structural config toggle (INST/hi-Z): unlike a knob, this changes how the device is *built*, so it
+  // edits the scene and rebuilds the engine (the same hot-swap repatching uses) rather than a live param.
+  function onConfigInput(device: string, key: string, value: number): void {
+    setSceneConfig(scene, device, key, value);
+    hotSwap();
   }
 
   // A structural edit → rebuild the engine from the new patch (compile + ScheduleSlot hot-swap, in the
@@ -923,10 +944,13 @@
                 params={desc.params}
                 ports={desc.ports}
                 readouts={desc.readouts}
+                configs={desc.configs}
                 flipped={effectiveFacing(scene, device.id) === "back"}
                 valueFor={(id) => paramValue(device.id, desc, id)}
                 readingFor={(id) => readingFor(device.id, id)}
                 onParam={(p, v) => onParamInput(device.id, p, v)}
+                configFor={(k) => configValue(device.id, desc, k)}
+                onConfig={(k, v) => onConfigInput(device.id, k, v)}
               />
             {/if}
           {/if}
@@ -1017,9 +1041,12 @@
                 params={f.desc.params}
                 ports={f.desc.ports}
                 readouts={f.desc.readouts}
+                configs={f.desc.configs}
                 valueFor={(id) => paramValue(f.device.id, f.desc, id)}
                 readingFor={(id) => readingFor(f.device.id, id)}
                 onParam={(p, v) => onParamInput(f.device.id, p, v)}
+                configFor={(k) => configValue(f.device.id, f.desc, k)}
+                onConfig={(k, v) => onConfigInput(f.device.id, k, v)}
               />
               {#if isPlayable(f.desc)}
                 <!-- The keybed = the device's open events input, drawn on-screen. Disabled when the input
