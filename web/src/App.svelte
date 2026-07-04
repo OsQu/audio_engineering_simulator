@@ -9,14 +9,8 @@
   import { deviceUi, focusUi } from "./device-ui";
   import { isFocusable } from "./focus";
   import { skinFor } from "./skin";
-  import {
-    type ControlMessage,
-    healthSummary,
-    type ReadyMessage,
-    startEngine,
-    wireKeyboard,
-    wireMidi,
-  } from "./engine";
+  import { wireKeyboard, wireMidi } from "./engine";
+  import { SceneSession } from "./session.svelte";
   import { cablePathData, cableTypeIdFor } from "./connections";
   import type { ConnectVerdict } from "./connections";
   import type { Connection, Patch, PortRef } from "./scene";
@@ -53,48 +47,17 @@
   import WorldView from "./widgets/WorldView.svelte";
   import type { WorldApi } from "./widgets/WorldView.svelte";
 
-  let status = $state("idle");
-  let health = $state("");
-  let midiStatus = $state("MIDI: requesting access…");
-  let started = $state(false);
-  let ready = $state(false);
-  let catalog = $state<DeviceDescriptor[]>([]);
-  // Cable presets the picker offers for analog connections (fetched with the device catalog).
-  let cables = $state<CableType[]>([]);
-  let send = $state<((msg: ControlMessage) => void) | null>(null);
-  // Master output peak (linear, ±1.0 = full scale), from the worklet's throttled level message.
-  let level = $state(0);
-  // Live device meter readings from the node→host lane, keyed by device id (values in readout-id
-  // order). Updated ~47×/s from the worklet's `readouts` message.
-  let readings = $state<Record<string, number[]>>({});
-  // Static per-connection loading loss in dB (or null for digital/event connections), by connection
-  // index (matching scene.patch.connections order). Seeded on `ready`, refreshed after each hot-swap.
-  let losses = $state<(number | null)[]>([]);
-  // A device's current reading for a readout id, or the meter floor if none has arrived yet.
-  const readingFor = (device: string, id: number): number => readings[device]?.[id] ?? -120;
+  // The engine session: the view-agnostic consumer surface over the worklet engine (engine lifecycle,
+  // live readout state, monitor volume). App constructs one and reads it throughout; the Story-6.2
+  // workbench will construct its own. Scene, param/config lanes, note routing, and patching move onto
+  // it over the rest of Story 6.1.
+  const session = new SceneSession();
+
   // Format a reading: off-scale (near the floor) shows a dash.
   const fmtReading = (v: number): string => (v <= -55 ? "—" : v.toFixed(1));
   // The world layer's coordinate converters, bound out of WorldView so we can measure jack DOM positions
   // into surface space for precise cable anchoring. Undefined until the world surface mounts.
   let worldApi = $state<WorldApi | undefined>();
-
-  // Monitor (listening) volume — a host-side output gain *outside* the simulation, persisted on its
-  // own (a per-listener setting, not scene/simulation data). Defaults low so it doesn't blast.
-  const VOLUME_KEY = "aes.volume";
-  function loadVolume(): number {
-    const s = localStorage.getItem(VOLUME_KEY);
-    if (s === null) return 0.25;
-    const raw = Number(s);
-    return Number.isFinite(raw) ? Math.max(0, Math.min(1, raw)) : 0.25;
-  }
-  let volume = $state(loadVolume());
-  let setVolume = $state<((gain: number) => void) | null>(null);
-
-  function onVolume(v: number): void {
-    volume = v;
-    setVolume?.(v);
-    localStorage.setItem(VOLUME_KEY, String(v));
-  }
 
   // Collapse the toolbar `<details>` menu a control lives in, so picking an action closes its drawer.
   function closeMenu(e: Event): void {
@@ -146,7 +109,7 @@
   // dependencies of whatever $derived/handler invokes it. Never hoist these into a plain const at
   // module-init time — the fields would be captured stale.
   const view = (): ViewCtx => ({ space: currentSpace, view: currentView, wall: currentWall, room });
-  const layout = (): LayoutCtx => ({ ...view(), scene, catalog });
+  const layout = (): LayoutCtx => ({ ...view(), scene, catalog: session.catalog });
 
   // Devices interleave with the single cable layer by facing: a back-shown unit sits below it (z 1), a
   // front-shown one above (z 3). See placedItemsFor.
@@ -172,10 +135,10 @@
   // Pan/zoom needn't trigger it — surface-local coords are invariant. Measure after paint, and again
   // once the 0.45s flip transition has settled (so a just-flipped back reports its final jack positions).
   $effect(() => {
-    void ready;
+    void session.ready;
     void currentSpace;
     void currentView;
-    void catalog.length;
+    void session.catalog.length;
     void worldApi;
     JSON.stringify(scene.ui.placements);
     JSON.stringify(scene.ui.racks); // a rack flip changes which jacks (front/back) are shown
@@ -265,14 +228,14 @@
   const pendingSourceName = $derived.by((): string | null => {
     if (dragCable?.mode !== "pending") return null;
     const dev = deviceById(scene, dragCable.source.device);
-    return (dev && descriptorFor(catalog, dev.typeId)?.name) || dragCable.source.device;
+    return (dev && descriptorFor(session.catalog, dev.typeId)?.name) || dragCable.source.device;
   });
 
   // Resolve a `data-jack` key into the JackHit the pure transitions need (endpoint + measured anchor),
   // or null if it doesn't name a real, resolvable port.
   const jackHitOf = (key: string | undefined | null): JackHit | null => {
     if (!key) return null;
-    const endpoint = patching.endpointFromJackKey(scene, catalog, key);
+    const endpoint = patching.endpointFromJackKey(scene, session.catalog, key);
     return endpoint ? { key, endpoint, anchor: jackAnchors[key] ?? null } : null;
   };
   const patchDeps = () => ({ connections: scene.patch.connections });
@@ -334,11 +297,11 @@
   // Connection introspection + edits are pure scene-ops; App wraps them to bind scene/catalog/cables
   // and to hot-swap the engine after any edit that changes the runnable patch.
   const connectionDomain = (c: Connection): PortDomain | null =>
-    sceneOps.connectionDomain(scene, catalog, c);
-  const connectionKind = (c: Connection): PortKind => sceneOps.connectionKind(scene, catalog, c);
+    sceneOps.connectionDomain(scene, session.catalog, c);
+  const connectionKind = (c: Connection): PortKind => sceneOps.connectionKind(scene, session.catalog, c);
 
   function commitCable(v: ConnectVerdict): void {
-    sceneOps.commitCable(scene, catalog, cables, v);
+    sceneOps.commitCable(scene, session.catalog, session.cables, v);
     hotSwap();
   }
 
@@ -360,12 +323,12 @@
   // a digital link / before the losses have arrived.
   const selectedLoss = $derived.by((): number | null => {
     const i = scene.patch.connections.findIndex((c) => connKey(c) === selectedCableKey);
-    return i >= 0 ? (losses[i] ?? null) : null;
+    return i >= 0 ? (session.losses[i] ?? null) : null;
   });
   // The cable presets that physically fit the selected connection (matching connector) — the picker
   // offers only these, so you can't put an XLR cable on a ¼" link.
   const cablesForSelected = $derived.by((): CableType[] =>
-    selectedConn ? sceneOps.cablesFor(scene, catalog, cables, selectedConn) : [],
+    selectedConn ? sceneOps.cablesFor(scene, session.catalog, session.cables, selectedConn) : [],
   );
 
   // --- Device focus mode (sit down at a device: a large, device-specific interaction surface) --------
@@ -379,7 +342,7 @@
   const focused = $derived.by(() => {
     if (focusedDevice === null) return null;
     const device = deviceById(scene, focusedDevice);
-    const desc = device ? descriptorFor(catalog, device.typeId) : undefined;
+    const desc = device ? descriptorFor(session.catalog, device.typeId) : undefined;
     if (!device || !desc || !isFocusable(desc)) return null;
     return { device, desc };
   });
@@ -409,7 +372,7 @@
   const keyboardTarget = $derived.by((): string | null => {
     if (focusedDevice === null) return null;
     const dev = deviceById(scene, focusedDevice);
-    const desc = dev ? descriptorFor(catalog, dev.typeId) : undefined;
+    const desc = dev ? descriptorFor(session.catalog, dev.typeId) : undefined;
     if (!dev || !desc || !isPlayable(desc)) return null;
     return eventsInputDriven(dev.id, desc) ? null : dev.id;
   });
@@ -420,6 +383,7 @@
   // it to the worklet. A no-op when nothing playable is focused or the engine isn't up yet.
   function playNote(on: boolean, note: number, velocity: number = DEFAULT_VELOCITY): void {
     const device = keyboardTarget;
+    const send = session.send;
     if (device === null || !send) return;
     if (on) {
       if (!heldNotes.includes(note)) heldNotes = [...heldNotes, note];
@@ -440,7 +404,7 @@
   // Set (or clear, `""` ⇒ ideal wire) the cable type on a connection, then hot-swap — the cable's R·C
   // is baked into the edge at compile, so changing it rebuilds the engine.
   function setCableType(c: Connection, typeId: string): void {
-    sceneOps.setCableType(scene, cables, c, typeId);
+    sceneOps.setCableType(scene, session.cables, c, typeId);
     hotSwap();
   }
 
@@ -468,7 +432,7 @@
   function onParamInput(device: string, p: ParamDescriptor, value: number): void {
     paramValues[key(device, p.id)] = value;
     setSceneParam(scene, device, p.id, value);
-    send?.({ type: "param", device, paramId: p.id, value });
+    session.send?.({ type: "param", device, paramId: p.id, value });
   }
 
   // A structural config's current value in the scene, falling back to the descriptor's build default —
@@ -489,10 +453,11 @@
   // worklet, the Story 4.1 path) and re-apply param values. Edits are rare gestures, so the off-block
   // compile cost is acceptable; the live audio thread swaps at a block boundary.
   function hotSwap(): void {
+    const send = session.send;
     if (!send) return;
     send({ type: "loadPatch", patch: plainPatch() });
-    paramValues = params.seedParamValues(scene, catalog);
-    params.pushParams(send, scene, catalog, paramValues);
+    paramValues = params.seedParamValues(scene, session.catalog);
+    params.pushParams(send, scene, session.catalog, paramValues);
   }
 
   // Add gear (rebuilds the engine) / a rack (UI furniture, no rebuild); remove either. Thin wrappers
@@ -509,73 +474,42 @@
   const addRack = (): void => sceneOps.addRack(layout(), placedItems);
   const removeRack = (id: string): void => sceneOps.removeRack(scene, id);
 
-  async function start(): Promise<void> {
-    if (started) return;
-    started = true;
-    try {
-      const control = await startEngine(
-        plainPatch(),
-        {
-          onStatus: (m) => {
-          status = m;
-        },
-        onHealth: (h) => {
-          health = healthSummary(h);
-        },
-        onLevel: (peak) => {
-          level = peak;
-        },
-        onReadouts: (r) => {
-          readings = Object.fromEntries(r);
-        },
-        onLosses: (l) => {
-          losses = l;
-        },
-        onReady: (r: ReadyMessage, sendFn) => {
-          catalog = r.catalog;
-          cables = r.cables;
-          losses = r.losses;
-          send = sendFn;
-          ready = true;
-          paramValues = params.seedParamValues(scene, catalog);
-          params.pushParams(sendFn, scene, catalog, paramValues); // match the engine to the scene from the start
-          // Request Web MIDI once (the permission); the note target follows focus via playNote. The
-          // computer keyboard is wired per-focus by the effect above, not here.
-          wireMidi((on, note, velocity) => playNote(on, note, velocity), (m) => {
-            midiStatus = m;
-          });
-        },
-        },
-        volume,
-      );
-      setVolume = control.setVolume;
-    } catch (err) {
-      status = `error: ${err}`;
-      started = false;
-    }
+  // Bring the engine up (session-owned lifecycle), then finish bring-up with the pieces still living
+  // view-side this task: seed + push the param values, and request Web MIDI. `plainPatch` and param
+  // seeding fold into the session in 6.1.2; note routing / MIDI in 6.1.3.
+  function start(): void {
+    session.start(plainPatch(), (r, sendFn) => {
+      paramValues = params.seedParamValues(scene, r.catalog);
+      params.pushParams(sendFn, scene, r.catalog, paramValues); // match the engine to the scene from the start
+      // Request Web MIDI once (the permission); the note target follows focus via playNote. The
+      // computer keyboard is wired per-focus by the effect above, not here.
+      wireMidi((on, note, velocity) => playNote(on, note, velocity), (m) => {
+        session.midiStatus = m;
+      });
+    });
   }
 
   function saveCurrent(): void {
     saveScene(scene);
-    status = "scene saved";
+    session.status = "scene saved";
   }
 
   function loadSaved(): void {
     const loaded = loadScene();
     if (!loaded) {
-      status = "no saved scene";
+      session.status = "no saved scene";
       return;
     }
     scene = loaded;
     currentSpace = loaded.ui.spaces[0]?.id ?? "";
-    paramValues = params.seedParamValues(scene, catalog);
-    send?.({ type: "loadPatch", patch: plainPatch() }); // hot-swap the engine to the saved scene
-    status = "scene loaded";
+    paramValues = params.seedParamValues(scene, session.catalog);
+    session.send?.({ type: "loadPatch", patch: plainPatch() }); // hot-swap the engine to the saved scene
+    session.status = "scene loaded";
   }
 
   function reload(): void {
-    send?.({ type: "loadPatch", patch: plainPatch() }); // re-apply current scene — proves glitch-free swap
-    status = "scene reloaded (hot-swap)";
+    session.send?.({ type: "loadPatch", patch: plainPatch() }); // re-apply current scene — proves glitch-free swap
+    session.status = "scene reloaded (hot-swap)";
   }
 </script>
 
@@ -591,8 +525,8 @@
 
 <main>
   <header class="toolbar">
-    <button type="button" class="start" onclick={start} disabled={started}>▶ start</button>
-    {#if ready}
+    <button type="button" class="start" onclick={start} disabled={session.started}>▶ start</button>
+    {#if session.ready}
       <div class="spaces">
         {#each scene.ui.spaces as space (space.id)}
           <button
@@ -633,7 +567,7 @@
       <details class="menu">
         <summary>+ Add</summary>
         <div class="menu-panel palette">
-          {#each catalog as desc (desc.typeId)}
+          {#each session.catalog as desc (desc.typeId)}
             <button
               type="button"
               class="add-chip"
@@ -669,10 +603,10 @@
               min="0"
               max="1"
               step="0.01"
-              value={volume}
-              oninput={(e) => onVolume(Number(e.currentTarget.value))}
+              value={session.volume}
+              oninput={(e) => session.onVolume(Number(e.currentTarget.value))}
             />
-            <span class="readout">{Math.round(volume * 100)}%</span>
+            <span class="readout">{Math.round(session.volume * 100)}%</span>
           </label>
           <span class="scene-buttons">
             <button type="button" onclick={(e) => { saveCurrent(); closeMenu(e); }}>save</button>
@@ -686,14 +620,14 @@
       <details class="menu right">
         <summary>Debug</summary>
         <div class="menu-panel debug-menu">
-          <Vu {level} />
-          <span class="statuses">{[status, health, midiStatus].filter(Boolean).join(" · ")}</span>
+          <Vu level={session.level} />
+          <span class="statuses">{[session.status, session.health, session.midiStatus].filter(Boolean).join(" · ")}</span>
         </div>
       </details>
     {/if}
   </header>
 
-  {#if ready}
+  {#if session.ready}
     <div class="stage">
       <!-- One patch cable: three stacked strokes for depth (dark drop-shadow, signal-coloured core, thin
            lit highlight — colour from the connector kind), plus a wide transparent hit-path for
@@ -919,7 +853,7 @@
             {/if}
           {:else}
             {@const place = scene.ui.placements[itemId]}
-            {@const focusDesc = descriptorFor(catalog, deviceById(scene, itemId)?.typeId ?? "")}
+            {@const focusDesc = descriptorFor(session.catalog, deviceById(scene, itemId)?.typeId ?? "")}
             {#if place}
               {#if currentView !== "top"}
                 <!-- Sit down at a device that warrants deep control (a synth keybed, a console): open its
@@ -976,7 +910,7 @@
             <!-- Top-down plan: a labelled floor footprint (no panel — you can't see a face from above). -->
             {@const rack = rackById(scene, itemId)}
             {@const device = deviceById(scene, itemId)}
-            {@const desc = device ? descriptorFor(catalog, device.typeId) : undefined}
+            {@const desc = device ? descriptorFor(session.catalog, device.typeId) : undefined}
             <!-- A device's brand accent (the skin's chassis colour) rims its floor tile, so a red
                  Focusrite reads as red from directly above too — one value, both views. -->
             {@const accent = device ? skinFor(device.typeId).accent : undefined}
@@ -997,7 +931,7 @@
             {/if}
           {:else}
             {@const device = deviceById(scene, itemId)}
-            {@const desc = device ? descriptorFor(catalog, device.typeId) : undefined}
+            {@const desc = device ? descriptorFor(session.catalog, device.typeId) : undefined}
             {@const place = scene.ui.placements[itemId]}
             {#if device && desc && place}
               <!-- The device's registered faceplate (its own component, or the generic Panel). -->
@@ -1012,7 +946,7 @@
                 configs={desc.configs}
                 flipped={effectiveFacing(scene, device.id) === "back"}
                 valueFor={(id) => paramValue(device.id, desc, id)}
-                readingFor={(id) => readingFor(device.id, id)}
+                readingFor={(id) => session.readingFor(device.id, id)}
                 onParam={(p, v) => onParamInput(device.id, p, v)}
                 configFor={(k) => configValue(device.id, desc, k)}
                 onConfig={(k, v) => onConfigInput(device.id, k, v)}
@@ -1042,7 +976,7 @@
             <label class="ci-type">
               Type
               <select
-                value={cableTypeIdFor(cables, selectedConn.cable)}
+                value={cableTypeIdFor(session.cables, selectedConn.cable)}
                 onchange={(e) => selectedConn && setCableType(selectedConn, e.currentTarget.value)}
               >
                 <option value="">Ideal wire</option>
@@ -1108,7 +1042,7 @@
                 readouts={f.desc.readouts}
                 configs={f.desc.configs}
                 valueFor={(id) => paramValue(f.device.id, f.desc, id)}
-                readingFor={(id) => readingFor(f.device.id, id)}
+                readingFor={(id) => session.readingFor(f.device.id, id)}
                 onParam={(p, v) => onParamInput(f.device.id, p, v)}
                 configFor={(k) => configValue(f.device.id, f.desc, k)}
                 onConfig={(k, v) => onConfigInput(f.device.id, k, v)}
@@ -1131,13 +1065,13 @@
         <div class="levels-body">
           <ul class="meter-list">
             {#each scene.patch.devices as d (d.id)}
-              {@const desc = descriptorFor(catalog, d.typeId)}
+              {@const desc = descriptorFor(session.catalog, d.typeId)}
               {#if desc && desc.readouts.length > 0}
                 <li>
                   <span class="dev">{desc.name}</span>
                   {#each desc.readouts as r (r.id)}
                     <span class="reading">
-                      {r.label} <strong>{fmtReading(readingFor(d.id, r.id))}</strong>
+                      {r.label} <strong>{fmtReading(session.readingFor(d.id, r.id))}</strong>
                       {r.unit}
                     </span>
                   {/each}
@@ -1147,7 +1081,7 @@
           </ul>
           <ul class="loss-list">
             {#each scene.patch.connections as c, i (connKey(c))}
-              {@const loss = losses[i]}
+              {@const loss = session.losses[i]}
               {#if loss !== undefined && loss !== null}
                 <li>
                   {c.from.device} → {c.to.device}
