@@ -901,10 +901,10 @@ again within seconds.
   level + Zout) is deliberately deferred — it's an Epic-5-style device addition, not a bench
   prerequisite (candidate Story 6.4).
 
-- **Story 6.1 — Engine-session extraction.** — 🚧 **In progress** (elaborated below). Pull the
-  engine/UI plumbing out of the `App.svelte` monolith into a shared session layer both views consume.
-  Pure refactor — the scene view must behave **identically** (the Story's validate gate). This is the
-  load-bearing story; the workbench is only as solid as this seam.
+- **Story 6.1 — Engine-session extraction.** — ✅ **Complete** (elaborated below). Pulled the
+  engine/UI plumbing out of the `App.svelte` monolith into a shared session layer both views consume
+  (`SceneSession` + `PatchController`). Pure refactor — the scene view behaves **identically** (the
+  Story's validate gate). This is the load-bearing story; the workbench is only as solid as this seam.
 - **Story 6.2 — Route + workbench shell.** The app's first URL routing (`/devices/<typeId>` vs the
   scene view; Vite dev serves deep links already). Suspended-context boot to get the catalog pre-
   gesture, resume-on-interaction. The bench stage: mm grid + rack-unit (44.45 mm) ruler sized from the
@@ -923,7 +923,7 @@ again within seconds.
   reload → URL restore → auto-resume). Candidate stretch: the bench **signal generator** device if the
   synth proves too blunt an oracle.
 
-### Story 6.1 — Engine-session extraction — 🚧 **In progress**
+### Story 6.1 — Engine-session extraction — ✅ **Complete**
 
 _Goal:_ Extract the engine/UI plumbing that today lives as `$state` + closures inside the ~1750-line
 `App.svelte` into a **session layer** any view root can construct — so the Story-6.2 workbench consumes
