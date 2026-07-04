@@ -66,10 +66,12 @@ pub enum CompileError {
     /// Two connections target the same input port — fan-in is modeled by a node with several
     /// input ports, not by two edges into one.
     InputAlreadyConnected { node: usize, port: usize },
-    /// An output port and the input port it feeds declare different conductor counts (e.g. a
-    /// balanced output into an unbalanced input). Cross-type connections aren't modeled yet —
-    /// match conductor counts, or insert an adapter device (not yet modeled).
-    ConductorMismatch {
+    /// An output port and the input port it feeds declare different **lane counts** — either an analog
+    /// conductor mismatch (a balanced output into an unbalanced input) or a digital **channel-count**
+    /// mismatch (e.g. an 8-channel USB send into a 2-channel return). Lane count unifies conductors
+    /// (analog) and channels (digital), so one check covers both. Match the counts, or insert an
+    /// adapter/mux (not modeled) — cross-count connections aren't bridged on a wire.
+    LaneCountMismatch {
         from_node: usize,
         from_port: usize,
         to_node: usize,
@@ -120,7 +122,7 @@ impl fmt::Display for CompileError {
             Self::InputAlreadyConnected { node, port } => {
                 write!(f, "node {node} input port {port} is already connected")
             }
-            Self::ConductorMismatch {
+            Self::LaneCountMismatch {
                 from_node,
                 from_port,
                 to_node,
@@ -128,7 +130,8 @@ impl fmt::Display for CompileError {
             } => write!(
                 f,
                 "node {from_node} output port {from_port} and node {to_node} input port \
-                 {to_port} have different conductor counts (balanced vs. unbalanced)"
+                 {to_port} have different lane counts (a balanced-vs-unbalanced analog mismatch, \
+                 or mismatched digital channel counts)"
             ),
             Self::DomainMismatch {
                 from_node,
@@ -910,13 +913,13 @@ pub fn compile(
 /// count from what it's wired to — anchored by the fixed faces of sources, the balanced driver,
 /// and the receiver. This propagates those counts along edges to a fixpoint: a `Some` count on
 /// one end of an edge fixes a still-unknown per-conductor node on the other. Two *known* counts
-/// that disagree (e.g. a balanced output into an unbalanced input) are a [`ConductorMismatch`].
+/// that disagree (e.g. a balanced output into an unbalanced input) are a [`LaneCountMismatch`].
 /// Per-conductor nodes left unconstrained (isolated, or in an all-unbalanced subgraph) default to
 /// one conductor — i.e. they stay plain unbalanced nodes and are never lifted.
 ///
 /// Returns one multiplicity per node (meaningful for per-conductor nodes; 1 otherwise).
 ///
-/// [`ConductorMismatch`]: CompileError::ConductorMismatch
+/// [`LaneCountMismatch`]: CompileError::LaneCountMismatch
 fn infer_conductors(
     nodes: &[Box<dyn Node>],
     edges: &[Edge],
@@ -945,7 +948,7 @@ fn infer_conductors(
             let to = port_cond(e.to_node.0, false, e.to_port, &m);
             match (from, to) {
                 (Some(a), Some(b)) if a != b => {
-                    return Err(CompileError::ConductorMismatch {
+                    return Err(CompileError::LaneCountMismatch {
                         from_node: e.from_node.0,
                         from_port: e.from_port,
                         to_node: e.to_node.0,

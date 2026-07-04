@@ -516,7 +516,7 @@ mod balanced_phenomena {
         g.set_output(amp, 0);
         assert_eq!(
             compile(g, 8, rate(), 0).err(),
-            Some(CompileError::ConductorMismatch {
+            Some(CompileError::LaneCountMismatch {
                 from_node: 0,
                 from_port: 0,
                 to_node: 1,
@@ -529,7 +529,7 @@ mod balanced_phenomena {
     fn dc_blocker_composes_on_the_balanced_pair() {
         // The DC blocker is a per-conductor node, so the compiler lifts it across the pair: the
         // driver's 2-conductor output infers it to 2 and replicates it per leg. Before the lift
-        // this very wiring would be a ConductorMismatch — now an ordinary processor just composes,
+        // this very wiring would be a LaneCountMismatch — now an ordinary processor just composes,
         // "balanced" never a label. (This is the mechanism phantom rides on in 1.5.3.)
         //
         //   source:  2 V DC + 1 V·sin(2π·10k)                    (single-ended)
@@ -2212,5 +2212,101 @@ mod readout_lane {
         // Still processes cleanly with an empty readout store.
         let mut out = VoltageBuffer::zeros(8, rate());
         sched.process(&mut out);
+    }
+}
+
+/// Multichannel digital: the first end-to-end coverage of an **N-lane digital edge** (one connector
+/// carrying many channels) and a **multi-output node** (the demux). The mux's N-channel output feeds
+/// the demux's N-channel input as a single edge that compiles to N `DigitalRoute`s; the demux then
+/// fans back to N mono output ports — exercising per-port pool allocation and step emission for a node
+/// with more than one output, the path that had no users before.
+mod multichannel_digital {
+    use super::super::*;
+    use crate::electrical::Ohms;
+    use crate::node::{AdConverter, DaConverter, DigitalDemux, DigitalMux, TestSource};
+    use crate::signal::{BitDepth, SampleRate, Volts};
+
+    fn rate() -> AnalogRate {
+        AnalogRate::new(384_000.0)
+    }
+    fn fs() -> SampleRate {
+        SampleRate::new(48_000.0)
+    }
+    fn bits() -> BitDepth {
+        BitDepth::new(16)
+    }
+
+    /// A DC signal survives the full chain `source → AD → mux(2) → demux(2) → DA` on **channel 0**:
+    /// the multi-lane mux→demux edge carries it, the demux routes channel 0 back to its first output,
+    /// and the DA reconstructs the original volts. 0.5 V into a 1 V-reference AD normalizes to 0.5,
+    /// copies through mux/demux, and the 1 V-reference DA brings it back to 0.5 V.
+    #[test]
+    fn n_lane_edge_carries_a_signal_through_mux_and_demux() {
+        let mut g = Graph::new();
+        // Channel 0 carries 0.5 V; channel 1's mux input is left open (digital silence).
+        let src = g.add(TestSource::new(Volts::new(0.5), Ohms::new(1.0)));
+        let ad = g.add(AdConverter::new(
+            fs(),
+            bits(),
+            Volts::new(1.0),
+            Ohms::new(1e6),
+        ));
+        let mux = g.add(DigitalMux::new(fs(), bits(), 2));
+        let demux = g.add(DigitalDemux::new(fs(), bits(), 2));
+        let da = g.add(DaConverter::new(
+            fs(),
+            bits(),
+            Volts::new(1.0),
+            Ohms::new(150.0),
+        ));
+        g.connect_ideal(src, 0, ad, 0);
+        g.connect_ideal(ad, 0, mux, 0); // → mux channel 0
+        g.connect_ideal(mux, 0, demux, 0); // the single N-lane digital edge (2 channels)
+        g.connect_ideal(demux, 0, da, 0); // demux output 0 (first of two output ports)
+        g.set_output(da, 0);
+
+        let block = 384; // a multiple of M = 8, per compile's decimation constraint
+        let mut sched = compile(g, block, rate(), 0).expect("multichannel digital chain compiles");
+        let mut out = VoltageBuffer::zeros(block, rate());
+        // Run enough blocks for the AD/DA FIRs (161 taps) to settle well past their group delay.
+        for _ in 0..40 {
+            sched.process(&mut out);
+        }
+        let tail = &out.as_slice()[block / 2..];
+        assert!(
+            tail.iter().all(|&v| (v - 0.5).abs() < 1e-2),
+            "channel 0 should reconstruct to 0.5 V through mux→demux, tail max dev = {}",
+            tail.iter().fold(0.0_f32, |m, &v| m.max((v - 0.5).abs()))
+        );
+    }
+
+    /// A digital edge whose channel counts disagree is a [`CompileError::LaneCountMismatch`] — the
+    /// same lane-count check that catches an analog balanced/unbalanced mismatch, now reading right for
+    /// digital channels (a 4-wide mux send into a 2-wide demux return).
+    #[test]
+    fn mismatched_channel_counts_are_rejected() {
+        let mut g = Graph::new();
+        let mux = g.add(DigitalMux::new(fs(), bits(), 4)); // node 0
+        let demux = g.add(DigitalDemux::new(fs(), bits(), 2)); // node 1
+        // A valid analog tap downstream, so the *only* compile error is the channel-count mismatch on
+        // the mux→demux edge (not a missing/again-invalid output tap).
+        let da = g.add(DaConverter::new(
+            fs(),
+            bits(),
+            Volts::new(1.0),
+            Ohms::new(150.0),
+        ));
+        g.connect_ideal(mux, 0, demux, 0); // 4-channel out → 2-channel in
+        g.connect_ideal(demux, 0, da, 0);
+        g.set_output(da, 0);
+        assert_eq!(
+            compile(g, 384, rate(), 0).err(),
+            Some(CompileError::LaneCountMismatch {
+                from_node: 0,
+                from_port: 0,
+                to_node: 1,
+                to_port: 0,
+            })
+        );
     }
 }
