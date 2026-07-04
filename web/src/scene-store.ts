@@ -12,10 +12,10 @@ import type { Patch } from "./scene";
 import type { Room, Vec3, Wall } from "./spatial";
 
 /** Current save-format version. A saved scene at any other version is discarded (no migration). Bumped
- *  to 12 in Task 5.7.6: the 8i6's preamps became `MicPreamp`s, so its exposed param face grew to 9
- *  (per-channel gain/pad/air + monitor/phones + Power) and it gained `inst1`/`inst2` structural config
- *  — a stale v11 save's 8i6 param ids no longer map, so it's discarded rather than mis-applied. */
-export const SCHEMA_VERSION = 12;
+ *  to 13 in Task 5.7.9: the 8i6 now routes through a 3×3 matrix, so its exposed param face grew to 18
+ *  (the nine crosspoints slot in at ids 6–14, shifting Monitor/Phones/Power to 15/16/17) — a stale v12
+ *  save's 8i6 param ids no longer map, so it's discarded rather than mis-applied. */
+export const SCHEMA_VERSION = 13;
 
 /** A space (room) in the studio — a UI grouping over the one engine graph (the engine never knows
  *  about rooms). A space is a **rectangular room**: gear stands against one of four walls, each an

@@ -9,8 +9,9 @@
   // per-port face resolver. INST/AIR/PAD are **software-controlled** on the real 2nd-gen 8i6 (Focusrite
   // Control): the front panel shows only indicator LEDs — the actual toggles live in the device's focus
   // surface (FocusriteControl.svelte). 48V is still omitted (phantom not modeled). Exposed ids come from
-  // the Rust `scarlett_8i6` entry: 0 Gain1 · 1 Pad1 · 2 Air1 · 3 Gain2 · 4 Pad2 · 5 Air2 · 6 Monitor ·
-  // 7 Phones · 8 Power; Pad/Air are placed by the focus surface, so the guardrail unions both surfaces.
+  // the Rust `scarlett_8i6` entry: 0 Gain1 · 1 Pad1 · 2 Air1 · 3 Gain2 · 4 Pad2 · 5 Air2 · 6–14 routing
+  // crosspoints · 15 Monitor · 16 Phones · 17 Power. Pad/Air and the crosspoint grid are placed by the
+  // focus surface (FocusriteControl), so the guardrail unions both surfaces' coverage.
   import { untrack } from "svelte";
   import type { DeviceUiProps } from "../device-ui";
   import { makeHandle } from "../device-handle";
@@ -57,13 +58,13 @@
       <!-- Monitor: the big centre knob. -->
       <div class="section monitor">
         <Legend text="Monitor" />
-        <div class="big"><Control id={6} cap="dark" /></div>
+        <div class="big"><Control id={15} cap="dark" /></div>
       </div>
 
       <!-- Headphones: level + the front headphone jack. -->
       <div class="section">
         <Legend text="◎ Phones" />
-        <Control id={7} cap="dark" />
+        <Control id={16} cap="dark" />
         <Socket dir="output" id={3} />
       </div>
 
@@ -95,7 +96,7 @@
       <div class="section">
         <Legend text="Power" />
         <!-- One switch for the whole unit — a real 8i6 is a single powered device (Rust param group). -->
-        <Control id={8} />
+        <Control id={17} />
       </div>
     </div>
   {/snippet}
