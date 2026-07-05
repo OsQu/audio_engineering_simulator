@@ -905,23 +905,24 @@ again within seconds.
   engine/UI plumbing out of the `App.svelte` monolith into a shared session layer both views consume
   (`SceneSession` + `PatchController`). Pure refactor — the scene view behaves **identically** (the
   Story's validate gate). This is the load-bearing story; the workbench is only as solid as this seam.
-- **Story 6.2 — Route + workbench shell.** — 🚧 **In progress** (elaborated below). The app's first URL
+- **Story 6.2 — Route + workbench shell.** — ✅ **Complete** (elaborated below). The app's first URL
   routing (`/devices/<typeId>` vs the scene view), a suspended-context boot that gets the catalog pre-
   gesture (resume-on-interaction), and a **dedicated** bench stage: mm grid + rack-unit ruler from the
   descriptor's form factor, both faces rendered simultaneously, live params/meters through the shared
   session. Device-only (silent) — the rig lands in 6.3. Unknown `typeId` → a catalog index page.
-- **Story 6.3 — Test rig + URL-persisted temp scene.** Auto-generate a default rig from the
-  descriptor's ports: synth → analog/events inputs, an auto-provided **monitor chain** (DA inserted
-  when tapping digital outs → speaker) with a **listen selector** for multi-output devices; freeform
-  repatching on top (same patching state machine). The rig + param overrides + listen selection
-  serialize compressed into the URL query (path = `typeId`), debounced `replaceState`, versioned +
-  regenerate-on-mismatch. **Also here — bench stage-surface upgrade:** 6.2.4 gave the `BenchStage` plain
-  wheel-zoom (reactive px/mm) + scrollbar pan; 6.3 needs a `WorldApi`-shaped surface anyway (a
-  `clientToSurface` that divides out the zoom, to measure jack anchors + draw cables via the shared
-  `PatchController`/`cable-view`). Build that as a transform-based pan/zoom surface and, in the same pass,
-  bring the zoom to **scene-side parity** — cursor-anchored zoom + drag-to-pan (a sibling pan-backdrop so
-  operating a control never pans), and a fit/reset — reusing WorldView's `onWheel`/`fit` math. (Doing the
-  transform surface and the patching surface together avoids building the bench surface twice.)
+- **Story 6.3 — Bench patching + URL-persisted temp scene.** — 🚧 **In progress** (elaborated below).
+  **No auto-rig** (revised at planning): the bench carries a **fixed supporting cast** — synth source,
+  DA, speaker — around the device-under-test, and the user patches source→DUT→monitor **by hand** with
+  cables. The tap (`patch.output`) is set by **clicking an analog output jack** (default: the DUT's first
+  analog out). Patching drives the **existing** `PatchController` + `cable-view`/`jack-anchors` (never a
+  second cable impl — the Epic's load-bearing watch-out), which forces decoupling `cable-view` from the
+  scene-spatial `LayoutCtx` behind a small injected layout interface. The whole temp scene (rig + param
+  overrides + tap) serializes to the URL query as `base64url(JSON)` (path = `typeId`), versioned +
+  regenerate-on-mismatch, debounced `replaceState`. **Also here — bench stage-surface upgrade:** a
+  `WorldApi`-shaped surface (`clientToSurface` dividing out the scale) to measure jack anchors + draw
+  cables, plus **cursor-anchored zoom** (scroll-anchored; keep the current scrollbar pan — no drag-to-pan,
+  no fit/reset). Consequence of no-auto-rig: audibility is **user-driven** (patch the chain, then play via
+  the reused keybed), softening the Epic's "pre-patched … audio after one gesture" phrasing.
 - **Story 6.4 — Debug surface + the hot loop.** A bench debug panel: every param (value + descriptor
   range), every readout, engine health (overruns, worst render ms, event/param drops), connection
   losses, config-vs-param distinction (recompiles made visible), and a seed control for deterministic
@@ -1019,7 +1020,7 @@ session modules that a second view root can construct; `App.svelte` retains only
 no Rust or `postMessage` changes; `pnpm run check && pnpm run typecheck && pnpm run test &&
 pnpm run build` green.
 
-### Story 6.2 — Route + workbench shell — 🚧 **In progress**
+### Story 6.2 — Route + workbench shell — ✅ **Done**
 
 _Goal:_ Stand up the **second view root** — a single-device workbench at `/devices/<typeId>` — on top of
 the Story-6.1 session seam. This Story delivers the app's first URL routing, a suspended-context engine
@@ -1130,3 +1131,166 @@ delivers the catalog **before** any gesture and audio resumes on first interacti
 lands on the catalog index; the **scene view still behaves identically** (no regression from the router /
 `resume()` decoupling); no new dependency; `pnpm run check && pnpm run typecheck && pnpm run test &&
 pnpm run build` green. (Rig, patching, and the URL-persisted scene are 6.3.)
+
+_Delivered:_ ✅ all five tasks landed; `/devices/<typeId>` renders a single device (both faces, mm/rack-U
+grid) with params/config/meters live through the shared `SceneSession`, booted suspended so the catalog
+arrives pre-gesture. What shipped:
+
+- **Router (6.2.1).** Hand-rolled, zero-dependency: `router.svelte.ts` parses `location.pathname`
+  (`^\/devices(?:\/([^/]*))?\/?$` → `{ view: "workbench", typeId }`, else `{ view: "scene" }`), `Root.svelte`
+  switches `Workbench` vs `App`, `main.ts` mounts `Root`; `navigate` uses `pushState` + a `popstate`
+  listener. Bare `/devices` and unknown types both fall through to the catalog index.
+- **Decoupled resume (6.2.2).** `startEngine` no longer calls `audio.resume()`; `EngineControl` gained
+  `resume()`, surfaced as `session.resume()`. The scene view's start button calls `start()` then `resume()`
+  (behavior identical); the workbench boots suspended and calls `resume()` once on the first
+  pointer/keydown.
+- **Workbench bring-up (6.2.3).** `Workbench.svelte` constructs its own `SceneSession` on a minimal
+  `synth_voice` bootstrap scene (`workbench-scene.ts`), boots suspended, and on catalog arrival resolves the
+  route's `<typeId>`: valid → `hotSwap` to a single-device scene tapped at its first analog output
+  (`analogOutputPort`); digital-only-output devices (e.g. `computer`) → a "needs a DA / monitor chain (6.3)"
+  message with the engine kept alive; unknown/bare → the catalog index (links to `/devices/<id>`). Covered
+  by `workbench-scene.test.ts`.
+- **Bench stage (6.2.4).** `BenchStage.svelte`: mm grid + rack-U (44.45 mm) ruler sized from `formFactor`
+  (`footprint`), both faces rendered via `deviceUi` twice (front + back), all wired to the session through
+  the identical `DeviceUiProps` (`valueFor`/`onParam`/`configFor`/`onConfig`/`readingFor`) — no forked
+  rendering.
+- **Engine hardening (6.2.5).** `build_patch` now validates the output tap resolves to an analog port and
+  returns `BuildError::OutputTapNotAnalog` otherwise (unit test `non_analog_output_tap_is_rejected`), so a
+  digital tap is a rejected swap instead of a `render_quantum` `unreachable` trap; `load_patch` keeps the
+  running scene on the error. The JS `analogOutputPort` guard stays as the friendlier front-line message.
+
+_Deviations from plan (not bugs):_
+
+- **The `WorldApi`-shaped surface was not built.** The plan asked 6.2.4 to "structure the stage so a
+  `WorldApi`-shaped surface can be exposed"; in practice the stage uses a plain `transform: scale` +
+  native-scrollbar pan with **no** `WorldApi`/`clientToSurface`. Building that surface is folded wholesale
+  into **Task 6.3.1** (where the patching machinery actually needs it), rather than half-built here.
+- **Wheel-zoom + scrollbar pan added as a usability extra.** Beyond the planned "grid + ruler + faces,"
+  6.2.4 also gave the bench `transform: scale` wheel-zoom (clamped, WorldView's sensitivity) + scrollbar
+  pan. It is **not** cursor-anchored; scene-side-parity zoom is **Task 6.3.1**.
+
+### Story 6.3 — Bench patching + URL-persisted temp scene — 🚧 **In progress**
+
+_Goal:_ Turn the silent single-device bench of 6.2 into a **hand-patchable workbench**: the
+device-under-test (DUT) plus a **fixed supporting cast** (synth source, DA converter, speaker) laid out
+around it, cables the user draws to build source→DUT→monitor themselves, a clicked-jack tap that chooses
+what's audible, a reused keybed to drive the source, and the whole temp scene living **in the URL** so the
+Rust-rebuild → reload loop restores itself. This is the Epic's payoff (PROJECT_PLAN §7 — the UI a pure
+consumer of the engine API): the bench becomes a full patching surface driving the **same**
+`SceneSession` + `PatchController` + `cable-view` as the scene view, never a forked copy.
+
+_Watch out:_
+
+- **One cable implementation (the Epic's load-bearing watch-out).** The bench must drive the **existing**
+  `PatchController` + `cable-view.ts` + `jack-anchors.ts` — never a second cable/anchor path. Those pure
+  modules today take a scene-spatial `LayoutCtx` (`projection.deviceRect`/`effectiveFacing`, backed by
+  placements/racks/room/wall); the bench has empty spatial `ui` and shows **both faces at once**. So the
+  reuse is only real once `cable-view`/`jack-anchors` are **decoupled from `LayoutCtx`** behind a small
+  injected layout interface (6.3.3) — otherwise the bench would fork the geometry, violating the rule.
+- **Scene-view parity is a hard gate on the shared refactors.** Extracting the layout interface (6.3.3),
+  hoisting `WorldApi` (6.3.1), and extracting the keyboard-input glue (6.3.5) must leave the scene view
+  **pixel- and behavior-identical** — these touch code App depends on. Anything ambiguous → keep today's
+  behavior and note it.
+- **Hot-path / layer rules unchanged.** No Rust changes are expected (the catalog already carries
+  `synth_voice`/`da_converter`/`speaker`, and `build_patch` already rejects a non-analog tap — 6.2.5). The
+  catalog gains **no** bench vocabulary; the bench reads descriptors as a pure consumer.
+- **`$state.snapshot` at the worklet boundary still holds** — every `postMessage` (hot-swap on each patch
+  edit, param, tap change) snapshots the proxy, as the session already does.
+- **URL scene is disposable by design.** Versioned via the existing `SCHEMA_VERSION`; on mismatch,
+  **regenerate** the default bench for the route's `typeId` — never migrate. Debounced `replaceState` (no
+  history spam).
+- **Scope guard.** No debug panel, no `wasm:watch` hot-loop, no bench signal-generator device (all 6.4);
+  no drag-to-pan / fit-reset (cut at planning — cursor-anchored zoom only); no auto-rig / listen-selector
+  widget / port-domain monitor-chain builder (cut at planning — the user patches by hand).
+
+_Design notes (settled at planning):_
+
+- **No auto-rig — a fixed supporting cast, patched by hand.** The bench always shows the DUT (centerpiece:
+  both faces, real dims, rack-U ruler) plus `synth_voice`, `da_converter`, `speaker` as adjacent
+  both-faces devices, **auto-arranged in surface mm and left unwired**. The user draws source→DUT→monitor
+  with cables. _Rejected: the sketch's auto-generated rig_ (port-domain branching, auto-inserted DA, a
+  listen-selector widget) — the user wants the bench to "make everything available and patch as they see
+  fit"; hand-patching is a first-class bench feature, and the auto-builder was speculative complexity for a
+  dev tool. **Consequence (not a bug):** audibility is user-driven — you patch the chain, then play — which
+  intentionally softens the Epic's "pre-patched … audio after one gesture" exit phrasing.
+- **The tap is a clicked analog output jack.** Clicking an analog output jack sets `patch.output` and shows
+  a "listening here" marker (default: the DUT's first analog out). Digital outs aren't directly tappable
+  (`build_patch` rejects — 6.2.5), so to hear a digital device the user patches through DA+speaker and taps
+  the speaker. _Rejected: a separate listen-selector widget_ — the jack UI already exists; clicking it is
+  discoverable and needs no new synced control.
+- **Decouple `cable-view`/`jack-anchors` behind an injected layout interface.** Replace their `LayoutCtx`
+  dependency with a minimal injected surface (`deviceRect(id)`, facing/shown-faces, `deviceById`) — backed
+  by `projection` for the scene view (identical behavior) and by the bench's auto-layout for the bench.
+  Because the bench shows **both faces**, every jack is measured (the precise path always applies; the
+  hidden-face estimate rarely fires). _Rejected: synthesizing a fake scene-spatial `LayoutCtx` for the
+  bench_ (fake placements/room) — the bench has no walls/racks and both-faces breaks the single
+  `effectiveFacing` assumption; a clean injected interface is the honest seam and the extract-don't-
+  duplicate move.
+- **`WorldApi`-shaped bench surface + cursor-anchored zoom.** Hoist `WorldApi`/`SurfacePoint` out of
+  `WorldView.svelte`'s module script into a standalone module (the bench shouldn't import a type from the
+  scene-view widget; 4 modules already import it). The bench implements `clientToSurface` (divide out the
+  `scale`, subtract the live surface rect), `worldToSurface` (bench world ≡ surface mm), `measureRoot`
+  (the scaled surface). Zoom becomes **cursor-anchored** by adjusting the scroll offset so the point under
+  the cursor stays fixed — **keeping the existing scrollbar pan**. _Rejected: WorldView's translate-based
+  pan + drag-to-pan backdrop + fit/reset_ — cut at planning ("only cursor-anchored zoom for usability");
+  scroll-anchoring reuses the working scrollbar-pan and is the smaller change.
+- **Reuse the keybed via extracted wiring glue.** `Keybed.svelte`, `wireKeyboard`/`wireMidi` (`engine.ts`),
+  and `notes.ts` are already modular; the reuse target is App's inline glue — the `playNote` wrapper + the
+  `wireKeyboard` attach `$effect` + the target accessor. Extract that into a shared keyboard-input helper
+  that takes a `() => target | null` accessor; App passes its focus-derived target (behavior identical),
+  the bench passes a fixed target. _Keeps 6.1's discipline_ (target selection stays view-side; nothing
+  entrenches `isPlayable`). **Settled simplification (not a bug):** the bench keybed targets the synth
+  source by default, or the DUT when the DUT itself has an event input — revisable in 6.4.
+- **URL codec: `base64url(JSON)`, dep-free.** `JSON.stringify` the temp scene → base64url; decode + guard
+  on `SCHEMA_VERSION` (mismatch → `null` → regenerate the default bench), mirroring `scene-store.parseScene`.
+  Bench scenes are a handful of devices + a few param overrides (a few hundred bytes), so compression is
+  unnecessary. _Rejected: `lz-string`_ (a new runtime dep against the zero-dep web posture) _and
+  `CompressionStream`_ (async in the debounced save path) — both unjustified at this size.
+- **Supporting-cast devices are auto-arranged, not user-draggable.** The bench isn't the scene view; device
+  positions are computed from footprints. Only cables + params + the tap are user state (and thus the only
+  things persisted).
+
+- **Task 6.3.1 — Bench surface + cursor-anchored zoom.** Hoist `WorldApi`/`SurfacePoint` into a standalone
+  module (both views import it; scene view unchanged). Give `BenchStage` a `WorldApi` implementation
+  (`clientToSurface` dividing out `scale`, `worldToSurface`, `measureRoot`) and cursor-anchored wheel-zoom
+  (adjust scroll offset to keep the point under the cursor fixed; keep scrollbars). _Done:_ zoom holds the
+  cursor point fixed; the surface exposes a `WorldApi`; scene view behaves identically; web gate green;
+  verified in-browser.
+- **Task 6.3.2 — Fixed supporting cast on the bench.** Render the DUT (centerpiece, ruler, real dims) plus
+  `synth_voice`/`da_converter`/`speaker` as adjacent both-faces devices, auto-laid-out in surface mm,
+  unwired — each wired to the session's param/config/meter lanes via the shared `DeviceUiProps`. Extend the
+  bench scene builder (`workbench-scene.ts`) to seed these device instances. _Done:_ the four devices
+  render with all jacks visible/reachable and live params/meters; in-browser.
+- **Task 6.3.3 — Decouple `cable-view`/`jack-anchors` from `LayoutCtx`.** Introduce a minimal injected
+  layout interface (`deviceRect(id)`, facing/shown-faces, `deviceById`); back it with `projection` for the
+  scene view and with the bench auto-layout for the bench. Unit-test the cable geometry against a fake
+  bench context (both-faces → all-precise anchors; a clamped cable path computed by hand). _Done:_
+  scene-view cables/anchors pixel-identical (parity check); the bench context resolves device rects/faces;
+  new unit tests green; web gate green.
+- **Task 6.3.4 — Bench patching + click-to-tap.** Construct `PatchController(session)` in the workbench,
+  wire window `pointerDown/Move/Up` delegations + the `measure(worldApi)` `$effect` (layout-dep list), and
+  render the cables/overlay SVG layers via `cable-view` + `cablePathData`. Clicking an analog output jack
+  sets `patch.output` (default the DUT's first analog out) with a "listening here" marker; `hotSwap` on
+  each edit. _Done:_ same-view drag, click-to-pick, disconnect, and cable-type change all work on the
+  bench; a user-built synth→DUT→(DA→)speaker chain is audible via the clicked tap; in-browser.
+- **Task 6.3.5 — Keyboard-input reuse.** Extract App's keybed glue (the `playNote` wrapper + `wireKeyboard`
+  attach `$effect` + target accessor) into a shared keyboard-input helper taking a `() => target | null`;
+  App consumes it (focus-derived target — behavior identical). Mount `Keybed` on the bench targeting the
+  synth source (or the DUT when it has an event input), fed by `session.heldNotes`/`session.playNote`.
+  _Done:_ bench notes play (QWERTY + on-screen keybed); scene-view keybed, QWERTY capture, and Web MIDI
+  behave exactly as before; in-browser.
+- **Task 6.3.6 — URL-persisted temp scene.** A `base64url(JSON)` codec with a `SCHEMA_VERSION` guard
+  (mismatch → regenerate the default bench for the route's `typeId`); seed the workbench `SceneSession`
+  from the URL on load; write the scene to the query with debounced `replaceState` on every patch/param/tap
+  change (path stays `/devices/<typeId>`). Round-trip + version-mismatch unit tests. _Done:_ patch + param
+  overrides + the tap survive a reload; a version mismatch regenerates cleanly; no history spam; the bench
+  is audible again within seconds of a reload; gate green; in-browser.
+
+_Validate:_ at `localhost:5173/devices/scarlett_8i6` the bench shows the DUT plus the synth/DA/speaker
+supporting cast; the user can drag/click cables (via the shared `PatchController`/`cable-view`) to build
+source→DUT→monitor, click an analog output jack to choose the audible tap, and play the reused keybed to
+hear it; the temp scene (patch + param overrides + tap) round-trips through the URL and restores on reload
+(regenerating on version mismatch); the **scene view still behaves identically** through the `WorldApi`
+hoist, the `cable-view` `LayoutCtx` decouple, and the keyboard-glue extraction; no new dependency;
+`pnpm run check && pnpm run typecheck && pnpm run test && pnpm run build` green. (Debug panel, `wasm:watch`
+hot-loop, and a bench signal-generator device are 6.4.)
