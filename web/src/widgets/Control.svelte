@@ -16,8 +16,10 @@
     as?: "knob" | "fader" | "switch";
     /** Knob cap finish (ignored by fader/switch). */
     cap?: CapFinish;
+    /** Physical knob diameter in mm (real-gear sizing, scaled by the world/bench zoom). Knob only. */
+    size?: number;
   }
-  let { id, as, cap = "dark" }: Props = $props();
+  let { id, as, cap = "dark", size }: Props = $props();
 
   const handle = getDeviceHandle();
   const param = $derived(handle.param(id));
@@ -30,6 +32,6 @@
   {:else if kind === "switch"}
     <Switch {param} value={handle.value(id)} onChange={(v) => handle.set(id, v)} />
   {:else}
-    <Knob {param} value={handle.value(id)} onChange={(v) => handle.set(id, v)} {cap} />
+    <Knob {param} value={handle.value(id)} onChange={(v) => handle.set(id, v)} {cap} {size} />
   {/if}
 {/if}

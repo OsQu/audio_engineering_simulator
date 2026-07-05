@@ -15,8 +15,22 @@
     onChange: (v: number) => void;
     /** Cap finish — a skin-only choice; the mechanics are identical. Defaults to the dark cap. */
     cap?: "dark" | "chrome" | "red" | "blue" | "cream";
+    /** Physical dial diameter in **mm** (the faceplate is laid out at 1 px/mm and the world/bench zoom
+     *  scales it). When given, the knob is a fixed physical size — the real-gear model. When omitted it
+     *  keeps the legacy container-relative sizing (`min(rem, cqh)`), so un-migrated callers are unchanged. */
+    size?: number;
   }
-  let { param, value, onChange, cap = "dark" }: Props = $props();
+  let { param, value, onChange, cap = "dark", size }: Props = $props();
+
+  // Physical sizing driven off the mm dial diameter: the column tracks the dial, gaps + label/value type
+  // scale with it, so a small gain knob and a big monitor knob read at true proportions. `null` ⇒ the CSS
+  // falls back to the legacy container-relative values.
+  const sizeVars = $derived(
+    size === undefined
+      ? undefined
+      : `--dial: ${size}px; --knob-gap: ${(size * 0.08).toFixed(2)}px; ` +
+        `--knob-font: ${(size * 0.26).toFixed(2)}px`,
+  );
 
   // -135°..+135° (a 270° sweep) across min→max.
   const angle = $derived(-135 + ((value - param.min) / (param.max - param.min || 1)) * 270);
@@ -33,7 +47,7 @@
   }
 </script>
 
-<div class="knob">
+<div class="knob" style={sizeVars}>
   <div
     class="dial"
     role="slider"
@@ -63,17 +77,19 @@
   /* Sizes scale with the chassis height (cqh, against the WorldView `.content` size container) but are
      capped at their natural rem, so a normal/desktop panel is unchanged while a thin 1U rack unit
      shrinks the knob to fit instead of clipping. min() also means no container ⇒ the rem cap wins. */
+  /* When a physical `--dial` (mm) is supplied the knob is a fixed size the world/bench zoom scales; the
+     `var(--x, legacy)` fallbacks keep un-migrated callers on the old container-relative sizing. */
   .knob {
     display: flex;
     flex-direction: column;
     align-items: center;
-    gap: min(5px, 4cqh);
-    width: min(4.5rem, 92cqh);
+    gap: var(--knob-gap, min(5px, 4cqh));
+    width: var(--dial, min(4.5rem, 92cqh));
   }
   .dial {
     position: relative;
-    width: min(3.25rem, 56cqh);
-    height: min(3.25rem, 56cqh);
+    width: var(--dial, min(3.25rem, 56cqh));
+    height: var(--dial, min(3.25rem, 56cqh));
     cursor: ns-resize;
     touch-action: none;
     outline: none;
@@ -154,7 +170,7 @@
   .label {
     font-family: var(--ae-font-ui);
     font-weight: var(--ae-label-weight);
-    font-size: min(var(--ae-label-size), 17cqh);
+    font-size: var(--knob-font, min(var(--ae-label-size), 17cqh));
     letter-spacing: var(--ae-label-spacing);
     text-transform: uppercase;
     /* On a device faceplate the engraved ink is set by the panel finish; standalone
@@ -166,7 +182,7 @@
   .value {
     font-family: var(--ae-font-ui);
     font-weight: 500;
-    font-size: min(var(--ae-value-size), 17cqh);
+    font-size: var(--knob-font, min(var(--ae-value-size), 17cqh));
     color: var(--ae-faceplate-ink-muted, var(--ae-text-muted));
     font-variant-numeric: tabular-nums;
   }

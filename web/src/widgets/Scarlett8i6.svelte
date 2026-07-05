@@ -38,7 +38,7 @@
            toggled in Focusrite Control), then the input jack. Written out per channel with **literal**
            ids so the faceplate guardrail can confirm each control/jack is placed and reachable. -->
       <div class="channel">
-        <Control id={0} cap="dark" />
+        <Control id={0} cap="dark" size={11} />
         <Legend text="Gain 1" />
         <div class="leds">
           <Led on={handle.config("inst1") >= 0.5} label="Inst" />
@@ -48,7 +48,7 @@
         <Socket dir="input" id={0} />
       </div>
       <div class="channel">
-        <Control id={3} cap="dark" />
+        <Control id={3} cap="dark" size={11} />
         <Legend text="Gain 2" />
         <div class="leds">
           <Led on={handle.config("inst2") >= 0.5} label="Inst" />
@@ -61,18 +61,18 @@
       <!-- Monitor: the big centre knob (drives line outs 1–2 via the Rust Monitor group). -->
       <div class="section monitor">
         <Legend text="Monitor" />
-        <div class="big"><Control id={204} cap="dark" /></div>
+        <Control id={204} cap="dark" size={22} />
       </div>
 
       <!-- Two headphone outputs, each with its own level knob + front jack. -->
       <div class="section">
         <Legend text="◎ Phones 1" />
-        <Control id={6} cap="dark" />
+        <Control id={6} cap="dark" size={8} />
         <Socket dir="output" id={6} />
       </div>
       <div class="section">
         <Legend text="◎ Phones 2" />
-        <Control id={7} cap="dark" />
+        <Control id={7} cap="dark" size={8} />
         <Socket dir="output" id={7} />
       </div>
 
@@ -175,12 +175,6 @@
     display: flex;
     flex-direction: row;
     gap: clamp(1px, 1cqw, 0.3rem);
-  }
-  /* The monitor knob reads as the hero control. */
-  .big {
-    transform: scale(1.35);
-    transform-origin: center;
-    padding: clamp(2px, 3cqh, 0.4rem);
   }
   .monitor {
     /* A hairline frame to set the monitor section apart, in the brand accent. */
