@@ -4,7 +4,7 @@
 // measuring and returns the map.
 
 import type { JackAnchor } from "./cable-view";
-import type { WorldApi } from "./widgets/WorldView.svelte";
+import type { WorldApi } from "./world-api";
 
 // Measure every rendered `[data-jack]` element's centre into surface coords, tagged with the chassis face
 // it sits on (read off the nearest `[data-face]` ancestor; defaults to "back" if none is found, matching

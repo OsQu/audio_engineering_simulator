@@ -35,7 +35,7 @@
   import Keybed from "./widgets/Keybed.svelte";
   import Vu from "./widgets/Vu.svelte";
   import WorldView from "./widgets/WorldView.svelte";
-  import type { WorldApi } from "./widgets/WorldView.svelte";
+  import type { WorldApi } from "./world-api";
 
   // The engine session: the view-agnostic consumer surface over the worklet engine (engine lifecycle,
   // live readout state, monitor volume, the authoritative scene + param/config lanes). App constructs

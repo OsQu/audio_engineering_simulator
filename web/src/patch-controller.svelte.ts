@@ -15,7 +15,7 @@ import * as patching from "./patching";
 import type { Connection } from "./scene";
 import * as sceneOps from "./scene-ops";
 import type { SceneSession } from "./session.svelte";
-import type { WorldApi } from "./widgets/WorldView.svelte";
+import type { WorldApi } from "./world-api";
 
 export class PatchController {
   #session: SceneSession;

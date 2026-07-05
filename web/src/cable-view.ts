@@ -8,7 +8,7 @@ import type { Connection, PortRef } from "./scene";
 import { connKey } from "./scene-ops";
 import type { DeviceFacing, Scene } from "./scene-store";
 import type { Wall } from "./spatial";
-import type { WorldApi } from "./widgets/WorldView.svelte";
+import type { WorldApi } from "./world-api";
 
 export type Pt = { x: number; y: number };
 

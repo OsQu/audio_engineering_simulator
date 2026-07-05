@@ -1,25 +1,3 @@
-<script module lang="ts">
-  /** A point in the overlay's surface-local pixel space (y increases downward — SVG convention). */
-  export interface SurfacePoint {
-    x: number;
-    y: number;
-  }
-
-  /** Coordinate converters the world layer exposes (to its `overlay` snippet, and to the parent via
-   *  `bind:api`) so cables can be placed/measured in the surface's own space without touching the
-   *  pan/zoom transform or the room height. Surface-local coords are pan/zoom-invariant.
-   *  - `worldToSurface`: world mm (x right, y **up** from the floor) → surface-local (y **down** from top).
-   *  - `clientToSurface`: a viewport client point (e.g. a measured DOM rect) → surface-local.
-   *  - `measureRoot`: the transformed surface element, the root to scope a jack DOM sweep to (so a
-   *    duplicate faceplate rendered *outside* the world — e.g. the device-focus overlay — can't clobber
-   *    real anchors). `null` until the surface mounts. */
-  export interface WorldApi {
-    worldToSurface: (worldX: number, worldY: number) => SurfacePoint;
-    clientToSurface: (clientX: number, clientY: number) => SurfacePoint;
-    measureRoot: () => HTMLElement | null;
-  }
-</script>
-
 <script lang="ts">
   // The isolated **world layer**: a pan/zoom surface that lays out devices in one space's front
   // elevation. This is the *thin interface* the rest of the UI talks to (the standing WebGL escape
@@ -37,6 +15,7 @@
   // or the corner chrome (see onDevicePointerDown) grabs the unit, so turning a knob never moves it.
   import type { Snippet } from "svelte";
   import { type Rect2, snapToGrid } from "../spatial";
+  import type { SurfacePoint, WorldApi } from "../world-api";
 
   interface WorldItem {
     id: string;
