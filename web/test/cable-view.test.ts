@@ -1,10 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
   bothInView,
+  type CableLayout,
   cableAnchor,
   cableEndpoints,
   deviceSurfaceRect,
-  inView,
   oneInView,
   otherEndLabel,
   PORTAL_LEN,
@@ -13,7 +13,7 @@ import {
   tipPatchEnd,
 } from "../src/cable-view";
 import type { DeviceDescriptor } from "../src/catalog";
-import type { LayoutCtx } from "../src/projection";
+import { deviceById, deviceRect, effectiveFacing, type LayoutCtx } from "../src/projection";
 import type { Connection } from "../src/scene";
 import type { Placement, Scene } from "../src/scene-store";
 import type { Room, Wall } from "../src/spatial";
@@ -77,42 +77,60 @@ function ctxOf(scene: Scene, wall: Wall = "front"): LayoutCtx {
   return { space: "s1", view: wall, wall, room: ROOM, scene, catalog: CATALOG };
 }
 
+// The scene view's CableLayout — the projection-backed seam App feeds cable-view. Every geometry test
+// below runs through it, so it stays a parity guard on the scene-view cable behavior after the decouple.
+function layoutOf(scene: Scene, wall: Wall = "front"): CableLayout {
+  const ctx = ctxOf(scene, wall);
+  return {
+    inView: (id) => {
+      const p = scene.ui.placements[id];
+      return p?.space === ctx.space && p.wall === ctx.wall;
+    },
+    faceAnchorable: (id, face) => face === effectiveFacing(scene, id),
+    rect: (id) => {
+      const d = deviceById(scene, id);
+      return d ? deviceRect(ctx, id, d.typeId) : null;
+    },
+    clampsEstimate: (id) => effectiveFacing(scene, id) === "back",
+    frontPatchOver: (id) => effectiveFacing(scene, id) === "front",
+  };
+}
+
 describe("inView / bothInView / oneInView", () => {
   const scene = makeScene({
     a: place("s1", "front"),
     b: place("s1", "back"),
     c: place("s2", "front"),
   });
-  const ctx = ctxOf(scene, "front");
+  const L = layoutOf(scene, "front");
   const conn = (from: string, to: string): Connection => ({
     from: { device: from, port: 0 },
     to: { device: to, port: 0 },
   });
 
   it("inView is true only for the shown space + wall", () => {
-    expect(inView(ctx, "a")).toBe(true); // s1/front — shown
-    expect(inView(ctx, "b")).toBe(false); // s1/back — other wall
-    expect(inView(ctx, "c")).toBe(false); // s2 — other space
+    expect(L.inView("a")).toBe(true); // s1/front — shown
+    expect(L.inView("b")).toBe(false); // s1/back — other wall
+    expect(L.inView("c")).toBe(false); // s2 — other space
   });
   it("bothInView needs both ends shown; oneInView needs exactly one", () => {
-    expect(bothInView(ctx, conn("a", "a"))).toBe(true);
-    expect(bothInView(ctx, conn("a", "b"))).toBe(false);
-    expect(oneInView(ctx, conn("a", "b"))).toBe(true); // a shown, b not
-    expect(oneInView(ctx, conn("b", "c"))).toBe(false); // neither shown
+    expect(bothInView(L, conn("a", "a"))).toBe(true);
+    expect(bothInView(L, conn("a", "b"))).toBe(false);
+    expect(oneInView(L, conn("a", "b"))).toBe(true); // a shown, b not
+    expect(oneInView(L, conn("b", "c"))).toBe(false); // neither shown
   });
 });
 
 describe("otherEndLabel", () => {
   const scene = makeScene({ b: place("s1", "back"), c: place("s2", "front") });
-  const ctx = ctxOf(scene, "front");
   it("names the room when the other end is in a different space", () => {
-    expect(otherEndLabel(ctx, WALL_LABELS, "c")).toBe("Booth");
+    expect(otherEndLabel(scene, "s1", WALL_LABELS, "c")).toBe("Booth");
   });
   it("names the wall when the other end is a different wall of this room", () => {
-    expect(otherEndLabel(ctx, WALL_LABELS, "b")).toBe("Back");
+    expect(otherEndLabel(scene, "s1", WALL_LABELS, "b")).toBe("Back");
   });
   it("is '?' for an unplaced device", () => {
-    expect(otherEndLabel(ctx, WALL_LABELS, "ghost")).toBe("?");
+    expect(otherEndLabel(scene, "s1", WALL_LABELS, "ghost")).toBe("?");
   });
 });
 
@@ -139,18 +157,18 @@ describe("cableAnchor", () => {
   it("front-facing output: estimates near the chassis, nudged right (0.62) at 0.45 height", () => {
     const scene = makeScene({ a: place("s1", "front", "front") });
     // deviceRect(front) = {x:0,y:0,w:200,h:100}; output wx = 200·0.62 = 124, wy = 100·0.45 = 45
-    expect(cableAnchor(ctxOf(scene), {}, ref("a"), "output", idApi)).toEqual({ x: 124, y: 45 });
+    expect(cableAnchor(layoutOf(scene), {}, ref("a"), "output", idApi)).toEqual({ x: 124, y: 45 });
   });
 
   it("front-facing input: nudged left (0.38)", () => {
     const scene = makeScene({ a: place("s1", "front", "front") });
-    expect(cableAnchor(ctxOf(scene), {}, ref("a"), "input", idApi)).toEqual({ x: 76, y: 45 });
+    expect(cableAnchor(layoutOf(scene), {}, ref("a"), "input", idApi)).toEqual({ x: 76, y: 45 });
   });
 
   it("back-facing: anchors at the measured socket when its face is the shown (back) face", () => {
     const scene = makeScene({ a: place("s1", "front", "back") });
     const anchors = { "a:output:0": { x: 9, y: 9, face: "back" as const } };
-    expect(cableAnchor(ctxOf(scene), anchors, ref("a"), "output", idApi)).toEqual({
+    expect(cableAnchor(layoutOf(scene), anchors, ref("a"), "output", idApi)).toEqual({
       x: 9,
       y: 9,
       face: "back",
@@ -159,7 +177,7 @@ describe("cableAnchor", () => {
 
   it("back-facing but unmeasured: falls back to the chassis estimate", () => {
     const scene = makeScene({ a: place("s1", "front", "back") });
-    expect(cableAnchor(ctxOf(scene), {}, ref("a"), "output", idApi)).toEqual({ x: 124, y: 45 });
+    expect(cableAnchor(layoutOf(scene), {}, ref("a"), "output", idApi)).toEqual({ x: 124, y: 45 });
   });
 
   it("front-face jack: anchors at the measured socket when the front face is shown", () => {
@@ -167,7 +185,7 @@ describe("cableAnchor", () => {
     // measured face matches → anchor precisely at it rather than the mid-chassis estimate.
     const scene = makeScene({ a: place("s1", "front", "front") });
     const anchors = { "a:input:0": { x: 3, y: 4, face: "front" as const } };
-    expect(cableAnchor(ctxOf(scene), anchors, ref("a"), "input", idApi)).toEqual({
+    expect(cableAnchor(layoutOf(scene), anchors, ref("a"), "input", idApi)).toEqual({
       x: 3,
       y: 4,
       face: "front",
@@ -180,7 +198,7 @@ describe("cableAnchor", () => {
     // deviceRect = {x:0,y:0,w:200,h:100}; output wx = 200·0.62 = 124, wy = 100·0.45 = 45
     const scene = makeScene({ a: place("s1", "front", "back") });
     const anchors = { "a:output:0": { x: 9, y: 9, face: "front" as const } };
-    expect(cableAnchor(ctxOf(scene), anchors, ref("a"), "output", idApi)).toEqual({
+    expect(cableAnchor(layoutOf(scene), anchors, ref("a"), "output", idApi)).toEqual({
       x: 124,
       y: 45,
     });
@@ -203,7 +221,7 @@ describe("cableAnchor", () => {
       },
     ];
     const anchors = { "a:output:0": { x: 9, y: 9, face: "back" as const } };
-    expect(cableAnchor(ctxOf(scene, "back"), anchors, ref("a"), "output", idApi)).toEqual({
+    expect(cableAnchor(layoutOf(scene, "back"), anchors, ref("a"), "output", idApi)).toEqual({
       x: 9,
       y: 9,
       face: "back",
@@ -212,7 +230,7 @@ describe("cableAnchor", () => {
 
   it("is null when the device isn't in the shown view (drawn as a portal instead)", () => {
     const scene = makeScene({ a: place("s1", "back") });
-    expect(cableAnchor(ctxOf(scene, "front"), {}, ref("a"), "output", idApi)).toBeNull();
+    expect(cableAnchor(layoutOf(scene, "front"), {}, ref("a"), "output", idApi)).toBeNull();
   });
 });
 
@@ -222,30 +240,30 @@ describe("tipPatchEnd", () => {
   it("is true for a measured front-face jack on a front-shown device (occluded by its panel)", () => {
     const scene = makeScene({ a: place("s1", "front", "front") });
     const anchors = { "a:input:0": { x: 3, y: 4, face: "front" as const } };
-    expect(tipPatchEnd(ctxOf(scene), anchors, ref("a"), "input")).toBe(true);
+    expect(tipPatchEnd(layoutOf(scene), anchors, ref("a"), "input")).toBe(true);
   });
 
   it("is false on a back-shown device (it already sits below the cables — nothing to patch over)", () => {
     const scene = makeScene({ a: place("s1", "front", "back") });
     const anchors = { "a:output:0": { x: 9, y: 9, face: "back" as const } };
-    expect(tipPatchEnd(ctxOf(scene), anchors, ref("a"), "output")).toBe(false);
+    expect(tipPatchEnd(layoutOf(scene), anchors, ref("a"), "output")).toBe(false);
   });
 
   it("is false when the jack isn't measured yet (the end anchors to an estimate, no visible socket)", () => {
     const scene = makeScene({ a: place("s1", "front", "front") });
-    expect(tipPatchEnd(ctxOf(scene), {}, ref("a"), "input")).toBe(false);
+    expect(tipPatchEnd(layoutOf(scene), {}, ref("a"), "input")).toBe(false);
   });
 
   it("is false for a jack measured on the hidden (away) face of a front-shown device", () => {
     const scene = makeScene({ a: place("s1", "front", "front") });
     const anchors = { "a:input:0": { x: 3, y: 4, face: "back" as const } };
-    expect(tipPatchEnd(ctxOf(scene), anchors, ref("a"), "input")).toBe(false);
+    expect(tipPatchEnd(layoutOf(scene), anchors, ref("a"), "input")).toBe(false);
   });
 
   it("is false when the device isn't in the shown view", () => {
     const scene = makeScene({ a: place("s1", "back", "front") });
     const anchors = { "a:input:0": { x: 3, y: 4, face: "front" as const } };
-    expect(tipPatchEnd(ctxOf(scene, "front"), anchors, ref("a"), "input")).toBe(false);
+    expect(tipPatchEnd(layoutOf(scene, "front"), anchors, ref("a"), "input")).toBe(false);
   });
 });
 
@@ -253,7 +271,7 @@ describe("deviceSurfaceRect", () => {
   it("returns the device's chassis rect in surface coords (top-left origin)", () => {
     const scene = makeScene({ a: place("s1", "front", "front") });
     // deviceRect(front) = {x:0,y:0,w:200,h:100}; idApi passes coords through → the same box, y-down.
-    expect(deviceSurfaceRect(ctxOf(scene), "a", idApi)).toEqual({
+    expect(deviceSurfaceRect(layoutOf(scene), "a", idApi)).toEqual({
       x: 0,
       y: 0,
       width: 200,
@@ -263,7 +281,7 @@ describe("deviceSurfaceRect", () => {
 
   it("is null when the device has no rect (not placed / unknown id)", () => {
     const scene = makeScene({ a: place("s1", "front") });
-    expect(deviceSurfaceRect(ctxOf(scene), "ghost", idApi)).toBeNull();
+    expect(deviceSurfaceRect(layoutOf(scene), "ghost", idApi)).toBeNull();
   });
 });
 
@@ -284,7 +302,7 @@ describe("cableEndpoints — back-shown chassis clamp", () => {
     // dst back-shown, unmeasured input → estimate wx=200·0.38=76, wy=100·0.45=45 ⇒ {76,45}, inside dst's
     // rect x∈[0,200] y∈[0,100]. src output estimate = 400+200·0.62=524, y=45 ⇒ {524,45} (the "other" end).
     // Segment {76,45}→{524,45} exits dst's rect at the right edge x=200 (t=124/448), y=45 ⇒ {200,45}.
-    const ends = cableEndpoints(ctxOf(twoScene("back")), {}, conn("src", "dst"), idApi);
+    const ends = cableEndpoints(layoutOf(twoScene("back")), {}, conn("src", "dst"), idApi);
     expect(ends?.b).toEqual({ x: 200, y: 45 });
     // src is front-shown → sits above the cables, so its estimate end is left unclamped.
     expect(ends?.a).toEqual({ x: 524, y: 45 });
@@ -292,7 +310,7 @@ describe("cableEndpoints — back-shown chassis clamp", () => {
 
   it("does not clamp a front-shown device's estimate (it sits above the cables, hiding the estimate)", () => {
     // Same layout, dst front-shown: its input estimate {76,45} is kept as-is.
-    const ends = cableEndpoints(ctxOf(twoScene("front")), {}, conn("src", "dst"), idApi);
+    const ends = cableEndpoints(layoutOf(twoScene("front")), {}, conn("src", "dst"), idApi);
     expect(ends?.b).toEqual({ x: 76, y: 45 });
   });
 
@@ -303,13 +321,13 @@ describe("cableEndpoints — back-shown chassis clamp", () => {
       dst: place("s1", "front", "back"),
       src: place("s1", "front", "front"),
     });
-    const ends = cableEndpoints(ctxOf(scene), {}, conn("src", "dst"), idApi);
+    const ends = cableEndpoints(layoutOf(scene), {}, conn("src", "dst"), idApi);
     expect(ends?.b).toEqual({ x: 76, y: 45 });
   });
 
   it("uses the precise socket (no clamp) when the jack is measured on the shown back face", () => {
     const anchors = { "dst:input:0": { x: 9, y: 9, face: "back" as const } };
-    const ends = cableEndpoints(ctxOf(twoScene("back")), anchors, conn("src", "dst"), idApi);
+    const ends = cableEndpoints(layoutOf(twoScene("back")), anchors, conn("src", "dst"), idApi);
     expect(ends?.b).toEqual({ x: 9, y: 9, face: "back" });
   });
 
@@ -318,6 +336,62 @@ describe("cableEndpoints — back-shown chassis clamp", () => {
       dst: place("s1", "front", "back"),
       src: place("s1", "back", "front"),
     });
-    expect(cableEndpoints(ctxOf(scene, "front"), {}, conn("src", "dst"), idApi)).toBeNull();
+    expect(cableEndpoints(layoutOf(scene, "front"), {}, conn("src", "dst"), idApi)).toBeNull();
+  });
+});
+
+// The workbench bench's CableLayout: a flat surface showing *both* faces of every device, no rooms/walls,
+// no z-interleave. Every device is in view, either face's measured jack anchors precisely, and there is no
+// chassis rect (so the interior estimate never fires) and no clamp/tip-patch.
+describe("bench CableLayout (both faces flat)", () => {
+  const bench: CableLayout = {
+    inView: () => true,
+    faceAnchorable: () => true,
+    rect: () => null,
+    clampsEstimate: () => false,
+    frontPatchOver: () => false,
+  };
+  const ref = (device: string, port = 0) => ({ device, port });
+  const conn = (from: string, to: string): Connection => ({
+    from: { device: from, port: 0 },
+    to: { device: to, port: 0 },
+  });
+
+  it("anchors precisely at a measured jack on EITHER face (both faces are shown on the bench)", () => {
+    const anchors = {
+      "a:output:0": { x: 5, y: 6, face: "front" as const },
+      "b:input:0": { x: 7, y: 8, face: "back" as const },
+    };
+    expect(cableAnchor(bench, anchors, ref("a"), "output", idApi)).toEqual({
+      x: 5,
+      y: 6,
+      face: "front",
+    });
+    expect(cableAnchor(bench, anchors, ref("b"), "input", idApi)).toEqual({
+      x: 7,
+      y: 8,
+      face: "back",
+    });
+  });
+
+  it("joins two measured jacks with no clamp (nothing sits below the cables)", () => {
+    const anchors = {
+      "src:output:0": { x: 10, y: 20, face: "back" as const },
+      "dst:input:0": { x: 100, y: 40, face: "back" as const },
+    };
+    expect(cableEndpoints(bench, anchors, conn("src", "dst"), idApi)).toEqual({
+      a: { x: 10, y: 20, face: "back" },
+      b: { x: 100, y: 40, face: "back" },
+    });
+  });
+
+  it("draws nothing until a jack is measured (no chassis rect ⇒ no interior estimate)", () => {
+    expect(cableAnchor(bench, {}, ref("a"), "output", idApi)).toBeNull();
+    expect(cableEndpoints(bench, {}, conn("src", "dst"), idApi)).toBeNull();
+  });
+
+  it("never tip-patches (cables draw above the flat panels)", () => {
+    const anchors = { "a:input:0": { x: 3, y: 4, face: "front" as const } };
+    expect(tipPatchEnd(bench, anchors, ref("a"), "input")).toBe(false);
   });
 });

@@ -298,9 +298,14 @@
     letter-spacing: var(--ae-legend-spacing, 0.05em);
     text-transform: uppercase;
   }
-  /* The device box at natural (1 px/mm) size; the faceplate fills it, the surface transform scales it. */
+  /* The device box at natural (1 px/mm) size; the faceplate fills it, the surface transform scales it.
+     A size container (as WorldView's `.content` is) so the faceplate scales its internals — knobs, jacks,
+     legends — to the *real* chassis box via `cqh`/`cqw`. `container-type` reads the pre-transform layout
+     size (the true mm footprint), so the controls size to the device, not the viewport (without this they
+     fall back to their fixed-rem caps and dwarf a small faceplate). */
   .device {
     position: relative;
+    container-type: size;
   }
   .device :global(> *) {
     width: 100%;

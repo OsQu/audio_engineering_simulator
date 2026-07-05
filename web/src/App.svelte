@@ -19,6 +19,7 @@
   import { defaultScene, loadScene } from "./scene-store";
   import {
     deviceById,
+    deviceRect,
     effectiveFacing,
     GRID_MM,
     isRack,
@@ -127,14 +128,35 @@
     };
   });
 
-  // Cable end anchor + view-membership helpers are pure cable-view fns, prebound here to the layout ctx,
+  // The scene view's `CableLayout` — the injected seam cable-view's geometry asks its layout questions of,
+  // backed by the spatial projection (placements/racks/room/wall). cable-view itself is view-agnostic (the
+  // workbench bench supplies its own); this binds it to the scene. Rebuilt per call (a fresh `layout()`) so
+  // the reactive reads register as dependencies, matching the inline-ctx discipline elsewhere.
+  const sceneLayout = (): cableView.CableLayout => {
+    const ctx = layout();
+    return {
+      inView: (id) => {
+        const p = ctx.scene.ui.placements[id];
+        return p?.space === ctx.space && p.wall === ctx.wall;
+      },
+      faceAnchorable: (id, face) => face === effectiveFacing(ctx.scene, id),
+      rect: (id) => {
+        const d = deviceById(ctx.scene, id);
+        return d ? deviceRect(ctx, id, d.typeId) : null;
+      },
+      clampsEstimate: (id) => effectiveFacing(ctx.scene, id) === "back",
+      frontPatchOver: (id) => effectiveFacing(ctx.scene, id) === "front",
+    };
+  };
+
+  // Cable end anchor + view-membership helpers are pure cable-view fns, prebound here to the scene layout,
   // the measured jack anchors, and (for cableAnchor) the world api.
   const cableAnchor = (
     ref: PortRef,
     direction: "input" | "output",
     api: WorldApi,
   ): { x: number; y: number } | null =>
-    cableView.cableAnchor(layout(), patch.jackAnchors, ref, direction, api);
+    cableView.cableAnchor(sceneLayout(), patch.jackAnchors, ref, direction, api);
 
   // Both of a cable's ends resolved to surface points (with the back-shown chassis clamp applied) — the
   // single geometry source shared by the z-2 lead and its overlay chassis patch, so the two copies trace
@@ -143,11 +165,11 @@
     c: Connection,
     api: WorldApi,
   ): { a: { x: number; y: number }; b: { x: number; y: number } } | null =>
-    cableView.cableEndpoints(layout(), patch.jackAnchors, c, api);
+    cableView.cableEndpoints(sceneLayout(), patch.jackAnchors, c, api);
 
   // A device's chassis rect in surface coords — the clip region for a front-plugged lead's overlay patch.
   const deviceSurfaceRect = (id: string, api: WorldApi): cableView.SurfaceRect | null =>
-    cableView.deviceSurfaceRect(layout(), id, api);
+    cableView.deviceSurfaceRect(sceneLayout(), id, api);
 
   // Cable occlusion is handled by z-order, not by the cable: a single continuous lead is drawn in the
   // cable layer (z 2), and each device sits above or below it (see placedItems' `z`) — a back-shown unit
@@ -160,12 +182,13 @@
 
   // Whether a cable end plugs into a visible front socket that the panel occludes (→ draw a chassis patch).
   const tipPatchEnd = (ref: PortRef, direction: "input" | "output"): boolean =>
-    cableView.tipPatchEnd(layout(), patch.jackAnchors, ref, direction);
+    cableView.tipPatchEnd(sceneLayout(), patch.jackAnchors, ref, direction);
 
-  const inView = (id: string): boolean => cableView.inView(layout(), id);
-  const bothInView = (c: Connection): boolean => cableView.bothInView(layout(), c);
-  const oneInView = (c: Connection): boolean => cableView.oneInView(layout(), c);
-  const otherEndLabel = (id: string): string => cableView.otherEndLabel(layout(), WALL_LABELS, id);
+  const inView = (id: string): boolean => sceneLayout().inView(id);
+  const bothInView = (c: Connection): boolean => cableView.bothInView(sceneLayout(), c);
+  const oneInView = (c: Connection): boolean => cableView.oneInView(sceneLayout(), c);
+  const otherEndLabel = (id: string): string =>
+    cableView.otherEndLabel(scene, currentSpace, WALL_LABELS, id);
   const portalKey = cableView.portalKey;
   const portalOffset = (c: Connection, fromIn: boolean): { dx: number; dy: number } =>
     cableView.portalOffset(scene, c, fromIn);
