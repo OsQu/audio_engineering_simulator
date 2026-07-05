@@ -2,13 +2,13 @@
   // The device workbench — the second view root (Epic 6): a focused single-device development view at
   // /devices/<typeId>. It constructs its own SceneSession (the shared engine consumer surface), boots it
   // **suspended** on a known-good bootstrap so the catalog arrives before any gesture, then resolves the
-  // requested typeId against that catalog — hot-swapping to the device (device-only, silent — the rig is
-  // 6.3) or falling back to the catalog index. Audio resumes on the first interaction. The bench stage
-  // (grid + both faces + live params/meters) lands in Task 6.2.4; for now a known device shows a stub.
+  // requested typeId against that catalog — hot-swapping to the bench scene (the device-under-test plus a
+  // fixed supporting cast: synth source + DA + speaker, unwired) or falling back to the catalog index.
+  // Audio resumes on the first interaction; the user patches source→DUT→monitor by hand (Story 6.3).
 
   import BenchStage from "./BenchStage.svelte";
   import { SceneSession } from "./session.svelte";
-  import { analogOutputPort, bootstrapScene, deviceScene } from "./workbench-scene";
+  import { BENCH_DEVICE, benchScene, bootstrapScene } from "./workbench-scene";
 
   interface Props {
     /** The requested device type id from the URL, or "" for the bare /devices index. */
@@ -38,18 +38,18 @@
   const requested = $derived(
     typeId ? (session.catalog.find((d) => d.typeId === typeId) ?? null) : null,
   );
-  // The analog output port to tap, or undefined if the device has none. A digital-only-output device
-  // (e.g. the computer) can't be tapped without a DA — that's the 6.3 monitor chain — so the bench refuses
-  // it here rather than building a digital-tap scene, which would fault the (shared, session-fatal) engine.
-  const tapPort = $derived(requested ? analogOutputPort(requested) : undefined);
 
-  // Once the engine is up and the requested device is known *and* tappable, make it the live scene (a
-  // one-time hot-swap off the bootstrap, and again if the route's typeId changes). The guard on the
-  // currently-loaded device id keeps this from re-swapping every re-run.
+  // Once the engine is up and the requested device is known, make the bench scene (DUT + supporting cast)
+  // the live scene — a one-time hot-swap off the bootstrap, and again if the route's typeId changes. The
+  // guard on the currently-loaded DUT instance keeps this from re-swapping every re-run. `benchScene`
+  // returns undefined only on a catalog regression (no speaker / no analog tap), which leaves the bootstrap.
   $effect(() => {
-    if (!session.ready || !requested || tapPort === undefined) return;
-    if (session.scene.patch.devices[0]?.typeId === requested.typeId) return;
-    session.scene = deviceScene(requested.typeId, tapPort);
+    if (!session.ready || !requested) return;
+    const loaded = session.scene.patch.devices.find((d) => d.id === BENCH_DEVICE)?.typeId;
+    if (loaded === requested.typeId) return;
+    const scene = benchScene(requested, session.catalog);
+    if (!scene) return;
+    session.scene = scene;
     session.hotSwap();
   });
 </script>
@@ -59,24 +59,13 @@
 <main class="workbench">
   {#if !session.ready}
     <p class="booting">Booting engine… <span class="muted">{session.status}</span></p>
-  {:else if requested && tapPort !== undefined}
+  {:else if requested}
     <header class="head">
       <span class="name">{requested.name}</span>
       <span class="muted">{requested.typeId}</span>
       <button type="button" class="back" onclick={() => navigate("/")}>← scene view</button>
     </header>
     <BenchStage {session} desc={requested} />
-  {:else if requested}
-    <!-- Known device, but no analog output to tap: needs a DA / monitor chain (Story 6.3). -->
-    <header class="head">
-      <span class="name">{requested.name}</span>
-      <span class="muted">{requested.typeId}</span>
-      <button type="button" class="back" onclick={() => navigate("/")}>← scene view</button>
-    </header>
-    <p class="muted">
-      This device has no analog output to tap — a monitor chain (DA) is needed to bench it. That lands
-      in Story 6.3.
-    </p>
   {:else}
     <!-- Catalog index: the bare /devices route, or an unknown typeId. -->
     <header class="head">

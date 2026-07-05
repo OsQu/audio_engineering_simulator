@@ -92,40 +92,54 @@
     api = worldApi;
   });
 
-  const Faceplate = $derived(deviceUi(desc.typeId));
-  const size = $derived(footprint(desc.formFactor)); // world mm
-  const rackUnits = $derived(desc.formFactor.kind === "rackmount" ? desc.formFactor.rackUnits : 0);
-
-  // A dimensions caption: rack height in U for rackmount, W×H×D mm for desktop.
-  const dims = $derived(
-    desc.formFactor.kind === "rackmount"
-      ? `${RACK_UNIT_MM * rackUnits} × ${size.width} mm · ${rackUnits}U`
-      : `${size.width} × ${size.height} × ${size.depth} mm`,
+  // The devices to render: the scene's instances (the DUT + the fixed supporting cast) resolved against
+  // the live catalog, in scene order (source → DUT → DA → speaker), each paired with its descriptor. The
+  // stage renders whatever the scene holds — so a URL-restored scene (Story 6.3) needs no special-casing.
+  type BenchDevice = { id: string; desc: DeviceDescriptor };
+  const devices = $derived<BenchDevice[]>(
+    session.scene.patch.devices
+      .map((d) => {
+        const found = session.catalog.find((c) => c.typeId === d.typeId);
+        return found ? { id: d.id, desc: found } : null;
+      })
+      .filter((x): x is BenchDevice => x !== null),
   );
 
-  // The faceplate props for one face — the identical descriptor-driven props App passes, bound to the
-  // bench's single device instance + this session's lanes. `flipped` selects front vs back.
-  function faceProps(flipped: boolean) {
-    return {
-      device: BENCH_DEVICE,
-      typeId: desc.typeId,
-      name: desc.name,
-      params: desc.params,
-      ports: desc.ports,
-      readouts: desc.readouts,
-      configs: desc.configs,
-      flipped,
-      valueFor: (id: number) => session.paramValue(BENCH_DEVICE, desc, id),
-      readingFor: (id: number) => session.readingFor(BENCH_DEVICE, id),
-      onParam: (p: DeviceDescriptor["params"][number], v: number) =>
-        session.onParamInput(BENCH_DEVICE, p, v),
-      configFor: (k: string) => session.configValue(BENCH_DEVICE, desc, k),
-      onConfig: (k: string, v: number) => session.onConfigInput(BENCH_DEVICE, k, v),
-    };
+  // Per-device layout: real footprint (world mm) + rack-unit count (0 if not rackmount).
+  function layoutOf(d: DeviceDescriptor) {
+    const size = footprint(d.formFactor);
+    const rackUnits = d.formFactor.kind === "rackmount" ? d.formFactor.rackUnits : 0;
+    return { size, rackUnits, uTicks: Array.from({ length: rackUnits + 1 }, (_, i) => i) };
   }
 
-  // U-slot tick offsets (mm from the top) for the rack ruler — one line per U boundary.
-  const uTicks = $derived(Array.from({ length: rackUnits + 1 }, (_, i) => i));
+  // A dimensions caption for the device-under-test: rack height in U for rackmount, W×H×D mm for desktop.
+  const dims = $derived.by(() => {
+    const size = footprint(desc.formFactor);
+    return desc.formFactor.kind === "rackmount"
+      ? `${RACK_UNIT_MM * (desc.formFactor.rackUnits ?? 0)} × ${size.width} mm · ${desc.formFactor.rackUnits}U`
+      : `${size.width} × ${size.height} × ${size.depth} mm`;
+  });
+
+  // The faceplate props for one device/face — the identical descriptor-driven props App passes, bound to
+  // this device instance + this session's lanes. `flipped` selects front vs back.
+  function faceProps(deviceId: string, d: DeviceDescriptor, flipped: boolean) {
+    return {
+      device: deviceId,
+      typeId: d.typeId,
+      name: d.name,
+      params: d.params,
+      ports: d.ports,
+      readouts: d.readouts,
+      configs: d.configs,
+      flipped,
+      valueFor: (id: number) => session.paramValue(deviceId, d, id),
+      readingFor: (id: number) => session.readingFor(deviceId, id),
+      onParam: (p: DeviceDescriptor["params"][number], v: number) =>
+        session.onParamInput(deviceId, p, v),
+      configFor: (k: string) => session.configValue(deviceId, d, k),
+      onConfig: (k: string, v: number) => session.onConfigInput(deviceId, k, v),
+    };
+  }
 </script>
 
 <div class="stage">
@@ -149,23 +163,39 @@
         bind:clientHeight={natH}
         style:transform="scale({scale})"
       >
-        <div class="faces">
-          {#if rackUnits > 0}
-            <!-- Rack-unit ruler: a tick per U boundary at 44.45 mm, matching the (natural) panel height. -->
-            <div class="ruler" style:height="{size.height}px">
-              {#each uTicks as u (u)}
-                <div class="tick" style:top="{u * RACK_UNIT_MM}px">
-                  {#if u < rackUnits}<span class="u-label">{u + 1}U</span>{/if}
-                </div>
-              {/each}
-            </div>
-          {/if}
-
-          {#each [{ flipped: false, label: "Front" }, { flipped: true, label: "Back" }] as face (face.label)}
-            <div class="face-col">
-              <span class="face-label muted">{face.label}</span>
-              <div class="device" style:width="{size.width}px" style:height="{size.height}px">
-                <Faceplate {...faceProps(face.flipped)} />
+        <!-- The device-under-test plus the fixed supporting cast, stacked top→bottom by signal flow. Each
+             device shows both faces (front above back); the rack-U ruler marks the DUT (the centerpiece). -->
+        <div class="bench-stack">
+          {#each devices as bd (bd.id)}
+            {@const lay = layoutOf(bd.desc)}
+            {@const Faceplate = deviceUi(bd.desc.typeId)}
+            {@const ruled = bd.id === BENCH_DEVICE && lay.rackUnits > 0}
+            <div class="device-group" class:dut={bd.id === BENCH_DEVICE}>
+              <span class="dev-name muted">{bd.desc.name}</span>
+              <div class="dev-faces">
+                {#each [{ flipped: false, label: "Front" }, { flipped: true, label: "Back" }] as face, i (face.label)}
+                  <div class="face-col">
+                    <span class="face-label muted">{face.label}</span>
+                    <div class="face-body">
+                      {#if ruled && i === 0}
+                        <!-- Rack-U ruler beside the front face: a tick per U boundary at 44.45 mm. -->
+                        <div class="ruler" style:height="{lay.size.height}px">
+                          {#each lay.uTicks as u (u)}
+                            <div class="tick" style:top="{u * RACK_UNIT_MM}px">
+                              {#if u < lay.rackUnits}<span class="u-label">{u + 1}U</span>{/if}
+                            </div>
+                          {/each}
+                        </div>
+                      {:else if ruled}
+                        <!-- Spacer so the back face lines up under the front (which carries the ruler). -->
+                        <div class="ruler-spacer"></div>
+                      {/if}
+                      <div class="device" style:width="{lay.size.width}px" style:height="{lay.size.height}px">
+                        <Faceplate {...faceProps(bd.id, bd.desc, face.flipped)} />
+                      </div>
+                    </div>
+                  </div>
+                {/each}
               </div>
             </div>
           {/each}
@@ -219,16 +249,50 @@
       10px 10px;
     background-position: -1px -1px;
   }
-  .faces {
+  /* The stack of devices (source → DUT → monitor), top→bottom; a wide gap separates them for cable room. */
+  .bench-stack {
     display: flex;
+    flex-direction: column;
     align-items: flex-start;
-    gap: 40px;
+    gap: 90px;
+    width: max-content;
+  }
+  /* One device: a name caption above its two faces (front + back), stacked vertically. */
+  .device-group {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+  .dev-name {
+    letter-spacing: var(--ae-legend-spacing, 0.05em);
+    text-transform: uppercase;
+    font-weight: 600;
+  }
+  /* The DUT is the centerpiece — nudge its name so the eye lands on it. */
+  .device-group.dut .dev-name {
+    color: var(--ae-text-strong);
+  }
+  .dev-faces {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 24px;
     width: max-content;
   }
   .face-col {
     display: flex;
     flex-direction: column;
     gap: 6px;
+  }
+  /* The face's device box, with the rack-U ruler (or its alignment spacer) to its left. */
+  .face-body {
+    display: flex;
+    align-items: flex-start;
+    gap: 6px;
+  }
+  .ruler-spacer {
+    width: 28px; /* matches .ruler width, so front + back faces line up */
+    flex: none;
   }
   .face-label {
     letter-spacing: var(--ae-legend-spacing, 0.05em);
@@ -242,11 +306,11 @@
     width: 100%;
     height: 100%;
   }
-  /* Rack-U ruler down the left of the panel. */
+  /* Rack-U ruler down the left of the panel (sits beside the device box, below the face label). */
   .ruler {
     position: relative;
     width: 28px;
-    margin-top: 22px; /* clear the face label row so ticks line up with the panel top */
+    flex: none;
     border-right: 1px solid var(--ae-line-hard, var(--ae-line-panel));
   }
   .tick {

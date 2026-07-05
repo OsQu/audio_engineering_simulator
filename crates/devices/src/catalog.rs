@@ -904,9 +904,9 @@ const CATALOG: &[CatalogEntry] = &[
         name: "Scarlett 8i6",
         // The real 2nd-gen 8i6: a half-rack-width desktop box, ~216 × 47 × 173 mm (W×H×D).
         form_factor: FormFactor::Desktop {
-            width_mm: 1216.0,
-            height_mm: 547.0,
-            depth_mm: 173.0,
+            width_mm: 210.0,
+            height_mm: 47.5,
+            depth_mm: 149.5,
         },
         // Signal-flow layout. Every routing-matrix port is internal (fed by the ADs/demuxes, consumed
         // by the muxes/DAs), so the matrix is placed **last** — its 196 generated crosspoints become the
