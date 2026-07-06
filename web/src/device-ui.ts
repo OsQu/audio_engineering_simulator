@@ -73,3 +73,10 @@ const FOCUS_SURFACES: Record<string, Component<DeviceUiProps>> = {
 export function focusUi(typeId: string): Component<DeviceUiProps> {
   return FOCUS_SURFACES[typeId] ?? deviceUi(typeId);
 }
+
+/** Whether a type has a *dedicated* (software) focus surface, vs reusing its physical faceplate. The focus
+ *  overlay renders a dedicated surface at its own UI scale, but **magnifies** a physical faceplate (which
+ *  is now sized in real mm) so it reads large — a zoomed physical view. */
+export function hasFocusSurface(typeId: string): boolean {
+  return typeId in FOCUS_SURFACES;
+}

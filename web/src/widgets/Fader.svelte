@@ -9,8 +9,21 @@
     param: ParamDescriptor;
     value: number;
     onChange: (v: number) => void;
+    /** Physical fader travel (track height) in **mm** (real-gear sizing, scaled by the world/bench zoom).
+     *  When omitted, keeps the legacy container-relative sizing. */
+    size?: number;
   }
-  let { param, value, onChange }: Props = $props();
+  let { param, value, onChange, size }: Props = $props();
+
+  // Physical sizing off the mm track height; the width/cap/type scale with it. `null` ⇒ legacy sizing.
+  const sizeVars = $derived(
+    size === undefined
+      ? undefined
+      : `--fader-h: ${size}px; --fader-col: ${(size * 0.55).toFixed(2)}px; ` +
+        `--fader-track: ${Math.max(2, size * 0.12).toFixed(2)}px; --fader-cap-w: ${(size * 0.3).toFixed(2)}px; ` +
+        `--fader-cap-h: ${(size * 0.15).toFixed(2)}px; --fader-font: ${(size * 0.11).toFixed(2)}px; ` +
+        `--fader-gap: ${(size * 0.04).toFixed(2)}px`,
+  );
 
   // 0%..100% of the track height, bottom = min.
   const pct = $derived(((value - param.min) / (param.max - param.min || 1)) * 100);
@@ -24,7 +37,7 @@
   }
 </script>
 
-<div class="fader">
+<div class="fader" style={sizeVars}>
   <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
   <div
     class="track"
@@ -51,13 +64,13 @@
     display: flex;
     flex-direction: column;
     align-items: center;
-    width: min(4.5rem, 92cqh);
-    gap: min(0.15rem, 2cqh);
+    width: var(--fader-col, min(4.5rem, 92cqh));
+    gap: var(--fader-gap, min(0.15rem, 2cqh));
   }
   .track {
     position: relative;
-    width: min(0.9rem, 12cqh);
-    height: min(7.5rem, 68cqh);
+    width: var(--fader-track, min(0.9rem, 12cqh));
+    height: var(--fader-h, min(7.5rem, 68cqh));
     border-radius: 8px;
     /* Recessed metal slot with a dark centre index groove. */
     background: linear-gradient(
@@ -92,8 +105,8 @@
     left: 50%;
     /* `bottom` is set inline from value→%; the transform keeps the cap centred on that point at any size. */
     transform: translate(-50%, 50%);
-    width: min(2.2rem, 30cqh);
-    height: min(1.1rem, 15cqh);
+    width: var(--fader-cap-w, min(2.2rem, 30cqh));
+    height: var(--fader-cap-h, min(1.1rem, 15cqh));
     border-radius: 3px;
     background: linear-gradient(to bottom, var(--ae-fader-cap-top), var(--ae-fader-cap-bot));
     box-shadow:
@@ -116,7 +129,7 @@
   .label {
     font-family: var(--ae-font-ui);
     font-weight: var(--ae-label-weight);
-    font-size: min(var(--ae-label-size), 17cqh);
+    font-size: var(--fader-font, min(var(--ae-label-size), 17cqh));
     letter-spacing: var(--ae-label-spacing);
     text-transform: uppercase;
     color: var(--ae-faceplate-ink, var(--ae-text-strong));
@@ -124,7 +137,7 @@
   }
   .value {
     font-family: var(--ae-font-ui);
-    font-size: min(var(--ae-value-size), 17cqh);
+    font-size: var(--fader-font, min(var(--ae-value-size), 17cqh));
     font-variant-numeric: tabular-nums;
     color: var(--ae-faceplate-ink-muted, var(--ae-text-muted));
   }

@@ -28,9 +28,9 @@
 
 {#if param}
   {#if kind === "fader"}
-    <Fader {param} value={handle.value(id)} onChange={(v) => handle.set(id, v)} />
+    <Fader {param} value={handle.value(id)} onChange={(v) => handle.set(id, v)} {size} />
   {:else if kind === "switch"}
-    <Switch {param} value={handle.value(id)} onChange={(v) => handle.set(id, v)} />
+    <Switch {param} value={handle.value(id)} onChange={(v) => handle.set(id, v)} {size} />
   {:else}
     <Knob {param} value={handle.value(id)} onChange={(v) => handle.set(id, v)} {cap} {size} />
   {/if}

@@ -8,11 +8,28 @@
     /** Owning device instance id — with the port, tags the connector so the cable layer can locate it. */
     device: string;
     port: PortDescriptor;
+    /** Physical connector diameter in **mm** (real-gear sizing, scaled by the world/bench zoom). When
+     *  omitted, keeps the legacy container-relative sizing. */
+    size?: number;
   }
-  let { device, port }: Props = $props();
+  let { device, port, size }: Props = $props();
+
+  // Physical sizing off the mm connector diameter; `null` ⇒ CSS falls back to the container-relative values.
+  const sizeVars = $derived(
+    size === undefined
+      ? undefined
+      : `--jack: ${size}px; --jack-font: ${(size * 0.42).toFixed(2)}px; ` +
+        `--jack-gap: ${(size * 0.12).toFixed(2)}px; --jack-lane-font: ${(size * 0.32).toFixed(2)}px`,
+  );
 </script>
 
-<div class="jack" data-kind={port.kind} data-domain={port.domain} title={`${port.kind} · ${port.domain}`}>
+<div
+  class="jack"
+  data-kind={port.kind}
+  data-domain={port.domain}
+  title={`${port.kind} · ${port.domain}`}
+  style={sizeVars}
+>
   <!-- `data-jack` = "device:direction:portId" — the cable overlay measures this element's centre. -->
   <span class="connector" data-jack={`${device}:${port.direction}:${port.id}`}></span>
   {#if port.channels > 1}
@@ -30,7 +47,7 @@
     display: flex;
     flex-direction: column;
     align-items: center;
-    gap: clamp(1px, 3cqh, 0.2rem);
+    gap: var(--jack-gap, clamp(1px, 3cqh, 0.2rem));
     min-width: 0;
   }
   /* Lane-count badge for a multichannel connector, pinned to the connector's top-right corner. */
@@ -43,20 +60,24 @@
     background: var(--ae-signal-digital);
     color: var(--ae-bg-panel, #000);
     font-family: var(--ae-font-ui);
-    font-size: clamp(4px, 12cqh, 0.5rem);
+    font-size: var(--jack-lane-font, clamp(4px, 12cqh, 0.5rem));
     font-weight: 700;
     line-height: 1.4;
     pointer-events: none;
   }
   .connector {
-    width: clamp(6px, 34cqh, 1.5rem);
-    height: clamp(6px, 34cqh, 1.5rem);
+    /* `--conn` is the connector diameter (the mm `--jack`, else the legacy container-relative size). The
+       edge + signal ring are a *proportion* of it, so a small ¼" jack and a big XLR keep the same look
+       (fixed px made the ring swallow a small socket). */
+    --conn: var(--jack, clamp(6px, 34cqh, 1.5rem));
+    width: var(--conn);
+    height: var(--conn);
     border-radius: 50%;
     /* Recessed barrel + a signal-coloured ring (the "what plugs in here" at a glance). */
     background: radial-gradient(circle at 50% 32%, var(--ae-jack-top), var(--ae-jack-bot));
-    border: 2px solid var(--ae-jack-edge);
+    border: calc(var(--conn) * 0.09) solid var(--ae-jack-edge);
     box-shadow:
-      inset 0 0 0 3px var(--ring, var(--ae-signal-line)),
+      inset 0 0 0 calc(var(--conn) * 0.13) var(--ring, var(--ae-signal-line)),
       0 1px 2px rgba(0, 0, 0, 0.6);
   }
   /* Digital carriers read as squared connectors (e.g. coax/optical/AES housings). */
@@ -84,7 +105,7 @@
   }
   .label {
     font-family: var(--ae-font-ui);
-    font-size: clamp(4px, 15cqh, 0.65rem);
+    font-size: var(--jack-font, clamp(4px, 15cqh, 0.65rem));
     letter-spacing: var(--ae-label-spacing);
     color: var(--ae-text-muted);
     text-align: center;

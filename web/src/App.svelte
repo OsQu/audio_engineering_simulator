@@ -7,7 +7,7 @@
 
   import type { CableType, DeviceDescriptor, PortDomain, PortKind } from "./catalog";
   import { descriptorFor, isPlayable } from "./catalog";
-  import { deviceUi, focusUi } from "./device-ui";
+  import { deviceUi, focusUi, hasFocusSurface } from "./device-ui";
   import { isFocusable } from "./focus";
   import { skinFor } from "./skin";
   import { wireKeyboard, wireMidi } from "./engine";
@@ -32,7 +32,7 @@
   import * as cableView from "./cable-view";
   import * as placement from "./placement";
   import * as sceneOps from "./scene-ops";
-  import { type Room, type Wall } from "./spatial";
+  import { footprint, type Room, type Wall } from "./spatial";
   import Keybed from "./widgets/Keybed.svelte";
   import Vu from "./widgets/Vu.svelte";
   import WorldView from "./widgets/WorldView.svelte";
@@ -270,6 +270,9 @@
   // presentation is an overlay that dims the world (a peer of the cable-inspector / patch-banner
   // overlays), not a WorldView spatial change.
   let focusedDevice = $state<string | null>(null);
+  // The on-screen width a magnified physical faceplate is zoomed to in the focus overlay (its mm footprint
+  // scaled up to this px width — a comfortable size inside the ~900px modal).
+  const FOCUS_FACE_WIDTH_PX = 720;
   // The focused device resolved to its instance + descriptor — or null when nothing is focused (or the
   // focused device has gone / isn't focusable, so a stale id renders nothing). Which surface component
   // to draw is `focusUi(typeId)`; whether a keybed is appended is `isPlayable(desc)`.
@@ -905,7 +908,7 @@
               <span class="focus-name">{f.desc.name}</span>
               <button type="button" class="focus-close" onclick={closeFocus}>Close</button>
             </header>
-            <div class="focus-body">
+            {#snippet focusFace()}
               <Surface
                 device={f.device.id}
                 typeId={f.device.typeId}
@@ -920,6 +923,28 @@
                 configFor={(k) => session.configValue(f.device.id, f.desc, k)}
                 onConfig={(k, v) => session.onConfigInput(f.device.id, k, v)}
               />
+            {/snippet}
+            <div class="focus-body">
+              {#if hasFocusSurface(f.device.typeId)}
+                <!-- Dedicated software surface (console / routing matrix): its own UI scale. -->
+                {@render focusFace()}
+              {:else}
+                <!-- Physical faceplate: a zoomed physical view — laid out at its real mm footprint, scaled
+                     up to a comfortable width so the mm-sized controls read large (a sizer carries the
+                     scaled extent, as on the bench). -->
+                {@const fp = footprint(f.desc.formFactor)}
+                {@const zoom = FOCUS_FACE_WIDTH_PX / fp.width}
+                <div class="focus-zoom-sizer" style:width="{fp.width * zoom}px" style:height="{fp.height * zoom}px">
+                  <div
+                    class="focus-zoom"
+                    style:width="{fp.width}px"
+                    style:height="{fp.height}px"
+                    style:transform="scale({zoom})"
+                  >
+                    {@render focusFace()}
+                  </div>
+                </div>
+              {/if}
               {#if isPlayable(f.desc)}
                 <!-- The keybed = the device's open events input, drawn on-screen. Disabled when the input
                      is cable-driven (a patched controller performs it instead — host notes are a no-op). -->
@@ -1481,6 +1506,21 @@
   .focus-body :global(.panel) {
     width: 100%;
     min-height: 220px;
+  }
+  /* A magnified physical faceplate: the inner box is laid out at the device's real mm footprint and scaled
+     up (transform-origin top-left); the sizer carries the scaled extent so the modal lays out around it.
+     The panel fills the mm footprint box (overriding the dedicated-surface min-height above). */
+  .focus-zoom-sizer {
+    position: relative;
+    flex: none;
+  }
+  .focus-zoom {
+    transform-origin: top left;
+  }
+  .focus-zoom :global(.panel) {
+    width: 100%;
+    height: 100%;
+    min-height: 0;
   }
   /* Global levels & losses panel — live meter readings + static connection losses. */
   .levels {

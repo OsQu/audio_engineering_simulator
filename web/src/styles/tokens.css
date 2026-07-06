@@ -225,10 +225,12 @@
   /* color comes from the matching --ae-signal-* / --ae-signal-*-lit vars.  */
   /* ====================================================================== */
   --ae-cable-shadow: #0a0d12;
-  --ae-cable-shadow-w: 9px;
-  --ae-cable-core-w: 6px;
-  --ae-cable-highlight-w: 2px;
-  --ae-cable-sag: 90px; /* how far control points droop below the endpoints */
+  /* Cable widths are in surface mm (the stage is 1 px/mm; the world/bench zoom scales them), so these are
+     a real patch cable's ~mm gauge — sized against the mm-accurate faceplates, not the old oversized ones. */
+  --ae-cable-shadow-w: 4.5px;
+  --ae-cable-core-w: 3px;
+  --ae-cable-highlight-w: 1.2px;
+  --ae-cable-sag: 40px; /* how far control points droop below the endpoints (mm) */
 
   /* Floor-plan / top-view routing (dashed signal trails) */
   --ae-route-dash: "2 7";

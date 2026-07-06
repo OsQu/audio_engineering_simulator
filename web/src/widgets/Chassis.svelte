@@ -62,7 +62,8 @@
     box-shadow:
       var(--ae-bevel-top),
       var(--ae-shadow-card);
-    padding: clamp(2px, 6cqh, 0.6rem) clamp(3px, 2cqw, 0.9rem);
+    /* Bezel inset in **mm** (the panel is 1 px/mm; the world/bench zoom scales it). */
+    padding: 2px 3px;
     display: flex;
     flex-direction: column;
     position: relative;
@@ -71,11 +72,11 @@
      height and a 1U unit's jacks stop clipping. */
   .name {
     position: absolute;
-    top: clamp(1px, 3cqh, 0.45rem);
-    left: clamp(2px, 2cqw, 0.7rem);
+    top: 2px;
+    left: 2px;
     z-index: 2;
     font-family: var(--ae-font-display);
-    font-size: clamp(5px, 22cqh, 0.8rem);
+    font-size: 4px;
     font-weight: 700;
     letter-spacing: var(--ae-legend-spacing);
     text-transform: uppercase;
@@ -118,7 +119,7 @@
      automatically contrasts with the face. Custom properties pierce Svelte's style scoping, so
      descendants (a device's face content) inherit them across components. */
   .front {
-    padding: clamp(3px, 3cqh, 0.5rem);
+    padding: 2px;
     border-radius: var(--ae-radius-panel);
     box-shadow:
       inset 0 1px 0 rgba(255, 255, 255, 0.25),
@@ -159,6 +160,6 @@
     /* Rear panel: dark sheet metal, distinct from the finished front face. */
     background: linear-gradient(var(--ae-bg-panel), var(--ae-bg-panel-2));
     border-radius: 5px;
-    padding: clamp(2px, 4cqh, 0.5rem);
+    padding: 2px;
   }
 </style>

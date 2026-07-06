@@ -4,16 +4,19 @@
   // contrasts with any finish; purely decorative (non-interactive). Scales with the chassis via cqh.
   interface Props {
     text: string;
+    /** Physical cap-height in **mm** (real-gear silkscreen sizing, scaled by the world/bench zoom). When
+     *  omitted, keeps the legacy container-relative sizing. */
+    size?: number;
   }
-  let { text }: Props = $props();
+  let { text, size }: Props = $props();
 </script>
 
-<span class="legend">{text}</span>
+<span class="legend" style={size === undefined ? undefined : `--legend: ${size}px`}>{text}</span>
 
 <style>
   .legend {
     font-family: var(--ae-font-display);
-    font-size: clamp(4px, 15cqh, 0.55rem);
+    font-size: var(--legend, clamp(4px, 15cqh, 0.55rem));
     font-weight: 700;
     letter-spacing: var(--ae-legend-spacing);
     text-transform: uppercase;

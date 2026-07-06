@@ -22,11 +22,15 @@
   const handle = makeHandle(untrack(() => props));
   // The send-meter readout ids in exposed order (Peak, RMS per lane) — all of them, laid out in a strip.
   const meters = $derived((props.readouts ?? []).map((r) => r.id));
+
+  // Physical control sizes in **mm** (panel is 1 px/mm; the world/bench zoom scales it), inherited by the
+  // legends + the (large, multi-lane) USB jacks.
+  const faceVars = "--legend: 2.8px; --jack: 13px; --jack-font: 4px; --jack-gap: 1.2px; --jack-lane-font: 3px";
 </script>
 
 <Chassis {handle} flipped={props.flipped} finish={skin.finish} name={props.name}>
   {#snippet front()}
-    <div class="front">
+    <div class="front" style={faceVars}>
       <span class="wordmark">Computer</span>
       <Legend text="USB Sends" />
       <div class="meters">
@@ -38,7 +42,7 @@
   {/snippet}
 
   {#snippet back()}
-    <div class="back">
+    <div class="back" style={faceVars}>
       <div class="section">
         <Legend text="USB" />
         <div class="row">
@@ -51,11 +55,12 @@
 </Chassis>
 
 <style>
+  /* Spacing in **mm** (panel is 1 px/mm; the world/bench zoom scales it). */
   .front {
     display: flex;
     flex-direction: column;
     align-items: flex-start;
-    gap: clamp(2px, 2cqh, 0.4rem);
+    gap: 2px;
     height: 100%;
     box-sizing: border-box;
   }
@@ -71,25 +76,25 @@
     display: flex;
     flex-direction: column;
     align-items: center;
-    gap: clamp(1px, 2cqh, 0.3rem);
+    gap: 1.5px;
   }
   .row {
     display: flex;
     flex-direction: row;
     align-items: center;
-    gap: clamp(2px, 1.5cqw, 0.5rem);
+    gap: 2.5px;
   }
   .meters {
     display: flex;
     flex-direction: row;
     flex-wrap: wrap;
     align-items: center;
-    gap: clamp(0.3rem, 2cqw, 1rem);
+    gap: 3px;
   }
   .wordmark {
     font-family: var(--ae-font-display);
     font-weight: 700;
-    font-size: clamp(6px, 18cqh, 0.9rem);
+    font-size: 5px;
     letter-spacing: var(--ae-legend-spacing);
     color: var(--ae-faceplate-ink, var(--ae-text-primary));
   }

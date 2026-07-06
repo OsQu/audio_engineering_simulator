@@ -12,13 +12,15 @@
     dir: PortDirection;
     /** Port id within its direction. */
     id: number;
+    /** Physical connector diameter in mm (real-gear sizing, scaled by the world/bench zoom). */
+    size?: number;
   }
-  let { dir, id }: Props = $props();
+  let { dir, id, size }: Props = $props();
 
   const handle = getDeviceHandle();
   const port = $derived(handle.port(dir, id));
 </script>
 
 {#if port}
-  <Jack device={handle.device} {port} />
+  <Jack device={handle.device} {port} {size} />
 {/if}

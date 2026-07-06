@@ -29,39 +29,48 @@
   const skin = $derived(skinFor(props.typeId));
   // makeHandle reads the (stable) props object lazily, so capture it once; untrack documents that.
   const handle = makeHandle(untrack(() => props));
+
+  // Physical control sizes in **mm** (the panel is laid out at 1 px/mm; the world/bench zoom scales it).
+  // Set once on each face as inherited CSS vars so every Legend/Led/Jack picks a real-gear size; a few
+  // controls override per-instance (the big combo inputs, the small phones jacks). See the size props.
+  // Measured off a real 2nd-gen 8i6: ¼" (6.3 mm) sockets are ~8 mm across (the default `--jack`); the XLR
+  // combo inputs (23 mm), gain knobs (14 mm) and the monitor knob (28 mm) override per-instance below.
+  const faceVars =
+    "--legend: 2.6px; --led: 3px; --led-font: 2.4px; --led-gap: 0.7px; " +
+    "--jack: 8px; --jack-font: 3px; --jack-gap: 1px; --jack-lane-font: 2.4px";
 </script>
 
 <Chassis {handle} flipped={props.flipped} finish={skin.finish} accent={skin.accent}>
   {#snippet front()}
-    <div class="front">
+    <div class="front" style={faceVars}>
       <!-- Two combo channels: gain knob, INST/AIR/PAD indicator LEDs (lit from config/param state;
            toggled in Focusrite Control), then the input jack. Written out per channel with **literal**
            ids so the faceplate guardrail can confirm each control/jack is placed and reachable. -->
       <div class="channel">
-        <Control id={0} cap="dark" size={11} />
+        <Control id={0} cap="dark" size={14} />
         <Legend text="Gain 1" />
         <div class="leds">
           <Led on={handle.config("inst1") >= 0.5} label="Inst" />
           <Led on={handle.value(2) >= 0.5} label="Air" />
           <Led on={handle.value(1) >= 0.5} label="Pad" />
         </div>
-        <Socket dir="input" id={0} />
+        <Socket dir="input" id={0} size={23} />
       </div>
       <div class="channel">
-        <Control id={3} cap="dark" size={11} />
+        <Control id={3} cap="dark" size={14} />
         <Legend text="Gain 2" />
         <div class="leds">
           <Led on={handle.config("inst2") >= 0.5} label="Inst" />
           <Led on={handle.value(5) >= 0.5} label="Air" />
           <Led on={handle.value(4) >= 0.5} label="Pad" />
         </div>
-        <Socket dir="input" id={1} />
+        <Socket dir="input" id={1} size={23} />
       </div>
 
       <!-- Monitor: the big centre knob (drives line outs 1–2 via the Rust Monitor group). -->
       <div class="section monitor">
         <Legend text="Monitor" />
-        <Control id={204} cap="dark" size={22} />
+        <Control id={204} cap="dark" size={28} />
       </div>
 
       <!-- Two headphone outputs, each with its own level knob + front jack. -->
@@ -81,7 +90,7 @@
   {/snippet}
 
   {#snippet back()}
-    <div class="back">
+    <div class="back" style={faceVars}>
       <!-- Rear line inputs 3–6 (line-level → the extra ADs → matrix). -->
       <div class="section">
         <Legend text="Line In 3–6" />
@@ -106,24 +115,24 @@
       <div class="section">
         <Legend text="S/PDIF" />
         <div class="row">
-          <Socket dir="input" id={6} />
-          <Socket dir="output" id={1} />
+          <Socket dir="input" id={6} size={9} />
+          <Socket dir="output" id={1} size={9} />
         </div>
       </div>
       <!-- USB (one connector): the 8-lane send + 6-lane return cluster. -->
       <div class="section">
         <Legend text="USB" />
         <div class="row">
-          <Socket dir="output" id={0} />
-          <Socket dir="input" id={7} />
+          <Socket dir="output" id={0} size={9} />
+          <Socket dir="input" id={7} size={9} />
         </div>
       </div>
       <!-- MIDI (DIN) thru. -->
       <div class="section">
         <Legend text="MIDI" />
         <div class="row">
-          <Socket dir="input" id={8} />
-          <Socket dir="output" id={8} />
+          <Socket dir="input" id={8} size={18} />
+          <Socket dir="output" id={8} size={18} />
         </div>
       </div>
       <!-- 12V DC inlet — decorative silkscreen only (external PSU, not modeled). -->
@@ -134,7 +143,7 @@
       <!-- One switch for the whole unit — a real 8i6 is a single powered device (Rust param group). -->
       <div class="section">
         <Legend text="Power" />
-        <Control id={205} />
+        <Control id={205} size={6} />
       </div>
     </div>
   {/snippet}
@@ -142,9 +151,9 @@
 
 <style>
   /* Front: a horizontal strip of sections (two channels, monitor, two headphones), the Focusrite idiom;
-     the back carries the many rear connectors. Both wrap so the (now dense) back panel stays readable at
-     small in-world sizes and expands in the focus overlay. Sizes are relative + container-query based so
-     the strip scales with the chassis. */
+     the back carries the many rear connectors. Both wrap so the dense back panel stays laid out. All
+     spacing is in **mm** (the panel is 1 px/mm; the world/bench zoom scales it), matching the physical
+     control sizes set via the size props / face vars. */
   .front,
   .back {
     display: flex;
@@ -152,7 +161,7 @@
     flex-wrap: wrap;
     align-items: center;
     justify-content: space-around;
-    gap: clamp(4px, 3cqw, 1.2rem);
+    gap: 4px;
     height: 100%;
     box-sizing: border-box;
   }
@@ -161,42 +170,42 @@
     display: flex;
     flex-direction: column;
     align-items: center;
-    gap: clamp(1px, 2cqh, 0.3rem);
+    gap: 1.5px;
     min-width: 0;
   }
   .row {
     display: flex;
     flex-direction: row;
     align-items: center;
-    gap: clamp(2px, 1.5cqw, 0.5rem);
+    gap: 2.5px;
   }
   /* The per-channel INST/AIR/PAD indicator lamps, in a tight row under the gain legend. */
   .leds {
     display: flex;
     flex-direction: row;
-    gap: clamp(1px, 1cqw, 0.3rem);
+    gap: 1px;
   }
   .monitor {
     /* A hairline frame to set the monitor section apart, in the brand accent. */
     border: 1px solid color-mix(in srgb, var(--ae-accent, var(--ae-line-panel)) 45%, transparent);
     border-radius: var(--ae-radius-control);
-    padding: clamp(2px, 2cqh, 0.35rem) clamp(3px, 2cqw, 0.6rem);
+    padding: 1.5px 2.5px;
   }
   /* The decorative DC barrel-jack silkscreen (no patchable port). */
   .dc-inlet {
-    width: clamp(6px, 5cqw, 0.9rem);
-    height: clamp(6px, 5cqw, 0.9rem);
+    width: 6px;
+    height: 6px;
     border-radius: 50%;
-    border: 2px solid var(--ae-faceplate-ink-muted, var(--ae-text-muted));
+    border: 1px solid var(--ae-faceplate-ink-muted, var(--ae-text-muted));
   }
   /* Brand wordmark, pinned bottom-left; "8i6" in the accent red. */
   .wordmark {
     position: absolute;
-    left: clamp(3px, 2cqw, 0.7rem);
-    bottom: clamp(2px, 3cqh, 0.5rem);
+    left: 4px;
+    bottom: 2px;
     font-family: var(--ae-font-display);
     font-weight: 700;
-    font-size: clamp(5px, 16cqh, 0.7rem);
+    font-size: 4px;
     letter-spacing: var(--ae-legend-spacing);
     color: var(--ae-faceplate-ink, var(--ae-text-primary));
     pointer-events: none;

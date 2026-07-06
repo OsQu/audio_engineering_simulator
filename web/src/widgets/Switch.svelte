@@ -7,13 +7,22 @@
     param: ParamDescriptor;
     value: number;
     onChange: (v: number) => void;
+    /** Physical toggle width in **mm** (real-gear sizing, scaled by the world/bench zoom). When omitted,
+     *  keeps the legacy container-relative sizing. */
+    size?: number;
   }
-  let { param, value, onChange }: Props = $props();
+  let { param, value, onChange, size }: Props = $props();
 
   const on = $derived(value >= 0.5);
+  const sizeVars = $derived(
+    size === undefined
+      ? undefined
+      : `--sw-w: ${size}px; --sw-h: ${(size * 1.35).toFixed(2)}px; ` +
+        `--sw-font: ${(size * 0.5).toFixed(2)}px; --sw-gap: ${(size * 0.18).toFixed(2)}px`,
+  );
 </script>
 
-<div class="switch">
+<div class="switch" style={sizeVars}>
   <button
     type="button"
     class:on
@@ -36,13 +45,13 @@
     display: flex;
     flex-direction: column;
     align-items: center;
-    width: min(4.5rem, 92cqh);
-    gap: min(0.25rem, 3cqh);
+    width: var(--sw-w, min(4.5rem, 92cqh));
+    gap: var(--sw-gap, min(0.25rem, 3cqh));
   }
   button {
     position: relative;
-    width: min(2.2rem, 40cqh);
-    height: min(3rem, 58cqh);
+    width: var(--sw-w, min(2.2rem, 40cqh));
+    height: var(--sw-h, min(3rem, 58cqh));
     padding: 0;
     border: 1px solid var(--ae-jack-edge);
     border-radius: 4px;
@@ -85,7 +94,7 @@
   .label {
     font-family: var(--ae-font-ui);
     font-weight: var(--ae-label-weight);
-    font-size: min(var(--ae-label-size), 17cqh);
+    font-size: var(--sw-font, min(var(--ae-label-size), 17cqh));
     letter-spacing: var(--ae-label-spacing);
     text-transform: uppercase;
     color: var(--ae-faceplate-ink, var(--ae-text-strong));

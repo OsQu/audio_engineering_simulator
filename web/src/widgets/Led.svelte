@@ -7,11 +7,20 @@
     on: boolean;
     /** Short legend under the lamp (e.g. "INST", "AIR", "PAD"). */
     label: string;
+    /** Physical lamp diameter in **mm** (real-gear sizing, scaled by the world/bench zoom). When omitted,
+     *  keeps the legacy container-relative sizing. */
+    size?: number;
   }
-  let { on, label }: Props = $props();
+  let { on, label, size }: Props = $props();
+
+  const sizeVars = $derived(
+    size === undefined
+      ? undefined
+      : `--led: ${size}px; --led-font: ${(size * 0.85).toFixed(2)}px; --led-gap: ${(size * 0.25).toFixed(2)}px`,
+  );
 </script>
 
-<div class="led-indicator">
+<div class="led-indicator" style={sizeVars}>
   <span class="lamp" class:on></span>
   <span class="label">{label}</span>
 </div>
@@ -21,10 +30,10 @@
     display: flex;
     flex-direction: column;
     align-items: center;
-    gap: min(0.15rem, 2cqh);
+    gap: var(--led-gap, min(0.15rem, 2cqh));
   }
   .lamp {
-    width: min(0.6rem, 12cqh);
+    width: var(--led, min(0.6rem, 12cqh));
     aspect-ratio: 1;
     border-radius: 50%;
     background: var(--ae-led-red-off);
@@ -40,7 +49,7 @@
   .label {
     font-family: var(--ae-font-ui);
     font-weight: var(--ae-label-weight);
-    font-size: min(0.5rem, 11cqh);
+    font-size: var(--led-font, min(0.5rem, 11cqh));
     letter-spacing: var(--ae-legend-spacing);
     text-transform: uppercase;
     color: var(--ae-faceplate-ink, var(--ae-text-primary));

@@ -51,7 +51,7 @@
     {#if props.params.length > 0}
       <div class="controls">
         {#each props.params as p (p.id)}
-          <Control id={p.id} cap={capFor(skin, p.id)} />
+          <Control id={p.id} cap={capFor(skin, p.id)} size={12} />
         {/each}
       </div>
     {:else if readouts.length === 0}
@@ -77,7 +77,7 @@
           <span class="group-label">In</span>
           <div class="row">
             {#each inputs as p (`in-${p.id}`)}
-              <Socket dir="input" id={p.id} />
+              <Socket dir="input" id={p.id} size={8} />
             {/each}
           </div>
         </div>
@@ -87,7 +87,7 @@
           <span class="group-label">Out</span>
           <div class="row">
             {#each outputs as p (`out-${p.id}`)}
-              <Socket dir="output" id={p.id} />
+              <Socket dir="output" id={p.id} size={8} />
             {/each}
           </div>
         </div>
@@ -100,20 +100,22 @@
   /* This component styles only the *face content* (controls / meters / jacks); the bezel, flip, and
      finish live in Chassis. Svelte scopes these rules to elements declared here, so they still apply
      when Chassis renders the snippets. */
+  /* All spacing in **mm** (the panel is 1 px/mm; the world/bench zoom scales it), matching the physical
+     control sizes the faceplate sets via the size props. */
   .controls {
     display: flex;
     flex-wrap: wrap;
-    gap: 0.6rem 0.4rem;
+    gap: 3px 2.5px;
     align-items: flex-start;
   }
   .empty {
-    font-size: clamp(5px, 20cqh, 0.75rem);
+    font-size: 3px;
     color: var(--ae-faceplate-ink-muted, var(--ae-text-muted));
     font-style: italic;
     margin: 0;
   }
   .screen-slot {
-    margin-top: 0.6rem;
+    margin-top: 2px;
   }
   .meters {
     /* Readouts sit side by side across the (wide) rack front — Peak next to RMS, the VU needle next
@@ -122,8 +124,8 @@
     flex-direction: row;
     flex-wrap: wrap;
     align-items: center;
-    gap: clamp(0.5rem, 3cqw, 1.5rem);
-    margin-top: 0.2rem;
+    gap: 4px;
+    margin-top: 1px;
   }
 
   /* Rear panel: In and Out groups laid out **horizontally** in one row (how a real 1U rear panel looks),
@@ -134,7 +136,7 @@
     flex-wrap: nowrap;
     align-items: center;
     justify-content: center;
-    gap: clamp(4px, 5cqw, 1.5rem);
+    gap: 8px;
     height: 100%;
     box-sizing: border-box;
   }
@@ -142,13 +144,13 @@
     display: flex;
     flex-direction: row;
     align-items: center;
-    gap: clamp(2px, 1.5cqw, 0.5rem);
+    gap: 2.5px;
     min-width: 0;
   }
   .group-label {
     flex: none;
     font-family: var(--ae-font-ui);
-    font-size: clamp(4px, 16cqh, 0.6rem);
+    font-size: 3px;
     text-transform: uppercase;
     letter-spacing: var(--ae-label-spacing);
     color: var(--ae-text-muted);
@@ -157,6 +159,6 @@
     display: flex;
     flex-direction: row;
     flex-wrap: nowrap;
-    gap: clamp(2px, 1.5cqw, 0.5rem);
+    gap: 2.5px;
   }
 </style>
