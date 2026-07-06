@@ -34,6 +34,15 @@ export function connectionDomain(
   return desc?.ports.find((p) => p.direction === "output" && p.id === c.from.port)?.domain ?? null;
 }
 
+// Whether a device's events input is fed by a cable (an incoming connection to its events-in port). If
+// so, host-injected notes are a no-op — the performance comes from the patched source instead — so the
+// on-screen keybed shows disabled and the keyboard doesn't target it. Shared by both views' note routing.
+export function eventsInputDriven(scene: Scene, desc: DeviceDescriptor, deviceId: string): boolean {
+  const evPort = desc.ports.find((p) => p.direction === "input" && p.domain === "events");
+  if (!evPort) return false;
+  return scene.patch.connections.some((c) => c.to.device === deviceId && c.to.port === evPort.id);
+}
+
 // The connector kind of a connection (from its output port) — picks the cable's colour from the signal
 // palette. Falls back to "line" (neutral grey) when the port can't be resolved.
 export function connectionKind(scene: Scene, catalog: DeviceDescriptor[], c: Connection): PortKind {

@@ -10,12 +10,12 @@
   import { deviceUi, focusUi, hasFocusSurface } from "./device-ui";
   import { isFocusable } from "./focus";
   import { skinFor } from "./skin";
-  import { wireKeyboard, wireMidi } from "./engine";
+  import { wireMidi } from "./engine";
+  import { wireKeyboardInput } from "./keyboard-input.svelte";
   import { SceneSession } from "./session.svelte";
   import { PatchController } from "./patch-controller.svelte";
   import { cablePathData } from "./connections";
   import type { Connection, PortRef } from "./scene";
-  import { DEFAULT_VELOCITY } from "./notes";
   import { defaultScene, loadScene } from "./scene-store";
   import {
     deviceById,
@@ -277,40 +277,21 @@
   });
 
   // --- Playing the focused instrument (note input follows focus) ------------------------------------
-  // Whether a device's events input is fed by a cable (an incoming connection to its events-in port).
-  // If so, host-injected notes are a no-op — the performance comes from the patched source instead — so
-  // the on-screen keybed shows disabled and the keyboard doesn't target it.
-  function eventsInputDriven(deviceId: string, desc: DeviceDescriptor): boolean {
-    const evPort = desc.ports.find((p) => p.direction === "input" && p.domain === "events");
-    if (!evPort) return false;
-    return scene.patch.connections.some((c) => c.to.device === deviceId && c.to.port === evPort.id);
-  }
   // The device a keyboard/MIDI/on-screen note plays: the focused device iff it's an instrument (a
   // keybed surface) whose events input is *open* (not cable-driven), else null. A plain string|null so
-  // the wireKeyboard effect below only re-runs when the *target* changes — turning a knob (which
-  // mutates the scene) doesn't re-attach the listener.
+  // the wireKeyboard effect only re-runs when the *target* changes — turning a knob (which mutates the
+  // scene) doesn't re-attach the listener.
   const keyboardTarget = $derived.by((): string | null => {
     if (focusedDevice === null) return null;
     const dev = deviceById(scene, focusedDevice);
     const desc = dev ? descriptorFor(session.catalog, dev.typeId) : undefined;
     if (!dev || !desc || !isPlayable(desc)) return null;
-    return eventsInputDriven(dev.id, desc) ? null : dev.id;
+    return sceneOps.eventsInputDriven(scene, desc, dev.id) ? null : dev.id;
   });
-  // Route a note to the focused instrument: resolve the view-side target (keyboardTarget), then delegate
-  // to the session's target-explicit playNote (which owns heldNotes + the worklet post). A no-op when
-  // nothing playable is focused. Fed by every source (mouse, QWERTY, MIDI); heldNotes drives the keybed
-  // highlight whichever way you play.
-  function playNote(on: boolean, note: number, velocity: number = DEFAULT_VELOCITY): void {
-    if (keyboardTarget === null) return;
-    session.playNote(keyboardTarget, on, note, velocity);
-  }
-  // Capture the computer keyboard **only while an instrument is focused** (attach on focus, detach on
-  // unfocus — the effect re-runs just when keyboardTarget changes). Web MIDI is wired once at start-up
-  // (below); both feed playNote, which targets the focused instrument.
-  $effect(() => {
-    if (keyboardTarget === null) return;
-    return wireKeyboard(playNote);
-  });
+  // QWERTY capture + the target-explicit `playNote` wrapper — the shared keyboard-input glue (also used by
+  // the bench). Web MIDI (wired below) and the focus keybed feed the same `playNote`; `heldNotes` drives
+  // the keybed highlight whichever way you play.
+  const playNote = wireKeyboardInput(session, () => (keyboardTarget === null ? [] : [keyboardTarget]));
 
   // Thin adapters over placement.ts, handed to the world layer as the drag legality + commit hooks.
   // Both build the layout ctx inline (so reads stay reactive) and pass the already-derived placedItems.
@@ -888,7 +869,7 @@
               {#if isPlayable(f.desc)}
                 <!-- The keybed = the device's open events input, drawn on-screen. Disabled when the input
                      is cable-driven (a patched controller performs it instead — host notes are a no-op). -->
-                <Keybed held={session.heldNotes} onNote={playNote} disabled={eventsInputDriven(f.device.id, f.desc)} />
+                <Keybed held={session.heldNotes} onNote={playNote} disabled={sceneOps.eventsInputDriven(scene, f.desc, f.device.id)} />
               {/if}
             </div>
           </div>

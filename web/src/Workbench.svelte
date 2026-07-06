@@ -6,9 +6,12 @@
   // fixed supporting cast: synth source + DA + speaker, unwired) or falling back to the catalog index.
   // Audio resumes on the first interaction; the user patches source→DUT→monitor by hand (Story 6.3).
 
-  import BenchStage from "./BenchStage.svelte";
+  import { wireKeyboardInput } from "./keyboard-input.svelte";
   import { PatchController } from "./patch-controller.svelte";
+  import { eventsInputDriven } from "./scene-ops";
   import { SceneSession } from "./session.svelte";
+  import BenchStage from "./BenchStage.svelte";
+  import Keybed from "./widgets/Keybed.svelte";
   import type { WorldApi } from "./world-api";
   import { BENCH_DEVICE, benchScene, bootstrapScene } from "./workbench-scene";
 
@@ -107,6 +110,40 @@
     session.scene.patch.output = { device: tap.device, port: tap.port };
     session.hotSwap();
   }
+
+  // --- Keyboard / keybed ----------------------------------------------------------------------------
+  // Every bench device with an events (MIDI) input — the keybed's possible targets (the synth source, the
+  // DUT if it's an instrument, and anything else added). "Send to" picks which one(s) the notes play.
+  function descOf(deviceId: string) {
+    const inst = session.scene.patch.devices.find((d) => d.id === deviceId);
+    return inst ? session.catalog.find((c) => c.typeId === inst.typeId) : undefined;
+  }
+  const eventInputs = $derived(
+    session.scene.patch.devices
+      .map((d) => ({ id: d.id, desc: descOf(d.id) }))
+      .filter((d) => d.desc?.ports.some((p) => p.direction === "input" && p.domain === "events"))
+      .map((d) => ({ id: d.id, name: d.desc?.name ?? d.id })),
+  );
+  // "Send to": "all" (every event input) or a single device id. Falls back to "all" if the chosen device
+  // goes away (e.g. a route change to a DUT without a MIDI input).
+  let sendTo = $state<string>("all");
+  $effect(() => {
+    if (sendTo !== "all" && !eventInputs.some((d) => d.id === sendTo)) sendTo = "all";
+  });
+  // A cable-driven event input ignores host notes, so drop it from the broadcast (matches the scene view's
+  // keybed-disable rule); an explicitly-selected single target is still sent (the user asked for it).
+  const noteTargets = $derived(
+    sendTo === "all"
+      ? eventInputs
+          .filter((d) => {
+            const desc = descOf(d.id);
+            return desc ? !eventsInputDriven(session.scene, desc, d.id) : false;
+          })
+          .map((d) => d.id)
+      : [sendTo],
+  );
+  const playNote = wireKeyboardInput(session, () => noteTargets);
+  let keybedOpen = $state(true);
 </script>
 
 <svelte:window
@@ -140,6 +177,34 @@
       <button type="button" class="back" onclick={() => navigate("/")}>← scene view</button>
     </header>
     <BenchStage {session} desc={requested} {patch} bind:api={benchApi} />
+    {#if eventInputs.length > 0}
+      <!-- Play the rig via the shared keybed + QWERTY (same session.playNote / heldNotes as the scene
+           view). "Send to" targets the MIDI inputs; the strip is sticky at the bottom and collapsible. -->
+      <div class="keybed-row" class:collapsed={!keybedOpen}>
+        <div class="keybed-head">
+          <button
+            type="button"
+            class="collapse"
+            aria-expanded={keybedOpen}
+            onclick={() => (keybedOpen = !keybedOpen)}
+          >
+            {keybedOpen ? "▾" : "▸"} Keyboard
+          </button>
+          <label class="send-to">
+            Send to
+            <select value={sendTo} onchange={(e) => (sendTo = e.currentTarget.value)}>
+              <option value="all">All MIDI inputs</option>
+              {#each eventInputs as d (d.id)}
+                <option value={d.id}>{d.name}</option>
+              {/each}
+            </select>
+          </label>
+        </div>
+        {#if keybedOpen}
+          <Keybed held={session.heldNotes} onNote={playNote} disabled={noteTargets.length === 0} />
+        {/if}
+      </div>
+    {/if}
   {:else}
     <!-- Catalog index: the bare /devices route, or an unknown typeId. -->
     <header class="head">
@@ -165,11 +230,17 @@
     font: 15px/1.5 var(--ae-font-ui);
     color: var(--ae-text-secondary);
   }
+  /* The header pins to the top while the bench scrolls beneath it (bg hides content passing under). */
   .head {
+    position: sticky;
+    top: 0;
+    z-index: 5;
     display: flex;
     align-items: baseline;
     gap: 0.8rem;
-    margin-bottom: 1rem;
+    padding: 0.75rem 0;
+    margin-bottom: 0.5rem;
+    background: var(--ae-bg-room);
   }
   .name {
     font-size: 1.2rem;
@@ -178,6 +249,52 @@
   .muted {
     color: var(--ae-text-muted);
     font-size: 0.85rem;
+  }
+  /* The play strip pins to the bottom while the bench scrolls: a head bar (collapse + "Send to") plus the
+     shared on-screen keybed (hidden when collapsed). */
+  .keybed-row {
+    position: sticky;
+    bottom: 0;
+    z-index: 5;
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    padding: 0.6rem 0;
+    margin-top: 1rem;
+    background: var(--ae-bg-room);
+  }
+  .keybed-head {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+  }
+  .collapse {
+    font: inherit;
+    cursor: pointer;
+    padding: 0.3em 0.8em;
+    color: var(--ae-text-strong);
+    background: var(--ae-bg-chip);
+    border: 1px solid var(--ae-line-chip);
+    border-radius: var(--ae-radius-control);
+  }
+  .send-to {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4em;
+    font-size: 0.85rem;
+    color: var(--ae-text-muted);
+    text-transform: uppercase;
+    letter-spacing: var(--ae-legend-spacing);
+  }
+  .send-to select {
+    font: inherit;
+    text-transform: none;
+    letter-spacing: normal;
+    padding: 0.3em 0.5em;
+    color: var(--ae-text-strong);
+    background: var(--ae-bg-chip);
+    border: 1px solid var(--ae-line-chip);
+    border-radius: var(--ae-radius-control);
   }
   /* "Listen" tap selector — pushed to the right, beside the back button. */
   .listen {
