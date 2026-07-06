@@ -5,7 +5,7 @@
   // **from the fetched device catalog** (not hardcoded ids) — a generic stepping stone; the
   // skeuomorphic panel widgets land in Story 4.2.3. Generic by device id throughout.
 
-  import type { CableType, DeviceDescriptor, PortDomain, PortKind } from "./catalog";
+  import type { DeviceDescriptor, PortKind } from "./catalog";
   import { descriptorFor, isPlayable } from "./catalog";
   import { deviceUi, focusUi, hasFocusSurface } from "./device-ui";
   import { isFocusable } from "./focus";
@@ -13,7 +13,7 @@
   import { wireKeyboard, wireMidi } from "./engine";
   import { SceneSession } from "./session.svelte";
   import { PatchController } from "./patch-controller.svelte";
-  import { cablePathData, cableTypeIdFor } from "./connections";
+  import { cablePathData } from "./connections";
   import type { Connection, PortRef } from "./scene";
   import { DEFAULT_VELOCITY } from "./notes";
   import { defaultScene, loadScene } from "./scene-store";
@@ -34,6 +34,7 @@
   import * as sceneOps from "./scene-ops";
   import { footprint, type Room, type Wall } from "./spatial";
   import Cable from "./widgets/Cable.svelte";
+  import CableInspector from "./widgets/CableInspector.svelte";
   import Keybed from "./widgets/Keybed.svelte";
   import Vu from "./widgets/Vu.svelte";
   import WorldView from "./widgets/WorldView.svelte";
@@ -236,34 +237,15 @@
     if (dragCable) patch.cancel();
   }
 
-  // Connection introspection is pure scene-ops; App binds scene/catalog for cable rendering + the inspector.
-  const connectionDomain = (c: Connection): PortDomain | null =>
-    sceneOps.connectionDomain(scene, session.catalog, c);
+  // Connection introspection is pure scene-ops; App binds scene/catalog for cable rendering.
   const connectionKind = (c: Connection): PortKind => sceneOps.connectionKind(scene, session.catalog, c);
-
-  // Remove a cable (from the inspector): drop the inspector selection if it was this one, then let the
-  // controller disconnect + hot-swap. (commit / setCableType are called straight off the controller.)
-  function disconnect(c: Connection): void {
-    if (selectedCableKey === connKey(c)) selectedCableKey = null;
-    patch.disconnect(c);
-  }
 
   // --- Cable inspector (select a cable to change its type / disconnect it) --------------------------
   let selectedCableKey = $state<string | null>(null);
-  // The selected connection, or null (also null once it's been disconnected).
+  // The selected connection, or null (also null once it's been disconnected). Fed to the shared
+  // CableInspector, which derives its fitting cable types / loss / domain and edits via the controller.
   const selectedConn = $derived(
     scene.patch.connections.find((c) => connKey(c) === selectedCableKey) ?? null,
-  );
-  // The selected connection's loading loss in dB (from the static per-connection losses), or null for
-  // a digital link / before the losses have arrived.
-  const selectedLoss = $derived.by((): number | null => {
-    const i = scene.patch.connections.findIndex((c) => connKey(c) === selectedCableKey);
-    return i >= 0 ? (session.losses[i] ?? null) : null;
-  });
-  // The cable presets that physically fit the selected connection (matching connector) — the picker
-  // offers only these, so you can't put an XLR cable on a ¼" link.
-  const cablesForSelected = $derived.by((): CableType[] =>
-    selectedConn ? sceneOps.cablesFor(scene, session.catalog, session.cables, selectedConn) : [],
   );
 
   // --- Device focus mode (sit down at a device: a large, device-specific interaction surface) --------
@@ -829,38 +811,9 @@
       {/if}
 
       {#if selectedConn}
-        <!-- Cable inspector: click a cable to select it, then change its type or disconnect it. Only
-             analog links carry a cable (R·C); digital/event links are always ideal. -->
-        <div class="cable-inspector">
-          <span class="ci-label">
-            Cable <strong>{selectedConn.from.device}</strong> → <strong>{selectedConn.to.device}</strong>
-          </span>
-          {#if connectionDomain(selectedConn) === "analog"}
-            <label class="ci-type">
-              Type
-              <select
-                value={cableTypeIdFor(session.cables, selectedConn.cable)}
-                onchange={(e) => selectedConn && patch.setCableType(selectedConn, e.currentTarget.value)}
-              >
-                <option value="">Ideal wire</option>
-                {#each cablesForSelected as ct (ct.typeId)}
-                  <option value={ct.typeId}>{ct.label}</option>
-                {/each}
-              </select>
-            </label>
-            <!-- Static impedance loading loss (the §5.3 divider), not a live meter — how far the loaded
-                 input sits below the source's open-circuit voltage. -->
-            <span class="ci-loss">
-              loading {selectedLoss !== null ? `${selectedLoss.toFixed(2)} dB` : "—"}
-            </span>
-          {:else}
-            <span class="ci-ideal">digital link — ideal (no cable)</span>
-          {/if}
-          <button type="button" onclick={() => selectedConn && disconnect(selectedConn)}>
-            Disconnect
-          </button>
-          <button type="button" class="ci-close" onclick={() => (selectedCableKey = null)}>Close</button>
-        </div>
+        <!-- Cable inspector (shared with the bench): click a cable to select it, then change its type or
+             disconnect it. Only analog links carry a cable (R·C); digital/event links are always ideal. -->
+        <CableInspector {session} {patch} conn={selectedConn} onClose={() => (selectedCableKey = null)} />
       {/if}
 
       {#if focused}
@@ -1325,47 +1278,6 @@
   }
   /* Cable inspector strip (shown when a cable is selected). */
   /* Floats over the stage (bottom-centre) rather than taking layout space, so the world stays full. */
-  .cable-inspector {
-    position: absolute;
-    left: 50%;
-    bottom: 1rem;
-    transform: translateX(-50%);
-    z-index: 6;
-    display: flex;
-    align-items: center;
-    flex-wrap: wrap;
-    gap: 0.6rem;
-    padding: 0.4rem 0.75rem;
-    background: var(--ae-bg-panel);
-    color: var(--ae-text-strong);
-    border: 1px solid var(--ae-line-panel);
-    border-radius: var(--ae-radius-panel);
-    box-shadow: var(--ae-shadow-card);
-    font-size: 0.8rem;
-  }
-  .cable-inspector .ci-type,
-  .cable-inspector .ci-ideal {
-    display: flex;
-    align-items: center;
-    gap: 0.35rem;
-    color: #b8bcc2;
-  }
-  .cable-inspector select {
-    font: inherit;
-    font-size: 0.75rem;
-  }
-  .cable-inspector button {
-    font: inherit;
-    font-size: 0.72rem;
-    padding: 0.2rem 0.7rem;
-  }
-  .cable-inspector .ci-loss {
-    color: #8fd0a0;
-    font-variant-numeric: tabular-nums;
-  }
-  .cable-inspector .ci-close {
-    margin-left: auto;
-  }
   /* Device focus overlay — dims the world and centres the focused device's surface. Above the toolbar
      menus (z 20) so nothing peeks through; covers the stage only (the toolbar stays reachable). */
   .focus-backdrop {

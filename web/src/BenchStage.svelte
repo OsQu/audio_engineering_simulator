@@ -19,6 +19,7 @@
   import { tick } from "svelte";
   import { type CableLayout, cableEndpoints, jackKey } from "./cable-view";
   import Cable from "./widgets/Cable.svelte";
+  import CableInspector from "./widgets/CableInspector.svelte";
   import type { DeviceDescriptor } from "./catalog";
   import { cablePathData } from "./connections";
   import { deviceUi } from "./device-ui";
@@ -57,6 +58,12 @@
     const o = session.scene.patch.output;
     return patch.jackAnchors[jackKey(o.device, "output", o.port)] ?? null;
   });
+
+  // A selected cable → the shared inspector (change type / disconnect). Cleared when it's disconnected.
+  let selectedCableKey = $state<string | null>(null);
+  const selectedConn = $derived(
+    session.scene.patch.connections.find((c) => connKey(c) === selectedCableKey) ?? null,
+  );
 
   // The zoom, in px per mm (the surface is laid out at 1 px/mm, then `transform: scale(scale)`d). A 1U 19"
   // device is 482.6 × 44.45 mm — at the 3× default that's ~1448 × 133 px, wide and legible. Wheel zooms
@@ -199,17 +206,17 @@
             {#if ends}
               {@const d = cablePathData(ends.a, ends.b)}
               {@const kind = connectionKind(session.scene, session.catalog, c)}
-              <Cable {d} {kind} />
+              <Cable {d} {kind} selected={connKey(c) === selectedCableKey} />
               <path
                 class="cable-hit"
                 {d}
                 role="button"
                 tabindex="-1"
-                aria-label={`disconnect cable ${connKey(c)}`}
+                aria-label={`select cable ${connKey(c)}`}
                 style:pointer-events={patch.dragCable ? "none" : "stroke"}
-                onclick={() => patch.disconnect(c)}
+                onclick={() => (selectedCableKey = connKey(c))}
                 onkeydown={(e: KeyboardEvent) => {
-                  if (e.key === "Enter" || e.key === " ") patch.disconnect(c);
+                  if (e.key === "Enter" || e.key === " ") selectedCableKey = connKey(c);
                 }}
               ></path>
             {/if}
@@ -277,10 +284,16 @@
       </div>
     </div>
   </div>
+
+  {#if selectedConn}
+    <!-- The shared cable inspector (same as the scene view): change the selected lead's type / disconnect. -->
+    <CableInspector {session} {patch} conn={selectedConn} onClose={() => (selectedCableKey = null)} />
+  {/if}
 </div>
 
 <style>
   .stage {
+    position: relative; /* positioning context for the floating cable inspector */
     display: flex;
     flex-direction: column;
     gap: 0.6rem;
@@ -334,13 +347,16 @@
     pointer-events: none;
     z-index: 2; /* above the flat panels */
   }
-  /* Wide invisible click target over the thin cable (the visual lead is the shared <Cable>). */
+  /* Wide invisible click target over the thin cable (the visual lead is the shared <Cable>). `tabindex=-1`
+     keeps it out of the tab order, so suppressing the click-focus outline (a huge rectangle around the
+     cable's bounding box) costs no keyboard accessibility. */
   .cable-hit {
     fill: none;
     stroke: transparent;
     stroke-width: 8px;
     stroke-linecap: round;
     cursor: pointer;
+    outline: none;
   }
   /* "Listening here" marker at the monitored output tap. */
   .tap-marker {
