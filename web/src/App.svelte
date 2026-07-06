@@ -33,6 +33,7 @@
   import * as placement from "./placement";
   import * as sceneOps from "./scene-ops";
   import { footprint, type Room, type Wall } from "./spatial";
+  import Cable from "./widgets/Cable.svelte";
   import Keybed from "./widgets/Keybed.svelte";
   import Vu from "./widgets/Vu.svelte";
   import WorldView from "./widgets/WorldView.svelte";
@@ -514,14 +515,7 @@
         {#if ends}
           {@const d = cablePathData(ends.a, ends.b)}
           {@const kind = connectionKind(c)}
-          <path class="cable-shadow" {d} />
-          <path
-            class="cable-core"
-            data-signal={kind}
-            class:selected={connKey(c) === selectedCableKey}
-            {d}
-          />
-          <path class="cable-highlight" data-signal={kind} {d} />
+          <Cable {d} {kind} selected={connKey(c) === selectedCableKey} />
           <path
             class="cable-hit"
             {d}
@@ -554,14 +548,7 @@
             <rect x={rect.x} y={rect.y} width={rect.width} height={rect.height} />
           </clipPath>
           <g clip-path={`url(#${clipId})`}>
-            <path class="cable-shadow" {d} />
-            <path
-              class="cable-core"
-              data-signal={kind}
-              class:selected={connKey(c) === selectedCableKey}
-              {d}
-            />
-            <path class="cable-highlight" data-signal={kind} {d} />
+            <Cable {d} {kind} selected={connKey(c) === selectedCableKey} />
           </g>
         {/if}
       {/snippet}
@@ -680,12 +667,12 @@
           {#if dragCable}
             {#if dragCable.mode === "drag" || inView(dragCable.source.device)}
               <!-- Source visible: draw the rubber-band from its jack to the cursor. -->
-              <path
-                class="cable dragging"
-                class:pending={dragCable.mode === "pending"}
-                class:legal={dragCable.over && dragCable.legal}
-                class:illegal={dragCable.over && !dragCable.legal}
+              <Cable
+                drag
                 d={cablePathData(dragCable.srcPoint, dragCable.free)}
+                pending={dragCable.mode === "pending"}
+                legal={dragCable.over && dragCable.legal}
+                illegal={dragCable.over && !dragCable.legal}
               />
             {:else}
               <!-- Pending across a view switch: the source is off-view, so just track a floating end
@@ -1252,78 +1239,9 @@
     cursor: pointer;
     outline: none;
   }
-  /* A settled patch lead: three stacked strokes (shadow / signal core / lit highlight), coloured by the
-     connection's connector kind. Widths come from the cable tokens. */
-  .cable-shadow,
-  .cable-core,
-  .cable-highlight {
-    fill: none;
-    stroke-linecap: round;
-    pointer-events: none;
-  }
-  .cable-shadow {
-    stroke: var(--ae-cable-shadow);
-    stroke-width: var(--ae-cable-shadow-w);
-    opacity: 0.5;
-  }
-  .cable-core {
-    stroke: var(--ae-signal-line);
-    stroke-width: var(--ae-cable-core-w);
-  }
-  .cable-highlight {
-    stroke: var(--ae-signal-line-lit);
-    stroke-width: var(--ae-cable-highlight-w);
-    opacity: 0.6;
-  }
-  .cable-core[data-signal="mic"] {
-    stroke: var(--ae-signal-mic);
-  }
-  .cable-core[data-signal="instrument"] {
-    stroke: var(--ae-signal-instrument);
-  }
-  .cable-core[data-signal="speaker"] {
-    stroke: var(--ae-signal-speaker);
-  }
-  .cable-core[data-signal="digital"] {
-    stroke: var(--ae-signal-digital);
-  }
-  .cable-core[data-signal="midi"] {
-    stroke: var(--ae-signal-midi);
-  }
-  .cable-highlight[data-signal="mic"] {
-    stroke: var(--ae-signal-mic-lit);
-  }
-  .cable-highlight[data-signal="instrument"] {
-    stroke: var(--ae-signal-instrument-lit);
-  }
-  .cable-highlight[data-signal="speaker"] {
-    stroke: var(--ae-signal-speaker-lit);
-  }
-  .cable-highlight[data-signal="digital"] {
-    stroke: var(--ae-signal-digital-lit);
-  }
-  .cable-highlight[data-signal="midi"] {
-    stroke: var(--ae-signal-midi-lit);
-  }
-  /* Selected lead: fatten the core so the inspector target reads clearly. */
-  .cable-core.selected {
-    stroke-width: calc(var(--ae-cable-core-w) + 3px);
-  }
-  /* The rubber-band while dragging a new cable. */
-  .cable.dragging {
-    stroke-dasharray: 12 9;
-    opacity: 0.85;
-  }
-  .cable.legal {
-    stroke: #4caf50;
-  }
-  .cable.illegal {
-    stroke: #d9534f;
-  }
-  /* A pending (clicked-and-held) cable lead — a lighter dash so it reads as "held", not being dragged. */
-  .cable.pending {
-    opacity: 0.6;
-  }
+  /* The settled patch lead + the drag rubber-band are the shared <Cable> component (widgets/Cable.svelte),
+     so the scene view and the workbench bench render one recipe. Portals + the pending floating end below
+     are scene-view-only and keep the local `.cable` base. */
   /* The floating end of a pending cable when its source is on another wall/room (no line to draw). */
   .pending-end {
     fill: #d98c3c;

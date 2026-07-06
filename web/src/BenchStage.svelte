@@ -17,8 +17,14 @@
   // (Story 6.3). Cables themselves land in a later 6.3 task; this task is the surface + zoom.
 
   import { tick } from "svelte";
+  import { type CableLayout, cableEndpoints, jackKey } from "./cable-view";
+  import Cable from "./widgets/Cable.svelte";
   import type { DeviceDescriptor } from "./catalog";
+  import { cablePathData } from "./connections";
   import { deviceUi } from "./device-ui";
+  import type { PatchController } from "./patch-controller.svelte";
+  import type { Connection } from "./scene";
+  import { connectionKind, connKey } from "./scene-ops";
   import type { SceneSession } from "./session.svelte";
   import { footprint, RACK_UNIT_MM } from "./spatial";
   import type { SurfacePoint, WorldApi } from "./world-api";
@@ -27,10 +33,30 @@
   interface Props {
     session: SceneSession;
     desc: DeviceDescriptor;
-    // The stage's coordinate seam, exposed for the shared patching machinery (wired in a later 6.3 task).
+    // The shared patching machinery (owned by the Workbench view root); the stage draws its cables +
+    // measured anchors and its drag rubber-band.
+    patch: PatchController;
+    // The stage's coordinate seam, bound out to the Workbench for jack measurement + pointer routing.
     api?: WorldApi;
   }
-  let { session, desc, api = $bindable() }: Props = $props();
+  let { session, desc, patch, api = $bindable() }: Props = $props();
+
+  // The bench's flat CableLayout for the shared cable-view geometry: everything is shown, both faces are
+  // rendered + measured (so either is anchorable), and there is no z-interleave — so no interior estimate
+  // (rect null), no chassis clamp, no tip-patch. The scene view supplies the spatial-projection version.
+  const benchLayout: CableLayout = {
+    inView: () => true,
+    faceAnchorable: () => true,
+    rect: () => null,
+    clampsEstimate: () => false,
+    frontPatchOver: () => false,
+  };
+
+  // The monitored tap's measured anchor, for the "listening here" marker (the output PortRef → its jack).
+  const tapAnchor = $derived.by(() => {
+    const o = session.scene.patch.output;
+    return patch.jackAnchors[jackKey(o.device, "output", o.port)] ?? null;
+  });
 
   // The zoom, in px per mm (the surface is laid out at 1 px/mm, then `transform: scale(scale)`d). A 1U 19"
   // device is 482.6 × 44.45 mm — at the 3× default that's ~1448 × 133 px, wide and legible. Wheel zooms
@@ -163,6 +189,48 @@
         bind:clientHeight={natH}
         style:transform="scale({scale})"
       >
+        <!-- Patch cables, drawn in surface-local coords (the same space the measured jack anchors live in)
+             via the shared cable-view geometry. `pointer-events:none` so jack presses pass through to the
+             faceplates; only each cable's hit-path takes clicks (disabled mid-drag so a release lands on a
+             jack). Cables sit above the flat panels (no z-interleave on the bench). -->
+        <svg class="cables" width={natW} height={natH} viewBox="0 0 {natW} {natH}">
+          {#each session.scene.patch.connections as c (connKey(c))}
+            {@const ends = cableEndpoints(benchLayout, patch.jackAnchors, c, worldApi)}
+            {#if ends}
+              {@const d = cablePathData(ends.a, ends.b)}
+              {@const kind = connectionKind(session.scene, session.catalog, c)}
+              <Cable {d} {kind} />
+              <path
+                class="cable-hit"
+                {d}
+                role="button"
+                tabindex="-1"
+                aria-label={`disconnect cable ${connKey(c)}`}
+                style:pointer-events={patch.dragCable ? "none" : "stroke"}
+                onclick={() => patch.disconnect(c)}
+                onkeydown={(e: KeyboardEvent) => {
+                  if (e.key === "Enter" || e.key === " ") patch.disconnect(c);
+                }}
+              ></path>
+            {/if}
+          {/each}
+
+          {#if patch.dragCable}
+            <!-- The drag rubber-band from the source jack to the cursor, coloured legal/illegal on hover. -->
+            <Cable
+              drag
+              d={cablePathData(patch.dragCable.srcPoint, patch.dragCable.free)}
+              legal={patch.dragCable.over && patch.dragCable.legal}
+              illegal={patch.dragCable.over && !patch.dragCable.legal}
+            />
+          {/if}
+
+          {#if tapAnchor}
+            <!-- "Listening here": the monitored output tap (what the capture hears). -->
+            <circle class="tap-marker" cx={tapAnchor.x} cy={tapAnchor.y} r="4.5" />
+          {/if}
+        </svg>
+
         <!-- The device-under-test plus the fixed supporting cast, stacked top→bottom by signal flow. Each
              device shows both faces (front above back); the rack-U ruler marks the DUT (the centerpiece). -->
         <div class="bench-stack">
@@ -190,7 +258,13 @@
                         <!-- Spacer so the back face lines up under the front (which carries the ruler). -->
                         <div class="ruler-spacer"></div>
                       {/if}
-                      <div class="device" style:width="{lay.size.width}px" style:height="{lay.size.height}px">
+                      <div
+                        class="device"
+                        class:show-front={!face.flipped}
+                        class:show-back={face.flipped}
+                        style:width="{lay.size.width}px"
+                        style:height="{lay.size.height}px"
+                      >
                         <Faceplate {...faceProps(bd.id, bd.desc, face.flipped)} />
                       </div>
                     </div>
@@ -234,6 +308,7 @@
   /* The zoomable surface: laid out at 1 px/mm and scaled by the transform. The mm grid lives here so it
      scales with the content (fine 10 mm lines + a stronger 50 mm line, both true-to-scale). */
   .surface {
+    position: relative; /* positioning context for the absolute cables overlay */
     width: max-content;
     transform-origin: top left;
     padding: 2rem;
@@ -248,6 +323,39 @@
       10px 10px,
       10px 10px;
     background-position: -1px -1px;
+  }
+  /* The cables overlay covers the surface in its own (unscaled, surface-local) coordinate space — the
+     same space the measured jack anchors live in. Transparent to pointers except each cable's hit-path. */
+  .cables {
+    position: absolute;
+    top: 0;
+    left: 0;
+    overflow: visible;
+    pointer-events: none;
+    z-index: 2; /* above the flat panels */
+  }
+  /* Wide invisible click target over the thin cable (the visual lead is the shared <Cable>). */
+  .cable-hit {
+    fill: none;
+    stroke: transparent;
+    stroke-width: 8px;
+    stroke-linecap: round;
+    cursor: pointer;
+  }
+  /* "Listening here" marker at the monitored output tap. */
+  .tap-marker {
+    fill: none;
+    stroke: var(--ae-signal-mic-lit, #6cf);
+    stroke-width: 1.5px;
+  }
+  /* The bench shows both faces at once, so each device faceplate is rendered twice (front column +
+     back column). Hide the away face in each so its (mirrored, backface) jacks aren't measured — the
+     shared jack keys stay unique. */
+  .device.show-front :global(.face.back) {
+    display: none;
+  }
+  .device.show-back :global(.face.front) {
+    display: none;
   }
   /* The stack of devices (source → DUT → monitor), top→bottom; a wide gap separates them for cable room. */
   .bench-stack {
