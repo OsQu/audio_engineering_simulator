@@ -10,6 +10,7 @@
   import { PatchController } from "./patch-controller.svelte";
   import { eventsInputDriven } from "./scene-ops";
   import { SceneSession } from "./session.svelte";
+  import { decodeScene, encodeScene } from "./url-scene";
   import BenchStage from "./BenchStage.svelte";
   import Keybed from "./widgets/Keybed.svelte";
   import type { WorldApi } from "./world-api";
@@ -44,16 +45,40 @@
     typeId ? (session.catalog.find((d) => d.typeId === typeId) ?? null) : null,
   );
 
-  // Once the engine is up and the requested device is known, make the bench scene (DUT + supporting cast)
-  // the live scene — a one-time hot-swap off the bootstrap, and again if the route's typeId changes. The
-  // guard on the currently-loaded DUT instance keeps this from re-swapping every re-run. `benchScene`
-  // returns undefined only on a catalog regression (no speaker / no analog tap), which leaves the bootstrap.
+  // The URL's temp scene, read **once** at init (before any write can overwrite it) — the rebuild→reload
+  // restore. `null` when absent / malformed / from an older schema (→ regenerate the default bench).
+  const initialUrlScene = decodeScene(new URLSearchParams(location.search).get("s"));
+
+  // The type the bench scene is currently built for — the swap guard (tracking this, not the loaded DUT
+  // typeId, avoids a collision when the requested device *is* the bootstrap type, `synth_voice`).
+  let benchedFor = $state<string | null>(null);
+
+  // Once the engine is up and the requested device is known, make the bench scene the live scene — a
+  // one-time hot-swap off the bootstrap, and again if the route's typeId changes. Prefer the URL-persisted
+  // scene when it's for *this* device (reload restore); else the freshly-generated default bench (DUT +
+  // supporting cast).
   $effect(() => {
-    if (!session.ready || !requested) return;
-    const loaded = session.scene.patch.devices.find((d) => d.id === BENCH_DEVICE)?.typeId;
-    if (loaded === requested.typeId) return;
-    session.scene = benchScene(requested, session.catalog) ?? session.scene;
+    if (!session.ready || !requested || benchedFor === requested.typeId) return;
+    const urlDut = initialUrlScene?.patch.devices.find((d) => d.id === BENCH_DEVICE)?.typeId;
+    const scene =
+      urlDut === requested.typeId ? initialUrlScene : benchScene(requested, session.catalog);
+    if (!scene) return;
+    session.scene = scene;
     session.hotSwap();
+    benchedFor = requested.typeId;
+  });
+
+  // Persist the live bench scene to the URL query (debounced `replaceState` — no history spam), path kept
+  // at /devices/<typeId>. Only once the device's bench scene is loaded (never the bootstrap). Reading the
+  // scene through `encodeScene` registers the reactive dep, so this re-runs on any patch / param / tap edit.
+  $effect(() => {
+    if (!requested || benchedFor !== requested.typeId) return;
+    const query = encodeScene(session.scene);
+    const typeId = requested.typeId;
+    const t = setTimeout(() => {
+      history.replaceState(history.state, "", `/devices/${typeId}?s=${query}`);
+    }, 300);
+    return () => clearTimeout(t);
   });
 
   // --- Patching -------------------------------------------------------------------------------------
