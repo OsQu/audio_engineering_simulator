@@ -910,7 +910,7 @@ again within seconds.
   gesture (resume-on-interaction), and a **dedicated** bench stage: mm grid + rack-unit ruler from the
   descriptor's form factor, both faces rendered simultaneously, live params/meters through the shared
   session. Device-only (silent) — the rig lands in 6.3. Unknown `typeId` → a catalog index page.
-- **Story 6.3 — Bench patching + URL-persisted temp scene.** — 🚧 **In progress** (elaborated below).
+- **Story 6.3 — Bench patching + URL-persisted temp scene.** — ✅ **Complete** (elaborated below).
   **No auto-rig** (revised at planning): the bench carries a **fixed supporting cast** — synth source,
   DA, speaker — around the device-under-test, and the user patches source→DUT→monitor **by hand** with
   cables. The tap (`patch.output`) is set by **clicking an analog output jack** (default: the DUT's first
@@ -1169,7 +1169,7 @@ _Deviations from plan (not bugs):_
   6.2.4 also gave the bench `transform: scale` wheel-zoom (clamped, WorldView's sensitivity) + scrollbar
   pan. It is **not** cursor-anchored; scene-side-parity zoom is **Task 6.3.1**.
 
-### Story 6.3 — Bench patching + URL-persisted temp scene — 🚧 **In progress**
+### Story 6.3 — Bench patching + URL-persisted temp scene — ✅ **Done**
 
 _Goal:_ Turn the silent single-device bench of 6.2 into a **hand-patchable workbench**: the
 device-under-test (DUT) plus a **fixed supporting cast** (synth source, DA converter, speaker) laid out
@@ -1294,3 +1294,46 @@ hear it; the temp scene (patch + param overrides + tap) round-trips through the 
 hoist, the `cable-view` `LayoutCtx` decouple, and the keyboard-glue extraction; no new dependency;
 `pnpm run check && pnpm run typecheck && pnpm run test && pnpm run build` green. (Debug panel, `wasm:watch`
 hot-loop, and a bench signal-generator device are 6.4.)
+
+_Delivered:_ ✅ all six tasks landed; the workbench is now a full hand-patchable bench that drives the
+**same** `SceneSession` / `PatchController` / `cable-view` / keybed as the scene view and restores itself
+from the URL. What shipped:
+
+- **Bench surface + cursor-anchored zoom (6.3.1).** Hoisted `WorldApi`/`SurfacePoint` into a standalone
+  `world-api.ts` (both stages import it); `BenchStage` implements the `WorldApi` (`clientToSurface` divides
+  out the scale) and got cursor-anchored wheel-zoom (scroll-anchored; scrollbar pan kept).
+- **Fixed supporting cast (6.3.2).** `benchScene` seeds the DUT plus a synth source + DA + speaker
+  (unwired); the digital-only refusal is gone (the speaker's analog tap makes any device benchable).
+  Devices + both faces stack vertically.
+- **`cable-view` decoupled from `LayoutCtx` (6.3.3).** The geometry takes an injected `CableLayout` (scene
+  view backs it with the spatial projection; the bench with a flat both-faces layout), so both drive one
+  cable/anchor implementation. Parity-guarded by the existing suite; bench cases added.
+- **Bench patching + tap + inspector (6.3.4).** The bench drives the shared `PatchController` with the
+  identical flow (drag **and** click-to-pick), draws leads via a new shared `Cable` component, and edits
+  them via a new shared `CableInspector` (cable-type + disconnect). The monitored tap is a **"Listen"**
+  header selector.
+- **Keyboard-input reuse (6.3.5).** `wireKeyboardInput` (shared `keyboard-input.svelte.ts`) +
+  `eventsInputDriven` (moved to `scene-ops`); the bench mounts the shared `Keybed` with a **"Send to"** selector
+  (All / per-device), a sticky header + keybed, and a collapsible keybed.
+- **URL-persisted temp scene (6.3.6).** `url-scene.ts` encodes the scene as URL-safe base64 (version-
+  guarded, regenerate-on-mismatch); the bench seeds from `?s=` on load and writes it back via debounced
+  `replaceState` (path kept at `/devices/<typeId>`) — the rebuild→reload→restore loop.
+
+_Deviations from plan (not bugs):_
+
+- **A large mm-sizing pass, mid-story (not a planned task).** The 6.2 faceplates were tuned for the old
+  oversized `formFactor`; once the 8i6 dimensions were corrected the controls dwarfed the panel, so
+  faceplate controls were re-sized in **real mm** — knobs/jacks/legends via `size` props + inherited face
+  vars, from measured Focusrite dimensions (XLR 23 mm, gain 14 mm, monitor 28 mm, ¼" 8 mm, DIN 18 mm,
+  digital 9 mm) — the cables scaled to real gauge, and the **focus overlay became a zoomed physical view**
+  (a magnified faceplate, gated by `hasFocusSurface`). Net-new shared widgets: `Cable.svelte`,
+  `CableInspector.svelte`.
+- **Tap = "Listen" header selector, not a clicked output jack** (the plan's design note). A plain jack
+  click collided with click-to-pick patching, so the tap moved to a header dropdown — keeping patching feel
+  identical to the scene view.
+- **Patching kept full parity** (drag + click-to-pick) rather than the drag-only sketch — one flow, both
+  views.
+- **Keybed gained a "Send to" multi-target selector (All / any MIDI input) + sticky/collapse** beyond the
+  plan's "reuse the keybed"; `wireKeyboardInput` therefore fans a note to a *list* of targets.
+- **Fixed a latent 6.2 bug:** benching `synth_voice` (== the bootstrap type) skipped the cast swap — the
+  guard now tracks a `benchedFor` type. Also corrected the 8i6 `formFactor` (was 1216 mm wide).
