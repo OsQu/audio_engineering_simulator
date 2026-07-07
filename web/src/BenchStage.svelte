@@ -4,20 +4,21 @@
   // session props (valueFor/onParam/configFor/onConfig/readingFor) the scene view uses — no forked
   // rendering.
   //
-  // Zoom is a `transform: scale` on the whole surface — exactly how WorldView zooms, so the faceplate's
-  // fixed-px controls scale uniformly (resizing the box instead would stretch the panel but leave the
-  // knobs their design size). The content is laid out at natural scale (world mm ≈ px), so the mm grid and
-  // rack-U ruler read true; the transform then blows it up. A `transform` doesn't create scroll extent, so
-  // a `sizer` sits under it at the *scaled* size to give the scroll container its scrollbars (pan).
+  // Pan/zoom is the shared `Camera` (camera.svelte.ts — the same one WorldView drives): a
+  // `transform: translate(pan)·scale(zoom)` on the whole surface, so the faceplate's fixed-px controls
+  // scale uniformly (resizing the box instead would stretch the panel but leave the knobs their design
+  // size). The content is laid out at natural scale (world mm ≈ px), so the mm grid and rack-U ruler read
+  // true; the transform then blows it up. Wheel zooms (cursor-anchored); drag empty space to pan.
   //
-  // Deliberately *not* a WorldView: the bench is one bolted-down device, not a spatial room. So it keeps
-  // scrollbar pan (rather than WorldView's translate-pan + drag-backdrop) but brings the zoom to parity —
-  // **cursor-anchored** — and exposes a `WorldApi`-shaped surface so the shared patching machinery
-  // (`PatchController` + `cable-view`) can measure jack anchors + draw cables in surface-local space
-  // (Story 6.3). Cables themselves land in a later 6.3 task; this task is the surface + zoom.
+  // Deliberately *not* a WorldView (the bench is one flat layout of both faces, not a spatial room), but
+  // the three interaction concerns are shared, one place each: pan/zoom via `Camera`, moving a device via
+  // the `draggable` action (device-drag.ts) — dragging a device body repositions it, its offset kept in
+  // `scene.ui.bench` — and patching via `PatchController` + `cable-view`. It exposes a `WorldApi`-shaped
+  // surface so that machinery can measure jack anchors + draw cables in surface-local space.
 
-  import { tick } from "svelte";
+  import { Camera } from "./camera.svelte";
   import { type CableLayout, cableEndpoints, jackKey } from "./cable-view";
+  import { draggable } from "./device-drag";
   import Cable from "./widgets/Cable.svelte";
   import CableInspector from "./widgets/CableInspector.svelte";
   import type { DeviceDescriptor } from "./catalog";
@@ -65,64 +66,59 @@
     session.scene.patch.connections.find((c) => connKey(c) === selectedCableKey) ?? null,
   );
 
-  // The zoom, in px per mm (the surface is laid out at 1 px/mm, then `transform: scale(scale)`d). A 1U 19"
-  // device is 482.6 × 44.45 mm — at the 3× default that's ~1448 × 133 px, wide and legible. Wheel zooms
-  // (like the scene view); the surface scrolls (scrollbars) for anything larger than the viewport.
-  let scale = $state(3);
-  const MIN_SCALE = 1;
-  const MAX_SCALE = 12;
-  const ZOOM_SENSITIVITY = 0.0015; // zoom change per px of scroll (gentle; trackpad-friendly), as WorldView
+  // The shared pan/zoom camera (same one the scene view uses): the surface is laid out at 1 px/mm, then
+  // `transform: translate(pan) scale(zoom)`d. A 1U 19" device is 482.6 × 44.45 mm — at the 3× default
+  // that's ~1448 × 133 px, wide and legible. Wheel zooms (cursor-anchored); drag empty space to pan;
+  // drag a device body to move it (device-drag). Wider zoom range than the room view (a lone device).
+  const camera = new Camera({ zoom: 3, minZoom: 1, maxZoom: 12 });
 
-  // The scroll container (pan) and the transformed surface (the origin for client↔surface conversion).
+  // The viewport (the pan grab target + wheel origin) and the transformed surface (the origin for
+  // client↔surface conversion). `natW`/`natH` are the surface's natural (unscaled) size — the cables SVG
+  // spans it; `clientWidth`/`Height` ignore the transform, so they track content, not the zoom.
   let viewport = $state<HTMLDivElement>();
   let surface = $state<HTMLDivElement>();
-
-  // The surface's natural (unscaled) layout size, measured so the `sizer` can advertise the scaled extent
-  // to the scroll container. `clientWidth`/`Height` ignore the transform, so these track content (the
-  // device), not the zoom — no feedback loop with `scale`.
   let natW = $state(0);
   let natH = $state(0);
 
-  // Cursor-anchored zoom: keep the surface point under the cursor fixed by adjusting the scroll offset.
-  // The surface maps a local point `s` to a viewport-local x of `s·scale − scrollLeft`, so the point under
-  // the cursor is `s = (vx + scrollLeft) / scale`; after re-scaling we solve `scrollLeft' = s·scale' − vx`.
-  // The sizer's scaled extent only updates after the reactive flush, so wait a `tick()` before scrolling.
-  async function onWheel(e: WheelEvent): Promise<void> {
-    e.preventDefault();
-    if (!viewport) return;
-    // Proportional to scroll distance (not a fixed step, which makes a trackpad explode); normalize
-    // line-mode deltas to px.
-    const px = e.deltaMode === 1 ? e.deltaY * 16 : e.deltaY;
-    const factor = Math.exp(-px * ZOOM_SENSITIVITY);
-    const next = Math.min(MAX_SCALE, Math.max(MIN_SCALE, scale * factor));
-    if (next === scale) return;
-
-    const vpRect = viewport.getBoundingClientRect();
-    const vx = e.clientX - vpRect.left;
-    const vy = e.clientY - vpRect.top;
-    const sx = (vx + viewport.scrollLeft) / scale;
-    const sy = (vy + viewport.scrollTop) / scale;
-
-    scale = next;
-    await tick();
-    if (!viewport) return;
-    viewport.scrollLeft = sx * next - vx;
-    viewport.scrollTop = sy * next - vy;
+  function onWheel(e: WheelEvent): void {
+    if (viewport) camera.wheelZoom(e, viewport);
   }
 
-  // The coordinate seam (built once; its methods read live `scale`/`surface`, as WorldView does).
-  // `clientToSurface` subtracts the (post-transform, post-scroll) surface origin and divides out the zoom —
-  // transform-origin is top-left, so the surface's client top-left is surface-local (0,0). The bench's
-  // world ≡ surface mm (one bolted-down layout, no room flip), so `worldToSurface` is identity.
+  // Drag empty space (not a device body/jack/control) to pan. A device-group press is left to its own
+  // move gesture (and jacks/controls to theirs); anything else grabs the camera.
+  function onViewportPointerDown(e: PointerEvent): void {
+    if ((e.target as HTMLElement | null)?.closest(".device-group, .cables")) return;
+    camera.startPan(e);
+  }
+
+  // The coordinate seam: client→surface is the camera's (transform-origin top-left ⇒ the surface's client
+  // top-left is surface-local (0,0)). The bench's world ≡ surface mm (one flat layout), so `worldToSurface`
+  // is identity.
   const worldToSurface = (worldX: number, worldY: number): SurfacePoint => ({ x: worldX, y: worldY });
-  const clientToSurface = (clientX: number, clientY: number): SurfacePoint => {
-    const r = surface?.getBoundingClientRect();
-    if (!r) return { x: 0, y: 0 };
-    return { x: (clientX - r.left) / scale, y: (clientY - r.top) / scale };
-  };
+  const clientToSurface = (clientX: number, clientY: number): SurfacePoint =>
+    camera.clientToSurface(surface, clientX, clientY);
   const worldApi: WorldApi = { worldToSurface, clientToSurface, measureRoot: () => surface ?? null };
   $effect(() => {
     api = worldApi;
+  });
+
+  // --- Device move (shared with the scene view via the `draggable` action) --------------------------
+  // Each device is a group on the flat bench; dragging its body repositions it. Committed offsets live in
+  // `scene.ui.bench` (surface mm — round-trips through the bench's URL persistence); `dragging` is the
+  // live preview the action feeds back. Bench placement is free — no walls/racks, overlaps allowed.
+  let dragging = $state<{ id: string; x: number; y: number } | null>(null);
+  function benchOffset(id: string): { x: number; y: number } {
+    if (dragging?.id === id) return { x: dragging.x, y: dragging.y };
+    return session.scene.ui.bench?.[id] ?? { x: 0, y: 0 };
+  }
+
+  // Re-measure jack anchors as a device is dragged (live preview) or a move commits, so its cables track
+  // the moved sockets. Depends on the live drag + committed offsets; measures after paint (rAF).
+  $effect(() => {
+    void dragging;
+    JSON.stringify(session.scene.ui.bench ?? {});
+    const raf = requestAnimationFrame(() => patch.measure(worldApi));
+    return () => cancelAnimationFrame(raf);
   });
 
   // The devices to render: the scene's instances (the DUT + the fixed supporting cast) resolved against
@@ -176,26 +172,26 @@
 </script>
 
 <div class="stage">
-  <p class="dims muted">{desc.name} · {dims} · {scale.toFixed(1)} px/mm</p>
+  <p class="dims muted">{desc.name} · {dims} · {camera.zoom.toFixed(1)} px/mm</p>
 
-  <!-- Wheel zooms (cursor-anchored); the surface scrolls (scrollbars) to pan. -->
+  <!-- Wheel zooms (cursor-anchored); drag empty space to pan; drag a device body to move it. -->
   <div
     class="viewport"
     role="application"
-    aria-label="device bench — scroll to zoom, scrollbars to pan"
+    aria-label="device bench — scroll to zoom, drag to pan, drag a device to move it"
     bind:this={viewport}
     onwheel={onWheel}
+    onpointerdown={onViewportPointerDown}
   >
-    <!-- Advertises the scaled extent so the viewport shows scrollbars (transform alone wouldn't). -->
-    <div class="sizer" style:width="{natW * scale}px" style:height="{natH * scale}px">
-      <!-- Laid out at 1 px/mm, then scaled — so grid/ruler read true and the faceplate controls scale. -->
-      <div
-        class="surface"
-        bind:this={surface}
-        bind:clientWidth={natW}
-        bind:clientHeight={natH}
-        style:transform="scale({scale})"
-      >
+    <!-- Laid out at 1 px/mm, then translate·scale'd by the shared camera — grid/ruler read true and the
+         faceplate controls scale. -->
+    <div
+      class="surface"
+      bind:this={surface}
+      bind:clientWidth={natW}
+      bind:clientHeight={natH}
+      style:transform={camera.transform}
+    >
         <!-- Patch cables, drawn in surface-local coords (the same space the measured jack anchors live in)
              via the shared cable-view geometry. `pointer-events:none` so jack presses pass through to the
              faceplates; only each cable's hit-path takes clicks (disabled mid-drag so a release lands on a
@@ -245,7 +241,25 @@
             {@const lay = layoutOf(bd.desc)}
             {@const Faceplate = deviceUi(bd.desc.typeId)}
             {@const ruled = bd.id === BENCH_DEVICE && lay.rackUnits > 0}
-            <div class="device-group" class:dut={bd.id === BENCH_DEVICE}>
+            <!-- One device: drag its body to move it on the bench (the shared `draggable` action, same as
+                 the scene view). Its jacks/controls opt out (DRAG_EXCLUDE); its committed offset lives in
+                 `scene.ui.bench`. The transform is surface mm, applied inside the scaled surface. -->
+            <div
+              class="device-group"
+              class:dut={bd.id === BENCH_DEVICE}
+              class:dragging={dragging?.id === bd.id}
+              style:transform="translate({benchOffset(bd.id).x}px, {benchOffset(bd.id).y}px)"
+              use:draggable={{
+                origin: () => benchOffset(bd.id),
+                scale: () => camera.zoom,
+                onStart: () => (dragging = { id: bd.id, ...benchOffset(bd.id) }),
+                onMove: (x, y) => (dragging = { id: bd.id, x, y }),
+                onEnd: (x, y) => {
+                  (session.scene.ui.bench ??= {})[bd.id] = { x, y };
+                  dragging = null;
+                },
+              }}
+            >
               <span class="dev-name muted">{bd.desc.name}</span>
               <div class="dev-faces">
                 {#each [{ flipped: false, label: "Front" }, { flipped: true, label: "Back" }] as face, i (face.label)}
@@ -282,7 +296,6 @@
           {/each}
         </div>
       </div>
-    </div>
   </div>
 
   {#if selectedConn}
@@ -306,22 +319,26 @@
     color: var(--ae-text-muted);
     font-size: 0.8rem;
   }
-  /* Scroll viewport for the zoomed surface (pan via scrollbars). */
+  /* Camera viewport: a fixed window the surface pans/zooms inside (drag empty space to pan). Clips the
+     transformed surface (which is absolutely positioned, so it doesn't size the viewport — hence the
+     explicit height). `touch-action: none` so a touch-drag pans rather than scrolls the page. */
   .viewport {
-    overflow: auto;
-    max-height: 80vh;
+    position: relative;
+    height: 80vh;
+    overflow: hidden;
+    touch-action: none;
     border: 1px solid var(--ae-line-panel);
     border-radius: var(--ae-radius-control);
     background-color: var(--ae-bg-panel-2, var(--ae-bg-panel));
+    cursor: grab;
   }
-  /* Holds the transformed surface at its scaled size, so the viewport can scroll around it. */
-  .sizer {
-    position: relative;
-  }
-  /* The zoomable surface: laid out at 1 px/mm and scaled by the transform. The mm grid lives here so it
-     scales with the content (fine 10 mm lines + a stronger 50 mm line, both true-to-scale). */
+  /* The zoomable surface: laid out at 1 px/mm and translate·scale'd by the camera (absolute, top-left
+     origin — as WorldView's). The mm grid lives here so it scales with the content (fine 10 mm lines + a
+     stronger 50 mm line, both true-to-scale). */
   .surface {
-    position: relative; /* positioning context for the absolute cables overlay */
+    position: absolute;
+    top: 0;
+    left: 0;
     width: max-content;
     transform-origin: top left;
     padding: 2rem;
@@ -381,11 +398,18 @@
     gap: 90px;
     width: max-content;
   }
-  /* One device: a name caption above its two faces (front + back), stacked vertically. */
+  /* One device: a name caption above its two faces (front + back), stacked vertically. The whole group is
+     a drag handle (grab to move it on the bench); its jacks/controls opt out via the shared action. */
   .device-group {
+    position: relative;
     display: flex;
     flex-direction: column;
     gap: 8px;
+    cursor: grab;
+  }
+  .device-group.dragging {
+    cursor: grabbing;
+    z-index: 10; /* lift the moving device above its peers (and the cable layer) while dragging */
   }
   .dev-name {
     letter-spacing: var(--ae-legend-spacing, 0.05em);

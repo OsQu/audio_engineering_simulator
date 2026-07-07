@@ -87,6 +87,11 @@ export interface SceneUi {
   placements: Record<string, Placement>;
   /** Manual portal-chip offsets; absent entries fall back to the default placement. */
   portals: Record<string, PortalOffset>;
+  /** Per-device drag offsets on the flat **workbench** bench, surface mm (the bench is a 2-D layout,
+   *  not a spatial room — it has no walls/racks/`placements`, so it can't reuse `Placement`). Absent
+   *  entries sit at their default signal-flow-stack slot. Unused by the scene view; round-trips through
+   *  the bench's URL persistence like the rest of `ui`. Optional so scene-view saves omit it. */
+  bench?: Record<string, { x: number; y: number }>;
 }
 
 /** A whole scene: a version stamp, UI-only spatial data, and the runnable patch. The unit we save/load. */

@@ -14,6 +14,8 @@
   // **dragging** lives on the whole device body — a pointerdown that doesn't land on a control, jack,
   // or the corner chrome (see onDevicePointerDown) grabs the unit, so turning a knob never moves it.
   import type { Snippet } from "svelte";
+  import { Camera } from "../camera.svelte";
+  import { draggable } from "../device-drag";
   import { type Rect2, snapToGrid } from "../spatial";
   import type { SurfacePoint, WorldApi } from "../world-api";
 
@@ -75,15 +77,12 @@
   // The room the surface spans, world mm. Generous so there's room to pan around; refined per-space later.
   const ROOM_WIDTH = 4000;
   const ROOM_HEIGHT = 1400;
-  const MIN_ZOOM = 0.2;
-  const MAX_ZOOM = 3;
   const NUDGE_MM = 50; // keyboard arrow step
-  const ZOOM_SENSITIVITY = 0.0015; // zoom change per pixel of scroll (gentle; trackpad-friendly)
   const FIT_PADDING = 80; // viewport px of breathing room around the framed gear
 
-  let panX = $state(0);
-  let panY = $state(0);
-  let zoom = $state(0.6);
+  // The shared pan/zoom camera (device-drag's twin: it moves the whole view). Owns the surface transform,
+  // cursor-anchored wheel zoom, and drag-to-pan; this component keeps only the world↔surface mapping + fit.
+  const camera = new Camera({ zoom: 0.6, minZoom: 0.2, maxZoom: 3 });
 
   // The viewport element (measured for fit-to-content) and whether the user has taken over the camera.
   let viewport = $state<HTMLDivElement>();
@@ -98,45 +97,21 @@
     x: worldX,
     y: ROOM_HEIGHT - worldY,
   });
-  // A viewport client point → surface-local: subtract the (post-transform) surface origin and divide out
-  // the zoom. transform-origin is top-left, so the surface's client top-left is surface-local (0,0).
-  const clientToSurface = (clientX: number, clientY: number): SurfacePoint => {
-    const r = surface?.getBoundingClientRect();
-    if (!r) return { x: 0, y: 0 };
-    return { x: (clientX - r.left) / zoom, y: (clientY - r.top) / zoom };
-  };
+  // Client→surface is the camera's (transform-origin top-left ⇒ the surface's client top-left is (0,0)).
+  const clientToSurface = (clientX: number, clientY: number): SurfacePoint =>
+    camera.clientToSurface(surface, clientX, clientY);
   const worldApi: WorldApi = { worldToSurface, clientToSurface, measureRoot: () => surface ?? null };
   // Expose the converters to the parent (for jack measurement outside the overlay snippet).
   $effect(() => {
     api = worldApi;
   });
 
-  // Active device drag (world mm + whether the current spot is legal), or null.
+  // Active device drag (world mm + whether the current spot is legal), or null. The drag *mechanics*
+  // live in the shared `draggable` action (device-drag.ts); this state is just the live preview the
+  // action feeds back, so `shown()` can render the item at the dragged position and flag illegal spots.
   let drag = $state<{ id: string; x: number; y: number; legal: boolean } | null>(null);
-  // Active background pan, or null.
-  let pan = $state<{ px: number; py: number; panX0: number; panY0: number } | null>(null);
-
-  // Drag bookkeeping in screen px + the device's world origin at grab time.
-  let grab = { px: 0, py: 0, worldX: 0, worldY: 0 };
 
   const legalAt = (id: string, x: number, y: number): boolean => canPlace?.(id, x, y) ?? true;
-
-  function startDeviceDrag(e: PointerEvent, it: WorldItem): void {
-    e.preventDefault();
-    userAdjusted = true;
-    grab = { px: e.clientX, py: e.clientY, worldX: it.rect.x, worldY: it.rect.y };
-    drag = { id: it.id, x: it.rect.x, y: it.rect.y, legal: true };
-  }
-
-  // The whole device body is the drag surface, but elements that own their own pointer gesture —
-  // controls (knob/fader = slider, switch = button), patch jacks, and the corner chrome buttons —
-  // must not start a move. A pointerdown landing on any of these is left alone.
-  const DRAG_EXCLUDE = 'button, input, select, textarea, a, [role="slider"], [role="switch"], [data-jack]';
-
-  function onDevicePointerDown(e: PointerEvent, it: WorldItem): void {
-    if ((e.target as HTMLElement | null)?.closest(DRAG_EXCLUDE)) return;
-    startDeviceDrag(e, it);
-  }
 
   // Keyboard nudge fires only when the device box itself is focused — arrow keys bubbling up from a
   // focused control (which handles its own value change) must not also move the device.
@@ -164,49 +139,18 @@
     if (legalAt(it.id, x, y)) onMoveTo(it.id, x, y);
   }
 
+  // A backdrop press starts a camera drag-pan (self-contained: it captures the pointer). A device press
+  // never reaches the backdrop (the devices are siblings above it), so it drives the move action instead.
   function startPan(e: PointerEvent): void {
     userAdjusted = true;
-    pan = { px: e.clientX, py: e.clientY, panX0: panX, panY0: panY };
+    camera.startPan(e);
   }
 
-  function onPointerMove(e: PointerEvent): void {
-    if (drag) {
-      // Screen delta → world delta (÷ zoom); screen-y grows down, world-y grows up, so negate dy.
-      // Snap the live position to the placement grid so the preview lands where the drop will commit.
-      const x = snapToGrid(grab.worldX + (e.clientX - grab.px) / zoom, gridStep);
-      const y = Math.max(0, snapToGrid(grab.worldY - (e.clientY - grab.py) / zoom, gridStep));
-      drag = { id: drag.id, x, y, legal: legalAt(drag.id, x, y) };
-    } else if (pan) {
-      panX = pan.panX0 + (e.clientX - pan.px);
-      panY = pan.panY0 + (e.clientY - pan.py);
-    }
-  }
-
-  function onPointerUp(): void {
-    if (drag) {
-      if (drag.legal) onMoveTo(drag.id, drag.x, drag.y);
-      drag = null;
-    }
-    pan = null;
-  }
-
+  // Wheel zooms toward the cursor (the camera keeps the surface point under it fixed).
   function onWheel(e: WheelEvent): void {
-    e.preventDefault();
+    if (!viewport) return;
     userAdjusted = true;
-    // Zoom by an amount proportional to the scroll distance (not a fixed step per event, which makes a
-    // trackpad's many small events explode). Normalize line-mode deltas (deltaMode 1) to pixels.
-    const px = e.deltaMode === 1 ? e.deltaY * 16 : e.deltaY;
-    const factor = Math.exp(-px * ZOOM_SENSITIVITY);
-    const next = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, zoom * factor));
-    if (next === zoom) return;
-    // Zoom toward the cursor: keep the world point under it fixed by adjusting pan. Surface maps a
-    // local point s to viewport coords as v = pan + zoom·s, so v stays put when pan' = v − (next/zoom)(v − pan).
-    const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
-    const cx = e.clientX - rect.left;
-    const cy = e.clientY - rect.top;
-    panX = cx - (next / zoom) * (cx - panX);
-    panY = cy - (next / zoom) * (cy - panY);
-    zoom = next;
+    camera.wheelZoom(e, viewport);
   }
 
   // Where to render an item: its dragged preview if active, else its scene rect.
@@ -218,8 +162,6 @@
   // surface-local top-left coords (the space the `translate · scale` transform maps to the viewport).
   function fit(): void {
     if (!viewport || items.length === 0) return;
-    const vw = viewport.clientWidth;
-    const vh = viewport.clientHeight;
     let left = Infinity;
     let right = -Infinity;
     let top = Infinity;
@@ -230,16 +172,12 @@
       top = Math.min(top, ROOM_HEIGHT - rect.y - rect.height);
       bottom = Math.max(bottom, ROOM_HEIGHT - rect.y);
     }
-    const z = Math.min(
-      MAX_ZOOM,
-      Math.max(
-        MIN_ZOOM,
-        Math.min((vw - 2 * FIT_PADDING) / (right - left), (vh - 2 * FIT_PADDING) / (bottom - top)),
-      ),
+    camera.frame(
+      viewport.clientWidth,
+      viewport.clientHeight,
+      { left, top, right, bottom },
+      FIT_PADDING,
     );
-    zoom = z;
-    panX = vw / 2 - z * ((left + right) / 2);
-    panY = vh / 2 - z * ((top + bottom) / 2);
   }
 
   let lastFitKey = $state<string | undefined>(undefined);
@@ -258,14 +196,11 @@
   });
 </script>
 
-<svelte:window onpointermove={onPointerMove} onpointerup={onPointerUp} />
-
 <div class="viewport" bind:this={viewport} onwheel={onWheel}>
   <div
     class="surface"
     bind:this={surface}
-    style="width: {ROOM_WIDTH}px; height: {ROOM_HEIGHT}px;
-           transform: translate({panX}px, {panY}px) scale({zoom});"
+    style="width: {ROOM_WIDTH}px; height: {ROOM_HEIGHT}px; transform: {camera.transform};"
   >
     <!-- Pan backdrop: a sibling of the devices, so a device press never bubbles here. -->
     <div
@@ -305,7 +240,23 @@
         role="button"
         tabindex="0"
         aria-label="{it.id} — drag to move"
-        onpointerdown={(e) => onDevicePointerDown(e, it)}
+        use:draggable={{
+          origin: () => ({ x: it.rect.x, y: it.rect.y }),
+          scale: () => camera.zoom,
+          invertY: true,
+          gridStep,
+          clampFloor: true,
+          canPlace: (x, y) => legalAt(it.id, x, y),
+          onStart: () => {
+            userAdjusted = true;
+            drag = { id: it.id, x: it.rect.x, y: it.rect.y, legal: true };
+          },
+          onMove: (x, y, legal) => (drag = { id: it.id, x, y, legal }),
+          onEnd: (x, y, legal) => {
+            if (legal) onMoveTo(it.id, x, y);
+            drag = null;
+          },
+        }}
         onkeydown={(e) => onDeviceKey(e, it)}
       >
         <div class="content">{@render item(it.id)}</div>
