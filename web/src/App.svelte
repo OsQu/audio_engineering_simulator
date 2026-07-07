@@ -673,7 +673,7 @@
                   <option value={s.id}>{s.name}</option>
                 {/each}
               </select>
-              <button type="button" class="chip" aria-label="remove rack" onclick={() => removeRack(itemId)}>
+              <button type="button" class="chip remove" aria-label="remove rack" onclick={() => removeRack(itemId)}>
                 ✕
               </button>
             {/if}
@@ -720,7 +720,7 @@
                 <!-- The output tap can't be removed (it would invalidate the patch). -->
                 <button
                   type="button"
-                  class="chip"
+                  class="chip remove"
                   aria-label="remove device"
                   onclick={() => removeDevice(itemId)}
                 >
@@ -1124,11 +1124,11 @@
   }
   .space-select {
     font: inherit;
-    font-size: 9px;
-    margin-left: 2px;
-    max-width: 6rem;
+    font-size: 10px;
+    padding: 2px 4px;
+    max-width: 8rem;
     border: 1px solid var(--ae-line-chip);
-    border-radius: 3px;
+    border-radius: var(--ae-radius-control);
     background: var(--ae-bg-chip);
     color: var(--ae-text-strong);
   }
@@ -1370,21 +1370,24 @@
   .levels .loss-list li {
     color: #777;
   }
-  /* Small chrome buttons in a world item's top bar (device flip, space selector, remove). */
+  /* Chrome buttons in a world item's hover toolbar (open, device flip, space selector, remove). */
   .chip {
     font: inherit;
-    font-size: 9px;
+    font-size: 10px;
     line-height: 1;
-    padding: 1px 5px;
-    margin: 0 1px;
+    padding: 3px 8px;
     border: 1px solid #555;
-    border-radius: 3px;
+    border-radius: var(--ae-radius-control);
     background: #4a4d52;
     color: #e0e0e0;
     cursor: pointer;
   }
   .chip:hover {
     background: #585c62;
+  }
+  /* The remove (✕) button anchors to the far right of the toolbar, apart from the left-grouped actions. */
+  .chip.remove {
+    margin-left: auto;
   }
   /* A rack: a dark frame filling its world box, padded to inset the U-slot guide rows. */
   .rack-frame {

@@ -310,8 +310,10 @@
       >
         <div class="content">{@render item(it.id)}</div>
         {#if controls}
-          <!-- Chrome (flip / space / remove) floats in the top-right corner, out of the drag surface. -->
-          <div class="corner">{@render controls(it.id)}</div>
+          <!-- Chrome (open / flip / space / remove) rides a slim bar across the device's top edge,
+               revealed only on hover (or keyboard focus within the device) so it never clutters the
+               faceplate. Its buttons/selects opt out of the body drag in onDevicePointerDown. -->
+          <div class="chrome">{@render controls(it.id)}</div>
         {/if}
       </div>
     {/each}
@@ -384,7 +386,8 @@
     position: absolute;
     display: flex;
     flex-direction: column;
-    overflow: hidden;
+    /* No overflow clip here: the hover toolbar (`.chrome`) is a child positioned ABOVE the chassis and
+       must not be clipped. The rounded-corner clip lives on `.content` instead. */
     box-shadow: 0 2px 6px rgba(0, 0, 0, 0.4);
     border-radius: 6px;
     /* z-index is set inline per item (WorldItem.z) so panels interleave with the cable layer by facing;
@@ -403,21 +406,44 @@
     outline: 2px solid var(--ae-signal-mic-lit);
     outline-offset: 1px;
   }
-  /* Chrome (flip / space / remove) floats in the device's top-right corner — above the faceplate and
-     outside the drag surface (its buttons/select opt out of the body drag in onDevicePointerDown). */
-  .corner {
+  /* Chrome (open / flip / space / remove) — a slim floating toolbar that sits just ABOVE the chassis
+     (not over the faceplate), outside the drag surface (its buttons/select opt out of the body drag in
+     onDevicePointerDown). Hidden until the device is hovered or focused within, so it never clutters the
+     view. Flush to the top edge (no gap) so moving the cursor from the panel onto the toolbar keeps the
+     device hovered — no flicker. It escapes the chassis clip because overflow:hidden lives on `.content`,
+     not `.device`. */
+  .chrome {
     position: absolute;
-    top: 3px;
-    right: 3px;
+    bottom: 100%;
+    left: 0;
+    right: 0;
     z-index: 4;
     display: flex;
     align-items: center;
-    gap: 3px;
+    gap: 4px;
+    padding: 3px 4px;
+    background: var(--ae-bg-panel);
+    border: 1px solid var(--ae-line-panel);
+    border-radius: var(--ae-radius-control) var(--ae-radius-control) 0 0;
+    box-shadow: 0 -4px 12px rgba(0, 0, 0, 0.4);
+    opacity: 0;
+    transform: translateY(6px);
+    pointer-events: none;
+    transition:
+      opacity 0.12s ease,
+      transform 0.12s ease;
+  }
+  .device:hover .chrome,
+  .device:focus-within .chrome {
+    opacity: 1;
+    transform: none;
+    pointer-events: auto;
   }
   .content {
     flex: 1;
     min-height: 0;
     overflow: hidden;
+    border-radius: 6px; /* the chassis clip (moved off `.device` so the hover toolbar can sit above it) */
     /* A size container so a device panel can scale its internals to the chassis box (a 1U rack unit is
        a thin strip; fixed rem content would overflow it). Panel/Jack use `cqh`/`cqw` against this. */
     container-type: size;
