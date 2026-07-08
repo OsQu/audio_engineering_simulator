@@ -16,7 +16,7 @@ import { type ConnectVerdict, cableSpec } from "./connections";
 import { wallSpawn } from "./placement";
 import { deviceById, FRAME_MARGIN, type LayoutCtx, type PlacedItem, rackById } from "./projection";
 import type { Connection } from "./scene";
-import { newSpace, type Scene } from "./scene-store";
+import { flip, newSpace, type Scene } from "./scene-store";
 import { footprint, RACK_DEPTH_MM, RACK_UNIT_MM, RACK_WIDTH_MM, type Size3 } from "./spatial";
 
 // A stable key for a connection (its two endpoints), for the {#each} in the cable overlay.
@@ -160,7 +160,7 @@ export function moveRackToSpace(scene: Scene, id: string, spaceId: string): void
 export function toggleFlip(scene: Scene, id: string): void {
   const place = scene.ui.placements[id];
   if (!place || place.rack) return;
-  place.facing = place.facing === "back" ? "front" : "back";
+  place.facing = flip(place.facing);
 }
 
 // Turn a whole rack around front↔back, exposing (or hiding) the rear I/O of all its mounted gear at
@@ -168,7 +168,17 @@ export function toggleFlip(scene: Scene, id: string): void {
 export function toggleRackFlip(scene: Scene, id: string): void {
   const rack = rackById(scene, id);
   if (!rack) return;
-  rack.facing = rack.facing === "back" ? "front" : "back";
+  rack.facing = flip(rack.facing);
+}
+
+// Turn a **workbench** device around front↔back. The bench has no rooms/racks/placements, so its facing
+// lives on the bench entry (beside its drag offset); `effectiveFacing` reads it. UI-only — the DUT shows
+// both faces at once and never calls this; only the supporting cast rotates.
+export function toggleBenchFacing(scene: Scene, id: string): void {
+  scene.ui.bench ??= {};
+  scene.ui.bench[id] ??= { x: 0, y: 0 };
+  const entry = scene.ui.bench[id];
+  entry.facing = flip(entry.facing ?? "front");
 }
 
 // Eject a device from its rack, leaving it free-standing at the position it already carried (so it can

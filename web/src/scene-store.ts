@@ -54,6 +54,10 @@ export interface Rack {
 /** Which panel faces the operator — the device can be flipped front↔back directly. */
 export type DeviceFacing = "front" | "back";
 
+/** Toggle a facing front↔back — the one flip operation, shared by every "turn it around" control (a
+ *  free-standing device, a rack, a bench device). */
+export const flip = (f: DeviceFacing): DeviceFacing => (f === "back" ? "front" : "back");
+
 /** One device's placement in the spatial world. The **single 3-D coordinate truth** (Story 4.3.2's
  *  model projects it to a rendered view): free-standing gear lives at `position`; rack-mounted gear's
  *  position is derived from its rack + U-slot instead. UI-only — never sent to the engine. */
@@ -87,11 +91,12 @@ export interface SceneUi {
   placements: Record<string, Placement>;
   /** Manual portal-chip offsets; absent entries fall back to the default placement. */
   portals: Record<string, PortalOffset>;
-  /** Per-device drag offsets on the flat **workbench** bench, surface mm (the bench is a 2-D layout,
-   *  not a spatial room — it has no walls/racks/`placements`, so it can't reuse `Placement`). Absent
-   *  entries sit at their default signal-flow-stack slot. Unused by the scene view; round-trips through
-   *  the bench's URL persistence like the rest of `ui`. Optional so scene-view saves omit it. */
-  bench?: Record<string, { x: number; y: number }>;
+  /** Per-device bench state on the flat **workbench** — drag offset (surface mm) + which face is turned
+   *  toward the operator (the DUT ignores facing; it shows both faces at once). The bench is a 2-D layout,
+   *  not a spatial room — no walls/racks/`placements`, so it can't reuse `Placement`. Absent entries sit
+   *  at their signal-flow-stack slot, front-facing. Unused by the scene view; round-trips through the
+   *  bench's URL persistence like the rest of `ui`. Optional so scene-view saves omit it. */
+  bench?: Record<string, { x: number; y: number; facing?: DeviceFacing }>;
 }
 
 /** A whole scene: a version stamp, UI-only spatial data, and the runnable patch. The unit we save/load. */

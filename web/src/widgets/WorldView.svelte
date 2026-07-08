@@ -12,12 +12,13 @@
   // Interaction is split so it never conflicts: **panning** lives on a `.backdrop` *sibling* of the
   // devices (a device press can't bubble to a sibling, so operating a control never pans), and
   // **dragging** lives on the whole device body — a pointerdown that doesn't land on a control, jack,
-  // or the corner chrome (see onDevicePointerDown) grabs the unit, so turning a knob never moves it.
+  // or the hover-header chrome (see DRAG_EXCLUDE) grabs the unit, so turning a knob never moves it.
   import type { Snippet } from "svelte";
   import { Camera } from "../camera.svelte";
   import { draggable } from "../device-drag";
   import { type Rect2, snapToGrid } from "../spatial";
   import type { SurfacePoint, WorldApi } from "../world-api";
+  import DeviceChrome from "./DeviceChrome.svelte";
 
   interface WorldItem {
     id: string;
@@ -229,7 +230,7 @@
     {#each items as it (it.id)}
       {@const p = shown(it)}
       <!-- The whole device body is the drag surface (grab anywhere to move); controls / jacks / the
-           corner chrome opt out in onDevicePointerDown, so operating them never moves the unit. -->
+           hover-header chrome opt out via DRAG_EXCLUDE, so operating them never moves the unit. -->
       <div
         class="device"
         class:background={it.background}
@@ -261,10 +262,10 @@
       >
         <div class="content">{@render item(it.id)}</div>
         {#if controls}
-          <!-- Chrome (open / flip / space / remove) rides a slim bar across the device's top edge,
-               revealed only on hover (or keyboard focus within the device) so it never clutters the
-               faceplate. Its buttons/selects opt out of the body drag in onDevicePointerDown. -->
-          <div class="chrome">{@render controls(it.id)}</div>
+          <!-- Chrome (open / flip / space / remove) in the shared hover header, revealed on device hover
+               (or keyboard focus within) — the reveal trigger is the CSS below. Its buttons/selects opt
+               out of the body drag in onDevicePointerDown. -->
+          <DeviceChrome>{@render controls(it.id)}</DeviceChrome>
         {/if}
       </div>
     {/each}
@@ -337,7 +338,7 @@
     position: absolute;
     display: flex;
     flex-direction: column;
-    /* No overflow clip here: the hover toolbar (`.chrome`) is a child positioned ABOVE the chassis and
+    /* No overflow clip here: the hover header (DeviceChrome) is a child positioned ABOVE the chassis and
        must not be clipped. The rounded-corner clip lives on `.content` instead. */
     box-shadow: 0 2px 6px rgba(0, 0, 0, 0.4);
     border-radius: 6px;
@@ -357,35 +358,11 @@
     outline: 2px solid var(--ae-signal-mic-lit);
     outline-offset: 1px;
   }
-  /* Chrome (open / flip / space / remove) — a slim floating toolbar that sits just ABOVE the chassis
-     (not over the faceplate), outside the drag surface (its buttons/select opt out of the body drag in
-     onDevicePointerDown). Hidden until the device is hovered or focused within, so it never clutters the
-     view. Flush to the top edge (no gap) so moving the cursor from the panel onto the toolbar keeps the
-     device hovered — no flicker. It escapes the chassis clip because overflow:hidden lives on `.content`,
-     not `.device`. */
-  .chrome {
-    position: absolute;
-    bottom: 100%;
-    left: 0;
-    right: 0;
-    z-index: 4;
-    display: flex;
-    align-items: center;
-    gap: 4px;
-    padding: 3px 4px;
-    background: var(--ae-bg-panel);
-    border: 1px solid var(--ae-line-panel);
-    border-radius: var(--ae-radius-control) var(--ae-radius-control) 0 0;
-    box-shadow: 0 -4px 12px rgba(0, 0, 0, 0.4);
-    opacity: 0;
-    transform: translateY(6px);
-    pointer-events: none;
-    transition:
-      opacity 0.12s ease,
-      transform 0.12s ease;
-  }
-  .device:hover .chrome,
-  .device:focus-within .chrome {
+  /* Reveal the shared hover header (DeviceChrome) when the device is hovered or focused within — the bar's
+     appearance + hidden default live in that component; this is just the per-view reveal trigger. The
+     device escapes the chassis clip because overflow:hidden lives on `.content`, not `.device`. */
+  .device:hover :global(.device-chrome),
+  .device:focus-within :global(.device-chrome) {
     opacity: 1;
     transform: none;
     pointer-events: auto;

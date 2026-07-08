@@ -41,11 +41,12 @@ export const isRack = (scene: Scene, id: string): boolean => rackById(scene, id)
 
 // Which panel side a device actually shows. A **rack-mounted** unit is bolted in, so it can't be flipped
 // on its own — its side follows the rack's `facing` (turn the whole rack around to reach the gear's rear
-// I/O). A **free-standing** unit follows its own `facing`. Defaults to "front" when the device has no
-// placement. This is the single source of truth for rendering, z-order, and jack anchoring.
+// I/O). A **free-standing** unit follows its own `facing`. A device with no placement is a **workbench**
+// device: it follows its bench `facing` (the flat bench has no rooms/racks). Defaults to "front". This is
+// the single source of truth for rendering, z-order, and jack anchoring — shared by both view roots.
 export function effectiveFacing(scene: Scene, deviceId: string): DeviceFacing {
   const place = scene.ui.placements[deviceId];
-  if (!place) return "front";
+  if (!place) return scene.ui.bench?.[deviceId]?.facing ?? "front";
   if (place.rack) return rackById(scene, place.rack.id)?.facing ?? place.facing;
   return place.facing;
 }
