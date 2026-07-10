@@ -18,7 +18,7 @@
     size === undefined
       ? undefined
       : `--sw-w: ${size}px; --sw-h: ${(size * 1.35).toFixed(2)}px; ` +
-        `--sw-font: ${(size * 0.5).toFixed(2)}px; --sw-gap: ${(size * 0.18).toFixed(2)}px`,
+          `--sw-font: ${(size * 0.5).toFixed(2)}px; --sw-gap: ${(size * 0.18).toFixed(2)}px`,
   );
 </script>
 

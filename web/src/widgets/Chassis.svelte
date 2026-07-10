@@ -59,9 +59,7 @@
     /* Dark chassis; the faceplate finish lives on the front face (below), so the
        panel's own background reads as the thin bezel around the faceplate. */
     background: var(--ae-bg-panel-2);
-    box-shadow:
-      var(--ae-bevel-top),
-      var(--ae-shadow-card);
+    box-shadow: var(--ae-bevel-top), var(--ae-shadow-card);
     /* Bezel inset in **mm** (the panel is 1 px/mm; the world/bench zoom scales it). */
     padding: 2px 3px;
     display: flex;

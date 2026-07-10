@@ -100,10 +100,17 @@
   // The coordinate seam: client→surface is the camera's (transform-origin top-left ⇒ the surface's client
   // top-left is surface-local (0,0)). The bench's world ≡ surface mm (one flat layout), so `worldToSurface`
   // is identity.
-  const worldToSurface = (worldX: number, worldY: number): SurfacePoint => ({ x: worldX, y: worldY });
+  const worldToSurface = (worldX: number, worldY: number): SurfacePoint => ({
+    x: worldX,
+    y: worldY,
+  });
   const clientToSurface = (clientX: number, clientY: number): SurfacePoint =>
     camera.clientToSurface(surface, clientX, clientY);
-  const worldApi: WorldApi = { worldToSurface, clientToSurface, measureRoot: () => surface ?? null };
+  const worldApi: WorldApi = {
+    worldToSurface,
+    clientToSurface,
+    measureRoot: () => surface ?? null,
+  };
   $effect(() => {
     api = worldApi;
   });
@@ -210,155 +217,160 @@
       bind:clientHeight={natH}
       style:transform={camera.transform}
     >
-        <!-- Patch cables, drawn in surface-local coords (the same space the measured jack anchors live in)
+      <!-- Patch cables, drawn in surface-local coords (the same space the measured jack anchors live in)
              via the shared cable-view geometry. `pointer-events:none` so jack presses pass through to the
              faceplates; only each cable's hit-path takes clicks (disabled mid-drag so a release lands on a
              jack). The cable layer sits at z 2; device groups interleave around it by facing (see zBase),
              so a cable to a front-shown device's hidden rear socket tucks behind its panel. -->
-        <svg class="cables" width={natW} height={natH} viewBox="0 0 {natW} {natH}">
-          {#each session.scene.patch.connections as c (connKey(c))}
-            {@const ends = cableEndpoints(benchLayout, patch.jackAnchors, c, worldApi)}
-            {#if ends}
-              {@const d = cablePathData(ends.a, ends.b)}
-              {@const kind = connectionKind(session.scene, session.catalog, c)}
-              <Cable {d} {kind} selected={connKey(c) === selectedCableKey} />
-              <path
-                class="cable-hit"
-                {d}
-                role="button"
-                tabindex="-1"
-                aria-label={`select cable ${connKey(c)}`}
-                style:pointer-events={patch.dragCable ? "none" : "stroke"}
-                onclick={() => (selectedCableKey = connKey(c))}
-                onkeydown={(e: KeyboardEvent) => {
-                  if (e.key === "Enter" || e.key === " ") selectedCableKey = connKey(c);
-                }}
-              ></path>
-            {/if}
-          {/each}
-
-          {#if patch.dragCable}
-            <!-- The drag rubber-band from the source jack to the cursor, coloured legal/illegal on hover. -->
-            <Cable
-              drag
-              d={cablePathData(patch.dragCable.srcPoint, patch.dragCable.free)}
-              legal={patch.dragCable.over && patch.dragCable.legal}
-              illegal={patch.dragCable.over && !patch.dragCable.legal}
-            />
+      <svg class="cables" width={natW} height={natH} viewBox="0 0 {natW} {natH}">
+        {#each session.scene.patch.connections as c (connKey(c))}
+          {@const ends = cableEndpoints(benchLayout, patch.jackAnchors, c, worldApi)}
+          {#if ends}
+            {@const d = cablePathData(ends.a, ends.b)}
+            {@const kind = connectionKind(session.scene, session.catalog, c)}
+            <Cable {d} {kind} selected={connKey(c) === selectedCableKey} />
+            <path
+              class="cable-hit"
+              {d}
+              role="button"
+              tabindex="-1"
+              aria-label={`select cable ${connKey(c)}`}
+              style:pointer-events={patch.dragCable ? "none" : "stroke"}
+              onclick={() => (selectedCableKey = connKey(c))}
+              onkeydown={(e: KeyboardEvent) => {
+                if (e.key === "Enter" || e.key === " ") selectedCableKey = connKey(c);
+              }}
+            ></path>
           {/if}
+        {/each}
 
-          {#if tapAnchor}
-            <!-- "Listening here": the monitored output tap (what the capture hears). -->
-            <circle class="tap-marker" cx={tapAnchor.x} cy={tapAnchor.y} r="4.5" />
-          {/if}
-        </svg>
+        {#if patch.dragCable}
+          <!-- The drag rubber-band from the source jack to the cursor, coloured legal/illegal on hover. -->
+          <Cable
+            drag
+            d={cablePathData(patch.dragCable.srcPoint, patch.dragCable.free)}
+            legal={patch.dragCable.over && patch.dragCable.legal}
+            illegal={patch.dragCable.over && !patch.dragCable.legal}
+          />
+        {/if}
 
-        <!-- The device-under-test plus the fixed supporting cast, stacked top→bottom by signal flow. The
+        {#if tapAnchor}
+          <!-- "Listening here": the monitored output tap (what the capture hears). -->
+          <circle class="tap-marker" cx={tapAnchor.x} cy={tapAnchor.y} r="4.5" />
+        {/if}
+      </svg>
+
+      <!-- The device-under-test plus the fixed supporting cast, stacked top→bottom by signal flow. The
              **DUT** shows both faces at once (front + back columns), with the rack-U ruler marking it as
              the centerpiece; a **supporting** device shows one rotatable face (flip button), exactly as
              the scene view renders a device. -->
-        <div class="bench-stack">
-          {#each devices as bd (bd.id)}
-            {@const isDut = bd.id === BENCH_DEVICE}
-            {@const lay = layoutOf(bd.desc)}
-            {@const Faceplate = deviceUi(bd.desc.typeId)}
-            {@const ruled = isDut && lay.rackUnits > 0}
-            {@const facing = effectiveFacing(session.scene, bd.id)}
-            <!-- z-interleave with the cable layer (z 2), mirroring the scene view. A **front-shown
+      <div class="bench-stack">
+        {#each devices as bd (bd.id)}
+          {@const isDut = bd.id === BENCH_DEVICE}
+          {@const lay = layoutOf(bd.desc)}
+          {@const Faceplate = deviceUi(bd.desc.typeId)}
+          {@const ruled = isDut && lay.rackUnits > 0}
+          {@const facing = effectiveFacing(session.scene, bd.id)}
+          <!-- z-interleave with the cable layer (z 2), mirroring the scene view. A **front-shown
                  supporting** device sits ABOVE the cables (z 3): its sockets are on the hidden back face,
                  so a cable to one tucks behind its panel. Everything else sits BELOW (z 1) — the DUT
                  (both faces shown ⇒ every socket visible) and a back-shown device (rear sockets visible)
                  — so cables plug into visible sockets on top. A dragged device floats above all (z 10). -->
-            {@const zBase = !isDut && facing === "front" ? 3 : 1}
-            <!-- The DUT lists both faces; a supporting device lists only its shown face (rotate to swap). -->
-            {@const faces = isDut
-              ? [
-                  { flipped: false, label: "Front" },
-                  { flipped: true, label: "Back" },
-                ]
-              : [{ flipped: facing === "back", label: facing === "back" ? "Back" : "Front" }]}
-            <!-- One device: drag its body to move it on the bench (the shared `draggable` action, same as
+          {@const zBase = !isDut && facing === "front" ? 3 : 1}
+          <!-- The DUT lists both faces; a supporting device lists only its shown face (rotate to swap). -->
+          {@const faces = isDut
+            ? [
+                { flipped: false, label: "Front" },
+                { flipped: true, label: "Back" },
+              ]
+            : [{ flipped: facing === "back", label: facing === "back" ? "Back" : "Front" }]}
+          <!-- One device: drag its body to move it on the bench (the shared `draggable` action, same as
                  the scene view). Its jacks/controls/flip opt out (DRAG_EXCLUDE); its committed offset +
                  facing live in `scene.ui.bench`. The transform is surface mm, applied inside the surface. -->
-            <div
-              class="device-group"
-              class:dut={isDut}
-              class:dragging={dragging?.id === bd.id}
-              style:transform="translate({benchOffset(bd.id).x}px, {benchOffset(bd.id).y}px)"
-              style:z-index={dragging?.id === bd.id ? 10 : zBase}
-              use:draggable={{
-                origin: () => benchOffset(bd.id),
-                scale: () => camera.zoom,
-                onStart: () => (dragging = { id: bd.id, ...benchOffset(bd.id) }),
-                onMove: (x, y) => (dragging = { id: bd.id, x, y }),
-                onEnd: (x, y) => {
-                  const bench = (session.scene.ui.bench ??= {});
-                  bench[bd.id] = { ...bench[bd.id], x, y }; // keep any facing
-                  dragging = null;
-                },
-              }}
-            >
-              {#if !isDut}
-                <!-- Rotate control in the shared hover header (same pattern as the scene view): appears
+          <div
+            class="device-group"
+            class:dut={isDut}
+            class:dragging={dragging?.id === bd.id}
+            style:transform="translate({benchOffset(bd.id).x}px, {benchOffset(bd.id).y}px)"
+            style:z-index={dragging?.id === bd.id ? 10 : zBase}
+            use:draggable={{
+              origin: () => benchOffset(bd.id),
+              scale: () => camera.zoom,
+              onStart: () => (dragging = { id: bd.id, ...benchOffset(bd.id) }),
+              onMove: (x, y) => (dragging = { id: bd.id, x, y }),
+              onEnd: (x, y) => {
+                const bench = (session.scene.ui.bench ??= {});
+                bench[bd.id] = { ...bench[bd.id], x, y }; // keep any facing
+                dragging = null;
+              },
+            }}
+          >
+            {#if !isDut}
+              <!-- Rotate control in the shared hover header (same pattern as the scene view): appears
                      above the device on hover. The DUT shows both faces at once, so it has no header. -->
-                <DeviceChrome>
-                  <button
-                    type="button"
-                    class="flip-btn"
-                    aria-label="rotate {bd.desc.name}"
-                    onclick={() => flipDevice(bd.id)}
-                  >
-                    ⟲ {facing === "back" ? "front" : "back"}
-                  </button>
-                </DeviceChrome>
-              {/if}
-              <span class="dev-name muted">{bd.desc.name}</span>
-              <!-- Keyed by index (stable per device) so a supporting device's single face-card persists
+              <DeviceChrome>
+                <button
+                  type="button"
+                  class="flip-btn"
+                  aria-label="rotate {bd.desc.name}"
+                  onclick={() => flipDevice(bd.id)}
+                >
+                  ⟲ {facing === "back" ? "front" : "back"}
+                </button>
+              </DeviceChrome>
+            {/if}
+            <span class="dev-name muted">{bd.desc.name}</span>
+            <!-- Keyed by index (stable per device) so a supporting device's single face-card persists
                    across a flip — the `flipped` prop changes and the 0.45s rotate transition plays,
                    rather than the element remounting already-flipped. -->
-              <div class="dev-faces">
-                {#each faces as face, i (i)}
-                  <div class="face-col">
-                    <span class="face-label muted">{face.label}</span>
-                    <div class="face-body">
-                      {#if ruled && i === 0}
-                        <!-- Rack-U ruler beside the front face: a tick per U boundary at 44.45 mm. -->
-                        <div class="ruler" style:height="{lay.size.height}px">
-                          {#each lay.uTicks as u (u)}
-                            <div class="tick" style:top="{u * RACK_UNIT_MM}px">
-                              {#if u < lay.rackUnits}<span class="u-label">{u + 1}U</span>{/if}
-                            </div>
-                          {/each}
-                        </div>
-                      {:else if ruled}
-                        <!-- Spacer so the back face lines up under the front (which carries the ruler). -->
-                        <div class="ruler-spacer"></div>
-                      {/if}
-                      <!-- The DUT's two columns each hide the away face (so each face measures once); a
+            <div class="dev-faces">
+              {#each faces as face, i (i)}
+                <div class="face-col">
+                  <span class="face-label muted">{face.label}</span>
+                  <div class="face-body">
+                    {#if ruled && i === 0}
+                      <!-- Rack-U ruler beside the front face: a tick per U boundary at 44.45 mm. -->
+                      <div class="ruler" style:height="{lay.size.height}px">
+                        {#each lay.uTicks as u (u)}
+                          <div class="tick" style:top="{u * RACK_UNIT_MM}px">
+                            {#if u < lay.rackUnits}<span class="u-label">{u + 1}U</span>{/if}
+                          </div>
+                        {/each}
+                      </div>
+                    {:else if ruled}
+                      <!-- Spacer so the back face lines up under the front (which carries the ruler). -->
+                      <div class="ruler-spacer"></div>
+                    {/if}
+                    <!-- The DUT's two columns each hide the away face (so each face measures once); a
                            supporting device is a single flip-card (like the scene view), whose hidden face
                            still measures — its mirrored jack centres are the correct see-through anchors. -->
-                      <div
-                        class="device"
-                        class:show-front={isDut && !face.flipped}
-                        class:show-back={isDut && face.flipped}
-                        style:width="{lay.size.width}px"
-                        style:height="{lay.size.height}px"
-                      >
-                        <Faceplate {...faceProps(bd.id, bd.desc, face.flipped)} />
-                      </div>
+                    <div
+                      class="device"
+                      class:show-front={isDut && !face.flipped}
+                      class:show-back={isDut && face.flipped}
+                      style:width="{lay.size.width}px"
+                      style:height="{lay.size.height}px"
+                    >
+                      <Faceplate {...faceProps(bd.id, bd.desc, face.flipped)} />
                     </div>
                   </div>
-                {/each}
-              </div>
+                </div>
+              {/each}
             </div>
-          {/each}
-        </div>
+          </div>
+        {/each}
       </div>
+    </div>
   </div>
 
   {#if selectedConn}
     <!-- The shared cable inspector (same as the scene view): change the selected lead's type / disconnect. -->
-    <CableInspector {session} {patch} conn={selectedConn} onClose={() => (selectedCableKey = null)} />
+    <CableInspector
+      {session}
+      {patch}
+      conn={selectedConn}
+      onClose={() => (selectedCableKey = null)}
+    />
   {/if}
 </div>
 

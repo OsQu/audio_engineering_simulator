@@ -32,7 +32,14 @@
           <line class="tick" x1="75" y1="24" x2="75" y2="30" transform={`rotate(${t} 75 86)`} />
         {/each}
         <text class="mark" x="75" y="78" text-anchor="middle">VU</text>
-        <line class="needle" x1="75" y1="86" x2="75" y2="28" transform={`rotate(${needle} 75 86)`} />
+        <line
+          class="needle"
+          x1="75"
+          y1="86"
+          x2="75"
+          y2="28"
+          transform={`rotate(${needle} 75 86)`}
+        />
         <circle class="pivot" cx="75" cy="86" r="5" />
       </svg>
     </div>

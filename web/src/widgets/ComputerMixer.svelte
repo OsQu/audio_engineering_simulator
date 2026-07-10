@@ -31,7 +31,9 @@
 
   <section>
     <span class="section-title">Routing</span>
-    <p class="hint">Each cell mixes a send into a return — the loopback the interface plays back.</p>
+    <p class="hint">
+      Each cell mixes a send into a return — the loopback the interface plays back.
+    </p>
     <RoutingGrid params={props.params} />
   </section>
 </div>

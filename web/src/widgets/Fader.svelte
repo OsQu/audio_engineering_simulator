@@ -20,9 +20,9 @@
     size === undefined
       ? undefined
       : `--fader-h: ${size}px; --fader-col: ${(size * 0.55).toFixed(2)}px; ` +
-        `--fader-track: ${Math.max(2, size * 0.12).toFixed(2)}px; --fader-cap-w: ${(size * 0.3).toFixed(2)}px; ` +
-        `--fader-cap-h: ${(size * 0.15).toFixed(2)}px; --fader-font: ${(size * 0.11).toFixed(2)}px; ` +
-        `--fader-gap: ${(size * 0.04).toFixed(2)}px`,
+          `--fader-track: ${Math.max(2, size * 0.12).toFixed(2)}px; --fader-cap-w: ${(size * 0.3).toFixed(2)}px; ` +
+          `--fader-cap-h: ${(size * 0.15).toFixed(2)}px; --fader-font: ${(size * 0.11).toFixed(2)}px; ` +
+          `--fader-gap: ${(size * 0.04).toFixed(2)}px`,
   );
 
   // 0%..100% of the track height, bottom = min.
@@ -47,7 +47,8 @@
     aria-valuemin={param.min}
     aria-valuemax={param.max}
     aria-valuenow={value}
-    onpointerdown={(e) => verticalDrag(e, { value, min: param.min, max: param.max, onChange, travelPx: 120 })}
+    onpointerdown={(e) =>
+      verticalDrag(e, { value, min: param.min, max: param.max, onChange, travelPx: 120 })}
     ondblclick={() => onChange(param.default)}
     onkeydown={onKey}
   >
@@ -109,9 +110,7 @@
     height: var(--fader-cap-h, min(1.1rem, 15cqh));
     border-radius: 3px;
     background: linear-gradient(to bottom, var(--ae-fader-cap-top), var(--ae-fader-cap-bot));
-    box-shadow:
-      var(--ae-shadow-control),
-      var(--ae-bevel-top);
+    box-shadow: var(--ae-shadow-control), var(--ae-bevel-top);
     border: 1px solid #000;
   }
   .cap::after {

@@ -101,7 +101,11 @@
   // Client→surface is the camera's (transform-origin top-left ⇒ the surface's client top-left is (0,0)).
   const clientToSurface = (clientX: number, clientY: number): SurfacePoint =>
     camera.clientToSurface(surface, clientX, clientY);
-  const worldApi: WorldApi = { worldToSurface, clientToSurface, measureRoot: () => surface ?? null };
+  const worldApi: WorldApi = {
+    worldToSurface,
+    clientToSurface,
+    measureRoot: () => surface ?? null,
+  };
   // Expose the converters to the parent (for jack measurement outside the overlay snippet).
   $effect(() => {
     api = worldApi;

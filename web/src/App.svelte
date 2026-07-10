@@ -91,7 +91,12 @@
   );
 
   // Human labels for the wall-view switcher.
-  const WALL_LABELS: Record<Wall, string> = { front: "Front", back: "Back", left: "Left", right: "Right" };
+  const WALL_LABELS: Record<Wall, string> = {
+    front: "Front",
+    back: "Back",
+    left: "Left",
+    right: "Right",
+  };
 
   // The projection context, rebuilt inline on each call so its field reads register as reactive
   // dependencies of whatever $derived/handler invokes it. Never hoist these into a plain const at
@@ -198,7 +203,12 @@
   // Dragging a portal chip: its key + the (fixed) jack anchor it hangs off + the world converters. The
   // offset is recomputed live as cursor − anchor and stored in the scene, so it persists on save.
   let portalDrag: { key: string; anchor: { x: number; y: number }; api: WorldApi } | null = null;
-  function startPortalDrag(e: PointerEvent, key: string, anchor: { x: number; y: number }, api: WorldApi): void {
+  function startPortalDrag(
+    e: PointerEvent,
+    key: string,
+    anchor: { x: number; y: number },
+    api: WorldApi,
+  ): void {
     e.preventDefault();
     e.stopPropagation(); // don't let the window cable/pan handlers see this press
     (e.currentTarget as Element).setPointerCapture(e.pointerId);
@@ -208,7 +218,10 @@
     if (!portalDrag) return;
     const s = portalDrag.api.clientToSurface(e.clientX, e.clientY);
     scene.ui.portals ??= {};
-    scene.ui.portals[portalDrag.key] = { dx: s.x - portalDrag.anchor.x, dy: s.y - portalDrag.anchor.y };
+    scene.ui.portals[portalDrag.key] = {
+      dx: s.x - portalDrag.anchor.x,
+      dy: s.y - portalDrag.anchor.y,
+    };
   }
   function onPortalDragEnd(e: PointerEvent): void {
     if (!portalDrag) return;
@@ -238,7 +251,8 @@
   }
 
   // Connection introspection is pure scene-ops; App binds scene/catalog for cable rendering.
-  const connectionKind = (c: Connection): PortKind => sceneOps.connectionKind(scene, session.catalog, c);
+  const connectionKind = (c: Connection): PortKind =>
+    sceneOps.connectionKind(scene, session.catalog, c);
 
   // --- Cable inspector (select a cable to change its type / disconnect it) --------------------------
   let selectedCableKey = $state<string | null>(null);
@@ -291,7 +305,9 @@
   // QWERTY capture + the target-explicit `playNote` wrapper — the shared keyboard-input glue (also used by
   // the bench). Web MIDI (wired below) and the focus keybed feed the same `playNote`; `heldNotes` drives
   // the keybed highlight whichever way you play.
-  const playNote = wireKeyboardInput(session, () => (keyboardTarget === null ? [] : [keyboardTarget]));
+  const playNote = wireKeyboardInput(session, () =>
+    keyboardTarget === null ? [] : [keyboardTarget],
+  );
 
   // Thin adapters over placement.ts, handed to the world layer as the drag legality + commit hooks.
   // Both build the layout ctx inline (so reads stay reactive) and pass the already-derived placedItems.
@@ -337,9 +353,12 @@
     await session.start(() => {
       // Request Web MIDI once (the permission); the note target follows focus via playNote. The
       // computer keyboard is wired per-focus by the effect above, not here.
-      wireMidi((on, note, velocity) => playNote(on, note, velocity), (m) => {
-        session.midiStatus = m;
-      });
+      wireMidi(
+        (on, note, velocity) => playNote(on, note, velocity),
+        (m) => {
+          session.midiStatus = m;
+        },
+      );
     });
     await session.resume();
   }
@@ -449,9 +468,27 @@
             <span class="readout">{Math.round(session.volume * 100)}%</span>
           </label>
           <span class="scene-buttons">
-            <button type="button" onclick={(e) => { saveCurrent(); closeMenu(e); }}>save</button>
-            <button type="button" onclick={(e) => { loadSaved(); closeMenu(e); }}>load</button>
-            <button type="button" onclick={(e) => { reload(); closeMenu(e); }}>reload</button>
+            <button
+              type="button"
+              onclick={(e) => {
+                saveCurrent();
+                closeMenu(e);
+              }}>save</button
+            >
+            <button
+              type="button"
+              onclick={(e) => {
+                loadSaved();
+                closeMenu(e);
+              }}>load</button
+            >
+            <button
+              type="button"
+              onclick={(e) => {
+                reload();
+                closeMenu(e);
+              }}>reload</button
+            >
           </span>
         </div>
       </details>
@@ -461,7 +498,11 @@
         <summary>Debug</summary>
         <div class="menu-panel debug-menu">
           <Vu level={session.level} />
-          <span class="statuses">{[session.status, session.health, session.midiStatus].filter(Boolean).join(" · ")}</span>
+          <span class="statuses"
+            >{[session.status, session.health, session.midiStatus]
+              .filter(Boolean)
+              .join(" · ")}</span
+          >
         </div>
       </details>
     {/if}
@@ -594,7 +635,12 @@
               <rect x={wTop.x} y={wTop.y} width={wBot.x - wTop.x} height={wBot.y - wTop.y} rx="6" />
               <line x1={(wTop.x + wBot.x) / 2} y1={wTop.y} x2={(wTop.x + wBot.x) / 2} y2={wBot.y} />
               <line x1={wTop.x} y1={(wTop.y + wBot.y) / 2} x2={wBot.x} y2={(wTop.y + wBot.y) / 2} />
-              <text class="window-label" x={(wTop.x + wBot.x) / 2} y={wTop.y - 22} text-anchor="middle">
+              <text
+                class="window-label"
+                x={(wTop.x + wBot.x) / 2}
+                y={wTop.y - 22}
+                text-anchor="middle"
+              >
                 Live Room
               </text>
             </g>
@@ -605,10 +651,18 @@
             {@const tr = api.worldToSurface(room.width, room.depth)}
             <g class="room-plan">
               <rect x={bl.x} y={tr.y} width={tr.x - bl.x} height={bl.y - tr.y} />
-              <text class="plan-wall" x={(bl.x + tr.x) / 2} y={tr.y + 40} text-anchor="middle">Front</text>
-              <text class="plan-wall" x={(bl.x + tr.x) / 2} y={bl.y - 18} text-anchor="middle">Back</text>
-              <text class="plan-wall" x={bl.x + 24} y={(bl.y + tr.y) / 2} text-anchor="start">Left</text>
-              <text class="plan-wall" x={tr.x - 24} y={(bl.y + tr.y) / 2} text-anchor="end">Right</text>
+              <text class="plan-wall" x={(bl.x + tr.x) / 2} y={tr.y + 40} text-anchor="middle"
+                >Front</text
+              >
+              <text class="plan-wall" x={(bl.x + tr.x) / 2} y={bl.y - 18} text-anchor="middle"
+                >Back</text
+              >
+              <text class="plan-wall" x={bl.x + 24} y={(bl.y + tr.y) / 2} text-anchor="start"
+                >Left</text
+              >
+              <text class="plan-wall" x={tr.x - 24} y={(bl.y + tr.y) / 2} text-anchor="end"
+                >Right</text
+              >
             </g>
           {/if}
           <!-- Chassis patches: for each in-view cable end plugged into a visible front socket (occluded by
@@ -659,7 +713,12 @@
               {#if currentView !== "top"}
                 <!-- Turn the whole rack around to reach the rear I/O of all its mounted gear at once
                      (no panel is shown in the top-down plan, so the flip is hidden there). -->
-                <button type="button" class="chip" aria-label="turn rack around" onclick={() => toggleRackFlip(itemId)}>
+                <button
+                  type="button"
+                  class="chip"
+                  aria-label="turn rack around"
+                  onclick={() => toggleRackFlip(itemId)}
+                >
                   {rack.facing === "back" ? "front" : "back"}
                 </button>
               {/if}
@@ -673,20 +732,33 @@
                   <option value={s.id}>{s.name}</option>
                 {/each}
               </select>
-              <button type="button" class="chip remove" aria-label="remove rack" onclick={() => removeRack(itemId)}>
+              <button
+                type="button"
+                class="chip remove"
+                aria-label="remove rack"
+                onclick={() => removeRack(itemId)}
+              >
                 ✕
               </button>
             {/if}
           {:else}
             {@const place = scene.ui.placements[itemId]}
-            {@const focusDesc = descriptorFor(session.catalog, deviceById(scene, itemId)?.typeId ?? "")}
+            {@const focusDesc = descriptorFor(
+              session.catalog,
+              deviceById(scene, itemId)?.typeId ?? "",
+            )}
             {#if place}
               {#if currentView !== "top"}
                 <!-- Sit down at a device that warrants deep control (a synth keybed, a console): open its
                      large focus surface. Only devices with a surface show the chip (converters/speaker
                      don't). A wall-elevation affordance, like flip — no panel is shown in the top plan. -->
                 {#if focusDesc && isFocusable(focusDesc)}
-                  <button type="button" class="chip" aria-label="open {focusDesc.name}" onclick={() => (focusedDevice = itemId)}>
+                  <button
+                    type="button"
+                    class="chip"
+                    aria-label="open {focusDesc.name}"
+                    onclick={() => (focusedDevice = itemId)}
+                  >
                     open
                   </button>
                 {/if}
@@ -694,7 +766,12 @@
                      A bolted-in unit can't be flipped on its own — turn its rack around instead, or
                      eject it here to flip it free-standing. -->
                 {#if place.rack}
-                  <button type="button" class="chip" aria-label="eject from rack" onclick={() => unmount(itemId)}>
+                  <button
+                    type="button"
+                    class="chip"
+                    aria-label="eject from rack"
+                    onclick={() => unmount(itemId)}
+                  >
                     eject
                   </button>
                 {:else}
@@ -747,7 +824,9 @@
             {@const rack = rackById(scene, itemId)}
             {#if rack}
               <div class="rack-frame" class:rear={rack.facing === "back"}>
-                <span class="rack-label">{rack.id} · {rack.slots}U{rack.facing === "back" ? " · rear" : ""}</span>
+                <span class="rack-label"
+                  >{rack.id} · {rack.slots}U{rack.facing === "back" ? " · rear" : ""}</span
+                >
                 <div class="slots">
                   {#each Array.from({ length: rack.slots }, (_, i) => i) as i (i)}
                     <div class="slot"></div>
@@ -794,7 +873,12 @@
       {#if selectedConn}
         <!-- Cable inspector (shared with the bench): click a cable to select it, then change its type or
              disconnect it. Only analog links carry a cable (R·C); digital/event links are always ideal. -->
-        <CableInspector {session} {patch} conn={selectedConn} onClose={() => (selectedCableKey = null)} />
+        <CableInspector
+          {session}
+          {patch}
+          conn={selectedConn}
+          onClose={() => (selectedCableKey = null)}
+        />
       {/if}
 
       {#if focused}
@@ -855,7 +939,11 @@
                      scaled extent, as on the bench). -->
                 {@const fp = footprint(f.desc.formFactor)}
                 {@const zoom = FOCUS_FACE_WIDTH_PX / fp.width}
-                <div class="focus-zoom-sizer" style:width="{fp.width * zoom}px" style:height="{fp.height * zoom}px">
+                <div
+                  class="focus-zoom-sizer"
+                  style:width="{fp.width * zoom}px"
+                  style:height="{fp.height * zoom}px"
+                >
                   <div
                     class="focus-zoom"
                     style:width="{fp.width}px"
@@ -869,7 +957,11 @@
               {#if isPlayable(f.desc)}
                 <!-- The keybed = the device's open events input, drawn on-screen. Disabled when the input
                      is cable-driven (a patched controller performs it instead — host notes are a no-op). -->
-                <Keybed held={session.heldNotes} onNote={playNote} disabled={sceneOps.eventsInputDriven(scene, f.desc, f.device.id)} />
+                <Keybed
+                  held={session.heldNotes}
+                  onNote={playNote}
+                  disabled={sceneOps.eventsInputDriven(scene, f.desc, f.device.id)}
+                />
               {/if}
             </div>
           </div>
@@ -1423,10 +1515,10 @@
     pointer-events: none;
     border-radius: 9px;
     background:
-      radial-gradient(circle at 7px 15px, var(--ae-rack-hole) 1.8px, transparent 2.4px) 0 0 / 100% 30px
-        repeat-y,
-      radial-gradient(circle at calc(100% - 7px) 15px, var(--ae-rack-hole) 1.8px, transparent 2.4px) 0 0 /
-        100% 30px repeat-y;
+      radial-gradient(circle at 7px 15px, var(--ae-rack-hole) 1.8px, transparent 2.4px) 0 0 / 100%
+        30px repeat-y,
+      radial-gradient(circle at calc(100% - 7px) 15px, var(--ae-rack-hole) 1.8px, transparent 2.4px)
+        0 0 / 100% 30px repeat-y;
   }
   .rack-label {
     position: absolute;

@@ -39,7 +39,10 @@
   const blacks: Array<{ note: number; pos: number }> = [];
   for (let oct = 0; oct < OCTAVES; oct++) {
     for (const b of BLACKS) {
-      blacks.push({ note: START + 12 * oct + b.semi, pos: (oct * 7 + b.after + 1) / whites.length });
+      blacks.push({
+        note: START + 12 * oct + b.semi,
+        pos: (oct * 7 + b.after + 1) / whites.length,
+      });
     }
   }
 
@@ -100,7 +103,9 @@
   {#if disabled}
     <p class="hint">Driven by <strong>MIDI In</strong> — play it from the patched controller</p>
   {:else}
-    <p class="hint">Click keys, or type <kbd>A</kbd>–<kbd>K</kbd> to play · <kbd>Z</kbd>/<kbd>X</kbd> change octave</p>
+    <p class="hint">
+      Click keys, or type <kbd>A</kbd>–<kbd>K</kbd> to play · <kbd>Z</kbd>/<kbd>X</kbd> change octave
+    </p>
   {/if}
 </div>
 

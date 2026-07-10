@@ -19,7 +19,7 @@
     size === undefined
       ? undefined
       : `--jack: ${size}px; --jack-font: ${(size * 0.42).toFixed(2)}px; ` +
-        `--jack-gap: ${(size * 0.12).toFixed(2)}px; --jack-lane-font: ${(size * 0.32).toFixed(2)}px`,
+          `--jack-gap: ${(size * 0.12).toFixed(2)}px; --jack-lane-font: ${(size * 0.32).toFixed(2)}px`,
   );
 </script>
 

@@ -124,11 +124,18 @@
       const desc = session.catalog.find((c) => c.typeId === d.typeId);
       return (desc?.ports ?? [])
         .filter((p) => p.direction === "output" && p.domain === "analog")
-        .map((p) => ({ device: d.id, port: p.id, key: `${d.id}:${p.id}`, label: `${desc?.name} · ${p.label}` }));
+        .map((p) => ({
+          device: d.id,
+          port: p.id,
+          key: `${d.id}:${p.id}`,
+          label: `${desc?.name} · ${p.label}`,
+        }));
     }),
   );
   // The selector's current value ("device:port") — the scene's output tap.
-  const tapKey = $derived(`${session.scene.patch.output.device}:${session.scene.patch.output.port}`);
+  const tapKey = $derived(
+    `${session.scene.patch.output.device}:${session.scene.patch.output.port}`,
+  );
   function setTap(key: string): void {
     const tap = analogOutputs.find((o) => o.key === key);
     if (!tap) return;

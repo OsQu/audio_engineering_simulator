@@ -29,7 +29,7 @@
     size === undefined
       ? undefined
       : `--dial: ${size}px; --knob-gap: ${(size * 0.08).toFixed(2)}px; ` +
-        `--knob-font: ${(size * 0.26).toFixed(2)}px`,
+          `--knob-font: ${(size * 0.26).toFixed(2)}px`,
   );
 
   // -135°..+135° (a 270° sweep) across min→max.
@@ -115,23 +115,43 @@
     inset: 28%;
     border-radius: 50%;
     /* default = dark cap; overridden via [data-cap] below */
-    background: radial-gradient(circle at 50% 28%, var(--ae-cap-dark-top), var(--ae-cap-dark-bot) 74%);
+    background: radial-gradient(
+      circle at 50% 28%,
+      var(--ae-cap-dark-top),
+      var(--ae-cap-dark-bot) 74%
+    );
     box-shadow:
       inset 0 2px 3px rgba(255, 255, 255, 0.18),
       inset 0 -3px 5px rgba(0, 0, 0, 0.55),
       0 1px 2px rgba(0, 0, 0, 0.4);
   }
   .cap[data-cap="chrome"] {
-    background: radial-gradient(circle at 50% 28%, var(--ae-cap-chrome-top), var(--ae-cap-chrome-bot) 74%);
+    background: radial-gradient(
+      circle at 50% 28%,
+      var(--ae-cap-chrome-top),
+      var(--ae-cap-chrome-bot) 74%
+    );
   }
   .cap[data-cap="red"] {
-    background: radial-gradient(circle at 50% 28%, var(--ae-cap-red-top), var(--ae-cap-red-bot) 74%);
+    background: radial-gradient(
+      circle at 50% 28%,
+      var(--ae-cap-red-top),
+      var(--ae-cap-red-bot) 74%
+    );
   }
   .cap[data-cap="blue"] {
-    background: radial-gradient(circle at 50% 28%, var(--ae-cap-blue-top), var(--ae-cap-blue-bot) 74%);
+    background: radial-gradient(
+      circle at 50% 28%,
+      var(--ae-cap-blue-top),
+      var(--ae-cap-blue-bot) 74%
+    );
   }
   .cap[data-cap="cream"] {
-    background: radial-gradient(circle at 50% 28%, var(--ae-cap-cream-top), var(--ae-cap-cream-bot) 74%);
+    background: radial-gradient(
+      circle at 50% 28%,
+      var(--ae-cap-cream-top),
+      var(--ae-cap-cream-bot) 74%
+    );
   }
 
   .face {

@@ -25,7 +25,8 @@
 
   // Physical control sizes in **mm** (panel is 1 px/mm; the world/bench zoom scales it), inherited by the
   // legends + the (large, multi-lane) USB jacks.
-  const faceVars = "--legend: 2.8px; --jack: 13px; --jack-font: 4px; --jack-gap: 1.2px; --jack-lane-font: 3px";
+  const faceVars =
+    "--legend: 2.8px; --jack: 13px; --jack-font: 4px; --jack-gap: 1.2px; --jack-lane-font: 3px";
 </script>
 
 <Chassis {handle} flipped={props.flipped} finish={skin.finish} name={props.name}>
