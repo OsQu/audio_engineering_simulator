@@ -45,6 +45,10 @@ pnpm run wasm && pnpm run dev` (then open `http://localhost:5173/`). `pnpm run w
 artifact via `web/build-wasm.sh` (wraps `wasm-pack`); `pnpm run check` runs Biome; `pnpm run typecheck`
 runs `svelte-check`; `pnpm run test` runs Vitest.
 
+`pnpm run format` is the one formatter to run before handing off web changes: it runs Biome
+(`format:biome`, everything except `.svelte`) then Prettier (`format:svelte`, the `.svelte` files —
+Biome doesn't format Svelte). Run it after editing any web file.
+
 ## 2. How we work (the task loop)
 
 This governs every body of work:
