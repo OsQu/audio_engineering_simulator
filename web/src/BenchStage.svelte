@@ -319,14 +319,14 @@
                 </button>
               </DeviceChrome>
             {/if}
-            <span class="dev-name muted">{bd.desc.name}</span>
+            {#if isDut}<span class="dev-name muted">{bd.desc.name}</span>{/if}
             <!-- Keyed by index (stable per device) so a supporting device's single face-card persists
                    across a flip — the `flipped` prop changes and the 0.45s rotate transition plays,
                    rather than the element remounting already-flipped. -->
             <div class="dev-faces">
               {#each faces as face, i (i)}
                 <div class="face-col">
-                  <span class="face-label muted">{face.label}</span>
+                  {#if isDut}<span class="face-label muted">{face.label}</span>{/if}
                   <div class="face-body">
                     {#if ruled && i === 0}
                       <!-- Rack-U ruler beside the front face: a tick per U boundary at 44.45 mm. -->
