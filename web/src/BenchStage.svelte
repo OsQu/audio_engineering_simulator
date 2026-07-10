@@ -30,7 +30,7 @@
   import type { Connection } from "./scene";
   import { connectionKind, connKey, toggleBenchFacing } from "./scene-ops";
   import type { SceneSession } from "./session.svelte";
-  import { footprint, RACK_UNIT_MM, type Rect2 } from "./spatial";
+  import { footprint, RACK_UNIT_MM } from "./spatial";
   import type { SurfacePoint, WorldApi } from "./world-api";
   import { BENCH_DEVICE } from "./workbench-scene";
 
@@ -45,19 +45,18 @@
   }
   let { session, desc, patch, api = $bindable() }: Props = $props();
 
-  // The bench's CableLayout for the shared cable-view geometry. Everything is in view. The **DUT** shows
-  // both faces at once (two columns, both measured) so either face anchors precisely. A **supporting**
-  // device shows one rotatable face (like the scene view): only its shown face anchors precisely, and a
-  // cable to a socket on its hidden face falls back to an interior estimate near the chassis — so we
-  // supply a measured chassis `rect` and clamp that estimate to the silhouette (the cables sit above the
-  // flat panels, so an unclamped estimate would dangle mid-air). No front-panel tip-patch: nothing paints
-  // over the cable layer on the bench.
+  // The bench's CableLayout for the shared cable-view geometry. Everything is in view, and **every jack
+  // anchors at its measured centre** (`faceAnchorable: () => true`) — including one on a device's hidden
+  // face. A hidden face still has a layout box (backface-visibility only hides paint), and under its
+  // `rotateY(180deg)` its measured centre lands at the correct *see-through* mirror position on the shown
+  // face — exactly where the "listening here" tap ring draws. So a cable to a back-face socket lands right
+  // beside its neighbours (e.g. the speaker's input next to its output tap), no interior estimate needed.
+  // Hence no `rect`, no clamp, and no tip-patch (nothing paints over the cable layer on the bench).
   const benchLayout: CableLayout = {
     inView: () => true,
-    faceAnchorable: (id, face) =>
-      id === BENCH_DEVICE || face === effectiveFacing(session.scene, id),
-    rect: (id) => deviceRects[id] ?? null,
-    clampsEstimate: (id) => id !== BENCH_DEVICE,
+    faceAnchorable: () => true,
+    rect: () => null,
+    clampsEstimate: () => false,
     frontPatchOver: () => false,
   };
 
@@ -123,41 +122,17 @@
   }
   const flipDevice = (id: string): void => toggleBenchFacing(session.scene, id);
 
-  // Measured chassis rects (surface coords) of the rotatable supporting devices — the hidden-face cable
-  // estimate + its silhouette clamp read these (the bench's analog of the scene's projection-derived
-  // rect). Keyed by device id off each `.device[data-device-id]` box; the DUT never needs one.
-  let deviceRects = $state<Record<string, Rect2>>({});
-  function measureDeviceRects(): void {
-    const root = worldApi.measureRoot();
-    if (!root) return;
-    const next: Record<string, Rect2> = {};
-    for (const el of root.querySelectorAll<HTMLElement>("[data-device-id]")) {
-      const id = el.dataset.deviceId;
-      if (!id) continue;
-      const r = el.getBoundingClientRect();
-      if (r.width === 0 && r.height === 0) continue;
-      const tl = worldApi.clientToSurface(r.left, r.top);
-      const br = worldApi.clientToSurface(r.right, r.bottom);
-      next[id] = { x: tl.x, y: tl.y, width: br.x - tl.x, height: br.y - tl.y };
-    }
-    deviceRects = next;
-  }
-
-  // Re-measure jack anchors + device rects when the bench layout that determines them changes: a live
-  // drag, a committed move/facing (`ui.bench`), the device set, or the catalog. Surface-local coords are
-  // pan/zoom-invariant, so the camera needn't trigger it. Measure after paint (rAF) and again once the
-  // 0.45s rotate transition settles (a just-flipped face reports its final jack positions then).
+  // Re-measure jack anchors when the bench layout that determines them changes: a live drag, a committed
+  // move/facing (`ui.bench`), the device set, or the catalog. Surface-local coords are pan/zoom-invariant,
+  // so the camera needn't trigger it. Measure after paint (rAF) and again once the 0.45s rotate transition
+  // settles (a just-flipped face reports its final, un-foreshortened jack positions then).
   $effect(() => {
     void dragging;
     JSON.stringify(session.scene.ui.bench ?? {});
     JSON.stringify(session.scene.patch.devices);
     void session.catalog.length;
-    const remeasure = (): void => {
-      patch.measure(worldApi);
-      measureDeviceRects();
-    };
-    const raf = requestAnimationFrame(remeasure);
-    const settle = setTimeout(remeasure, 480);
+    const raf = requestAnimationFrame(() => patch.measure(worldApi));
+    const settle = setTimeout(() => patch.measure(worldApi), 480);
     return () => {
       cancelAnimationFrame(raf);
       clearTimeout(settle);
@@ -238,7 +213,8 @@
         <!-- Patch cables, drawn in surface-local coords (the same space the measured jack anchors live in)
              via the shared cable-view geometry. `pointer-events:none` so jack presses pass through to the
              faceplates; only each cable's hit-path takes clicks (disabled mid-drag so a release lands on a
-             jack). Cables sit above the flat panels (no z-interleave on the bench). -->
+             jack). The cable layer sits at z 2; device groups interleave around it by facing (see zBase),
+             so a cable to a front-shown device's hidden rear socket tucks behind its panel. -->
         <svg class="cables" width={natW} height={natH} viewBox="0 0 {natW} {natH}">
           {#each session.scene.patch.connections as c (connKey(c))}
             {@const ends = cableEndpoints(benchLayout, patch.jackAnchors, c, worldApi)}
@@ -288,6 +264,12 @@
             {@const Faceplate = deviceUi(bd.desc.typeId)}
             {@const ruled = isDut && lay.rackUnits > 0}
             {@const facing = effectiveFacing(session.scene, bd.id)}
+            <!-- z-interleave with the cable layer (z 2), mirroring the scene view. A **front-shown
+                 supporting** device sits ABOVE the cables (z 3): its sockets are on the hidden back face,
+                 so a cable to one tucks behind its panel. Everything else sits BELOW (z 1) — the DUT
+                 (both faces shown ⇒ every socket visible) and a back-shown device (rear sockets visible)
+                 — so cables plug into visible sockets on top. A dragged device floats above all (z 10). -->
+            {@const zBase = !isDut && facing === "front" ? 3 : 1}
             <!-- The DUT lists both faces; a supporting device lists only its shown face (rotate to swap). -->
             {@const faces = isDut
               ? [
@@ -303,6 +285,7 @@
               class:dut={isDut}
               class:dragging={dragging?.id === bd.id}
               style:transform="translate({benchOffset(bd.id).x}px, {benchOffset(bd.id).y}px)"
+              style:z-index={dragging?.id === bd.id ? 10 : zBase}
               use:draggable={{
                 origin: () => benchOffset(bd.id),
                 scale: () => camera.zoom,
@@ -352,13 +335,12 @@
                         <div class="ruler-spacer"></div>
                       {/if}
                       <!-- The DUT's two columns each hide the away face (so each face measures once); a
-                           supporting device is a single flip-card (like the scene view) and carries a
-                           `data-device-id` so its chassis rect is measured for hidden-face cable anchoring. -->
+                           supporting device is a single flip-card (like the scene view), whose hidden face
+                           still measures — its mirrored jack centres are the correct see-through anchors. -->
                       <div
                         class="device"
                         class:show-front={isDut && !face.flipped}
                         class:show-back={isDut && face.flipped}
-                        data-device-id={isDut ? undefined : bd.id}
                         style:width="{lay.size.width}px"
                         style:height="{lay.size.height}px"
                       >
@@ -438,7 +420,7 @@
     left: 0;
     overflow: visible;
     pointer-events: none;
-    z-index: 2; /* above the flat panels */
+    z-index: 2; /* device groups interleave around this by facing (zBase): front-shown above, else below */
   }
   /* Wide invisible click target over the thin cable (the visual lead is the shared <Cable>). `tabindex=-1`
      keeps it out of the tab order, so suppressing the click-focus outline (a huge rectangle around the
@@ -485,7 +467,7 @@
   }
   .device-group.dragging {
     cursor: grabbing;
-    z-index: 10; /* lift the moving device above its peers (and the cable layer) while dragging */
+    /* z-index is set inline (per-device by facing; 10 while dragging) so it interleaves with the cables. */
   }
   .dev-name {
     letter-spacing: var(--ae-legend-spacing, 0.05em);
