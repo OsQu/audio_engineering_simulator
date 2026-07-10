@@ -12,6 +12,7 @@
 
   import { type Watchable, matchesQuery, watchables } from "./bench-watch";
   import { type DeviceDescriptor, descriptorFor } from "./catalog";
+  import { noteName } from "./notes";
   import type { BenchWatch } from "./scene-store";
   import { isWatched, toggleWatch, watchKey } from "./scene-ops";
   import type { SceneSession } from "./session.svelte";
@@ -60,6 +61,11 @@
         loss: x.loss as number,
       })),
   );
+
+  // --- MIDI monitor ---------------------------------------------------------------------------------
+  // Held notes (sorted low→high) as note names, and the routed-event log — the first place to look when a
+  // triggered note stays silent: it shows whether an event was emitted at all and to which device.
+  const held = $derived([...session.heldNotes].sort((a, b) => a - b).map(noteName));
 
   // --- Watch-list -----------------------------------------------------------------------------------
   const MAX_RESULTS = 40; // cap the results list; a note surfaces when the filter matched more (no silent cap).
@@ -165,6 +171,39 @@
         </ul>
       {/if}
     </div>
+  </section>
+
+  <section class="midi">
+    <div class="midi-head">
+      <span class="k">MIDI monitor</span>
+      <span class="access">{session.midiStatus}</span>
+    </div>
+    <div class="held">
+      <span class="k">Held</span>
+      {#if held.length === 0}
+        <span class="muted">— none</span>
+      {:else}
+        {#each held as n (n)}<span class="note-chip">{n}</span>{/each}
+      {/if}
+    </div>
+    {#if session.midiLog.length === 0}
+      <p class="hint">
+        No note events yet. Play the keybed / QWERTY / a MIDI controller — if nothing shows here,
+        check “Send to” has a target and the source isn't a cable-driven input.
+      </p>
+    {:else}
+      <ul class="log">
+        {#each session.midiLog as e (e.seq)}
+          <li class:off={!e.on} class:unsent={!e.sent}>
+            <span class="ev">{e.on ? "▶ on " : "▷ off"}</span>
+            <span class="nn">{noteName(e.note)}</span>
+            <span class="vel">{e.on ? `vel ${e.velocity}` : ""}</span>
+            <span class="arrow">→ <span class="dev">{deviceName(e.device)}</span></span>
+            {#if !e.sent}<span class="warn">engine not ready</span>{/if}
+          </li>
+        {/each}
+      </ul>
+    {/if}
   </section>
 
   <section class="watch">
@@ -281,6 +320,87 @@
   }
   .losses li strong {
     color: var(--ae-text-strong);
+  }
+
+  /* --- MIDI monitor --- */
+  .midi {
+    display: flex;
+    flex-direction: column;
+    gap: 0.35rem;
+    padding: 0.6rem 0.9rem;
+    background: var(--ae-bg-panel);
+    border: 1px solid var(--ae-line-panel);
+    border-radius: var(--ae-radius-control);
+  }
+  .midi-head,
+  .held {
+    display: flex;
+    align-items: baseline;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+  }
+  .access {
+    color: var(--ae-text-muted);
+    font-size: 0.82rem;
+  }
+  .note-chip {
+    padding: 0.05em 0.4em;
+    color: var(--ae-text-strong);
+    background: var(--ae-bg-chip);
+    border: 1px solid var(--ae-line-chip);
+    border-radius: var(--ae-radius-control);
+    font-size: 0.85em;
+  }
+  .log {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 0.05rem;
+    max-height: 9rem;
+    overflow-y: auto;
+  }
+  .log li {
+    display: flex;
+    align-items: baseline;
+    gap: 0.5rem;
+  }
+  .log li.off {
+    color: var(--ae-text-muted);
+  }
+  .log li.unsent {
+    opacity: 0.7;
+  }
+  .log .ev {
+    flex: 0 0 auto;
+    font-size: 0.82rem;
+    white-space: pre;
+  }
+  .log .nn {
+    flex: 0 0 3em;
+    color: var(--ae-text-strong);
+  }
+  .log li.off .nn {
+    color: inherit;
+  }
+  .log .vel {
+    flex: 0 0 4.5em;
+    font-size: 0.82rem;
+    color: var(--ae-text-muted);
+  }
+  .log .arrow {
+    flex: 1 1 auto;
+    font-size: 0.85rem;
+    color: var(--ae-text-muted);
+  }
+  .log .dev {
+    color: var(--ae-text-secondary);
+  }
+  .log .warn {
+    flex: 0 0 auto;
+    font-size: 0.78rem;
+    color: var(--ae-warn, #c98a2b);
   }
 
   /* --- Watch-list --- */

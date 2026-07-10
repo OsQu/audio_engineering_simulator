@@ -6,6 +6,7 @@
   // fixed supporting cast: synth source + DA + speaker, unwired) or falling back to the catalog index.
   // Audio resumes on the first interaction; the user patches source→DUT→monitor by hand (Story 6.3).
 
+  import { wireMidi } from "./engine";
   import { wireKeyboardInput } from "./keyboard-input.svelte";
   import { PatchController } from "./patch-controller.svelte";
   import { eventsInputDriven } from "./scene-ops";
@@ -176,6 +177,20 @@
       : [sendTo],
   );
   const playNote = wireKeyboardInput(session, () => noteTargets);
+
+  // Web MIDI (hardware controllers): the scene view wires this on start; the bench must too, or a
+  // plugged-in controller does nothing here. Request access once the engine is up (so notes have
+  // somewhere to go) and route every note through the same `playNote` fan-out QWERTY/keybed use. A
+  // cable-driven target is dropped by `noteTargets`, so MIDI follows the same "Send to" rules.
+  let midiWired = false;
+  $effect(() => {
+    if (!session.ready || midiWired) return;
+    midiWired = true;
+    wireMidi(playNote, (m) => {
+      session.midiStatus = m;
+    });
+  });
+
   let keybedOpen = $state(true);
 </script>
 

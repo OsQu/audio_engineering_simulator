@@ -36,6 +36,21 @@ function loadVolume(): number {
   return Number.isFinite(raw) ? Math.max(0, Math.min(1, raw)) : 0.25;
 }
 
+/** One entry in the bench MIDI monitor: a note event as it was routed through {@link
+ *  SceneSession.playNote}. `sent` is false when the engine wasn't up yet (the event went nowhere) — a
+ *  debugging signal in itself. `seq` is a monotonic id for a stable list key. */
+export interface MidiLogEntry {
+  seq: number;
+  on: boolean;
+  note: number;
+  velocity: number;
+  device: string;
+  sent: boolean;
+}
+
+/** How many recent note events the MIDI monitor keeps (newest-first, older ones drop off). */
+const MIDI_LOG_MAX = 32;
+
 export class SceneSession {
   // --- Engine lifecycle + status ------------------------------------------------------------------
   status = $state("idle");
@@ -75,6 +90,11 @@ export class SceneSession {
   // the on-screen keys light up whichever way you play. Target selection stays view-side; `playNote`
   // takes the device explicitly.
   heldNotes = $state<number[]>([]);
+  // A rolling log (newest first) of the note events funnelled through `playNote` — every source (the
+  // on-screen keybed, QWERTY, Web MIDI) routes through there, so this is the one place to see whether a
+  // MIDI event was actually emitted and to which device. Drives the bench debug MIDI monitor.
+  midiLog = $state<MidiLogEntry[]>([]);
+  #midiSeq = 0;
 
   // --- Monitor volume -----------------------------------------------------------------------------
   volume = $state(loadVolume());
@@ -108,6 +128,17 @@ export class SceneSession {
   // view-side — the view resolves it and calls this. A no-op when the engine isn't up yet.
   playNote(device: string, on: boolean, note: number, velocity: number = DEFAULT_VELOCITY): void {
     const send = this.send;
+    // Log every attempt (including ones that go nowhere because the engine isn't up) so the bench MIDI
+    // monitor shows exactly what was triggered and where — the first thing to check when a note is silent.
+    const entry: MidiLogEntry = {
+      seq: this.#midiSeq++,
+      on,
+      note,
+      velocity,
+      device,
+      sent: send !== null,
+    };
+    this.midiLog = [entry, ...this.midiLog].slice(0, MIDI_LOG_MAX);
     if (!send) return;
     if (on) {
       if (!this.heldNotes.includes(note)) this.heldNotes = [...this.heldNotes, note];

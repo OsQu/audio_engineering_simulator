@@ -49,3 +49,12 @@ export function octaveShiftFor(key: string): -1 | 1 | null {
 export function clampOctave(octave: number): number {
   return Math.max(OCTAVE_MIN, Math.min(OCTAVE_MAX, octave));
 }
+
+/** Note names for the twelve semitones (sharps), indexed by pitch class. */
+const NOTE_NAMES = ["C", "C♯", "D", "D♯", "E", "F", "F♯", "G", "G♯", "A", "A♯", "B"];
+
+/** Format a MIDI note number as scientific pitch notation — 60 → "C4" (matching {@link BASE_C}). For the
+ *  bench MIDI monitor's human-readable event log. */
+export function noteName(note: number): string {
+  return `${NOTE_NAMES[((note % 12) + 12) % 12]}${Math.floor(note / 12) - 1}`;
+}

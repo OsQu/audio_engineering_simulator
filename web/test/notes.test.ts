@@ -3,6 +3,7 @@ import {
   BASE_C,
   clampOctave,
   noteForKey,
+  noteName,
   OCTAVE_MAX,
   OCTAVE_MIN,
   octaveShiftFor,
@@ -48,5 +49,15 @@ describe("clampOctave", () => {
     expect(clampOctave(0)).toBe(0);
     expect(clampOctave(OCTAVE_MAX + 5)).toBe(OCTAVE_MAX);
     expect(clampOctave(OCTAVE_MIN - 5)).toBe(OCTAVE_MIN);
+  });
+});
+
+describe("noteName", () => {
+  it("formats MIDI numbers as scientific pitch notation (C4 = 60)", () => {
+    expect(noteName(BASE_C)).toBe("C4");
+    expect(noteName(61)).toBe("C♯4");
+    expect(noteName(69)).toBe("A4"); // A440
+    expect(noteName(72)).toBe("C5");
+    expect(noteName(0)).toBe("C-1"); // lowest MIDI note
   });
 });
