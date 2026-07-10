@@ -913,7 +913,9 @@ const CATALOG: &[CatalogEntry] = &[
         // trailing exposed params without disturbing the port face. Node order:
         //   0,1 preamps · 2,3 preamp ADs · 4–7 line-in ADs (3–6) · 8 S/PDIF-in demux · 9 USB-return
         //   demux · 10 USB-send mux · 11 S/PDIF-out mux · 12,13 monitor DAs (L/R) · 14,15 monitor amps
-        //   (Line Out 1/2) · 16,17 line-out DAs (3/4) · 18,19 phones amps · 20 MIDI thru · 21 matrix.
+        //   (Line Out 1/2) · 16,17 line-out DAs (3/4) · 18,19 phones amps · 20 MIDI thru · 21 matrix ·
+        //   22,23 input meters (combo 1/2). The meters are appended last so adding them left every
+        //   earlier node index — and thus every param id and internal edge — unchanged.
         nodes: &[
             |cfg| scarlett_preamp(cfg, "inst1"),
             |cfg| scarlett_preamp(cfg, "inst2"),
@@ -979,21 +981,40 @@ const CATALOG: &[CatalogEntry] = &[
                     d,
                 ))
             },
+            // 22,23: input meters on combo 1/2, inserted post-preamp (pre-AD). Appended *after* the
+            // matrix so every existing node index (and thus every param id + the internal wiring) is
+            // unchanged; a `VuMeter` is a transparent bridging passthrough, so it meters the gained
+            // input level (the ring around the gain knob) without altering the record path.
+            |_cfg| Box::new(VuMeter::new()), // input 1 meter
+            |_cfg| Box::new(VuMeter::new()), // input 2 meter
         ],
-        // The internal chassis wiring. preamp→AD (×2); the 6 ADs + S/PDIF-in demux (2) + USB-return
+        // The internal chassis wiring. preamp→meter→AD (×2, the meters tap combo 1/2's input level);
+        // the 6 ADs + S/PDIF-in demux (2) + USB-return
         // demux (6) feed the matrix's 14 inputs; the matrix's 14 outputs feed the USB-send mux (8), the
         // monitor + line-out DAs (4), and the S/PDIF-out mux (2); each monitor DA fans to its line-out
         // amp and a phones amp.
         internal: &[
-            // preamp → its AD
+            // preamp → input meter → its AD (the meter taps the gained input level for the knob ring)
             InternalEdge {
                 from_node: 0,
+                from_port: 0,
+                to_node: 22,
+                to_port: 0,
+            },
+            InternalEdge {
+                from_node: 22,
                 from_port: 0,
                 to_node: 2,
                 to_port: 0,
             },
             InternalEdge {
                 from_node: 1,
+                from_port: 0,
+                to_node: 23,
+                to_port: 0,
+            },
+            InternalEdge {
+                from_node: 23,
                 from_port: 0,
                 to_node: 3,
                 to_port: 0,
@@ -1398,7 +1419,27 @@ const CATALOG: &[CatalogEntry] = &[
             },
         ],
         delayed_outputs: &[],
-        readouts: &[],
+        // Input meters on combo 1/2 (nodes 22,23), each a VuMeter exposing VU + peak-dBu — in node
+        // order, so the four exposed readouts are In 1 (VU, Peak) then In 2 (VU, Peak). The web
+        // faceplate renders these as the level ring around each preamp's gain knob.
+        readouts: &[
+            ReadoutUi {
+                label: "In 1 VU",
+                unit: "VU",
+            },
+            ReadoutUi {
+                label: "In 1 Peak",
+                unit: "dBu",
+            },
+            ReadoutUi {
+                label: "In 2 VU",
+                unit: "VU",
+            },
+            ReadoutUi {
+                label: "In 2 Peak",
+                unit: "dBu",
+            },
+        ],
         // INST/hi-Z per preamp: a structural toggle selecting the channel's input impedance (line
         // vs instrument), read by the preamp builders. Default off (line-level), reproducing today's
         // behavior. AIR/PAD are runtime *params* on the preamp, not structural configs.
@@ -2287,12 +2328,12 @@ mod tests {
         assert_eq!(spk.outputs, vec![(spk.nodes[0], 0)]);
     }
 
-    /// The full Scarlett 8i6 expands into its 22 internal nodes wired by 34 internal edges, and its
+    /// The full Scarlett 8i6 expands into its 24 internal nodes wired by 36 internal edges, and its
     /// exposed face maps to the right `(NodeId, …)`. This pins the big remap: 9 inputs (2 combo, 4 line,
-    /// S/PDIF, USB return, MIDI-in), 9 outputs (USB send, S/PDIF, 4 line, 2 phones, MIDI-out), and the
+    /// S/PDIF, USB return, MIDI-in), 9 outputs (USB send, S/PDIF, 4 line, 2 phones, MIDI-out), the
     /// param face — the preamp + phones controls, the 196 matrix crosspoints, the Monitor group, and the
-    /// Power group over all 16 powered stages. The param map is spot-checked at its boundaries (the full
-    /// enumeration would be 206 entries).
+    /// Power group over all 16 powered stages — and the 4 input-meter readouts. The param map is
+    /// spot-checked at its boundaries (the full enumeration would be 206 entries).
     #[test]
     fn scarlett_8i6_expands_with_mixed_face_io() {
         let mut g = Graph::new();
@@ -2300,8 +2341,10 @@ mod tests {
             .expect("scarlett_8i6 is in the catalog");
         let n = &dev.nodes;
 
-        assert_eq!(n.len(), 22, "22 internal nodes");
-        assert_eq!(g.connection_count(), 34, "34 internal edges");
+        // 22 signal/routing nodes + 2 input meters (appended last, so earlier indices are unchanged).
+        assert_eq!(n.len(), 24, "24 internal nodes");
+        // 34 original edges + 2: each preamp→AD became preamp→meter→AD (one extra edge per meter).
+        assert_eq!(g.connection_count(), 36, "36 internal edges");
 
         // Inputs: 2 preamps, 4 line-in ADs, S/PDIF-in demux, USB-return demux, MIDI-in (in node order).
         assert_eq!(
@@ -2365,6 +2408,19 @@ mod tests {
             "Monitor group over the monitor pair"
         );
         assert_eq!(dev.params[205].len(), 16, "Power group over all 16 stages");
+
+        // The two input meters (nodes 22,23) each expose VU + peak-dBu, in node order → 4 readouts,
+        // which the faceplate binds as the level ring around gain knobs 1 and 2.
+        assert_eq!(
+            dev.readouts,
+            vec![
+                (n[22], ReadoutId(0)),
+                (n[22], ReadoutId(1)),
+                (n[23], ReadoutId(0)),
+                (n[23], ReadoutId(1)),
+            ],
+            "In 1/In 2 VU + peak readouts"
+        );
     }
 
     /// The 8i6's routing matrix defaults to the **identity** — input i → output i (hardware inputs to
