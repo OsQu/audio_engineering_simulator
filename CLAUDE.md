@@ -45,6 +45,12 @@ pnpm run wasm && pnpm run dev` (then open `http://localhost:5173/`). `pnpm run w
 artifact via `web/build-wasm.sh` (wraps `wasm-pack`); `pnpm run check` runs Biome; `pnpm run typecheck`
 runs `svelte-check`; `pnpm run test` runs Vitest.
 
+**Hot loop (Story 6.4):** for engine-Rust iteration, run `pnpm run wasm:watch` alongside `pnpm run dev`.
+It watches `crates/` (via `cargo watch` — install once with `cargo install cargo-watch`) and re-runs
+`build-wasm.sh` on every Rust save; a Vite plugin full-reloads the page when the rebuilt artifact lands.
+The device bench (`/devices/<typeId>`) restores itself from the URL (repatch, params, **pins**) and needs
+**one click** to sound again (browser autoplay suspends audio on each reload — not a bug).
+
 `pnpm run format` is the one formatter to run before handing off web changes: it runs Biome
 (`format:biome`, everything except `.svelte`) then Prettier (`format:svelte`, the `.svelte` files —
 Biome doesn't format Svelte). Run it after editing any web file.

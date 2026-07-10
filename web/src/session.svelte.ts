@@ -59,6 +59,10 @@ export class SceneSession {
   // Static per-connection loading loss in dB (or null for digital/event connections), by connection
   // index (matching scene.patch.connections order). Seeded on `ready`, refreshed after each hot-swap.
   losses = $state<(number | null)[]>([]);
+  // Signal-path latency in ms (the whole-engine group delay: schedule chain + capture), from the
+  // `ready` message. A single engine scalar — held here so a view (the bench debug header) can show it
+  // without recomputing. The scene view's status line already renders the fuller `latencySummary`.
+  latencyMs = $state(0);
 
   // --- The authoritative scene + its control-param lane -------------------------------------------
   // The page's authoritative scene: the view root constructs the session with it. Held as `$state` so
@@ -216,6 +220,7 @@ export class SceneSession {
             this.catalog = r.catalog;
             this.cables = r.cables;
             this.losses = r.losses;
+            this.latencyMs = r.signalPathLatencyMs;
             this.send = sendFn;
             this.ready = true;
             this.paramValues = params.seedParamValues(this.scene, r.catalog);

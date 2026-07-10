@@ -923,12 +923,12 @@ again within seconds.
   cables, plus **cursor-anchored zoom** (scroll-anchored; keep the current scrollbar pan — no drag-to-pan,
   no fit/reset). Consequence of no-auto-rig: audibility is **user-driven** (patch the chain, then play via
   the reused keybed), softening the Epic's "pre-patched … audio after one gesture" phrasing.
-- **Story 6.4 — Debug surface + the hot loop.** A bench debug panel: every param (value + descriptor
-  range), every readout, engine health (overruns, worst render ms, event/param drops), connection
-  losses, config-vs-param distinction (recompiles made visible), and a seed control for deterministic
-  noise comparisons. Close the dev loop: a `wasm:watch` script (rebuild on Rust save → Vite full
-  reload → URL restore → auto-resume). Candidate stretch: the bench **signal generator** device if the
-  synth proves too blunt an oracle.
+- **Story 6.4 — Debug surface + the hot loop.** — 🚧 **In progress** (elaborated below). An **audio**
+  debug surface on the bench — a scalable filter + pin **watch-list** over the rig's params/configs/
+  readouts (the 8i6 alone has 206), plus an always-on header (master level + tap, signal-path latency,
+  connection losses) — and the `wasm:watch` **hot loop** (rebuild on Rust save → Vite reload → URL
+  restore incl. pins → one-click resume). Engine-health surface, seed control, App-panel dedup, and the
+  bench signal-generator device are **deferred** (recorded in the block).
 
 ### Story 6.1 — Engine-session extraction — ✅ **Complete**
 
@@ -1337,3 +1337,75 @@ _Deviations from plan (not bugs):_
   plan's "reuse the keybed"; `wireKeyboardInput` therefore fans a note to a *list* of targets.
 - **Fixed a latent 6.2 bug:** benching `synth_voice` (== the bootstrap type) skipped the cast swap — the
   guard now tracks a `benchedFor` type. Also corrected the 8i6 `formFactor` (was 1216 mm wide).
+
+### Story 6.4 — Debug surface + the hot loop — 🚧 **In progress**
+
+_Goal:_ Give the bench the developer instrumentation it exists for (PROJECT_PLAN §7 — the UI a pure
+consumer of the engine API): an **audio-parameter debug surface** — a scalable, searchable/pinnable
+inspector over the rig's params, configs, and readouts, plus an always-on header (master level + tap,
+signal-path latency, connection losses) — and the **hot loop** that closes the Rust-edit → audible-again
+cycle (`wasm:watch` → rebuild → Vite reload → URL restore → resume). The panel reads the **same**
+`SceneSession` the scene view does; nothing forks the engine/patch plumbing.
+
+_Watch out:_
+
+- **Scale from the get-go — the DUT has hundreds of params.** The 8i6 exposes 206 (mostly routing
+  crosspoints), so a flat "every param" list is unusable. The inspector is a **filter + pin watch-list**,
+  not a dump; you monitor only what the task at hand needs.
+- **Pins must survive the hot loop.** The whole point is editing Rust and reloading; a watched param
+  re-renders after the reload only if the pin set persists — so pins live in `scene.ui` and round-trip
+  through the URL (like the rest of the bench state), never in ephemeral component state.
+- **"Auto-resume" is one-click, not zero-click.** Browser autoplay suspends audio on every reload; the
+  bench already resumes on first interaction. The loop restores the bench (pins included) and needs one
+  click to sound — a browser constraint, recorded as **not a bug**.
+- **Audio surface only (scope narrowed at planning).** The panel shows audio parameters —
+  params/configs/readouts/losses/latency/level/tap — **not** engine-internal health (overruns, render-ms,
+  drops) nor a seed control. Those stay on `session.health` / the pinned `SEED` as today.
+- **Layer + hot-path rules hold.** The catalog gains no debug vocabulary; the panel is a pure
+  descriptor/reading consumer. `$state.snapshot` still guards every worklet post; no Rust changes for the
+  debug surface (the seed control that *would* need Rust is deferred).
+
+_Design notes (settled at planning):_
+
+- **The inspector is a filter + pin watch-list over params + configs + readouts.** A plain text filter
+  matches across all devices by name/label/id (a results list you pin from — **not** an ARIA combobox:
+  same value, far less complexity, chosen explicitly over the fancier control). Pinned items form a live
+  watch-list with unpin; the searchable set unifies params, **configs** (tagged *recompile-on-change*,
+  which is how the "config-vs-param" distinction reads), and readouts, so you can watch any of them.
+  _Rejected: a flat grouped-by-device list_ — usable at 5 params, useless at 206.
+- **Pins persist in `scene.ui` (URL round-trip).** A `benchWatch` list of `{device, kind, id}` on the
+  UI-only scene, optional like `bench`, so pins survive `wasm:watch` reloads. Panel values are
+  **read-only** — the faceplate knobs remain the editor; the panel's job is the exact numbers + ranges +
+  ids the knobs don't surface. _Rejected: localStorage_ — the bench's state already lives in the URL; keep
+  one persistence home.
+- **Always-on header for the few-enough things.** Master output peak (`session.level`) + monitored tap
+  (`patch.output`), signal-path latency (new: stored on the session from the `ready` message), and the
+  connection-loss list — no filtering needed at these counts.
+- **App's existing losses/readouts/level panels stay (dedup deferred).** The bench inspector (filter +
+  pins) is a genuinely different presentation, and the load-bearing plumbing (the `SceneSession`) is
+  already shared — so a bench-specific debug UI doesn't fork the layer the Epic's "one plumbing path"
+  watch-out protects. Unifying the small losses/level renderers is a later cleanup if it earns its keep.
+  _Deferred with it (recorded, not dropped):_ the **seed control**, the **engine-health surface**, and the
+  bench **signal-generator** device.
+- **The hot loop needs a watcher the user installs.** `cargo watch` over `crates/` runs `build-wasm.sh`;
+  Vite full-reloads on the rebuilt artifact. `cargo install cargo-watch` is a system change — surfaced for
+  the user to run, not performed by tooling.
+
+- **Task 6.4.1 — `DebugPanel` shell + always-on audio header.** A session-driven `DebugPanel.svelte`:
+  master output peak + monitored tap (`patch.output`), signal-path latency (store it on the session from
+  `ready`), and the connection-loss list (from→to · dB). Embed as a collapsible panel in the workbench.
+  _Done:_ the bench shows live header values + losses for the default rig; web gate green; verified
+  in-browser.
+- **Task 6.4.2 — Searchable, pinnable watch-list.** A text filter across every device's
+  params/configs/readouts; pin/unpin to a live watch-list; persist pins in `scene.ui.benchWatch` (URL
+  round-trip). Configs tagged recompile; values read-only. _Done:_ filtering finds an 8i6 routing
+  crosspoint, pinning shows it live, and it survives a manual reload; web gate green; in-browser.
+- **Task 6.4.3 — The hot loop (`wasm:watch`).** A watch script (`cargo watch` over `crates/` →
+  `build-wasm.sh`) + Vite full-reload on the rebuilt wasm; document the loop and the one-click-resume.
+  _Done:_ editing an engine Rust file and saving reloads the bench within seconds, restored from the URL
+  (pins intact), audible after one click; `cargo install cargo-watch` surfaced for the user.
+
+_Validate:_ at `localhost:5173/devices/scarlett_8i6` the debug panel shows the rig's master level/tap,
+signal-path latency, and connection losses live; you can filter to any of the 8i6's 206 params/configs (or
+a readout), pin a handful, and monitor only those; pins survive a reload; and `pnpm wasm:watch` (with
+`cargo-watch` installed) turns a Rust save into a restored, one-click-audible bench within seconds.

@@ -82,6 +82,16 @@ export interface PortalOffset {
   dy: number;
 }
 
+/** One pinned entry on the bench debug watch-list: a device instance's param, structural config, or
+ *  readout, addressed by kind + id. `id` is the stringified param/readout id (its position in the
+ *  exposed list) or the config key — a uniform string so it round-trips + keys cleanly. Lives in
+ *  `scene.ui` so pins survive the `wasm:watch` reload (like the rest of the bench state). */
+export interface BenchWatch {
+  device: string;
+  kind: "param" | "config" | "readout";
+  id: string;
+}
+
 /** UI-only scene data — never sent to the engine. The spatial world: spaces, racks, where each device
  *  sits, and any moved portal chips. Placement keys are device instance ids (matching a patch
  *  `DeviceInstance.id`); `portals` keys are `${connectionKey}|${end}`. */
@@ -97,6 +107,9 @@ export interface SceneUi {
    *  at their signal-flow-stack slot, front-facing. Unused by the scene view; round-trips through the
    *  bench's URL persistence like the rest of `ui`. Optional so scene-view saves omit it. */
   bench?: Record<string, { x: number; y: number; facing?: DeviceFacing }>;
+  /** Bench debug watch-list: the pinned params/configs/readouts the debug panel monitors live. Optional
+   *  (only the bench writes it); round-trips through the bench URL so pins survive a `wasm:watch` reload. */
+  benchWatch?: BenchWatch[];
 }
 
 /** A whole scene: a version stamp, UI-only spatial data, and the runnable patch. The unit we save/load. */

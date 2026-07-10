@@ -12,6 +12,7 @@
   import { SceneSession } from "./session.svelte";
   import { decodeScene, encodeScene } from "./url-scene";
   import BenchStage from "./BenchStage.svelte";
+  import DebugPanel from "./DebugPanel.svelte";
   import Keybed from "./widgets/Keybed.svelte";
   import type { WorldApi } from "./world-api";
   import { BENCH_DEVICE, benchScene, bootstrapScene } from "./workbench-scene";
@@ -209,6 +210,12 @@
       <button type="button" class="back" onclick={() => navigate("/")}>← scene view</button>
     </header>
     <BenchStage {session} desc={requested} {patch} bind:api={benchApi} />
+    <!-- The audio debug surface (Story 6.4): always-on header (level/tap/latency/losses) + a filter+pin
+         watch-list over the rig's params/configs/readouts. Collapsible; reads the shared session. -->
+    <details class="debug-row" open>
+      <summary>Debug</summary>
+      <DebugPanel {session} />
+    </details>
     {#if eventInputs.length > 0}
       <!-- Play the rig via the shared keybed + QWERTY (same session.playNote / heldNotes as the scene
            view). "Send to" targets the MIDI inputs; the strip is sticky at the bottom and collapsible. -->
@@ -281,6 +288,22 @@
   .muted {
     color: var(--ae-text-muted);
     font-size: 0.85rem;
+  }
+  /* The debug surface sits below the stage, above the play strip. A plain <details> — collapse it to get
+     the stage back; its own panel styling lives in DebugPanel. */
+  .debug-row {
+    margin-top: 1rem;
+  }
+  .debug-row > summary {
+    cursor: pointer;
+    font-size: 0.85rem;
+    text-transform: uppercase;
+    letter-spacing: var(--ae-legend-spacing);
+    color: var(--ae-text-muted);
+    padding: 0.3em 0;
+  }
+  .debug-row[open] > summary {
+    margin-bottom: 0.5rem;
   }
   /* The play strip pins to the bottom while the bench scrolls: a head bar (collapse + "Send to") plus the
      shared on-screen keybed (hidden when collapsed). */

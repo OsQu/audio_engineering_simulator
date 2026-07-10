@@ -16,7 +16,7 @@ import { type ConnectVerdict, cableSpec } from "./connections";
 import { wallSpawn } from "./placement";
 import { deviceById, FRAME_MARGIN, type LayoutCtx, type PlacedItem, rackById } from "./projection";
 import type { Connection } from "./scene";
-import { flip, newSpace, type Scene } from "./scene-store";
+import { type BenchWatch, flip, newSpace, type Scene } from "./scene-store";
 import { footprint, RACK_DEPTH_MM, RACK_UNIT_MM, RACK_WIDTH_MM, type Size3 } from "./spatial";
 
 // A stable key for a connection (its two endpoints), for the {#each} in the cable overlay.
@@ -179,6 +179,31 @@ export function toggleBenchFacing(scene: Scene, id: string): void {
   scene.ui.bench[id] ??= { x: 0, y: 0 };
   const entry = scene.ui.bench[id];
   entry.facing = flip(entry.facing ?? "front");
+}
+
+// --- Bench debug watch-list (Story 6.4) -----------------------------------------------------------
+// Pin management for the bench debug panel: the pinned set lives on `scene.ui.benchWatch` so it
+// round-trips through the bench URL (pins survive a `wasm:watch` reload). UI-only — the engine never
+// sees `ui`. Pure scene writes, like the rest of this module.
+
+// A stable key for a watch item (device + kind + id) — for equality + the {#each}.
+export const watchKey = (w: BenchWatch): string => `${w.device}|${w.kind}|${w.id}`;
+
+// Whether an item is currently pinned.
+export function isWatched(scene: Scene, item: BenchWatch): boolean {
+  const key = watchKey(item);
+  return (scene.ui.benchWatch ?? []).some((w) => watchKey(w) === key);
+}
+
+// Pin/unpin an item on the watch-list (toggle). Creates the list on first pin; leaves it in place
+// (possibly empty) once created so the URL keeps a stable shape.
+export function toggleWatch(scene: Scene, item: BenchWatch): void {
+  scene.ui.benchWatch ??= [];
+  const key = watchKey(item);
+  const list = scene.ui.benchWatch;
+  const at = list.findIndex((w) => watchKey(w) === key);
+  if (at >= 0) list.splice(at, 1);
+  else list.push({ device: item.device, kind: item.kind, id: item.id });
 }
 
 // Eject a device from its rack, leaving it free-standing at the position it already carried (so it can
