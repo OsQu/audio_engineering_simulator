@@ -192,6 +192,9 @@
   });
 
   let keybedOpen = $state(true);
+  // The debug surface is a collapsible right-hand drawer (view-only state — pins persist in the scene,
+  // but whether the drawer is open is ephemeral). Open by default so the instrumentation is visible.
+  let debugOpen = $state(true);
 </script>
 
 <svelte:window
@@ -201,7 +204,7 @@
   onkeydown={onKeyDown}
 />
 
-<main class="workbench">
+<main class="workbench" class:drawer-open={!!requested && debugOpen}>
   {#if !session.ready}
     <p class="booting">Booting engine… <span class="muted">{session.status}</span></p>
   {:else if requested}
@@ -225,12 +228,6 @@
       <button type="button" class="back" onclick={() => navigate("/")}>← scene view</button>
     </header>
     <BenchStage {session} desc={requested} {patch} bind:api={benchApi} />
-    <!-- The audio debug surface (Story 6.4): always-on header (level/tap/latency/losses) + a filter+pin
-         watch-list over the rig's params/configs/readouts. Collapsible; reads the shared session. -->
-    <details class="debug-row" open>
-      <summary>Debug</summary>
-      <DebugPanel {session} />
-    </details>
     {#if eventInputs.length > 0}
       <!-- Play the rig via the shared keybed + QWERTY (same session.playNote / heldNotes as the scene
            view). "Send to" targets the MIDI inputs; the strip is sticky at the bottom and collapsible. -->
@@ -259,6 +256,36 @@
         {/if}
       </div>
     {/if}
+    <!-- The audio debug surface (Story 6.4) lives in a collapsible right-hand drawer so it doesn't add to
+         the bench's vertical stack: always-on header (level/tap/latency/losses) + MIDI monitor + a
+         filter+pin watch-list over the rig's params/configs/readouts. Reads the shared session. -->
+    <aside class="debug-drawer" class:open={debugOpen}>
+      {#if debugOpen}
+        <div class="drawer-body">
+          <div class="drawer-head">
+            <span class="drawer-title">Debug</span>
+            <button
+              type="button"
+              class="drawer-close"
+              aria-label="collapse debug panel"
+              onclick={() => (debugOpen = false)}>›</button
+            >
+          </div>
+          <DebugPanel {session} />
+        </div>
+      {:else}
+        <button
+          type="button"
+          class="drawer-tab"
+          aria-label="show debug panel"
+          aria-expanded={debugOpen}
+          onclick={() => (debugOpen = true)}
+        >
+          <span class="chev">‹</span>
+          <span class="tab-label">Debug</span>
+        </button>
+      {/if}
+    </aside>
   {:else}
     <!-- Catalog index: the bare /devices route, or an unknown typeId. -->
     <header class="head">
@@ -304,21 +331,87 @@
     color: var(--ae-text-muted);
     font-size: 0.85rem;
   }
-  /* The debug surface sits below the stage, above the play strip. A plain <details> — collapse it to get
-     the stage back; its own panel styling lives in DebugPanel. */
-  .debug-row {
-    margin-top: 1rem;
+  /* The debug surface is a collapsible right-hand drawer, pinned to the viewport so it never joins the
+     bench's vertical stack. Open → reserve space via `.workbench.drawer-open` (padding-right) so the
+     header controls and stage aren't covered; closed → only a slim vertical tab, centred at the right
+     edge (clear of the top header row). */
+  .workbench.drawer-open {
+    padding-right: 23rem;
   }
-  .debug-row > summary {
-    cursor: pointer;
+  .debug-drawer {
+    position: fixed;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 6; /* above the sticky header + keybed (z 5) */
+    display: flex;
+    align-items: stretch;
+    pointer-events: none; /* the fixed layer is click-through; its children opt back in */
+  }
+  .drawer-body,
+  .drawer-tab {
+    pointer-events: auto;
+  }
+  .drawer-body {
+    width: 21rem;
+    overflow-y: auto;
+    padding: 1rem 1.1rem 2rem;
+    background: var(--ae-bg-room);
+    border-left: 1px solid var(--ae-line-panel);
+    box-shadow: -10px 0 28px rgba(0, 0, 0, 0.22);
+  }
+  .drawer-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 0.7rem;
+  }
+  .drawer-title {
     font-size: 0.85rem;
     text-transform: uppercase;
     letter-spacing: var(--ae-legend-spacing);
     color: var(--ae-text-muted);
-    padding: 0.3em 0;
   }
-  .debug-row[open] > summary {
-    margin-bottom: 0.5rem;
+  .drawer-close {
+    font: inherit;
+    font-size: 1.1rem;
+    line-height: 1;
+    cursor: pointer;
+    padding: 0.1em 0.5em;
+    color: var(--ae-text-strong);
+    background: var(--ae-bg-chip);
+    border: 1px solid var(--ae-line-chip);
+    border-radius: var(--ae-radius-control);
+  }
+  /* Collapsed handle: a slim tab centred on the right edge, its label set vertically. */
+  .drawer-tab {
+    align-self: center;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.4em;
+    cursor: pointer;
+    padding: 0.7em 0.35em;
+    font: inherit;
+    color: var(--ae-text-strong);
+    background: var(--ae-bg-chip);
+    border: 1px solid var(--ae-line-chip);
+    border-right: none;
+    border-radius: var(--ae-radius-control) 0 0 var(--ae-radius-control);
+    box-shadow: -6px 0 18px rgba(0, 0, 0, 0.18);
+  }
+  .drawer-tab:hover {
+    background: var(--ae-bg-panel);
+  }
+  .drawer-tab .chev {
+    font-size: 1rem;
+  }
+  .drawer-tab .tab-label {
+    writing-mode: vertical-rl;
+    font-size: 0.72rem;
+    text-transform: uppercase;
+    letter-spacing: var(--ae-legend-spacing);
+    color: var(--ae-text-muted);
   }
   /* The play strip pins to the bottom while the bench scrolls: a head bar (collapse + "Send to") plus the
      shared on-screen keybed (hidden when collapsed). */
