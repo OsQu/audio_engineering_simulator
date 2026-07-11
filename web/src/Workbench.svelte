@@ -6,11 +6,15 @@
   // fixed supporting cast: synth source + DA + speaker, unwired) or falling back to the catalog index.
   // Audio resumes on the first interaction; the user patches source→DUT→monitor by hand (Story 6.3).
 
+  import { isPlayable } from "./catalog";
+  import { focusUi, hasFocusSurface } from "./device-ui";
   import { wireMidi } from "./engine";
+  import { isFocusable } from "./focus";
   import { wireKeyboardInput } from "./keyboard-input.svelte";
   import { PatchController } from "./patch-controller.svelte";
   import { eventsInputDriven } from "./scene-ops";
   import { SceneSession } from "./session.svelte";
+  import { footprint } from "./spatial";
   import { decodeScene, encodeScene } from "./url-scene";
   import BenchStage from "./BenchStage.svelte";
   import DebugPanel from "./DebugPanel.svelte";
@@ -116,7 +120,10 @@
 
   function onKeyDown(e: KeyboardEvent): void {
     resumeOnce();
-    if (e.key === "Escape") patch.cancel(); // abandon an in-progress pick/drag
+    // Esc closes the focus overlay first, else abandons an in-progress pick/drag.
+    if (e.key !== "Escape") return;
+    if (focusedDevice !== null) focusedDevice = null;
+    else patch.cancel();
   }
 
   // The analog outputs across all bench devices, for the "Listen" selector — each is a monitorable tap (the
@@ -195,6 +202,30 @@
   // The debug surface is a collapsible right-hand drawer (view-only state — pins persist in the scene,
   // but whether the drawer is open is ephemeral). Open by default so the instrumentation is visible.
   let debugOpen = $state(true);
+
+  // --- Device focus mode (sit down at a device) -----------------------------------------------------
+  // The same large interaction surface the scene view opens (Story 4.8) — for the 8i6 it's the Focusrite
+  // Control routing matrix, which is how you actually route an input to an analog output on the bench.
+  // Reuses the shared focusUi / isFocusable machinery; note input follows focus to the focused device.
+  const FOCUS_FACE_WIDTH_PX = 720;
+  let focusedDevice = $state<string | null>(null);
+  let focusSurfaceEl = $state<HTMLElement | undefined>();
+  const focused = $derived.by(() => {
+    if (focusedDevice === null) return null;
+    const device = session.scene.patch.devices.find((d) => d.id === focusedDevice);
+    const desc = device ? descOf(device.id) : undefined;
+    if (!device || !desc || !isFocusable(desc)) return null;
+    return { device, desc };
+  });
+  // Move keyboard focus into the surface when it opens (a basic focus-trap), mirroring the scene view.
+  $effect(() => {
+    if (focusedDevice !== null) focusSurfaceEl?.focus();
+  });
+  // The focus keybed plays the *focused* device (not the bench's "Send to" fan-out) — you're sitting at it.
+  // Velocity defaults in `session.playNote` (the Keybed's onNote passes only on/note, like the bench keybed).
+  function focusPlayNote(on: boolean, note: number): void {
+    if (focused) session.playNote(focused.device.id, on, note);
+  }
 </script>
 
 <svelte:window
@@ -211,6 +242,13 @@
     <header class="head">
       <span class="name">{requested.name}</span>
       <span class="muted">{requested.typeId}</span>
+      <!-- Open the DUT's focus surface (for the 8i6, the Focusrite Control routing matrix). Only shown for
+           a device that has one — a converter/speaker has none. -->
+      {#if isFocusable(requested)}
+        <button type="button" class="open-focus" onclick={() => (focusedDevice = BENCH_DEVICE)}>
+          ⛶ Open
+        </button>
+      {/if}
       <!-- Listen: which analog output feeds the monitor (the audible tap). Patching is jack-only, so this
            picks the tap without overloading a jack click. -->
       <label class="listen">
@@ -225,6 +263,15 @@
           {/each}
         </select>
       </label>
+      <!-- Always-visible drawer toggle (the collapsed drawer has no on-stage handle to find). -->
+      <button
+        type="button"
+        class="debug-toggle"
+        aria-expanded={debugOpen}
+        onclick={() => (debugOpen = !debugOpen)}
+      >
+        {debugOpen ? "▸" : "◂"} Debug
+      </button>
       <button type="button" class="back" onclick={() => navigate("/")}>← scene view</button>
     </header>
     <BenchStage {session} desc={requested} {patch} bind:api={benchApi} />
@@ -258,34 +305,101 @@
     {/if}
     <!-- The audio debug surface (Story 6.4) lives in a collapsible right-hand drawer so it doesn't add to
          the bench's vertical stack: always-on header (level/tap/latency/losses) + MIDI monitor + a
-         filter+pin watch-list over the rig's params/configs/readouts. Reads the shared session. -->
-    <aside class="debug-drawer" class:open={debugOpen}>
-      {#if debugOpen}
-        <div class="drawer-body">
-          <div class="drawer-head">
-            <span class="drawer-title">Debug</span>
-            <button
-              type="button"
-              class="drawer-close"
-              aria-label="collapse debug panel"
-              onclick={() => (debugOpen = false)}>›</button
-            >
-          </div>
-          <DebugPanel {session} />
+         filter+pin watch-list over the rig's params/configs/readouts. Reads the shared session. Toggled
+         from the always-visible header "Debug" button; the × here just collapses it. -->
+    {#if debugOpen}
+      <aside class="debug-drawer">
+        <div class="drawer-head">
+          <span class="drawer-title">Debug</span>
+          <button
+            type="button"
+            class="drawer-close"
+            aria-label="collapse debug panel"
+            onclick={() => (debugOpen = false)}>›</button
+          >
         </div>
-      {:else}
-        <button
-          type="button"
-          class="drawer-tab"
-          aria-label="show debug panel"
-          aria-expanded={debugOpen}
-          onclick={() => (debugOpen = true)}
+        <DebugPanel {session} />
+      </aside>
+    {/if}
+    {#if focused}
+      {@const f = focused}
+      {@const Surface = focusUi(f.device.typeId)}
+      <!-- Device focus overlay — the same large surface the scene view opens (Story 4.8). For the 8i6
+           this is the Focusrite Control routing matrix; click the backdrop or press Esc to leave. -->
+      <div
+        class="focus-backdrop"
+        role="button"
+        tabindex="-1"
+        aria-label="close focus"
+        onclick={(e) => {
+          if (e.target === e.currentTarget) focusedDevice = null;
+        }}
+        onkeydown={(e) => {
+          if (e.key === "Enter") focusedDevice = null;
+        }}
+      >
+        <div
+          class="focus-surface"
+          bind:this={focusSurfaceEl}
+          role="dialog"
+          aria-modal="true"
+          aria-label={`${f.desc.name} — focus`}
+          tabindex="-1"
         >
-          <span class="chev">‹</span>
-          <span class="tab-label">Debug</span>
-        </button>
-      {/if}
-    </aside>
+          <header class="focus-head">
+            <span class="focus-name">{f.desc.name}</span>
+            <button type="button" class="focus-close" onclick={() => (focusedDevice = null)}>
+              Close
+            </button>
+          </header>
+          {#snippet focusFace()}
+            <Surface
+              device={f.device.id}
+              typeId={f.device.typeId}
+              name={f.desc.name}
+              params={f.desc.params}
+              ports={f.desc.ports}
+              readouts={f.desc.readouts}
+              configs={f.desc.configs}
+              valueFor={(id) => session.paramValue(f.device.id, f.desc, id)}
+              readingFor={(id) => session.readingFor(f.device.id, id)}
+              onParam={(p, v) => session.onParamInput(f.device.id, p, v)}
+              configFor={(k) => session.configValue(f.device.id, f.desc, k)}
+              onConfig={(k, v) => session.onConfigInput(f.device.id, k, v)}
+            />
+          {/snippet}
+          <div class="focus-body">
+            {#if hasFocusSurface(f.device.typeId)}
+              {@render focusFace()}
+            {:else}
+              {@const fp = footprint(f.desc.formFactor)}
+              {@const zoom = FOCUS_FACE_WIDTH_PX / fp.width}
+              <div
+                class="focus-zoom-sizer"
+                style:width="{fp.width * zoom}px"
+                style:height="{fp.height * zoom}px"
+              >
+                <div
+                  class="focus-zoom"
+                  style:width="{fp.width}px"
+                  style:height="{fp.height}px"
+                  style:transform="scale({zoom})"
+                >
+                  {@render focusFace()}
+                </div>
+              </div>
+            {/if}
+            {#if isPlayable(f.desc)}
+              <Keybed
+                held={session.heldNotes}
+                onNote={focusPlayNote}
+                disabled={eventsInputDriven(session.scene, f.desc, f.device.id)}
+              />
+            {/if}
+          </div>
+        </div>
+      </div>
+    {/if}
   {:else}
     <!-- Catalog index: the bare /devices route, or an unknown typeId. -->
     <header class="head">
@@ -331,10 +445,107 @@
     color: var(--ae-text-muted);
     font-size: 0.85rem;
   }
+  /* "Open" opens the DUT's focus surface — a chip-styled header button, emphasised so it reads as the
+     primary action (sit down at the device). */
+  .open-focus {
+    font: inherit;
+    padding: 0.4em 1em;
+    cursor: pointer;
+    color: var(--ae-text-strong);
+    background: var(--ae-bg-chip);
+    border: 1px solid var(--ae-line-chip);
+    border-radius: var(--ae-radius-control);
+  }
+  .open-focus:hover {
+    background: var(--ae-bg-panel);
+  }
+  /* Device focus overlay — fixed full-viewport modal (the bench has no single relative stage container to
+     anchor to like the scene view), above the debug drawer (z 20). */
+  .focus-backdrop {
+    position: fixed;
+    inset: 0;
+    z-index: 40;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 2rem;
+    background: rgb(0 0 0 / 0.55);
+    cursor: default;
+  }
+  .focus-surface {
+    display: flex;
+    flex-direction: column;
+    gap: 0.8rem;
+    max-width: min(90%, 900px);
+    max-height: 90%;
+    overflow: auto;
+    padding: 1rem 1.2rem 1.4rem;
+    background: var(--ae-bg-panel);
+    border: 1px solid var(--ae-line-panel);
+    border-radius: var(--ae-radius-panel);
+    box-shadow: var(--ae-shadow-card);
+  }
+  .focus-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+  }
+  .focus-name {
+    font-size: 1rem;
+    font-weight: 600;
+    color: var(--ae-text-strong);
+  }
+  .focus-close {
+    font: inherit;
+    font-size: 0.72rem;
+    padding: 0.2rem 0.7rem;
+    color: var(--ae-text-strong);
+    background: var(--ae-bg-chip);
+    border: 1px solid var(--ae-line-chip);
+    border-radius: var(--ae-radius-control);
+    cursor: pointer;
+  }
+  .focus-body {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 1.2rem;
+  }
+  .focus-body :global(.panel) {
+    width: 100%;
+    min-height: 220px;
+  }
+  .focus-zoom-sizer {
+    position: relative;
+    flex: none;
+  }
+  .focus-zoom {
+    transform-origin: top left;
+  }
+  .focus-zoom :global(.panel) {
+    width: 100%;
+    height: 100%;
+    min-height: 0;
+  }
+
+  /* The Debug toggle in the header is the always-visible open/close control (chip-styled like the other
+     header buttons). */
+  .debug-toggle {
+    font: inherit;
+    padding: 0.4em 1em;
+    cursor: pointer;
+    color: var(--ae-text-strong);
+    background: var(--ae-bg-chip);
+    border: 1px solid var(--ae-line-chip);
+    border-radius: var(--ae-radius-control);
+  }
+  .debug-toggle[aria-expanded="true"] {
+    background: var(--ae-bg-panel);
+  }
   /* The debug surface is a collapsible right-hand drawer, pinned to the viewport so it never joins the
-     bench's vertical stack. Open → reserve space via `.workbench.drawer-open` (padding-right) so the
-     header controls and stage aren't covered; closed → only a slim vertical tab, centred at the right
-     edge (clear of the top header row). */
+     bench's vertical stack. When open, `.workbench.drawer-open` reserves space (padding-right) so the
+     header controls and stage aren't covered; the drawer scrolls independently. */
   .workbench.drawer-open {
     padding-right: 23rem;
   }
@@ -343,16 +554,7 @@
     top: 0;
     right: 0;
     bottom: 0;
-    z-index: 6; /* above the sticky header + keybed (z 5) */
-    display: flex;
-    align-items: stretch;
-    pointer-events: none; /* the fixed layer is click-through; its children opt back in */
-  }
-  .drawer-body,
-  .drawer-tab {
-    pointer-events: auto;
-  }
-  .drawer-body {
+    z-index: 20; /* above the sticky header/keybed (z 5) and any dragged stage device (z 10) */
     width: 21rem;
     overflow-y: auto;
     padding: 1rem 1.1rem 2rem;
@@ -382,36 +584,6 @@
     background: var(--ae-bg-chip);
     border: 1px solid var(--ae-line-chip);
     border-radius: var(--ae-radius-control);
-  }
-  /* Collapsed handle: a slim tab centred on the right edge, its label set vertically. */
-  .drawer-tab {
-    align-self: center;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: 0.4em;
-    cursor: pointer;
-    padding: 0.7em 0.35em;
-    font: inherit;
-    color: var(--ae-text-strong);
-    background: var(--ae-bg-chip);
-    border: 1px solid var(--ae-line-chip);
-    border-right: none;
-    border-radius: var(--ae-radius-control) 0 0 var(--ae-radius-control);
-    box-shadow: -6px 0 18px rgba(0, 0, 0, 0.18);
-  }
-  .drawer-tab:hover {
-    background: var(--ae-bg-panel);
-  }
-  .drawer-tab .chev {
-    font-size: 1rem;
-  }
-  .drawer-tab .tab-label {
-    writing-mode: vertical-rl;
-    font-size: 0.72rem;
-    text-transform: uppercase;
-    letter-spacing: var(--ae-legend-spacing);
-    color: var(--ae-text-muted);
   }
   /* The play strip pins to the bottom while the bench scrolls: a head bar (collapse + "Send to") plus the
      shared on-screen keybed (hidden when collapsed). */
