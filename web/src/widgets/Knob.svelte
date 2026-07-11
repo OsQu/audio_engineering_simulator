@@ -70,7 +70,6 @@
     </svg>
   </div>
   <span class="label">{param.label}</span>
-  <span class="value">{formatParam(param, value)}</span>
 </div>
 
 <style>
