@@ -9,7 +9,7 @@
   },
   "scripts": {
     "wasm": "sh build-wasm.sh",
-    "wasm:watch": "cargo watch --watch ../crates --shell 'sh build-wasm.sh'",
+    "wasm:watch": "cd .. && cargo watch --watch crates --shell 'sh web/build-wasm.sh'",
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
