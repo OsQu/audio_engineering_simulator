@@ -36,7 +36,6 @@
     <!-- One jack carries many channels (a multichannel digital connector) — badge the lane count. -->
     <span class="lanes" title={`${port.channels} channels`}>×{port.channels}</span>
   {/if}
-  <span class="label">{port.label}</span>
 </div>
 
 <style>
