@@ -924,6 +924,42 @@ mod tests {
         assert!(inst > -0.2, "inst-Z barely loads it, got {inst} dB");
     }
 
+    /// Regression oracle for the balanced preamp front-end (Story 5.8): the **unbalanced** synth
+    /// into the preamp's now-balanced combo input rides the engine's grounding edge, whose hot leg
+    /// uses the *same* divider formula the unbalanced input did — the differential Zin plays exactly
+    /// the role the unbalanced Zin played, so the loading gain is **numerically unchanged** by the
+    /// front-end change. Hand calc (synth Zout = 1 Ω, no cable, line-Z 10 kΩ):
+    /// gain = 10 000/(1 + 0 + 10 000) = 0.99990001 → 20·log10 = −0.000869 dB.
+    #[test]
+    fn balanced_preamp_keeps_the_unbalanced_loading_gain() {
+        let patch = Patch {
+            devices: vec![device("synth", "synth_voice"), device("if", "scarlett_8i6")],
+            connections: vec![conn("synth", 0, "if", 0)], // synth → combo in 1
+            output: PortRef {
+                device: "if".into(),
+                port: 2,
+            },
+        };
+        let scene = build_patch(&patch, BLOCK_LEN, rate(), 0).expect("builds");
+        let loss_db = scene
+            .connection_loading_loss(0)
+            .expect("synth→preamp is analog");
+
+        // Exactly the unbalanced 1→1 solve — what this same edge baked before the balanced face.
+        let unbal_gain =
+            engine::divider_gain(Ohms::new(1.0), Ohms::ZERO, InputZ::new(Ohms::new(10_000.0)));
+        let unbal_db = 20.0 * unbal_gain.log10();
+        assert!(
+            (loss_db - unbal_db).abs() < 1e-7,
+            "grounding-edge gain must equal the unbalanced divider: {loss_db} vs {unbal_db} dB"
+        );
+        // And the hand number: −0.000869 dB.
+        assert!(
+            (loss_db - (-0.000_869)).abs() < 1e-5,
+            "hand calc −0.000869 dB, got {loss_db}"
+        );
+    }
+
     /// A cabled connection assembles (the cable's R·C rides the edge). Smoke test that the cable path
     /// builds and runs; the electrical effect itself is the engine's own tested concern.
     #[test]

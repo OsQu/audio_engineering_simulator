@@ -432,7 +432,9 @@ const PREAMP_INST_Z_OHMS: f32 = 1_500_000.0;
 
 /// Build one 8i6 preamp — a [`MicPreamp`] whose input impedance is selected by the `inst_key`
 /// structural toggle (`>= 0.5` ⇒ instrument/hi-Z, else line). Its default (`0.0` = line) reproduces
-/// the pre-INST 10 kΩ behavior.
+/// the pre-INST 10 kΩ behavior. Both faces are **balanced** (a combo jack's XLR and TRS paths both
+/// carry the pair); an unbalanced source still seats via the engine's grounding edge, with the
+/// *same* loading gain — the differential Z plays exactly the role the unbalanced Z did.
 fn scarlett_preamp(cfg: &DeviceConfig, inst_key: &str) -> Box<dyn Node> {
     let z_ohms = if cfg.get_or(inst_key, 0.0) >= 0.5 {
         PREAMP_INST_Z_OHMS
@@ -442,7 +444,7 @@ fn scarlett_preamp(cfg: &DeviceConfig, inst_key: &str) -> Box<dyn Node> {
     Box::new(MicPreamp::new(
         1.0,
         Volts::new(10.0),
-        InputZ::new(Ohms::new(z_ohms)),
+        InputZ::balanced(Ohms::new(z_ohms)),
         Ohms::new(150.0),
     ))
 }

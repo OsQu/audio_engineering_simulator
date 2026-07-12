@@ -1,5 +1,6 @@
-//! A microphone / instrument preamp — a gain stage with the front-panel switches a real preamp
-//! carries (PAD, AIR), and an INST/hi-Z input selectable at construction.
+//! A microphone / instrument preamp — a **balanced**, difference-first front-end into a gain stage
+//! with the front-panel switches a real preamp carries (PAD, AIR), and an INST/hi-Z input
+//! selectable at construction.
 
 use super::Node;
 use crate::dsp::Biquad;
@@ -8,7 +9,8 @@ use crate::param::{ParamDecl, ParamId, Params};
 use crate::port::{InputPort, OutputPort};
 use crate::signal::{AnalogRate, Lane, SampleRate, Volts};
 
-/// A preamp stage: `out = shelf(clamp((in · pad) · gain, ±rail)) · powered`, where `shelf` is the
+/// A preamp stage with a **balanced front-end**:
+/// `out = shelf(clamp(((V+ − V−) · pad) · gain, ±rail)) · powered`, where `shelf` is the
 /// smoothly-engaged AIR high-shelf.
 ///
 /// Modeled on [`GainStage`](super::GainStage) (a buffered active stage — real `InputZ` in, `OutputZ`
@@ -30,10 +32,22 @@ use crate::signal::{AnalogRate, Lane, SampleRate, Volts};
 /// **INST / hi-Z** is *not* a param: it selects the preamp's input impedance, which the loading
 /// divider bakes at compile — a structural choice. So it is a **constructor argument** (`z_in`); the
 /// catalog picks a line-level vs instrument-level `InputZ` from the device config and rebuilds on
-/// toggle. This node is single-ended (one conductor), like `GainStage`; a balanced front-end (and the
-/// per-conductor lift that would come with it) is deferred with the rest of the balanced-preamp model.
+/// toggle. Both choices are **balanced** faces (a combo jack's XLR and TRS paths both carry the pair).
 ///
-/// One input; one output.
+/// # The balanced front-end
+/// The input is a **balanced** pair — one port, two conductor lanes (V+ then V−, the
+/// [`BalancedReceiver`](super::BalancedReceiver) convention) — and `process` takes the difference
+/// `s = V+ − V−` **first**, before anything else. Ordering is the physics, not a style choice:
+/// common-mode rejection only survives **linear** per-leg processing
+/// (`f(cm + s/2) − f(cm − s/2) = f(s)` needs linearity), so it must happen upstream of the first
+/// nonlinearity. Put the rail clamp first and a 48 V phantom pedestal pins *both* legs to the rail —
+/// `clamp(48·g) − clamp(48·g) = 0`, the audio annihilated with no way to recover it downstream
+/// (`osku_physics_concepts.md` §17). Difference-first is exact at the ideal-CMRR altitude (perfectly
+/// symmetric legs); finite CMRR is leg *asymmetry*, deferred with the per-leg-caps topology it would
+/// make distinguishable. An **unbalanced** source still plugs straight in: the schedule's grounding
+/// edge (a TS plug's sleeve shorts the cold pin) delivers hot = signal, cold = 0, and `s − 0 = s`.
+///
+/// One (balanced, two-lane) input; one output.
 pub struct MicPreamp {
     gain: f32,
     rail: f32,
@@ -78,14 +92,21 @@ impl MicPreamp {
     /// and driving from `z_out`. PAD and AIR default off.
     ///
     /// # Panics
-    /// Panics unless `rail` is finite and `> 0` — a degenerate clamp is a setup bug, caught here at
-    /// construction, never on the hot path.
+    /// Panics unless `rail` is finite and `> 0` — a degenerate clamp is a setup bug — and unless
+    /// `z_in` is **balanced** (two conductors): the front-end reads two input lanes, so an unbalanced
+    /// face would starve it of the cold leg. Both are caught here at construction, never on the hot
+    /// path.
     #[must_use]
     pub fn new(gain: f32, rail: Volts, z_in: InputZ, z_out: Ohms) -> Self {
         let rail = rail.get();
         assert!(
             rail.is_finite() && rail > 0.0,
             "MicPreamp rail must be finite and > 0, got {rail}"
+        );
+        assert!(
+            z_in.conductors() == 2,
+            "MicPreamp z_in must be balanced (2 conductors), got {}",
+            z_in.conductors()
         );
         Self {
             gain,
@@ -155,18 +176,24 @@ impl Node for MicPreamp {
     fn process(&mut self, params: &Params, inputs: &[Lane], outputs: &mut [Lane]) {
         // Read gain/pad/air/power per sample so a control change de-zippers across the block; the
         // fallbacks (construction gain, pad/air off, powered on) apply only outside a schedule (unit
-        // tests). Chain: PAD (pre-gain) → gain → rail clip → AIR crossfade → power gate (last, like
+        // tests). Chain: difference (V+ − V−, FIRST — see the front-end doc: rejection must precede
+        // the clamp) → PAD (pre-gain) → gain → rail clip → AIR crossfade → power gate (last, like
         // `GainStage`, so an off preamp passes nothing).
         let (fallback, rail, pad_factor) = (self.gain, self.rail, self.pad_factor);
-        let src = inputs[0].voltage().as_slice();
+        // One balanced input port = two conductor lanes: [0] = V+, [1] = V−.
+        let vp = inputs[0].voltage().as_slice();
+        let vn = inputs[1].voltage().as_slice();
         let out = outputs[0].voltage_mut().as_mut_slice();
         match &mut self.air {
             Some(shelf) => {
-                for (i, (o, &v)) in out.iter_mut().zip(src).enumerate() {
+                for (i, (o, (&p, &n))) in out.iter_mut().zip(vp.iter().zip(vn)).enumerate() {
                     let gain = params.value_at_or(Self::GAIN, i, fallback);
                     let pad = params.value_at_or(Self::PAD, i, 0.0);
                     let air = params.value_at_or(Self::AIR, i, 0.0);
                     let powered = params.value_at_or(Self::POWERED, i, 1.0);
+                    // Difference-first: anything common-mode (phantom pedestal, coupled hum)
+                    // cancels here, while it's still linear territory.
+                    let v = p - n;
                     // PAD interpolates the linear attenuation: 1.0 (off) → pad_factor (engaged).
                     let padded = v * (1.0 + pad * (pad_factor - 1.0));
                     let amped = (padded * gain).clamp(-rail, rail);
@@ -178,11 +205,11 @@ impl Node for MicPreamp {
             None => {
                 // Unprepared (no rate yet): no shelf. `compile` always prepares before `process`, so a
                 // compiled schedule never hits this arm.
-                for (i, (o, &v)) in out.iter_mut().zip(src).enumerate() {
+                for (i, (o, (&p, &n))) in out.iter_mut().zip(vp.iter().zip(vn)).enumerate() {
                     let gain = params.value_at_or(Self::GAIN, i, fallback);
                     let pad = params.value_at_or(Self::PAD, i, 0.0);
                     let powered = params.value_at_or(Self::POWERED, i, 1.0);
-                    let padded = v * (1.0 + pad * (pad_factor - 1.0));
+                    let padded = (p - n) * (1.0 + pad * (pad_factor - 1.0));
                     *o = (padded * gain).clamp(-rail, rail) * powered;
                 }
             }
@@ -206,9 +233,19 @@ mod tests {
         MicPreamp::new(
             gain,
             Volts::new(rail),
-            InputZ::new(Ohms::new(10_000.0)),
+            InputZ::balanced(Ohms::new(10_000.0)),
             Ohms::new(150.0),
         )
+    }
+
+    /// A hot-driven balanced input pair: V+ carries `hot`, V− is grounded 0 V — the shape the
+    /// schedule's grounding edge delivers for an unbalanced source, so `V+ − V− = hot` and each
+    /// single-ended test keeps its exact hand numbers.
+    fn hot_and_grounded_cold(hot: &[f32]) -> [VoltageBuffer; 2] {
+        [
+            VoltageBuffer::from_volts(hot.to_vec(), rate()),
+            VoltageBuffer::zeros(hot.len(), rate()),
+        ]
     }
 
     /// A settled `Params` over the preamp's four params (in id order): gain, powered, pad, air.
@@ -223,17 +260,19 @@ mod tests {
 
     #[test]
     fn declares_the_constructed_impedances() {
-        // INST/line is the constructed input impedance — the face reflects exactly what was passed.
+        // INST/line is the constructed input impedance — the face reflects exactly what was passed:
+        // a balanced (two-conductor) input of the given differential Z, an unbalanced output.
         let inst = MicPreamp::new(
             1.0,
             Volts::new(10.0),
-            InputZ::new(Ohms::new(1_500_000.0)),
+            InputZ::balanced(Ohms::new(1_500_000.0)),
             Ohms::new(150.0),
         );
         assert_eq!(
             inst.inputs(),
-            &[InputPort::Analog(InputZ::new(Ohms::new(1_500_000.0)))]
+            &[InputPort::Analog(InputZ::balanced(Ohms::new(1_500_000.0)))]
         );
+        assert_eq!(inst.inputs()[0].lane_count(), 2);
         assert_eq!(
             inst.outputs(),
             &[OutputPort::Analog(OutputZ::new(Ohms::new(150.0)))]
@@ -241,12 +280,25 @@ mod tests {
     }
 
     #[test]
+    #[should_panic(expected = "must be balanced")]
+    fn rejects_an_unbalanced_input_face() {
+        // The front-end reads two lanes; an unbalanced face would starve it of the cold leg —
+        // a construction bug, caught at construction rather than on the hot path.
+        let _ = MicPreamp::new(
+            1.0,
+            Volts::new(10.0),
+            InputZ::new(Ohms::new(10_000.0)),
+            Ohms::new(150.0),
+        );
+    }
+
+    #[test]
     fn applies_gain_below_the_rail() {
-        // 0.5 V × 4 = 2.0 V, under a 10 V rail → linear (PAD/AIR off, run outside a schedule).
+        // Hot 0.5 V, cold grounded → s = 0.5 V; × 4 = 2.0 V, under a 10 V rail → linear (PAD/AIR
+        // off, run outside a schedule).
         let mut p = preamp(4.0, 10.0);
         p.prepare(rate());
-        let mut input = [VoltageBuffer::zeros(64, rate())];
-        input[0].fill(Volts::new(0.5));
+        let input = hot_and_grounded_cold(&[0.5_f32; 64]);
         let mut out = [VoltageBuffer::zeros(64, rate())];
         process_voltage(&mut p, &input, &mut out);
         // AIR is off (default 0), so the shelf crossfade contributes nothing: pure gain.
@@ -255,12 +307,11 @@ mod tests {
 
     #[test]
     fn clips_hard_at_the_rail() {
-        // 0.5 V × 4 wants 2.0 V but the rail is 1.5 V → clamps; symmetric hard clip in volts.
+        // Hot ±0.5 V (cold grounded) × 4 wants ±2.0 V but the rail is 1.5 V → clamps; symmetric
+        // hard clip in volts.
         let mut p = preamp(4.0, 1.5);
         p.prepare(rate());
-        let mut input = [VoltageBuffer::zeros(2, rate())];
-        input[0].set(0, Volts::new(0.5));
-        input[0].set(1, Volts::new(-0.5));
+        let input = hot_and_grounded_cold(&[0.5, -0.5]);
         let mut out = [VoltageBuffer::zeros(2, rate())];
         process_voltage(&mut p, &input, &mut out);
         assert_relative_eq!(out[0].get(0).get(), 1.5, epsilon = 1e-6);
@@ -268,15 +319,57 @@ mod tests {
     }
 
     #[test]
+    fn pedestal_rejected_before_the_clamp() {
+        // The story's headline oracle: a 48 V phantom pedestal with a 10 mV differential signal —
+        // V+ = 48.005 V, V− = 47.995 V — through gain 100 under a ±10 V rail comes out as
+        //   (V+ − V−) · gain = 0.01 · 100 = 1.0 V,   with zero DC (no trace of the 48 V).
+        // Ordering is what this proves: were the clamp applied per leg *before* the difference,
+        // clamp(48.005·100, ±10) − clamp(47.995·100, ±10) = 10 − 10 = 0 — both legs pin to the
+        // rail and the audio is annihilated (physics §17). Difference-first makes the pedestal
+        // vanish while everything is still linear.
+        let mut p = preamp(100.0, 10.0);
+        p.prepare(rate());
+        let ins = [
+            VoltageBuffer::from_volts(vec![48.005_f32; 64], rate()),
+            VoltageBuffer::from_volts(vec![47.995_f32; 64], rate()),
+        ];
+        let mut out = [VoltageBuffer::zeros(64, rate())];
+        process_voltage(&mut p, &ins, &mut out);
+        for &v in out[0].as_slice() {
+            // f32 note: 48.005 − 47.995 carries ~µV-scale rounding at this magnitude, ×100 ≈ mV.
+            assert_relative_eq!(v, 1.0, epsilon = 1e-3);
+        }
+    }
+
+    #[test]
+    fn common_mode_hum_cancels_at_the_front_end() {
+        // A differential 0.2 V signal (V± = ±0.1 V) with the *identical* hum ramp added to both
+        // legs: V+ = 0.1 + h_i, V− = −0.1 + h_i. The difference is (0.1 + h) − (−0.1 + h) = 0.2 V
+        // for every sample — the hum cancels exactly (ideal CMRR), so out = 0.2 · 4 = 0.8 V flat.
+        let mut p = preamp(4.0, 10.0);
+        p.prepare(rate());
+        let n = 64;
+        let hum = |i: usize| (i as f32 / n as f32) - 0.5; // a ±0.5 V common-mode sweep
+        let ins = [
+            VoltageBuffer::from_volts((0..n).map(|i| 0.1 + hum(i)).collect(), rate()),
+            VoltageBuffer::from_volts((0..n).map(|i| -0.1 + hum(i)).collect(), rate()),
+        ];
+        let mut out = [VoltageBuffer::zeros(n, rate())];
+        process_voltage(&mut p, &ins, &mut out);
+        for &v in out[0].as_slice() {
+            assert_relative_eq!(v, 0.8, epsilon = 1e-5);
+        }
+    }
+
+    #[test]
     fn pad_attenuates_by_ten_db() {
-        // PAD engaged scales the input by 10^(−10/20) ≈ 0.3162 before the (unity) gain. Hand calc:
-        // 1.0 V × 0.31623 × 1 = 0.31623 V. Compared to PAD off (1.0 V), that's exactly −10 dB.
+        // PAD engaged scales the differential input by 10^(−10/20) ≈ 0.3162 before the (unity)
+        // gain. Hand calc: hot 1.0 V (cold grounded) → s = 1.0 V × 0.31623 × 1 = 0.31623 V.
+        // Compared to PAD off (1.0 V), that's exactly −10 dB.
         let mut p = preamp(1.0, 10.0);
         p.prepare(rate());
-        let inp = [Lane::Voltage(VoltageBuffer::from_volts(
-            vec![1.0_f32; 32],
-            rate(),
-        ))];
+        let [hot, cold] = hot_and_grounded_cold(&[1.0_f32; 32]);
+        let inp = [Lane::Voltage(hot), Lane::Voltage(cold)];
 
         let smoothers = params(1.0, 1.0, 1.0, 0.0); // pad engaged
         let mut out = [Lane::Voltage(VoltageBuffer::zeros(32, rate()))];
@@ -296,7 +389,11 @@ mod tests {
             let mut p = preamp(1.0, 100.0);
             p.prepare(rate());
             measure_gain(freq, rate(), |buf| {
-                let inp = [Lane::Voltage(buf.clone())];
+                // Hot carries the tone, cold is grounded — the unbalanced-source shape.
+                let inp = [
+                    Lane::Voltage(buf.clone()),
+                    Lane::Voltage(VoltageBuffer::zeros(buf.len(), buf.rate())),
+                ];
                 let mut out = [Lane::Voltage(VoltageBuffer::zeros(buf.len(), buf.rate()))];
                 p.process(&Params::new(&smoothers), &inp, &mut out);
                 buf.as_mut_slice()
@@ -319,7 +416,10 @@ mod tests {
         let mut p = preamp(1.0, 100.0);
         p.prepare(rate());
         let g = measure_gain(20_000.0, rate(), |buf| {
-            let inp = [Lane::Voltage(buf.clone())];
+            let inp = [
+                Lane::Voltage(buf.clone()),
+                Lane::Voltage(VoltageBuffer::zeros(buf.len(), buf.rate())),
+            ];
             let mut out = [Lane::Voltage(VoltageBuffer::zeros(buf.len(), buf.rate()))];
             p.process(&Params::new(&smoothers), &inp, &mut out);
             buf.as_mut_slice()
@@ -332,10 +432,8 @@ mod tests {
     fn powered_off_silences_output() {
         let mut p = preamp(4.0, 10.0);
         p.prepare(rate());
-        let inp = [Lane::Voltage(VoltageBuffer::from_volts(
-            vec![0.5_f32; 32],
-            rate(),
-        ))];
+        let [hot, cold] = hot_and_grounded_cold(&[0.5_f32; 32]);
+        let inp = [Lane::Voltage(hot), Lane::Voltage(cold)];
         let smoothers = params(4.0, 0.0, 0.0, 0.0); // powered off
         let mut out = [Lane::Voltage(VoltageBuffer::zeros(32, rate()))];
         p.process(&Params::new(&smoothers), &inp, &mut out);
