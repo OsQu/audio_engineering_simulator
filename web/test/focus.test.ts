@@ -7,16 +7,20 @@ const eventsIn: PortDescriptor = {
   label: "MIDI In",
   direction: "input",
   domain: "events",
+  channels: 1,
   kind: "midi",
   connector: "din5",
+  delayed: false,
 };
 const analogIn: PortDescriptor = {
   id: 0,
   label: "In",
   direction: "input",
   domain: "analog",
+  channels: 1,
   kind: "line",
   connector: "quarterInch",
+  delayed: false,
 };
 
 function device(typeId: string, ports: PortDescriptor[]): DeviceDescriptor {
@@ -27,6 +31,7 @@ function device(typeId: string, ports: PortDescriptor[]): DeviceDescriptor {
     params: [],
     ports,
     readouts: [],
+    configs: [],
   };
 }
 

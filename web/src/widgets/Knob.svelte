@@ -184,24 +184,4 @@
       var(--ae-shadow-knob),
       0 0 0 2px var(--ae-signal-mic-lit);
   }
-
-  .label {
-    font-family: var(--ae-font-ui);
-    font-weight: var(--ae-label-weight);
-    font-size: var(--knob-font, min(var(--ae-label-size), 17cqh));
-    letter-spacing: var(--ae-label-spacing);
-    text-transform: uppercase;
-    /* On a device faceplate the engraved ink is set by the panel finish; standalone
-       (no faceplate) it falls back to the light UI text so it reads on the dark room. */
-    color: var(--ae-faceplate-ink, var(--ae-text-strong));
-    text-align: center;
-    line-height: 1.15;
-  }
-  .value {
-    font-family: var(--ae-font-ui);
-    font-weight: 500;
-    font-size: var(--knob-font, min(var(--ae-value-size), 17cqh));
-    color: var(--ae-faceplate-ink-muted, var(--ae-text-muted));
-    font-variant-numeric: tabular-nums;
-  }
 </style>

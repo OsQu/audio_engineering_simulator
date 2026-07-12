@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { DeviceDescriptor } from "../src/catalog";
-import type { Connection, Endpoint } from "../src/connections";
+import type { Endpoint } from "../src/connections";
 import {
   cancel,
   endpointFromJackKey,
@@ -11,6 +11,7 @@ import {
   pointerMove,
   pointerUp,
 } from "../src/patching";
+import type { Connection } from "../src/scene";
 import type { Scene } from "../src/scene-store";
 
 // Two devices: a source with an analog line output (port 0) and a sink with an analog line input.
@@ -25,11 +26,14 @@ const SRC: DeviceDescriptor = {
       label: "out",
       direction: "output",
       domain: "analog",
+      channels: 1,
       kind: "line",
       connector: "quarterInch",
+      delayed: false,
     },
   ],
   readouts: [],
+  configs: [],
 };
 const SINK: DeviceDescriptor = {
   typeId: "sink",
@@ -42,11 +46,14 @@ const SINK: DeviceDescriptor = {
       label: "in",
       direction: "input",
       domain: "analog",
+      channels: 1,
       kind: "line",
       connector: "quarterInch",
+      delayed: false,
     },
   ],
   readouts: [],
+  configs: [],
 };
 const CATALOG = [SRC, SINK];
 
@@ -68,6 +75,7 @@ const OUT: Endpoint = {
   port: 0,
   direction: "output",
   domain: "analog",
+  channels: 1,
   connector: "quarterInch",
 };
 const IN: Endpoint = {
@@ -75,6 +83,7 @@ const IN: Endpoint = {
   port: 0,
   direction: "input",
   domain: "analog",
+  channels: 1,
   connector: "quarterInch",
 };
 const srcHit: JackHit = { key: jackKeyOf(OUT), endpoint: OUT, anchor: { x: 10, y: 10 } };
@@ -187,6 +196,7 @@ describe("pointerUp — pending mode", () => {
       port: 0,
       direction: "output",
       domain: "analog",
+      channels: 1,
       connector: "quarterInch",
     };
     const outHit: JackHit = {

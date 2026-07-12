@@ -36,19 +36,24 @@ const AMP: DeviceDescriptor = {
       label: "in",
       direction: "input",
       domain: "analog",
+      channels: 1,
       kind: "line",
       connector: "quarterInch",
+      delayed: false,
     },
     {
       id: 0,
       label: "out",
       direction: "output",
       domain: "analog",
+      channels: 1,
       kind: "line",
       connector: "quarterInch",
+      delayed: false,
     },
   ],
   readouts: [],
+  configs: [],
 };
 const MIDI: DeviceDescriptor = {
   typeId: "midi",
@@ -56,9 +61,19 @@ const MIDI: DeviceDescriptor = {
   formFactor: { kind: "desktop", widthMm: 200, heightMm: 100, depthMm: 150 },
   params: [],
   ports: [
-    { id: 0, label: "out", direction: "output", domain: "events", kind: "midi", connector: "din5" },
+    {
+      id: 0,
+      label: "out",
+      direction: "output",
+      domain: "events",
+      channels: 1,
+      kind: "midi",
+      connector: "din5",
+      delayed: false,
+    },
   ],
   readouts: [],
+  configs: [],
 };
 const CATALOG = [AMP, MIDI];
 

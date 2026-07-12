@@ -209,13 +209,6 @@
   .monitor {
     padding: 1.5px 2.5px;
   }
-  /* The decorative DC barrel-jack silkscreen (no patchable port). */
-  .dc-inlet {
-    width: 6px;
-    height: 6px;
-    border-radius: 50%;
-    border: 1px solid var(--ae-faceplate-ink-muted, var(--ae-text-muted));
-  }
   /* Brand wordmark type; "8i6" in the accent red. Position is owned by the enclosing <Place x b>. */
   .wordmark {
     font-family: var(--ae-font-display);

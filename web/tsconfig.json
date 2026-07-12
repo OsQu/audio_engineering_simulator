@@ -11,5 +11,5 @@
     "verbatimModuleSyntax": true,
     "types": []
   },
-  "include": ["src"]
+  "include": ["src", "test", "*.config.ts"]
 }

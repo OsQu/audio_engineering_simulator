@@ -15,6 +15,7 @@ const COMP: DeviceDescriptor = {
   params: [],
   ports: [],
   readouts: [],
+  configs: [],
 };
 const SYNTH: DeviceDescriptor = {
   typeId: "synth",
@@ -23,6 +24,7 @@ const SYNTH: DeviceDescriptor = {
   params: [],
   ports: [],
   readouts: [],
+  configs: [],
 };
 const CATALOG = [COMP, SYNTH];
 

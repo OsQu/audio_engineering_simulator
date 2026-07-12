@@ -34,6 +34,7 @@ const DESK: DeviceDescriptor = {
   params: [],
   ports: [],
   readouts: [],
+  configs: [],
 };
 const CATALOG = [DESK];
 
@@ -41,6 +42,7 @@ const CATALOG = [DESK];
 const idApi = {
   worldToSurface: (x: number, y: number) => ({ x, y }),
   clientToSurface: (x: number, y: number) => ({ x, y }),
+  measureRoot: () => null,
 };
 
 const place = (space: string, wall: Wall, facing: "front" | "back" = "front"): Placement => ({

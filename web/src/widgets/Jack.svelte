@@ -102,13 +102,4 @@
   .jack[data-kind="midi"] .connector {
     --ring: var(--ae-signal-midi);
   }
-  .label {
-    font-family: var(--ae-font-ui);
-    font-size: var(--jack-font, clamp(4px, 15cqh, 0.65rem));
-    letter-spacing: var(--ae-label-spacing);
-    color: var(--ae-text-muted);
-    text-align: center;
-    line-height: 1.1;
-    white-space: nowrap;
-  }
 </style>

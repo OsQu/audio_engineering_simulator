@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import type { DeviceDescriptor } from "../src/catalog";
+import type { ControlMessage } from "../src/engine";
 import { key, paramValue, pushParams, seedParamValues } from "../src/params";
 import type { Scene } from "../src/scene-store";
 
@@ -14,6 +15,7 @@ const DESC: DeviceDescriptor = {
   ],
   ports: [],
   readouts: [],
+  configs: [],
 };
 const CATALOG = [DESC];
 
@@ -64,8 +66,8 @@ describe("paramValue", () => {
 describe("pushParams", () => {
   it("emits exactly one param message per device param, using the current values", () => {
     const sent: Array<{ device: string; paramId: number; value: number }> = [];
-    const sendFn = vi.fn((m: { type: string; device: string; paramId: number; value: number }) => {
-      sent.push({ device: m.device, paramId: m.paramId, value: m.value });
+    const sendFn = vi.fn((m: ControlMessage) => {
+      if (m.type === "param") sent.push({ device: m.device, paramId: m.paramId, value: m.value });
     });
     pushParams(sendFn, scene, CATALOG, { "amp1:0": 3, "amp1:1": 0 });
     expect(sendFn).toHaveBeenCalledTimes(2); // two params, one message each

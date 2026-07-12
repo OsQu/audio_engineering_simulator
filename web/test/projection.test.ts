@@ -28,6 +28,7 @@ const RACK_UNIT: DeviceDescriptor = {
   params: [],
   ports: [],
   readouts: [],
+  configs: [],
 };
 const DESK_UNIT: DeviceDescriptor = {
   typeId: "synth",
@@ -36,6 +37,7 @@ const DESK_UNIT: DeviceDescriptor = {
   params: [],
   ports: [],
   readouts: [],
+  configs: [],
 };
 const CATALOG = [RACK_UNIT, DESK_UNIT];
 

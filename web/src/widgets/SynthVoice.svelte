@@ -34,20 +34,20 @@
       </Col>
       <Row gap={2.5} align="end">
         <Col gap={1} align="center">
-          <Control id={1} cap="cream" size={9} />
-          <Legend text="A" />
+          <Control id={1} cap="cream" size={20} />
+          <Legend text="A" size={14} />
         </Col>
         <Col gap={1} align="center">
-          <Control id={2} cap="cream" size={9} />
-          <Legend text="D" />
+          <Control id={2} cap="cream" size={20} />
+          <Legend text="D" size={14} />
         </Col>
         <Col gap={1} align="center">
-          <Control id={3} cap="cream" size={9} />
-          <Legend text="S" />
+          <Control id={3} cap="cream" size={20} />
+          <Legend text="S" size={14} />
         </Col>
         <Col gap={1} align="center">
-          <Control id={4} cap="cream" size={9} />
-          <Legend text="R" />
+          <Control id={4} cap="cream" size={20} />
+          <Legend text="R" size={14} />
         </Col>
       </Row>
       <Screen
@@ -57,7 +57,7 @@
         releaseMs={handle.value(4)}
       />
       <Col gap={1} align="center">
-        <Control id={5} size={6} />
+        <Control id={5} size={20} />
         <Legend text="Power" />
       </Col>
     </Row>
