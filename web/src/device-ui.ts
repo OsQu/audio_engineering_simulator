@@ -22,6 +22,7 @@ import ComputerMixer from "./widgets/ComputerMixer.svelte";
 import Console from "./widgets/Console.svelte";
 import FocusriteControl from "./widgets/FocusriteControl.svelte";
 import MidiController from "./widgets/MidiController.svelte";
+import MidiControllerFocus from "./widgets/MidiControllerFocus.svelte";
 import Panel from "./widgets/Panel.svelte";
 import Scarlett8i6 from "./widgets/Scarlett8i6.svelte";
 import Speaker from "./widgets/Speaker.svelte";
@@ -49,6 +50,16 @@ export interface DeviceUiProps {
   configFor?: (key: string) => number;
   /** Set a structural config key — edits the scene and rebuilds the engine (recompile). */
   onConfig?: (key: string, value: number) => void;
+  // --- Note-play seam (focus render only) -------------------------------------------------------------
+  // A playable focus surface (the MIDI controller) composes an on-screen `Keybed` from these. The
+  // in-world faceplate leaves them unset; `App`/`Workbench` populate them for the *focused* device only.
+  /** MIDI notes currently sounding (from mouse/QWERTY/MIDI), for the keybed's key highlight. */
+  heldNotes?: number[];
+  /** Whether this device's events input is cable-driven (a patched controller performs it) — the keybed
+   *  renders inert, since host notes would be a no-op. */
+  notesDriven?: boolean;
+  /** Play (`on=true`) / release a note on this device — the keybed calls this per key press. */
+  onNote?: (on: boolean, note: number) => void;
 }
 
 /** In-world faceplates by type; a device without one falls back to the generic `Panel`. */
@@ -71,6 +82,7 @@ const FOCUS_SURFACES: Record<string, Component<DeviceUiProps>> = {
   channel_strip: Console,
   scarlett_8i6: FocusriteControl,
   computer: ComputerMixer,
+  midi_controller: MidiControllerFocus,
 };
 
 /** The focus-surface component for a device type — its dedicated surface, else its in-world faceplate. */

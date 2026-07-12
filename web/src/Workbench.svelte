@@ -5,8 +5,6 @@
   // requested typeId against that catalog — hot-swapping to the bench scene (the device-under-test plus a
   // fixed supporting cast: synth source + DA + speaker, unwired) or falling back to the catalog index.
   // Audio resumes on the first interaction; the user patches source→DUT→monitor by hand (Story 6.3).
-
-  import { isPlayable } from "./catalog";
   import { focusUi, hasFocusSurface } from "./device-ui";
   import { wireMidi } from "./engine";
   import { isFocusable } from "./focus";
@@ -221,11 +219,6 @@
   $effect(() => {
     if (focusedDevice !== null) focusSurfaceEl?.focus();
   });
-  // The focus keybed plays the *focused* device (not the bench's "Send to" fan-out) — you're sitting at it.
-  // Velocity defaults in `session.playNote` (the Keybed's onNote passes only on/note, like the bench keybed).
-  function focusPlayNote(on: boolean, note: number): void {
-    if (focused) session.playNote(focused.device.id, on, note);
-  }
 </script>
 
 <svelte:window
@@ -366,6 +359,9 @@
               onParam={(p, v) => session.onParamInput(f.device.id, p, v)}
               configFor={(k) => session.configValue(f.device.id, f.desc, k)}
               onConfig={(k, v) => session.onConfigInput(f.device.id, k, v)}
+              heldNotes={session.heldNotes}
+              notesDriven={eventsInputDriven(session.scene, f.desc, f.device.id)}
+              onNote={(on, note) => session.playNote(f.device.id, on, note)}
             />
           {/snippet}
           <div class="focus-body">
@@ -388,13 +384,6 @@
                   {@render focusFace()}
                 </div>
               </div>
-            {/if}
-            {#if isPlayable(f.desc)}
-              <Keybed
-                held={session.heldNotes}
-                onNote={focusPlayNote}
-                disabled={eventsInputDriven(session.scene, f.desc, f.device.id)}
-              />
             {/if}
           </div>
         </div>

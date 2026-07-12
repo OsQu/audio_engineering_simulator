@@ -35,7 +35,6 @@
   import { footprint, type Room, type Wall } from "./spatial";
   import Cable from "./widgets/Cable.svelte";
   import CableInspector from "./widgets/CableInspector.svelte";
-  import Keybed from "./widgets/Keybed.svelte";
   import Vu from "./widgets/Vu.svelte";
   import WorldView from "./widgets/WorldView.svelte";
   import type { WorldApi } from "./world-api";
@@ -272,7 +271,7 @@
   const FOCUS_FACE_WIDTH_PX = 720;
   // The focused device resolved to its instance + descriptor — or null when nothing is focused (or the
   // focused device has gone / isn't focusable, so a stale id renders nothing). Which surface component
-  // to draw is `focusUi(typeId)`; whether a keybed is appended is `isPlayable(desc)`.
+  // to draw is `focusUi(typeId)`.
   const focused = $derived.by(() => {
     if (focusedDevice === null) return null;
     const device = deviceById(scene, focusedDevice);
@@ -303,8 +302,8 @@
     return sceneOps.eventsInputDriven(scene, desc, dev.id) ? null : dev.id;
   });
   // QWERTY capture + the target-explicit `playNote` wrapper — the shared keyboard-input glue (also used by
-  // the bench). Web MIDI (wired below) and the focus keybed feed the same `playNote`; `heldNotes` drives
-  // the keybed highlight whichever way you play.
+  // the bench). The focused instrument is played from the computer keyboard and Web MIDI (wired below),
+  // both feeding the same `playNote`.
   const playNote = wireKeyboardInput(session, () =>
     keyboardTarget === null ? [] : [keyboardTarget],
   );
@@ -927,6 +926,9 @@
                 onParam={(p, v) => session.onParamInput(f.device.id, p, v)}
                 configFor={(k) => session.configValue(f.device.id, f.desc, k)}
                 onConfig={(k, v) => session.onConfigInput(f.device.id, k, v)}
+                heldNotes={session.heldNotes}
+                notesDriven={sceneOps.eventsInputDriven(scene, f.desc, f.device.id)}
+                onNote={(on, note) => session.playNote(f.device.id, on, note)}
               />
             {/snippet}
             <div class="focus-body">
@@ -953,15 +955,6 @@
                     {@render focusFace()}
                   </div>
                 </div>
-              {/if}
-              {#if isPlayable(f.desc)}
-                <!-- The keybed = the device's open events input, drawn on-screen. Disabled when the input
-                     is cable-driven (a patched controller performs it instead — host notes are a no-op). -->
-                <Keybed
-                  held={session.heldNotes}
-                  onNote={playNote}
-                  disabled={sceneOps.eventsInputDriven(scene, f.desc, f.device.id)}
-                />
               {/if}
             </div>
           </div>

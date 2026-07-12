@@ -5,18 +5,20 @@
 
 import { type DeviceDescriptor, isPlayable } from "./catalog";
 
-/** TypeIds that open a **dedicated** (non-keybed) focus surface — e.g. a mixing console. This is the
- *  focusability authority for non-playable devices; the matching typeId → component map is
- *  `FOCUS_SURFACES` in device-ui.ts (keep the two in sync). A playable device (an events input) already
- *  earns a keybed surface for free, so this table lists only the exceptions. */
+/** TypeIds that open a **dedicated** software focus surface — a mixing console, a routing matrix, the
+ *  MIDI controller's playable keybed. The matching typeId → component map is `FOCUS_SURFACES` in
+ *  device-ui.ts (keep the two in sync). A device *without* a dedicated surface but with an events input is
+ *  still focusable (see `isFocusable`) — it just magnifies its physical faceplate; the on-screen keybed is
+ *  no longer free, it is composed by the controller's dedicated surface here. */
 const DEDICATED_FOCUS_SURFACES: ReadonlySet<string> = new Set([
   "channel_strip",
   "scarlett_8i6",
   "computer",
+  "midi_controller",
 ]);
 
-/** Whether a device opens a focus surface when clicked: a playable device gets a keybed (derived from
- *  its events input, so no per-type list to maintain), and a listed type opens its dedicated surface. */
+/** Whether a device opens a focus surface when clicked: a listed type opens its dedicated surface, and a
+ *  playable device (an events input) is focusable to be played/operated — no per-type list needed for it. */
 export function isFocusable(desc: DeviceDescriptor): boolean {
   return isPlayable(desc) || DEDICATED_FOCUS_SURFACES.has(desc.typeId);
 }

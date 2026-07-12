@@ -31,9 +31,10 @@ function device(typeId: string, ports: PortDescriptor[]): DeviceDescriptor {
 }
 
 describe("isFocusable", () => {
-  it("is true for any device with an events input (it earns a keybed) — derived, not listed", () => {
+  it("is true for any device with an events input (playable/operable) — derived, not listed", () => {
     // Both the synth and the standalone controller have an events input, so both are focusable with no
-    // per-type entry needed; even an unknown future events-in device is focusable for free.
+    // per-type entry needed; even an unknown future events-in device is focusable for free. (Whether a
+    // focus surface actually shows a keybed is a per-surface choice now — see MidiControllerFocus.)
     expect(isFocusable(device("synth_voice", [eventsIn]))).toBe(true);
     expect(isFocusable(device("midi_controller", [eventsIn]))).toBe(true);
     expect(isFocusable(device("some_new_synth", [eventsIn]))).toBe(true);
