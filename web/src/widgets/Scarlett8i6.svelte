@@ -116,59 +116,88 @@
 
   {#snippet back()}
     <Row fill wrap justify="around" gap={4} style={faceVars}>
-      <!-- Rear line inputs 3–6 (line-level → the extra ADs → matrix). -->
-      <Col gap={1.5}>
-        <Legend text="Line In 3–6" />
-        <Row gap={2.5}>
-          <Socket dir="input" id={2} />
-          <Socket dir="input" id={3} />
-          <Socket dir="input" id={4} />
-          <Socket dir="input" id={5} />
-        </Row>
-      </Col>
-      <!-- Line outputs 1–4 (1–2 are the monitor pair, 3–4 direct from the matrix). -->
-      <Col gap={1.5}>
-        <Legend text="Line Out 1–4" />
-        <Row gap={2.5}>
-          <Socket dir="output" id={2} />
-          <Socket dir="output" id={3} />
-          <Socket dir="output" id={4} />
-          <Socket dir="output" id={5} />
-        </Row>
-      </Col>
-      <!-- S/PDIF (RCA coax) in/out — a 2-lane digital pair each. -->
-      <Col gap={1.5}>
-        <Legend text="S/PDIF" />
-        <Row gap={2.5}>
-          <Socket dir="input" id={6} size={9} />
-          <Socket dir="output" id={1} size={9} />
-        </Row>
-      </Col>
-      <!-- USB (one connector): the 8-lane send + 6-lane return cluster. -->
-      <Col gap={1.5}>
-        <Legend text="USB" />
-        <Row gap={2.5}>
-          <Socket dir="output" id={0} size={9} />
-          <Socket dir="input" id={7} size={9} />
-        </Row>
-      </Col>
-      <!-- MIDI (DIN) thru. -->
-      <Col gap={1.5}>
-        <Legend text="MIDI" />
-        <Row gap={2.5}>
-          <Socket dir="input" id={8} size={18} />
-          <Socket dir="output" id={8} size={18} />
-        </Row>
-      </Col>
-      <!-- 12V DC inlet — decorative silkscreen only (external PSU, not modeled). -->
-      <Col gap={1.5}>
-        <Legend text="12V DC" />
-        <div class="dc-inlet" aria-hidden="true"></div>
-      </Col>
       <!-- One switch for the whole unit — a real 8i6 is a single powered device (Rust param group). -->
       <Col gap={1.5}>
         <Legend text="Power" />
         <Control id={205} size={6} />
+      </Col>
+      <!-- S/PDIF (RCA coax) in/out — a 2-lane digital pair each. -->
+      <Col gap={1.5}>
+        <Legend text="S/PDIF" />
+        <Col gap={2.5}>
+          <Socket dir="input" id={6} size={9} />
+          <Socket dir="output" id={1} size={9} />
+        </Col>
+      </Col>
+      <!-- USB (one connector): the 8-lane send + 6-lane return cluster. -->
+      <Col gap={1.5}>
+        <Legend text="USB" />
+        <Col gap={2.5}>
+          <Socket dir="output" id={0} size={9} />
+          <Socket dir="input" id={7} size={9} />
+        </Col>
+      </Col>
+      <!-- MIDI (DIN) thru. -->
+      <Col gap={1.5}>
+        <Row gap={2.5} align="start">
+          <Col>
+            <Legend text="Out" />
+            <Socket dir="output" id={8} size={18} />
+          </Col>
+          <Legend text="MIDI" />
+          <Col>
+            <Legend text="In" />
+            <Socket dir="input" id={8} size={18} />
+          </Col>
+        </Row>
+      </Col>
+      <!-- Line outputs 1–4 (1–2 are the monitor pair, 3–4 direct from the matrix). -->
+      <Col gap={5} alignSelf="stretch">
+        <Row gap={8}>
+          <Row align="start">
+            <Legend text="3" />
+            <Socket dir="output" id={4} />
+          </Row>
+          <Row align="start">
+            <Legend text="1" />
+            <Socket dir="output" id={2} />
+          </Row>
+        </Row>
+        <Legend text="Line Outputs" />
+        <Row gap={8}>
+          <Row align="start">
+            <Legend text="4" />
+            <Socket dir="output" id={5} />
+          </Row>
+          <Row align="start">
+            <Legend text="2" />
+            <Socket dir="output" id={3} />
+          </Row>
+        </Row>
+      </Col>
+      <!-- Rear line inputs 3–6 (line-level → the extra ADs → matrix). -->
+      <Col gap={5} alignSelf="stretch">
+        <Row gap={8}>
+          <Row align="start">
+            <Legend text="5" />
+            <Socket dir="input" id={4} />
+          </Row>
+          <Row align="start">
+            <Legend text="3" />
+            <Socket dir="input" id={2} />
+          </Row>
+        </Row>
+        <Legend text="Line Inputs" />
+        <Row gap={8}>
+          <Row align="start">
+            <Legend text="6" />
+            <Socket dir="input" id={5} />
+          </Row>
+          <Row align="start">
+            <Legend text="4" />
+            <Socket dir="input" id={3} />
+          </Row>
+        </Row>
       </Col>
     </Row>
   {/snippet}
