@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## 1. The crates
 
-`IMPLEMENTATION_PLAN.md` is the authoritative source for story/epic progress and what's next — don't
+`docs/IMPLEMENTATION_PLAN.md` is the authoritative source for story/epic progress and what's next — don't
 duplicate that state here. The workspace layout:
 
 - **`crates/engine`** — the headless voltage engine: units/buffers, electrical local-solve, FIR
@@ -83,8 +83,8 @@ Two documents govern everything. Keep them authoritative; update them when a dec
 
 | Doc | Role |
 | --- | --- |
-| `PROJECT_PLAN.md` | The *what and why* — vision, domain model, engine design, staged roadmap (§9), risks. |
-| `IMPLEMENTATION_PLAN.md` | The *order and granularity* — Epic → Story → Task. Epic 1 is detailed to Task level; later epics stay coarse on purpose. |
+| `docs/PROJECT_PLAN.md` | The *what and why* — vision, domain model, engine design, staged roadmap (§9), risks. |
+| `docs/IMPLEMENTATION_PLAN.md` | The *order and granularity* — Epic → Story → Task. Epic 1 is detailed to Task level; later epics stay coarse on purpose. |
 
 Before working a task: find it in `IMPLEMENTATION_PLAN.md` and honor its **Goal / Watch out / Validate**
 notes — they encode decisions and traps not recoverable from code. Each Story ends with a **Validate**
