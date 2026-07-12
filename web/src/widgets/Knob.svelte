@@ -69,7 +69,6 @@
       <line class="pointer" x1="50" y1="50" x2="50" y2="25" transform={`rotate(${angle} 50 50)`} />
     </svg>
   </div>
-  <span class="label">{param.label}</span>
 </div>
 
 <style>
