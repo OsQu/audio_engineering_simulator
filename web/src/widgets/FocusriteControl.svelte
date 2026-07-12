@@ -55,7 +55,7 @@
   {#if hasRouting}
     <section>
       <span class="section-title">Routing</span>
-      <p class="hint">Each cell mixes an input into an output — turn it up to route.</p>
+      <p class="hint">Active routes only — add an input → output pair, then set its level.</p>
       <RoutingGrid params={props.params} />
     </section>
   {/if}

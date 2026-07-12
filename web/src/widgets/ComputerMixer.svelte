@@ -32,7 +32,8 @@
   <section>
     <span class="section-title">Routing</span>
     <p class="hint">
-      Each cell mixes a send into a return — the loopback the interface plays back.
+      Active send → return routes — the loopback the interface plays back. Add or remove routes
+      below.
     </p>
     <RoutingGrid params={props.params} />
   </section>
