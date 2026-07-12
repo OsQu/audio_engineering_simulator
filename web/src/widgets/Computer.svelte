@@ -24,9 +24,9 @@
   const meters = $derived((props.readouts ?? []).map((r) => r.id));
 
   // Physical control sizes in **mm** (panel is 1 px/mm; the world/bench zoom scales it), inherited by the
-  // legends + the (large, multi-lane) USB jacks.
+  // legends + the multi-lane USB jacks. Sized down for the compact (240 × 28 mm) chassis.
   const faceVars =
-    "--legend: 2.8px; --jack: 13px; --jack-font: 4px; --jack-gap: 1.2px; --jack-lane-font: 3px";
+    "--legend: 2.4px; --jack: 9px; --jack-font: 3px; --jack-gap: 1px; --jack-lane-font: 2.4px";
 </script>
 
 <Chassis {handle} flipped={props.flipped} finish={skin.finish} name={props.name}>
@@ -95,7 +95,7 @@
   .wordmark {
     font-family: var(--ae-font-display);
     font-weight: 700;
-    font-size: 5px;
+    font-size: 3.5px;
     letter-spacing: var(--ae-legend-spacing);
     color: var(--ae-faceplate-ink, var(--ae-text-primary));
   }

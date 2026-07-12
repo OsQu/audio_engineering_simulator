@@ -483,10 +483,12 @@ const CATALOG: &[CatalogEntry] = &[
     CatalogEntry {
         type_id: "synth_voice",
         name: "Synth Voice",
+        // A compact desktop synth module, sized to sit alongside the 8i6 (a tabletop unit, not a
+        // console): fader + ADSR knobs + a small envelope screen fit across ~220 mm.
         form_factor: FormFactor::Desktop {
-            width_mm: 600.0,
-            height_mm: 90.0,
-            depth_mm: 300.0,
+            width_mm: 220.0,
+            height_mm: 62.0,
+            depth_mm: 150.0,
         },
         nodes: &[|_cfg| Box::new(SynthVoice::new(Volts::new(1.0), Ohms::new(1.0)))],
         internal: &[],
@@ -546,10 +548,12 @@ const CATALOG: &[CatalogEntry] = &[
     CatalogEntry {
         type_id: "midi_controller",
         name: "MIDI Controller",
+        // A compact controller/thru box (played via the focus keybed), 8i6-width so the stock set reads
+        // as one tidy scale — the true-to-life 49-key (~800 mm) variant is a later, realistic addition.
         form_factor: FormFactor::Desktop {
-            width_mm: 800.0,
-            height_mm: 80.0,
-            depth_mm: 250.0,
+            width_mm: 210.0,
+            height_mm: 42.0,
+            depth_mm: 110.0,
         },
         nodes: &[|_cfg| Box::new(EventThru::new(64))],
         internal: &[],
@@ -717,10 +721,12 @@ const CATALOG: &[CatalogEntry] = &[
     CatalogEntry {
         type_id: "speaker",
         name: "Speaker",
+        // A compact desktop monitor — kept small so it sits with the 8i6 rather than towering over the
+        // bench; a full-size main monitor is a later realistic variant.
         form_factor: FormFactor::Desktop {
-            width_mm: 250.0,
-            height_mm: 380.0,
-            depth_mm: 300.0,
+            width_mm: 130.0,
+            height_mm: 170.0,
+            depth_mm: 150.0,
         },
         nodes: &[|_cfg| Box::new(Speaker::new(1.0, InputZ::new(Ohms::new(10_000.0))))],
         internal: &[],
@@ -1476,11 +1482,12 @@ const CATALOG: &[CatalogEntry] = &[
     CatalogEntry {
         type_id: "computer",
         name: "Computer",
-        // A laptop footprint (closed, ~15"): ~350 × 22 × 245 mm (W×H×D) — the studio's DAW host.
+        // A compact laptop-ish DAW host, trimmed to sit with the 8i6; tall enough to show the USB send
+        // meters on the front. A true 15" footprint is a later realistic variant.
         form_factor: FormFactor::Desktop {
-            width_mm: 350.0,
-            height_mm: 22.0,
-            depth_mm: 245.0,
+            width_mm: 240.0,
+            height_mm: 28.0,
+            depth_mm: 175.0,
         },
         nodes: &[
             |_cfg| {

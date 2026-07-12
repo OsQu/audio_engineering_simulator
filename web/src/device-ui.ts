@@ -21,8 +21,10 @@ import Computer from "./widgets/Computer.svelte";
 import ComputerMixer from "./widgets/ComputerMixer.svelte";
 import Console from "./widgets/Console.svelte";
 import FocusriteControl from "./widgets/FocusriteControl.svelte";
+import MidiController from "./widgets/MidiController.svelte";
 import Panel from "./widgets/Panel.svelte";
 import Scarlett8i6 from "./widgets/Scarlett8i6.svelte";
+import Speaker from "./widgets/Speaker.svelte";
 import SynthVoice from "./widgets/SynthVoice.svelte";
 
 /** The props every faceplate/focus-surface component accepts — the same shape `App` feeds `Panel`
@@ -54,6 +56,8 @@ const FACEPLATES: Record<string, Component<DeviceUiProps>> = {
   synth_voice: SynthVoice,
   scarlett_8i6: Scarlett8i6,
   computer: Computer,
+  speaker: Speaker,
+  midi_controller: MidiController,
 };
 
 /** The faceplate component for a device type — its own, or the generic `Panel`. */

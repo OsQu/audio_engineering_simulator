@@ -15,8 +15,10 @@ import type { Room, Vec3, Wall } from "./spatial";
  *  to 15 in Task 5.7.8: the default scene became the round-trip **monitoring loop** through the computer
  *  (synth → 8i6 → computer → 8i6 → speaker), so a stale v14 save (the earlier placeholder chain) is
  *  discarded to bring every studio up to the new default. (v14 grew the 8i6 to the full 206-param unit
- *  and added the `computer` peer.) */
-export const SCHEMA_VERSION = 15;
+ *  and added the `computer` peer.)
+ *  v16: the stock devices (synth_voice / midi_controller / speaker / computer) were shrunk to compact,
+ *  8i6-scale footprints and given proper faceplates, so their placements changed — discard stale v15. */
+export const SCHEMA_VERSION = 16;
 
 /** A space (room) in the studio — a UI grouping over the one engine graph (the engine never knows
  *  about rooms). A space is a **rectangular room**: gear stands against one of four walls, each an
