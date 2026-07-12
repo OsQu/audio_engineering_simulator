@@ -21,6 +21,17 @@
 //! It's deliberately a struct behind a constructor and a single `process` entry,
 //! **not** a contract: a reactive source later makes an edge a 2nd-order transfer function
 //! depending on both endpoints, which generalizes the representation without touching callers.
+//!
+//! ## Unbalanced into balanced (the grounding edge)
+//! A **1-conductor** analog output may feed a **2-conductor** balanced input — the honest model of
+//! a TS plug seated in a combo/TRS jack, whose sleeve **grounds the cold pin**. The hot leg
+//! (conductor 0) gets the normal baked transform, and because the differential divider gain is the
+//! same `Zin/(Zout+Rc+Zin)` formula an unbalanced source keeps its *exact* 1→1 gain; the cold leg
+//! (conductor 1) is baked to a constant **0 V** (`gain = 0`), yet still fully overwritten every
+//! block (the schedule contract — nothing reads stale data). Coupled interference lands on **both**
+//! legs (the wire pair is physically adjacent), so hum/pickup stays common-mode and cancels at a
+//! downstream difference. The reverse (a 2-conductor output into a 1-conductor input) has no
+//! grounding-plug physics and stays a [`CompileError`].
 
 mod events;
 mod hum;
@@ -70,7 +81,9 @@ pub enum CompileError {
     /// conductor mismatch (a balanced output into an unbalanced input) or a digital **channel-count**
     /// mismatch (e.g. an 8-channel USB send into a 2-channel return). Lane count unifies conductors
     /// (analog) and channels (digital), so one check covers both. Match the counts, or insert an
-    /// adapter/mux (not modeled) — cross-count connections aren't bridged on a wire.
+    /// adapter/mux (not modeled) — cross-count connections aren't bridged on a wire. The **one**
+    /// exception is an analog **1-conductor output into a 2-conductor (balanced) input**, which is
+    /// legal (the module docs' grounding edge — a TS plug in a combo jack); the reverse still errors.
     LaneCountMismatch {
         from_node: usize,
         from_port: usize,
@@ -729,6 +742,10 @@ pub fn compile(
                     })
                     .collect();
                 let gains = fan_out_gains(z_out, &branches);
+                // The output's own conductor count. When it's below the load's (a 1-conductor output
+                // into a 2-conductor balanced input — the grounding edge), the extra input legs have
+                // no source conductor: they are **grounded** (the cold pin a TS plug shorts).
+                let src_conductors = out_face.lane_count();
                 for (k, &ei) in group.iter().enumerate() {
                     let e = &edges[ei];
                     let load = nodes[e.to_node.0].inputs()[e.to_port]
@@ -736,16 +753,27 @@ pub fn compile(
                         .expect("analog input face");
                     let conductors = load.conductors();
                     let mut kinds = Vec::with_capacity(conductors);
-                    for _ in 0..conductors {
+                    for cond in 0..conductors {
+                        // A conductor past the source's own count is a grounded cold leg: constant
+                        // 0 V (gain 0, no cable rolloff — there's no signal to roll off), still fully
+                        // overwritten each block. Coupled interference is added to it below, so hum
+                        // and pickup land common-mode on hot and cold alike. For a matched edge
+                        // (equal conductor counts) `grounded` is never true, so the bake is identical
+                        // to before — the 1→1 and 2→2 paths stay byte-for-byte the same.
+                        let grounded = cond >= src_conductors;
                         kinds.push(EdgeKind::Analog(EdgeTransform {
-                            gain: gains[k],
-                            lowpass: e.cable.map(|c| c.lowpass(z_out, load, rate)),
+                            gain: if grounded { 0.0 } else { gains[k] },
+                            lowpass: if grounded {
+                                None
+                            } else {
+                                e.cable.map(|c| c.lowpass(z_out, load, rate))
+                            },
                             pickup: None, // pickup/hum are installed below, after the gains are baked
                             hum: None,
                         }));
                     }
                     edge_kinds[ei] = Some(kinds);
-                    // Same divider gain on every conductor — record it once as the edge's loading loss.
+                    // The hot leg's divider gain — the single loading loss reported for the edge.
                     edge_gains[ei] = Some(gains[k]);
                 }
             }
@@ -839,9 +867,14 @@ pub fn compile(
         // Map lane k of the source port to lane k of the destination port.
         let src_base = out_port_base[e.from_node.0][e.from_port];
         let dst_base = in_port_base[e.to_node.0][e.to_port];
+        // The source port's own lane count. On a matched edge it equals the destination's, so each
+        // lane maps straight across. On the grounding edge (1-conductor source → 2-conductor input)
+        // the extra cold leg has no source lane, so it reads the single source lane — harmless,
+        // since its transform's gain is 0 (it writes only its grounded 0 V + common-mode pickup).
+        let src_lanes = nodes[e.from_node.0].outputs()[e.from_port].lane_count();
         for (k, kind) in kinds.into_iter().enumerate() {
             dst.push(Step::Edge {
-                src: src_base + k,
+                src: src_base + k.min(src_lanes - 1),
                 dst: dst_base + k,
                 kind,
             });
@@ -946,9 +979,12 @@ pub fn compile(
 /// count from what it's wired to — anchored by the fixed faces of sources, the balanced driver,
 /// and the receiver. This propagates those counts along edges to a fixpoint: a `Some` count on
 /// one end of an edge fixes a still-unknown per-conductor node on the other. Two *known* counts
-/// that disagree (e.g. a balanced output into an unbalanced input) are a [`LaneCountMismatch`].
-/// Per-conductor nodes left unconstrained (isolated, or in an all-unbalanced subgraph) default to
-/// one conductor — i.e. they stay plain unbalanced nodes and are never lifted.
+/// that disagree (e.g. a balanced output into an unbalanced input) are a [`LaneCountMismatch`] —
+/// with **one** exception: an analog **1-conductor output into a 2-conductor input** is legal (the
+/// grounding edge — a TS plug in a combo jack shorts the cold pin), so it is neither rejected nor
+/// propagated (a terminating boundary, not a constraint to spread). Per-conductor nodes left
+/// unconstrained (isolated, or in an all-unbalanced subgraph) default to one conductor — i.e. they
+/// stay plain unbalanced nodes and are never lifted.
 ///
 /// Returns one multiplicity per node (meaningful for per-conductor nodes; 1 otherwise).
 ///
@@ -979,8 +1015,15 @@ fn infer_conductors(
         for e in edges {
             let from = port_cond(e.from_node.0, true, e.from_port, &m);
             let to = port_cond(e.to_node.0, false, e.to_port, &m);
+            // The grounding edge: a 1-conductor **analog** output into a 2-conductor input is legal
+            // (the cold pin is shorted to ground). It's a terminating boundary, so it neither errors
+            // nor propagates — it just falls through to the no-op arm. Restricted to analog: a
+            // digital 1ch→2ch is a real channel-count mismatch and still errors.
+            let unbal_into_bal = from == Some(1)
+                && to == Some(2)
+                && nodes[e.from_node.0].outputs()[e.from_port].domain() == Domain::Analog;
             match (from, to) {
-                (Some(a), Some(b)) if a != b => {
+                (Some(a), Some(b)) if a != b && !unbal_into_bal => {
                     return Err(CompileError::LaneCountMismatch {
                         from_node: e.from_node.0,
                         from_port: e.from_port,
