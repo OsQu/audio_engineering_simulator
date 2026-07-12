@@ -34,6 +34,12 @@ describe("flexStyle", () => {
     expect(decls(flexStyle({ justify: "around" }, "row"))["justify-content"]).toBe("space-around");
   });
 
+  it("emits align-self only when set, mapping the token (the wrap-safe fill for mt:auto)", () => {
+    expect(flexStyle({}, "column")).not.toContain("align-self");
+    expect(decls(flexStyle({ alignSelf: "stretch" }, "column"))["align-self"]).toBe("stretch");
+    expect(decls(flexStyle({ alignSelf: "end" }, "column"))["align-self"]).toBe("flex-end");
+  });
+
   it("adds wrap / fill / relative only when flagged", () => {
     expect(flexStyle({}, "row")).not.toContain("flex-wrap");
     expect(flexStyle({}, "row")).not.toContain("position");
@@ -66,5 +72,16 @@ describe("flexStyle", () => {
 
   it("emits no padding declarations when none are given", () => {
     expect(flexStyle({ gap: 1 }, "row")).not.toContain("padding");
+  });
+
+  it("emits margins in mm and passes 'auto' through (the push-to-far-end idiom)", () => {
+    expect(decls(flexStyle({ mt: 2 }, "column"))["margin-top"]).toBe("2px");
+    expect(decls(flexStyle({ mt: "auto" }, "column"))["margin-top"]).toBe("auto");
+    // Same precedence as padding: per-edge > axis (mx/my) > all (m).
+    const s = decls(flexStyle({ m: 1, my: 2, mb: "auto" }, "column"));
+    expect(s["margin-top"]).toBe("2px"); // from my
+    expect(s["margin-bottom"]).toBe("auto"); // per-edge wins
+    expect(s["margin-left"]).toBe("1px"); // from m
+    expect(flexStyle({ gap: 1 }, "row")).not.toContain("margin");
   });
 });

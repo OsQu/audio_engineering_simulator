@@ -45,53 +45,70 @@
 
 <Chassis {handle} flipped={props.flipped} finish={skin.finish} accent={skin.accent}>
   {#snippet front()}
-    <Row fill wrap relative justify="around" gap={4} style={faceVars}>
+    <Row fill wrap relative justify="around" align="start" gap={4} style={faceVars}>
       <!-- Two combo channels: gain knob, INST/AIR/PAD indicator LEDs (lit from config/param state;
            toggled in Focusrite Control), then the input jack. Written out per channel with **literal**
            ids so the faceplate guardrail can confirm each control/jack is placed and reachable. -->
-      <Col gap={1.5}>
-        <Control id={0} cap="dark" size={14} />
-        <Legend text="Gain 1" />
-        <Row gap={1}>
+      <Col align="start" pt={5}>
+        <Socket dir="input" id={0} size={23} />
+      </Col>
+      <Col gap={1.5} alignSelf="stretch">
+        <Row pt={2} gap={1} align="start">
+          <Legend text="1" />
+          <Control id={0} cap="dark" size={14} />
+        </Row>
+        <Row gap={1} mt="auto" pb={9}>
           <Led on={handle.config("inst1") >= 0.5} label="Inst" />
           <Led on={handle.value(2) >= 0.5} label="Air" />
           <Led on={handle.value(1) >= 0.5} label="Pad" />
         </Row>
-        <Socket dir="input" id={0} size={23} />
       </Col>
-      <Col gap={1.5}>
-        <Control id={3} cap="dark" size={14} />
-        <Legend text="Gain 2" />
-        <Row gap={1}>
+      <Col align="start" pt={5}>
+        <Socket dir="input" id={1} size={23} />
+      </Col>
+      <Col gap={1.5} alignSelf="stretch">
+        <Row pt={2} gap={1} align="start">
+          <Legend text="2" />
+          <Control id={3} cap="dark" size={14} />
+        </Row>
+        <Row gap={1} mt="auto" pb={9}>
           <Led on={handle.config("inst2") >= 0.5} label="Inst" />
           <Led on={handle.value(5) >= 0.5} label="Air" />
           <Led on={handle.value(4) >= 0.5} label="Pad" />
         </Row>
-        <Socket dir="input" id={1} size={23} />
       </Col>
 
       <!-- Monitor: the big centre knob (drives line outs 1–2 via the Rust Monitor group). The
            .monitor frame is decoration (accent hairline); the Col does the layout. -->
       <div class="monitor">
-        <Col gap={1.5}>
+        <Col gap={1.5} px={1.5} py={2.5}>
           <Legend text="Monitor" />
           <Control id={204} cap="dark" size={28} />
         </Col>
       </div>
 
       <!-- Two headphone outputs, each with its own level knob + front jack. -->
-      <Col gap={1.5}>
-        <Legend text="◎ Phones 1" />
-        <Control id={6} cap="dark" size={8} />
-        <Socket dir="output" id={6} />
-      </Col>
-      <Col gap={1.5}>
-        <Legend text="◎ Phones 2" />
-        <Control id={7} cap="dark" size={8} />
-        <Socket dir="output" id={7} />
-      </Col>
+      <Row alignSelf="stretch" align="start" gap={4} pt={5}>
+        <Col gap={6}>
+          <Row align="start">
+            <Legend text="1" />
+            <Control id={6} cap="dark" size={10} />
+          </Row>
+          <Socket dir="output" id={6} />
+        </Col>
+        <Col justify="center" alignSelf="stretch">
+          <Legend text="🎧" />
+        </Col>
+        <Col gap={6}>
+          <Row align="start">
+            <Legend text="2" />
+            <Control id={7} cap="dark" size={10} />
+          </Row>
+          <Socket dir="output" id={7} />
+        </Col>
+      </Row>
 
-      <Place x={4} b={2}>
+      <Place x={4} b={-6}>
         <span class="wordmark">Scarlett <b>8i6</b></span>
       </Place>
     </Row>
@@ -161,9 +178,6 @@
   /* Layout is composition now — <Row>/<Col>/<Place> (widgets/layout) carry the flex scaffolding, in mm.
      This block keeps only genuine *decoration* (frames, silkscreen, wordmark type), not layout. */
   .monitor {
-    /* A hairline frame to set the monitor section apart, in the brand accent. */
-    border: 1px solid color-mix(in srgb, var(--ae-accent, var(--ae-line-panel)) 45%, transparent);
-    border-radius: var(--ae-radius-control);
     padding: 1.5px 2.5px;
   }
   /* The decorative DC barrel-jack silkscreen (no patchable port). */

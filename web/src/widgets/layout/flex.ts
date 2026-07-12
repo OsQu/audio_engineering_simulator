@@ -23,8 +23,12 @@ export type Justify = "start" | "center" | "end" | "between" | "around" | "evenl
 export interface FlexProps {
   /** Gap between children, in mm. */
   gap?: number;
-  /** Cross-axis alignment. Default `center`. */
+  /** Cross-axis alignment of this container's *children* (maps to `align-items`). Default `center`. */
   align?: Align;
+  /** Cross-axis alignment of *this* item within its own parent (maps to `align-self`). `"stretch"`
+   *  fills the item to its wrap-line's cross size — the room `mt="auto"` needs to push a child to the
+   *  far end. Prefer this over `fill`'s `height:100%`: it is wrap-safe and needs no definite parent height. */
+  alignSelf?: Align;
   /** Main-axis distribution. Default `start`. */
   justify?: Justify;
   /** Allow children to wrap onto multiple lines. */
@@ -43,7 +47,26 @@ export interface FlexProps {
   pr?: number;
   pb?: number;
   pl?: number;
+  /** Margin on all edges, in mm — or `"auto"` to absorb free space (overridden by mx/my, then per-edge). */
+  m?: Length;
+  /** Horizontal margin (left+right). */
+  mx?: Length;
+  /** Vertical margin (top+bottom). */
+  my?: Length;
+  mt?: Length;
+  mr?: Length;
+  mb?: Length;
+  ml?: Length;
 }
+
+/**
+ * A length in mm, or the string `"auto"`. An `auto` margin is the flexbox idiom for
+ * pushing an item (and its following siblings) to the far end of the container —
+ * e.g. `mt="auto"` in a Col drops the item to the bottom while earlier items stay
+ * at the top. Needs surplus space to distribute, so the parent must stretch/size
+ * the item's cross-axis (`align="stretch"`) or give it a height.
+ */
+export type Length = number | "auto";
 
 const ALIGN: Record<Align, string> = {
   start: "flex-start",
@@ -62,18 +85,21 @@ const JUSTIFY: Record<Justify, string> = {
   evenly: "space-evenly",
 };
 
-/** 1 px ≡ 1 mm on the faceplate; `undefined` emits nothing. */
-const mm = (v: number | undefined): string | null => (v == null ? null : `${v}px`);
+/** 1 px ≡ 1 mm on the faceplate; `"auto"` passes through; `undefined` emits nothing. */
+const mm = (v: Length | undefined): string | null =>
+  v == null ? null : v === "auto" ? "auto" : `${v}px`;
 
 /**
  * Build the inline `style` declaration string for a flex container in the given
- * `dir`. Padding resolves in precedence order: per-edge → axis (px/py) → all (p).
+ * `dir`. Padding and margin each resolve in precedence order: per-edge → axis
+ * (x/y) → all. Margins accept `"auto"` (the push-to-far-end flexbox idiom).
  */
 export function flexStyle(p: FlexProps, dir: "row" | "column"): string {
   const decls: (string | null)[] = [
     "display:flex",
     `flex-direction:${dir}`,
     `align-items:${ALIGN[p.align ?? "center"]}`,
+    p.alignSelf != null ? `align-self:${ALIGN[p.alignSelf]}` : null,
     `justify-content:${JUSTIFY[p.justify ?? "start"]}`,
     p.gap != null ? `gap:${mm(p.gap)}` : null,
     p.wrap ? "flex-wrap:wrap" : null,
@@ -82,14 +108,19 @@ export function flexStyle(p: FlexProps, dir: "row" | "column"): string {
     p.relative ? "position:relative" : null,
   ];
 
-  const edge = (specific?: number, axis?: number): string | null => mm(specific ?? axis ?? p.p);
-  const pad: Record<string, string | null> = {
-    "padding-top": edge(p.pt, p.py),
-    "padding-right": edge(p.pr, p.px),
-    "padding-bottom": edge(p.pb, p.py),
-    "padding-left": edge(p.pl, p.px),
+  const pad = (specific?: number, axis?: number): string | null => mm(specific ?? axis ?? p.p);
+  const mrg = (specific?: Length, axis?: Length): string | null => mm(specific ?? axis ?? p.m);
+  const box: Record<string, string | null> = {
+    "padding-top": pad(p.pt, p.py),
+    "padding-right": pad(p.pr, p.px),
+    "padding-bottom": pad(p.pb, p.py),
+    "padding-left": pad(p.pl, p.px),
+    "margin-top": mrg(p.mt, p.my),
+    "margin-right": mrg(p.mr, p.mx),
+    "margin-bottom": mrg(p.mb, p.my),
+    "margin-left": mrg(p.ml, p.mx),
   };
-  for (const [prop, val] of Object.entries(pad)) {
+  for (const [prop, val] of Object.entries(box)) {
     if (val != null) decls.push(`${prop}:${val}`);
   }
 
