@@ -569,6 +569,9 @@ _Tasks to be elaborated when we reach this Epic._
   device. Further fidelity corner cases accrue here as they surface.
 - **Story 5.7** — Per-device faceplate UIs: each device authors its own look & feel. ✅ **Complete**
   (parts 1 + 2; merged to `main`).
+- **Story 5.8** — 48V phantom power: balanced preamp front-end, a patchable condenser mic, and the
+  compile-time phantom DC operating-point solve (retiring the mic's self-`powered` flag). 🚧 **In
+  progress** (planned; see the Story block below).
 
 ### Story 5.7 — Per-device faceplate UIs — ✅ **Complete**
 
@@ -864,6 +867,136 @@ connectivity pass over a side-graph, plus an emergent runtime consequence — ne
   _Prerequisites:_ the carrier/clock seam and `ClockDomainId` stamp (Story 1.6); multiple digital
   devices and the fractional resampler (this Epic). ROI is high here (multi-device digital sync is the
   heart of the lesson), nil before.
+
+### Story 5.8 — 48V Phantom Power — 🚧 **In progress**
+
+_Goal:_ Make +48 V phantom power **honest end-to-end**: a patchable **condenser mic** whose power
+arrives from the device it's plugged into, a **balanced preamp front-end** that separates the phantom
+pedestal from the audio the way real hardware does, and a **48V switch on the 8i6** that actually
+reaches the mic. Retires the last in-domain label on the signal path — `CondenserMic`'s self-asserted
+`powered` flag (condenser.rs's documented "informed approximation") — by replacing it with a
+**compile-time DC operating-point solve** over the patch's real connectivity. Anchors to
+PROJECT_PLAN §2 (phantom emerges from voltage physics, never a flag), §5.3 (local solve at compile /
+per-sample forward), and the Epic-4/5 layer rule (catalog owns specs, web owns look & feel). Closes the
+one switch Story 5.7.6 left deferred ("48V may stay deferred if that side-graph isn't built here").
+
+_Watch out:_
+
+- **The DC solve is compile-time physics, not a label.** The interconnect is linear (nonlinearity lives
+  in devices) and the phantom network is static (48 V behind fixed resistors), so **superposition**
+  splits the problem: solve the DC bias network once at compile (the operating point — SPICE `.OP`),
+  superpose the AC signal per-sample forward as today (`osku_physics_concepts.md` §17). Do **not** try
+  to push per-sample voltage backwards through the pull DAG — the stationary DC axis is exactly what
+  compile-time solving is for, the same trade the loading divider already makes.
+- **Common-mode rejection cannot be applied after a nonlinearity.** The 48 V pedestal must be removed
+  **before** the preamp's gain/rail clamp (`clamp(48·g, ±10)` on both legs pins the rail and
+  annihilates the differential — §17). Difference-first is *exact* at the ideal-CMRR altitude.
+- **Hot-path contracts hold:** the resolution pass allocates/fails only in `compile`; `process` stays
+  alloc-free, panic-free, branch-light. The capsule tone goes through the seeded/deterministic
+  machinery (no ambient entropy; a phase accumulator, not `sin` of wall-clock).
+- **Don't break the default scene:** the synth (unbalanced) feeds the 8i6 preamp today. Making the
+  preamp balanced requires the unbal→bal edge rule to land **first**, and a regression oracle that the
+  synth→preamp loading gain is *numerically unchanged*.
+- **Scope guards:** single-edge resolution only (mic directly into the supplying input); no finite
+  CMRR; no per-sample supply modulation; no back-driven DC into non-phantom sources (48V engaged with a
+  synth plugged in simply resolves nothing — the real-world "mostly harmless" case, simplified).
+
+_Design notes (settled at planning):_
+
+- **48V is a structural config (recompile-on-toggle), like INST.** The DC network *is* topology; when
+  it changes, recompile — the same pattern as repatching and the INST impedance switch, riding the
+  existing `ConfigDescriptor`/schedule-swap machinery. Acoustically safe: the pedestal cancels at every
+  balanced receiver in both states, so the swap can't click. _Rejected: a runtime 48V param with a
+  compile-baked cross-node "supply feed" scaling the mic's pedestal through the supplier's smoother_ —
+  it buys the seconds-long RC charge-up ramp (mic audibly fades in) but needs a new cross-node param
+  mechanism; recorded as a possible later upgrade, not this story.
+- **Resolution lives in engine `compile`, declared via `Node`-trait hooks.** Nodes declare phantom
+  roles per port — a supply (`48 V` behind `6.8 kΩ` per leg, engaged or not) and a load (a DC
+  resistance + minimum operating volts). These are **circuit-topology declarations**, the same class of
+  port-fact as `InputZ`/`OutputZ` — not labels on the signal. `compile` walks analog edges; where an
+  engaged supply faces a declared load it solves the DC divider (reusing the §5.3 local-solve
+  primitives) and hands the producer its terminal volts via a `prepare`-like hook (default no-op).
+  _Rejected: resolving in `build_patch`_ — less engine churn but puts electrical physics in the product
+  layer, against the layer rule.
+- **Sag and dead-mic emerge from the solve.** Supply = 48 V behind 2×6.8 kΩ (3.4 kΩ effective for
+  common-mode current) + the connection's cable series R + the mic's DC load (constant-resistance
+  model). Hand calc at a ~3 mA-class load (12.7 kΩ), no cable: `48·12 700/(3 400+12 700) = 37.86 V`.
+  The mic runs iff terminal volts ≥ its declared minimum — a threshold in the mic's own electronics,
+  the same species as rail clipping, not a flag. _Rejected: constant-current load_ — makes the solve
+  nonlinear (iterative) for no audible payoff; constant-R keeps it a divider.
+- **Unbalanced-into-balanced is an edge rule, not an adapter node.** A 1-conductor output into a
+  2-conductor analog input becomes legal in `compile`: the hot lane gets the normal divider transform,
+  the cold lane is **grounded (0 V)** — literally what a TS plug in a combo jack does (sleeve shorts
+  the cold pin). The differential divider formula is unchanged (`Zin/(Zout+Rc+Zin)`), so existing
+  unbalanced sources keep their exact gain. _Rejected: a build-inserted adapter node_ — electrically
+  wrong: its own Z faces split one loading divider into two near-unity ones, silently deleting the
+  loading loss.
+- **`MicPreamp` grows a balanced front-end: difference-first, then the existing chain.** Input becomes
+  `InputZ::balanced(...)` (2 conductors); `process` computes `s = V+ − V−` (exact pedestal/hum
+  cancellation at ideal CMRR), then PAD → gain → rail → AIR → power as today (2-in/1-out node shape:
+  the `BalancedReceiver` precedent). The per-leg coupling-caps topology becomes distinguishable only
+  under finite CMRR — deferred with it. The declared `InputZ` lumps the phantom feed network's AC
+  loading, as `InputZ` already lumps everything.
+- **The capsule is a declared boundary stand-in: a deterministic test tone.** Acoustics are out of
+  scope (PROJECT_PLAN §2), so `CondenserMic`'s capsule emits an internal sine (level + frequency
+  params, mic-level ~10 mV default, phase-accumulator deterministic), riding the *resolved* pedestal:
+  `V± = V_dc ± s/2`. Toggling 48V audibly kills/raises the tone — the story's in-browser payoff.
+- **Deferred — the "air link" story (separate, not this one):** the missing abstraction from a
+  vibrating source (speaker cone, vocal cords, string) over air to the capsule. Not accurate
+  acoustics — a simple "analog wave over the air" carrier with a transduction seam at each end
+  (pressure↔volts is the declared boundary). Noted at planning: acoustic feedback (mic hears speaker)
+  is already expressible via the delayed-edge primitive — one block ≈ 2.7 ms ≈ 0.93 m of air at
+  343 m/s, so the forced latency is nearly physical — and the open question is how an air path is
+  "patched" (proximity/geometry, not a cable). Howlround as an emergent challenge is the payoff.
+- **Known simplifications (not bugs):** single-edge phantom resolution (through-a-patchbay deferred
+  with 5.1); fan-out from one mic into two supplying inputs unresolved (deferred, real-world-weird);
+  no DC back-drive onto non-load sources; the ramp-up transient (structural toggle is instant).
+
+- **Task 5.8.1 — Unbal→bal edge rule (`engine::compile`).** Make a 1-conductor analog output into a
+  2-conductor analog input legal: hot lane = the normal baked divider transform, cold lane = 0 V
+  (TS-in-combo physics). Conductor inference, pool sizing, and interference coupling (pickup/hum still
+  lands on both conductors) updated. _Done:_ oracle — the divider gain equals the 1→1 case exactly
+  (hand calc in comment); a driven balanced receiver recovers the full signal (`s − 0 = s`); existing
+  1→1 and 2→2 paths byte-identical; engine gate green.
+- **Task 5.8.2 — `MicPreamp` balanced front-end.** Input face → `InputZ::balanced`; `process` takes
+  `V+ − V−` first, then the existing PAD/gain/rail/AIR/power chain. The 8i6 catalog entry keeps
+  working via 5.8.1 (synth still plugs in). _Done:_ oracles — a `48.005/47.995` pair comes out as
+  `gain·0.01` with **zero** DC (pedestal rejected before the clamp); common-mode hum injected on both
+  legs cancels; the default scene's synth→preamp gain is numerically unchanged (regression hand calc);
+  engine + devices tests green.
+- **Task 5.8.3 — Phantom declarations + the compile-time DC solve.** `Node`-trait hooks for supply
+  (volts, per-leg feed R, engaged) and load (DC resistance, minimum volts); `compile` resolves each
+  analog edge's operating point and delivers terminal volts to the producer via a default-no-op hook.
+  `CondenserMic` consumes it: pedestal = resolved volts, dead below its minimum — **the `powered`
+  flag is deleted**. `MicPreamp` grows the supply declaration (engaged via constructor ← config).
+  _Done:_ oracles — `48·12 700/16 100 = 37.86 V` (no cable), sag grows with cable R (hand calc), a
+  long/lossy enough run drops below the minimum ⇒ silent mic, no supply (or disengaged) ⇒ 0 V ⇒
+  silent, supply facing a non-load ⇒ no-op; engine gate green.
+- **Task 5.8.4 — Capsule test tone.** `CondenserMic`'s capsule emits a deterministic internal sine
+  (smoothed level + frequency params, ~10 mV default) differentially on the resolved pedestal:
+  `V± = V_dc ± s/2`. _Done:_ oracles — output common-mode = `V_dc` exactly, differential amplitude =
+  the level param; deterministic across runs (same seed ⇒ identical buffers); no-alloc test still
+  green.
+- **Task 5.8.5 — `condenser_mic` catalog device + the 8i6 48V config.** Catalog entry (balanced XLR
+  out, level/freq params, phantom-load declaration, sane `FormFactor`); the 8i6 gains a **48V**
+  `ConfigDescriptor` (one switch, both preamps — matching the real unit) mapped to the preamps'
+  supply-engaged constructor arg. _Done:_ `catalog_aligns_with_exposed_face` +
+  `descriptors_carry_engine_truth` + an `instantiate` remap test cover the mic; toggling the 8i6's
+  48V config rebuilds with supplies engaged; devices tests green.
+- **Task 5.8.6 — Web: 48V switch + mic in the world.** The 8i6 faceplate presents the 48V toggle (the
+  INST config-toggle pattern; button + LED); the mic renders via the generic `Panel` fallback (no
+  bespoke faceplate — it earns one later); an XLR cable patches mic → combo 1. _Done:_ in-browser —
+  48V off ⇒ silence, on ⇒ the capsule tone through preamp → AD → computer loop → monitors; faceplate
+  mount-test guardrail green; `pnpm run format` + web `check`/`typecheck`/`test`/`build` green.
+
+_Validate:_ a condenser mic patched into the 8i6's combo input is **silent until the 8i6's 48V switch
+is engaged** and audible through the full monitoring loop after; the pedestal is genuinely present on
+the wire (common-mode `V_dc`) and **cancels at the balanced front-end before any nonlinearity**; sag
+emerges from the DC divider with hand-calc oracles (`37.86 V` at the reference load; below-minimum ⇒
+dead mic); the synth still plugs into the same combo jack with **numerically unchanged** gain; the
+mic's self-`powered` flag is gone from the engine; the full Rust gate (`cargo fmt --check && cargo
+lint && cargo test && cargo wasm && cargo docs`) plus web `check`/`typecheck`/`test`/`build` pass;
+verified in-browser.
 
 ---
 

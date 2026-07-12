@@ -9,7 +9,8 @@ we're modeling and why*. Use it to skip re-explaining things already covered.
 > open/short extremes, global-vs-local, feedback/algebraic loops, buffering & pushback, and
 > ground loops), cables, filters (one-pole & 2nd-order), poles, filter implementation,
 > distortion, rail clipping, sampling/decimation/aliasing, windowed-sinc FIR, quantization &
-> dither, group delay/latency, and round-trip latency (feedback via a one-block delay) — through Epic 5.
+> dither, group delay/latency, round-trip latency (feedback via a one-block delay), and phantom
+> power / the balanced front-end — through Epic 5.
 
 ## Contents
 1. [The voltage-native model](#1-the-voltage-native-model)
@@ -28,6 +29,7 @@ we're modeling and why*. Use it to skip re-explaining things already covered.
 14. [Quantization & dBFS calibration](#14-quantization--dbfs-calibration)
 15. [Dither](#15-dither)
 16. [Group delay & latency](#16-group-delay--latency)
+17. [Phantom power & the balanced front-end](#17-phantom-power--the-balanced-front-end)
 
 ---
 
@@ -718,3 +720,83 @@ sample, at a time. The physics we model: a real device with input→output laten
 > transient smearing nonlinear phase causes, phase in the s-plane (and all-pass filters), and why it
 > matters both for the ear and for keeping parallel paths aligned. Not now; §16 and the filter sections
 > (5–9, 13) are the running notes until then.
+
+## 17. Phantom power & the balanced front-end
+
+**What phantom is.** A condenser mic needs DC to run (capsule polarization + its internal impedance
+converter). +48 V phantom delivers it **over the same two conductors as the audio**, as
+**common-mode DC**: the preamp feeds +48 V through one 6.8 kΩ resistor onto *each* leg, and the mic
+draws its current back through them. On the wire:
+
+```
+   V+ = 48 + s/2,   V− = 48 − s/2     ⇒   common-mode 48 V, differential s
+```
+
+"Phantom" because a balanced receiver's difference `V+ − V−` cancels it exactly — equipment that
+subtracts never sees it. It rejects like hum does (§3), by the same mechanism: it's common-mode.
+The pedestal is *huge* relative to the signal: 48 V over a 10 mV mic signal is `20·log10(48/0.01)
+≈ 74 dB` — a whisper on a platform.
+
+**How a real preamp survives its own 48 V.** The feed node would destroy a DC-coupled amplifier, so
+the input stage separates supply from signal *before* anything active:
+
+```
+   XLR leg ──┬── 6.8 kΩ ──> +48 V rail          (phantom feed, per leg)
+             └──╢├── coupling cap ──> diff amp   (DC blocked, audio passes)
+```
+
+1. **Coupling caps** (one per leg): impedance `1/(2πfC)` — infinite at DC, ~short at audio. The
+   48 V exists only on the cable side; the transistors see pure audio. This is exactly our
+   `DcBlocker` (§the AC-coupling node).
+2. **The differential stage** then subtracts the legs, cancelling residual common-mode *AC*.
+
+**Nonlinearity destroys common-mode rejection.** Why must the pedestal go *before* the gain stage?
+Per-leg identical processing preserves the CM/diff decomposition only while it's **linear**:
+`f(cm + d/2) − f(cm − d/2) = f(d)` needs linearity. A clamp (rail, §11) is not linear: with a
+±10 V rail,
+
+```
+   clamp(48.005) − clamp(47.995) = 10 − 10 = 0     — the signal is annihilated
+```
+
+Both legs pin to the rail identically and the difference — the entire audio — is gone. No
+subtraction *afterwards* can recover what the nonlinearity already ate: rejection must happen
+**upstream of the first nonlinear stage**. (Real-world echo: DC or RF overload eats input headroom
+before any diff amp can reject it.)
+
+**In our engine.** At the ideal-CMRR altitude (symmetric legs), **difference-first is exact**: the
+subtraction cancels the pedestal perfectly with no filter state, so a balanced preamp front-end can
+be `V+ − V−` → pad/gain/clamp. The per-leg-caps topology becomes distinguishable only once leg
+*asymmetry* (finite CMRR) is modeled — deferred. The direction quirk: real phantom flows
+*upstream* (preamp → mic), against the pull-based DAG, so `CondenserMic` currently self-emits the
+pedestal as an informed approximation; honest supply needs connectivity resolved at compile.
+
+### DC operating point & superposition
+
+How can a supply that flows *backwards* (preamp → mic) be simulated in a forward, per-sample
+engine? By the decomposition every circuit simulator uses (SPICE: `.OP`, then transient):
+
+- **Superposition:** in a **linear** circuit, the total voltage is the sum of each source's
+  contribution solved independently. Our interconnect is linear by design (§3 — nonlinearity lives
+  inside devices, never in the wiring), so the phantom DC and the audio AC can be solved separately
+  and *added*.
+- **Stationarity:** the phantom network is static — a 48 V rail behind 2×6.8 kΩ (3.4 kΩ effective
+  common-mode) + cable R + the mic's DC load. Nothing about it changes per sample, so solving it
+  per-sample would compute the same number 384 000 times a second. Solve it **once, at compile** —
+  the **DC operating point** — with the *same local divider* as the audio solve:
+
+```
+   mic draw ~3 mA  ⇒  DC load ≈ 12.7 kΩ
+   V_mic = 48 · 12 700 / (3 400 + R_cable + 12 700) ≈ 37.9 V     — sag emerges
+```
+
+- **Per-sample AC forward, as always:** the mic emits `V_dc ± s/2` where `V_dc` is the *solved*
+  operating point. The pedestal in the buffers stays literal volts; only its value is earned from
+  the bias network instead of hardcoded.
+
+"Is the mic powered" then stops being a flag: it's a threshold in the mic's own electronics
+(runs above ~35 V, dead below its minimum) — the same species of device-internal physics as rail
+clipping. This mirrors the trade the engine already makes on the audio axis (divider baked at
+compile, per-sample multiply at runtime), applied to the DC axis. A port *declaring* "48 V
+Thévenin behind 6.8 kΩ when engaged" is not a label on the signal — it's a circuit-topology
+declaration, the same class of fact as `InputZ`/`OutputZ`.
