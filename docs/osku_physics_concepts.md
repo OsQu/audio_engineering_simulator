@@ -734,8 +734,10 @@ draws its current back through them. On the wire:
 
 "Phantom" because a balanced receiver's difference `V+ − V−` cancels it exactly — equipment that
 subtracts never sees it. It rejects like hum does (§3), by the same mechanism: it's common-mode.
-The pedestal is *huge* relative to the signal: 48 V over a 10 mV mic signal is `20·log10(48/0.01)
-≈ 74 dB` — a whisper on a platform.
+The constant DC platform the audio rides on is called the **pedestal** (EE jargon: a fixed DC
+offset lifting a waveform away from 0 V — the statue's pedestal). It carries no audio information,
+only power; the differential wiggle on top is the signal. And it is *huge* relative to that
+signal: 48 V over a 10 mV mic signal is `20·log10(48/0.01) ≈ 74 dB` — a whisper on a platform.
 
 **How a real preamp survives its own 48 V.** The feed node would destroy a DC-coupled amplifier, so
 the input stage separates supply from signal *before* anything active:

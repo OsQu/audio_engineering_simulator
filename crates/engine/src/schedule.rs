@@ -32,6 +32,18 @@
 //! legs (the wire pair is physically adjacent), so hum/pickup stays common-mode and cancels at a
 //! downstream difference. The reverse (a 2-conductor output into a 1-conductor input) has no
 //! grounding-plug physics and stays a [`CompileError`].
+//!
+//! ## Phantom power: the compile-time DC operating point
+//! `compile` also resolves the **phantom DC bias network** (`osku_physics_concepts.md` §17): where
+//! an output port declaring a [`phantom_load`](crate::Node::phantom_load) faces a consumer input
+//! declaring an **engaged** [`phantom_supply`](crate::Node::phantom_supply), the DC operating
+//! point is solved once — the same local divider as the audio solve, over the supply's common-mode
+//! feed, the edge's cable R, and the load — and delivered to the producer via
+//! [`resolve_phantom`](crate::Node::resolve_phantom). The network is linear and static
+//! (superposition, stationarity), so solving it here rather than per-sample is exact; the hot path
+//! carries only the resulting pedestal as ordinary volts. Every load port is resolved explicitly
+//! (0 V when unfed); one load fanned into several engaged supplies is rejected
+//! ([`CompileError::PhantomFanIn`]).
 
 mod events;
 mod hum;
@@ -53,6 +65,7 @@ use crate::readout::{ReadoutHandle, ReadoutId};
 use crate::rng::Rng;
 use crate::signal::{
     AnalogRate, ClockDomainId, Domain, EventBuffer, Lane, SampleBuffer, TimedEvent, VoltageBuffer,
+    Volts,
 };
 use core::fmt;
 
@@ -117,6 +130,11 @@ pub enum CompileError {
     /// A digital edge connects two different sample rates — a clock crossing that needs a
     /// sample-rate converter, not yet modeled.
     ClockCrossingUnsupported { from_node: usize, to_node: usize },
+    /// An output port's declared phantom **load** fans out into more than one **engaged** supply.
+    /// Two feed networks biasing one load in parallel is a real (if weird) circuit, but resolving
+    /// it is deferred — rejected legibly rather than solved wrong. One engaged supply among
+    /// passive / non-supplying / disengaged consumers resolves fine.
+    PhantomFanIn { node: usize, port: usize },
     /// The graph has a cycle; the local-solve engine has no feedback paths to resolve.
     Cycle,
 }
@@ -179,6 +197,11 @@ impl fmt::Display for CompileError {
                 f,
                 "digital edge from node {from_node} to node {to_node} crosses sample rates; \
                  sample-rate conversion is not yet modeled"
+            ),
+            Self::PhantomFanIn { node, port } => write!(
+                f,
+                "node {node} output port {port} declares a phantom load fed by more than one \
+                 engaged supply; multi-supply resolution is not modeled"
             ),
             Self::Cycle => write!(f, "the graph has a cycle"),
         }
@@ -552,7 +575,8 @@ impl Schedule {
 ///
 /// # Errors
 /// Returns [`CompileError`] if no output is set, a port/node reference is out of range, an
-/// input port is connected twice, or the graph has a cycle.
+/// input port is connected twice, a phantom load fans into several engaged supplies, or the
+/// graph has a cycle.
 pub fn compile(
     graph: Graph,
     block_len: usize,
@@ -904,6 +928,44 @@ pub fn compile(
                 continue; // emitted in the pre-loop pass above
             }
             emit_edge(&mut steps, ei);
+        }
+    }
+
+    // --- 8b. Resolve the phantom DC operating point (§17's superposition split: the bias network
+    //         is linear and static, so its solve belongs here, not per-sample). For every output
+    //         port declaring a phantom load, find the engaged supplies among its consumers'
+    //         declared input faces: exactly one ⇒ deliver the divider-solved terminal volts
+    //         (feed/2 ∥ common-mode + the edge's cable R against the load); none ⇒ deliver an
+    //         explicit 0 V (never "hook not called" — a node's powered state is always this
+    //         compile's truth); more than one ⇒ a legible error (multi-supply bias is deferred).
+    //         An engaged supply facing a producer with no load declaration resolves nothing — the
+    //         real-world "mostly harmless" case (48 V into a line output), simplified to a no-op.
+    //         Single-edge resolution only: phantom does not propagate through intermediate nodes. ---
+    for n in 0..node_count {
+        for p in 0..nodes[n].outputs().len() {
+            let Some(load) = nodes[n].phantom_load(p) else {
+                continue;
+            };
+            let mut resolved = Volts::ZERO;
+            let mut engaged_feeds = 0usize;
+            for e in &edges {
+                if e.from_node.0 != n || e.from_port != p {
+                    continue;
+                }
+                let Some(supply) = nodes[e.to_node.0].phantom_supply(e.to_port) else {
+                    continue;
+                };
+                if !supply.engaged() {
+                    continue;
+                }
+                engaged_feeds += 1;
+                if engaged_feeds > 1 {
+                    return Err(CompileError::PhantomFanIn { node: n, port: p });
+                }
+                let r_cable = e.cable.map_or(Ohms::ZERO, |c| c.r());
+                resolved = supply.terminal_volts(r_cable, load);
+            }
+            nodes[n].resolve_phantom(p, resolved);
         }
     }
 

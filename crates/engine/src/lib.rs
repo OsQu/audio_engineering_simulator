@@ -22,7 +22,10 @@ mod signal;
 mod test_util;
 
 pub use dsp::{Biquad, PeakEnvelope};
-pub use electrical::{Cable, Farads, InputZ, Ohms, OnePole, OutputZ, Thevenin, divider_gain};
+pub use electrical::{
+    Cable, Farads, InputZ, Ohms, OnePole, OutputZ, PhantomLoad, PhantomSupply, Thevenin,
+    divider_gain,
+};
 pub use fir::{Decimator, Interpolator, kaiser_beta};
 pub use graph::{Graph, NodeId};
 pub use level::{

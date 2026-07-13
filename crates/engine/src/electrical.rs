@@ -21,6 +21,7 @@ mod farads;
 mod input_z;
 mod ohms;
 mod output_z;
+mod phantom;
 mod thevenin;
 
 pub use cable::{Cable, OnePole};
@@ -30,4 +31,5 @@ pub use farads::Farads;
 pub use input_z::InputZ;
 pub use ohms::Ohms;
 pub use output_z::OutputZ;
+pub use phantom::{PhantomLoad, PhantomSupply};
 pub use thevenin::Thevenin;

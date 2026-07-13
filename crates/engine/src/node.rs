@@ -61,11 +61,12 @@ pub use sum::PassiveSum;
 pub use synth::SynthVoice;
 pub use vu_meter::VuMeter;
 
+use crate::electrical::{PhantomLoad, PhantomSupply};
 use crate::param::{ParamDecl, Params};
 use crate::port::{InputPort, OutputPort};
 use crate::readout::ReadoutDecl;
 use crate::rng::Rng;
-use crate::signal::{AnalogRate, Lane};
+use crate::signal::{AnalogRate, Lane, Volts};
 
 /// A black-box processing element: fixed electrical faces plus a per-block voltage transform.
 ///
@@ -145,6 +146,37 @@ pub trait Node {
     /// Nodes own their state across compiles, so a stateful filter node needs the rate delivered
     /// to it here. Off the hot path.
     fn prepare(&mut self, _rate: AnalogRate) {}
+
+    /// The phantom-power **supply** this node feeds back up input port `port`'s wire pair, if any
+    /// — a preamp's mic input declaring "+48 V behind 6.8 kΩ per leg, engaged or not".
+    ///
+    /// A **circuit-topology declaration**, the same class of port-fact as
+    /// [`InputZ`](crate::InputZ)/[`OutputZ`](crate::OutputZ) — never a label on the signal.
+    /// `compile` reads it when resolving each analog edge's DC operating point (see
+    /// [`resolve_phantom`](Self::resolve_phantom)). Default: no port supplies phantom. Not
+    /// forwarded through the per-conductor lift — phantom lives on fixed balanced faces.
+    fn phantom_supply(&self, _port: usize) -> Option<PhantomSupply> {
+        None
+    }
+
+    /// The phantom-power **load** this node draws through output port `port`'s wire pair, if any —
+    /// a condenser mic's XLR output declaring its DC resistance and minimum operating volts.
+    ///
+    /// The load-side twin of [`phantom_supply`](Self::phantom_supply): a circuit-topology
+    /// declaration `compile` solves the DC divider against. Default: no port draws phantom.
+    fn phantom_load(&self, _port: usize) -> Option<PhantomLoad> {
+        None
+    }
+
+    /// Deliver the compile-solved phantom DC **operating point** at output port `port`'s terminals.
+    ///
+    /// Called by [`compile`](crate::compile) — the `prepare`-like delivery of the §5.3-style DC
+    /// solve — **once for every output port that declares a [`phantom_load`](Self::phantom_load)**:
+    /// the solved terminal volts when the port faces exactly one engaged supply, and an explicit
+    /// **0 V** otherwise (no consumer, no supply declared, or the supply disengaged) — so a node's
+    /// powered state is always this compile's truth, never stale. Ports without a load declaration
+    /// are never called; the default is a no-op. Off the hot path.
+    fn resolve_phantom(&mut self, _port: usize, _volts: Volts) {}
 
     /// The latency this node adds to the signal, in **analog-rate samples** — its filters' group
     /// delay. Default 0: memoryless or negligible-delay nodes (gain, sum, the voice, the speaker)

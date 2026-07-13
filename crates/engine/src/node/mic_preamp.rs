@@ -4,7 +4,7 @@
 
 use super::Node;
 use crate::dsp::Biquad;
-use crate::electrical::{InputZ, Ohms, OutputZ};
+use crate::electrical::{InputZ, Ohms, OutputZ, PhantomSupply};
 use crate::param::{ParamDecl, ParamId, Params};
 use crate::port::{InputPort, OutputPort};
 use crate::signal::{AnalogRate, Lane, SampleRate, Volts};
@@ -47,12 +47,24 @@ use crate::signal::{AnalogRate, Lane, SampleRate, Volts};
 /// make distinguishable. An **unbalanced** source still plugs straight in: the schedule's grounding
 /// edge (a TS plug's sleeve shorts the cold pin) delivers hot = signal, cold = 0, and `s − 0 = s`.
 ///
+/// # The phantom supply
+/// The mic input **declares** a +48 V phantom feed ([`Node::phantom_supply`]:
+/// [`PHANTOM_VOLTS`](Self::PHANTOM_VOLTS) behind [`PHANTOM_FEED_PER_LEG_OHMS`](Self::PHANTOM_FEED_PER_LEG_OHMS)
+/// per leg — IEC 61938 P48), engaged or not per [`with_phantom`](Self::with_phantom). Whether it's
+/// engaged is **structural**, like INST: the DC network *is* topology, so the 48V switch recompiles
+/// (and the swap can't click — the pedestal cancels at this very front-end in both states). The
+/// solve itself lives in `compile`; the declared `InputZ` already lumps the feed network's AC
+/// loading, as `InputZ` lumps everything.
+///
 /// One (balanced, two-lane) input; one output.
 pub struct MicPreamp {
     gain: f32,
     rail: f32,
     /// The engaged-PAD linear factor, `10^(PAD_DB/20)` — precomputed at construction.
     pad_factor: f32,
+    /// Whether the +48 V phantom feed is switched on — part of the declared DC topology
+    /// (see [`with_phantom`](Self::with_phantom)), read by `compile`, never by `process`.
+    phantom_engaged: bool,
     /// The AIR high-shelf, baked from the analog rate at [`prepare`](Node::prepare). `None` until
     /// prepared — an unprepared preamp applies no shelf (AIR inert), like `DcBlocker`.
     air: Option<Biquad>,
@@ -83,6 +95,11 @@ impl MicPreamp {
 
     /// PAD attenuation in dB (an informed approximation of the Scarlett pad).
     pub const PAD_DB: f32 = -10.0;
+    /// The phantom supply rail: standard +48 V (IEC 61938 "P48").
+    pub const PHANTOM_VOLTS: f32 = 48.0;
+    /// The P48 per-leg feed resistance: 6.8 kΩ onto each conductor (3.4 kΩ effective for the
+    /// common-mode draw — the two legs in parallel).
+    pub const PHANTOM_FEED_PER_LEG_OHMS: f32 = 6_800.0;
     /// AIR high-shelf design: corner, Q, and boost. Informed approximation of the published Air curve.
     const AIR_FREQ_HZ: f64 = 10_000.0;
     const AIR_Q: f64 = 0.707;
@@ -112,6 +129,7 @@ impl MicPreamp {
             gain,
             rail,
             pad_factor: 10.0_f32.powf(Self::PAD_DB / 20.0),
+            phantom_engaged: false,
             air: None,
             param_decls: [
                 ParamDecl {
@@ -147,6 +165,15 @@ impl MicPreamp {
             outputs: [OutputZ::new(z_out).into()],
         }
     }
+
+    /// The same preamp with its +48 V phantom feed switched on or off (off by default from
+    /// [`new`](Self::new)). Structural, like the INST impedance choice: the catalog maps the
+    /// device's 48V config to this at build, and toggling it recompiles.
+    #[must_use]
+    pub fn with_phantom(mut self, engaged: bool) -> Self {
+        self.phantom_engaged = engaged;
+        self
+    }
 }
 
 impl Node for MicPreamp {
@@ -160,6 +187,18 @@ impl Node for MicPreamp {
 
     fn params(&self) -> &[ParamDecl] {
         &self.param_decls
+    }
+
+    fn phantom_supply(&self, port: usize) -> Option<PhantomSupply> {
+        // The feed network is declared engaged or not — the 48V switch is part of the topology,
+        // and `compile` resolves whatever load faces this input against it.
+        (port == 0).then(|| {
+            PhantomSupply::new(
+                Volts::new(Self::PHANTOM_VOLTS),
+                Ohms::new(Self::PHANTOM_FEED_PER_LEG_OHMS),
+                self.phantom_engaged,
+            )
+        })
     }
 
     fn prepare(&mut self, rate: AnalogRate) {
@@ -277,6 +316,21 @@ mod tests {
             inst.outputs(),
             &[OutputPort::Analog(OutputZ::new(Ohms::new(150.0)))]
         );
+    }
+
+    #[test]
+    fn declares_the_phantom_supply_disengaged_by_default() {
+        // The P48 feed network is a circuit-topology declaration on the mic input: +48 V behind
+        // 6.8 kΩ per leg. `new` leaves it disengaged; `with_phantom(true)` is the 48V switch.
+        let p = preamp(1.0, 10.0);
+        let supply = p.phantom_supply(0).expect("input 0 declares the feed");
+        assert_relative_eq!(supply.volts().get(), 48.0);
+        assert_relative_eq!(supply.feed_per_leg().get(), 6_800.0);
+        assert!(!supply.engaged(), "disengaged until the 48V switch");
+        assert!(p.phantom_supply(1).is_none(), "only the mic input feeds");
+
+        let engaged = preamp(1.0, 10.0).with_phantom(true);
+        assert!(engaged.phantom_supply(0).expect("declared").engaged());
     }
 
     #[test]
