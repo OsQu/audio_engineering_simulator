@@ -974,6 +974,7 @@ mod phantom_phenomena {
     use crate::node::{BalancedReceiver, CondenserMic, MicPreamp, TestSource};
     use crate::signal::Volts;
     use approx::assert_relative_eq;
+    use std::f64::consts::TAU;
 
     fn rate() -> AnalogRate {
         AnalogRate::new(384_000.0)
@@ -1009,13 +1010,13 @@ mod phantom_phenomena {
     #[test]
     fn solved_operating_point_rides_the_wire() {
         // The §17 reference solve, no cable: V_dc = 48·12 700/(3 400 + 0 + 12 700) = 37.8634 V.
-        // Tapping the mic's open-circuit hot leg with signal = 0.02 V shows the earned pedestal
-        // plus half the differential: 37.8634 + 0.01 = 37.8734 V — power arrived from the patch,
-        // not from any flag.
+        // The capsule tone is purely differential and starts at phase 0, so the mic's open-circuit
+        // hot leg at the first sample is the earned pedestal *alone* (sin 0 = 0): 37.8634 V — power
+        // arrived from the patch, not from any flag. (Later samples add the ±½·tone wiggle on top of
+        // this same pedestal — the difference-first preamp then rejects the pedestal, see
+        // `preamp_recovers_audio_and_rejects_the_solved_pedestal`.)
         let out = run(0.02, true, None, true);
-        for &v in out.as_slice() {
-            assert_relative_eq!(v, 37.8734, epsilon = 1e-3);
-        }
+        assert_relative_eq!(out.get(0).get(), 37.8634, epsilon = 1e-3);
     }
 
     #[test]
@@ -1093,11 +1094,15 @@ mod phantom_phenomena {
         // gain 100, rail ±10 V. The edge divider is 10 000/(150 + 10 000) = 0.985222 on every
         // conductor, so the preamp sees a 37.30 V common-mode pedestal and a 0.0197044 V
         // differential. Difference-first rejects the pedestal *before* the rail (clamp-first would
-        // pin both legs at ±10 and annihilate the audio): out = 100 · 0.0197044 = 1.97044 V with
-        // zero DC. Toggling 48V off (a rebuild — the switch is structural) ⇒ dead mic ⇒ silence.
+        // pin both legs at ±10 and annihilate the audio). The differential is now the capsule sine
+        // `0.02·sin(2π·1000·k/384000)`, so the recovered audio is that sine scaled by
+        // 100 · 0.985222 = 98.5222 ⇒ amplitude 1.97044 V, with **zero DC** (no trace of the 37 V
+        // pedestal). Toggling 48V off (a rebuild — the switch is structural) ⇒ dead mic ⇒ silence.
         let out = run(0.02, true, None, false);
-        for &v in out.as_slice() {
-            assert_relative_eq!(v, 1.970_44, epsilon = 1e-3);
+        for (k, &v) in out.as_slice().iter().enumerate() {
+            let want = 1.970_44 * (TAU * 1_000.0 * k as f64 / 384_000.0).sin();
+            // f32 note: recovered from two ~37.3 V legs, so ~µV-scale cancellation noise ×100.
+            assert_relative_eq!(f64::from(v), want, epsilon = 1e-3);
         }
         let out = run(0.02, false, None, false);
         assert!(out.as_slice().iter().all(|&v| v == 0.0));
@@ -1123,8 +1128,8 @@ mod phantom_phenomena {
     #[test]
     fn one_engaged_supply_among_passive_consumers_resolves() {
         // Fan-out into one engaged supply + a passive receiver is fine: the load resolves from the
-        // single feed (37.8634 V, no cable) and the mic runs. Tap the mic's open-circuit hot leg:
-        // 37.8634 + 0.02/2 = 37.8734 V.
+        // single feed (37.8634 V, no cable) and the mic runs. Tap the mic's open-circuit hot leg at
+        // the first sample (phase 0 ⇒ the tone is 0): the earned pedestal alone, 37.8634 V.
         let mut g = Graph::new();
         let mic = g.add(CondenserMic::new(Volts::new(0.02), Ohms::new(150.0)));
         let pre = g.add(preamp(100.0, true));
@@ -1135,9 +1140,17 @@ mod phantom_phenomena {
         let mut sched = compile(g, 8, rate(), 0).expect("one supply among passives resolves");
         let mut out = VoltageBuffer::zeros(8, rate());
         sched.process(&mut out);
-        for &v in out.as_slice() {
-            assert_relative_eq!(v, 37.8734, epsilon = 1e-3);
-        }
+        assert_relative_eq!(out.get(0).get(), 37.8634, epsilon = 1e-3);
+    }
+
+    #[test]
+    fn capsule_tone_is_deterministic() {
+        // Structural determinism (no ambient entropy): two identically-built schedules render
+        // bit-for-bit identical buffers. Same patch (mic → engaged preamp, tapping the mic) built
+        // and run twice ⇒ byte-equal output — the phase accumulator and sine are reproducible.
+        let a = run(0.02, true, None, true);
+        let b = run(0.02, true, None, true);
+        assert_eq!(a.as_slice(), b.as_slice(), "same build ⇒ identical buffers");
     }
 }
 
