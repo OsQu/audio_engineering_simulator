@@ -31,9 +31,12 @@ function portIds(src: string, dir: "input" | "output"): number[] {
   return [...src.matchAll(re)].map((m) => Number(m[1])).sort((a, b) => a - b);
 }
 
-/** Structural config keys a source places via ConfigSwitch, sorted. */
+/** Structural config keys a source places via ConfigSwitch (focus surfaces) or ConfigButton
+ *  (hardware faceplates), sorted. */
 function configKeys(src: string): string[] {
-  return [...src.matchAll(/<ConfigSwitch\b[^>]*?\bkey="([^"]+)"/g)].map((m) => m[1]).sort();
+  return [...src.matchAll(/<Config(?:Switch|Button)\b[^>]*?\bkey="([^"]+)"/g)]
+    .map((m) => m[1])
+    .sort();
 }
 
 function surfaceSource(file: string): string {
@@ -69,8 +72,17 @@ describe("Scarlett 8i6 surfaces place its full exposed face", () => {
     expect(portIds(faceplate, "output")).toEqual([0, 1, 2, 3, 4, 5, 6, 7, 8]);
   });
 
-  it("covers both INST structural config keys in the focus surface", () => {
+  it("covers every structural config key: INST in the focus surface, the global 48V on the faceplate", () => {
+    // INST is software-controlled (Focusrite Control); 48V is a real front-panel button, so the
+    // faceplate carries its interactive `ConfigButton` — one key, both preamps (the Rust entry's
+    // shared `phantom`). The union is the 8i6's full config face.
     expect(configKeys(focus)).toEqual(["inst1", "inst2"]);
+    expect(configKeys(faceplate)).toEqual(["phantom"]);
+    expect([...configKeys(faceplate), ...configKeys(focus)].sort()).toEqual([
+      "inst1",
+      "inst2",
+      "phantom",
+    ]);
   });
 });
 

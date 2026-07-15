@@ -10,8 +10,10 @@
   // The signature red chassis comes from the skin `accent`. Faces are just which snippet a jack is
   // written in — no per-port face resolver. INST/AIR/PAD are software-controlled (Focusrite Control): the
   // front shows only indicator LEDs; the actual toggles + the routing matrix live in the focus surface
-  // (FocusriteControl.svelte). 48V is omitted (phantom not modeled); the two phones jacks are mono
-  // (stereo-TRS-as-two-lanes is a later fidelity case). Exposed ids from the Rust `scarlett_8i6` entry:
+  // (FocusriteControl.svelte). **48V** (Story 5.8) is a real front-panel button on the unit, so the
+  // faceplate carries the interactive toggle itself: one global `ConfigButton` on the shared `phantom`
+  // config key — structural, so pressing it rebuilds/recompiles, exactly like INST. The two phones jacks
+  // are mono (stereo-TRS-as-two-lanes is a later fidelity case). Exposed ids from the Rust `scarlett_8i6` entry:
   // 0 Gain1 · 1 Pad1 · 2 Air1 · 3 Gain2 · 4 Pad2 · 5 Air2 · 6 Phones1 · 7 Phones2 · 8–203 routing
   // crosspoints · 204 Monitor · 205 Power. Pad/Air and the crosspoints are placed by the focus surface,
   // so the guardrail unions both surfaces' coverage.
@@ -20,6 +22,7 @@
   import { makeHandle } from "../device-handle";
   import { skinFor } from "../skin";
   import Chassis from "./Chassis.svelte";
+  import ConfigButton from "./ConfigButton.svelte";
   import Control from "./Control.svelte";
   import Col from "./layout/Col.svelte";
   import Place from "./layout/Place.svelte";
@@ -76,6 +79,13 @@
           <Led on={handle.value(5) >= 0.5} label="Air" />
           <Led on={handle.value(4) >= 0.5} label="Pad" />
         </Row>
+      </Col>
+
+      <!-- 48V phantom: ONE hardware button for both combo inputs (the real unit has a single global
+           switch; the Rust entry one shared `phantom` key). Structural — pressing it rebuilds, like
+           INST — and its lamp lights red while the supplies are engaged. -->
+      <Col justify="start" alignSelf="stretch" pt={5}>
+        <ConfigButton key="phantom" size={6} />
       </Col>
 
       <!-- Monitor: the big centre knob (drives line outs 1–2 via the Rust Monitor group). The

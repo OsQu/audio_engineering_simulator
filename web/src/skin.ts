@@ -45,6 +45,8 @@ const SKINS: Record<string, DeviceSkin> = {
   scarlett_8i6: { finish: "black", cap: "dark", accent: "#e6362b" },
   // The computer — a neutral slate box (it's a plain USB peer, not a piece of studio metal).
   computer: { finish: "slate", cap: "dark" },
+  // The condenser mic — a black studio-condenser body with chrome trim (renders via the generic Panel).
+  condenser_mic: { finish: "black", cap: "chrome" },
 };
 
 /** The skin for a device type (falls back to a neutral slate skin). */
