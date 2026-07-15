@@ -20,8 +20,8 @@ export const SPEAKER_DEVICE = "spk";
  *  `typeId` against the catalog that comes back. `synth_voice` is a core device present since Epic 2. */
 export const BOOTSTRAP_TYPE = "synth_voice";
 /** The supporting-cast type ids (all core devices present since Epic 2–4). */
-const SOURCE_TYPE = "synth_voice";
-const DA_TYPE = "da_converter";
+const _SOURCE_TYPE = "synth_voice";
+const _DA_TYPE = "da_converter";
 const SPEAKER_TYPE = "speaker";
 
 /** Wrap a runnable patch in a minimal Scene — empty spatial `ui` (the workbench has no WorldView). */
@@ -78,12 +78,7 @@ export function benchScene(dut: DeviceDescriptor, catalog: DeviceDescriptor[]): 
   const output = defaultBenchTap(dut, speaker);
   if (!output) return undefined;
   return sceneOf({
-    devices: [
-      { id: SOURCE_DEVICE, typeId: SOURCE_TYPE },
-      { id: BENCH_DEVICE, typeId: dut.typeId },
-      { id: DA_DEVICE, typeId: DA_TYPE },
-      { id: SPEAKER_DEVICE, typeId: SPEAKER_TYPE },
-    ],
+    devices: [{ id: BENCH_DEVICE, typeId: dut.typeId }],
     connections: [],
     output,
   });

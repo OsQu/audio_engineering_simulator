@@ -59,8 +59,8 @@
 
   // Once the engine is up and the requested device is known, make the bench scene the live scene — a
   // one-time hot-swap off the bootstrap, and again if the route's typeId changes. Prefer the URL-persisted
-  // scene when it's for *this* device (reload restore); else the freshly-generated default bench (DUT +
-  // supporting cast).
+  // scene when it's for *this* device (reload restore); else the
+  // freshly-generated default bench (device under test).
   $effect(() => {
     if (!session.ready || !requested || benchedFor === requested.typeId) return;
     const urlDut = initialUrlScene?.patch.devices.find((d) => d.id === BENCH_DEVICE)?.typeId;

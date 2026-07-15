@@ -6,9 +6,7 @@ import {
   BOOTSTRAP_TYPE,
   benchScene,
   bootstrapScene,
-  DA_DEVICE,
   defaultBenchTap,
-  SOURCE_DEVICE,
   SPEAKER_DEVICE,
 } from "../src/workbench-scene";
 
@@ -79,18 +77,13 @@ describe("defaultBenchTap", () => {
 });
 
 describe("benchScene", () => {
-  it("builds the DUT plus the fixed cast (source → DUT → DA → speaker), unwired, tapped at the DUT", () => {
+  it("builds the DUT, tapped at the DUT", () => {
     const dut = descWith("amp", [
       { id: 0, direction: "input", domain: "analog" },
       { id: 0, direction: "output", domain: "analog" },
     ]);
     const scene = benchScene(dut, [dut, speaker]);
-    expect(scene?.patch.devices).toEqual([
-      { id: SOURCE_DEVICE, typeId: "synth_voice" },
-      { id: BENCH_DEVICE, typeId: "amp" },
-      { id: DA_DEVICE, typeId: "da_converter" },
-      { id: SPEAKER_DEVICE, typeId: "speaker" },
-    ]);
+    expect(scene?.patch.devices).toEqual([{ id: BENCH_DEVICE, typeId: "amp" }]);
     expect(scene?.patch.connections).toEqual([]);
     expect(scene?.patch.output).toEqual({ device: BENCH_DEVICE, port: 0 });
   });
