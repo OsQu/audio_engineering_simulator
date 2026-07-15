@@ -52,7 +52,9 @@
     align-items: center;
     gap: var(--btn-gap, 1px);
   }
-  button {
+  /* Every selector is scoped under `.config-button` so the bare-element `button` rule can never leak to
+     other buttons in the app (the shared-`<style>` scope hash is belt; this is braces). */
+  .config-button button {
     position: relative;
     width: var(--btn, 6px);
     aspect-ratio: 1;
@@ -63,7 +65,7 @@
     box-shadow: var(--ae-bevel-press);
     cursor: pointer;
   }
-  .lamp {
+  .config-button .lamp {
     position: absolute;
     top: 50%;
     left: 50%;
@@ -74,13 +76,13 @@
     background: var(--ae-led-red-off);
     box-shadow: var(--ae-bevel-press);
   }
-  button.on .lamp {
+  .config-button button.on .lamp {
     background: radial-gradient(circle at 40% 35%, var(--ae-led-red-lit), var(--ae-led-red));
     box-shadow:
       0 0 5px var(--ae-led-red-glow),
       inset 0 0 2px rgba(255, 255, 255, 0.7);
   }
-  .label {
+  .config-button .label {
     font-family: var(--ae-font-ui);
     font-weight: var(--ae-label-weight);
     font-size: var(--btn-font, 2.6px);
