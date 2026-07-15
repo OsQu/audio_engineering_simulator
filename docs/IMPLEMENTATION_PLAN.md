@@ -570,8 +570,8 @@ _Tasks to be elaborated when we reach this Epic._
 - **Story 5.7** — Per-device faceplate UIs: each device authors its own look & feel. ✅ **Complete**
   (parts 1 + 2; merged to `main`).
 - **Story 5.8** — 48V phantom power: balanced preamp front-end, a patchable condenser mic, and the
-  compile-time phantom DC operating-point solve (retiring the mic's self-`powered` flag). 🚧 **In
-  progress** (planned; see the Story block below).
+  compile-time phantom DC operating-point solve (retiring the mic's self-`powered` flag).
+  ✅ **Complete** (on `e5-s8/phantom-power`, Validate met; see the Story block below).
 
 ### Story 5.7 — Per-device faceplate UIs — ✅ **Complete**
 
@@ -868,7 +868,7 @@ connectivity pass over a side-graph, plus an emergent runtime consequence — ne
   devices and the fractional resampler (this Epic). ROI is high here (multi-device digital sync is the
   heart of the lesson), nil before.
 
-### Story 5.8 — 48V Phantom Power — 🚧 **In progress**
+### Story 5.8 — 48V Phantom Power — ✅ **Complete**
 
 _Goal:_ Make +48 V phantom power **honest end-to-end**: a patchable **condenser mic** whose power
 arrives from the device it's plugged into, a **balanced preamp front-end** that separates the phantom
@@ -997,6 +997,38 @@ dead mic); the synth still plugs into the same combo jack with **numerically unc
 mic's self-`powered` flag is gone from the engine; the full Rust gate (`cargo fmt --check && cargo
 lint && cargo test && cargo wasm && cargo docs`) plus web `check`/`typecheck`/`test`/`build` pass;
 verified in-browser.
+
+*Delivered:* all six tasks as planned (one commit each), Validate met in-browser (mic silent →
+48V on → capsule tone through the monitoring loop → off → silent). Deviations from plan: none
+structural; the notable in-task design choices, for future reference:
+
+- **5.8.1 (grounding edge):** the cold leg is an ordinary `EdgeTransform` with `gain = 0` (no new
+  `EdgeKind` variant, no second hot-path arm), its source index clamped to the hot lane so nothing
+  can index out of bounds; step-7b interference already cloned onto every conductor, so
+  common-mode pickup/hum on the grounding edge came free. Matched edges bake byte-identically.
+- **5.8.2 (balanced front-end):** `MicPreamp::new` kept its `z_in: InputZ` signature with a
+  construction-time balanced assert (the rail-check precedent) rather than switching to bare
+  `Ohms` — honest about the declared face, no call-site ripple.
+- **5.8.3 (DC solve):** declarations landed as `PhantomSupply`/`PhantomLoad` in
+  `electrical/phantom.rs` with the solve as `PhantomSupply::terminal_volts` **reusing
+  `divider_gain`** (compile stays a thin walk); `MicPreamp` grew a chainable
+  `with_phantom(engaged)` builder (default off) instead of a positional bool; the fan-in guard
+  (`CompileError::PhantomFanIn`) counts only *engaged* supplies.
+- **5.8.4 (capsule tone):** the oscillator **free-runs while dead** (power folds into a per-block
+  gate multiplier — no per-sample branch, phase continuity on re-power); unprepared ⇒ phase step 0.
+  Noted at review: when the air-link story lands, **FREQ dies with the internal sine** while
+  **LEVEL mutates into capsule sensitivity** (the pressure→volts mV/Pa figure, likely a catalog
+  spec rather than a knob).
+- **5.8.5 (catalog):** the both-preamps-from-one-key test reads the existing input-meter Peak
+  readouts (one build proves both channels); devices-crate tests kept the house abs-diff style
+  (no new `approx` dev-dep).
+- **5.8.6 (web):** a new mm-scaled `ConfigButton` hardware widget (the rem-scaled `ConfigSwitch`
+  stays a focus-surface aesthetic) with a **red** engaged lamp (phantom hardware convention); the
+  interactive 48V lives on the faceplate only (real front-panel button), trivially addable to the
+  Focusrite Control surface later; the mic renders via the generic `Panel` fallback with a
+  one-line skin. Field note: a config widget whose key misses the descriptor renders nothing —
+  a stale WASM artifact thus shows as a zero-width div; a dev-mode warning in that branch is a
+  candidate hardening (IMPROVEMENTS.md).
 
 ---
 
