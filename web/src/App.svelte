@@ -1220,6 +1220,9 @@
   .palette {
     flex-wrap: wrap;
     align-items: center;
+    /* Natural single-row width, capped by max-width so chips wrap into a wide grid rather than
+       collapsing onto narrow per-chip lines (the abspos panel would otherwise shrink to its `.menu`). */
+    width: max-content;
     max-width: 24rem;
   }
   .add-chip {

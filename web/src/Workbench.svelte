@@ -529,6 +529,10 @@
   .palette {
     flex-wrap: wrap;
     align-items: center;
+    /* Lay out at the chips' natural (single-row) width, capped by max-width so they wrap into a wide
+       grid. Without an explicit width the absolutely-positioned panel shrinks to fit its `.menu`
+       containing block (the "+ Add" summary), collapsing every chip onto its own narrow line. */
+    width: max-content;
     max-width: 24rem;
   }
   .add-chip {
