@@ -960,6 +960,128 @@ mod tests {
         );
     }
 
+    /// `mics` condenser mics into the 8i6's combo inputs (mic i → combo i), the shared 48V config
+    /// at `phantom`, tapped at Line Out 1. XLR-into-Combo is the legal jack fit.
+    fn mics_into_8i6(phantom: f32, mics: &[&str]) -> Patch {
+        let mut devices = vec![DeviceInstance {
+            id: "if".into(),
+            type_id: "scarlett_8i6".into(),
+            params: vec![],
+            config: vec![crate::scene::ConfigSetting {
+                key: "phantom".into(),
+                value: phantom,
+            }],
+        }];
+        let mut connections = Vec::new();
+        for (i, id) in mics.iter().enumerate() {
+            devices.push(device(id, "condenser_mic"));
+            connections.push(conn(id, 0, "if", i as u32));
+        }
+        Patch {
+            devices,
+            connections,
+            output: PortRef {
+                device: "if".into(),
+                port: 2, // Line Out 1 (analog)
+            },
+        }
+    }
+
+    /// The Story 5.8 payoff at the scene level: a condenser mic into the 8i6's combo input is
+    /// **dead with 48V off and alive with it on** — the same patch, rebuilt with the structural
+    /// `phantom` config toggled, and nothing else changed. Routed Pre 1 → Line 1 through the matrix
+    /// so the capsule tone reaches the analog tap. Hand calc for the powered amplitude — 10 mV
+    /// differential capsule tone through the chain's baked dividers, gain 1 everywhere:
+    ///   mic (150 Ω) → preamp (10 kΩ diff):   10 000/(150 + 10 000)  = 0.985222
+    ///   preamp (150 Ω) → input meter (1 MΩ): 10⁶/1 000 150          = 0.999850
+    ///   meter (150 Ω) → AD (1 MΩ):           10⁶/1 000 150          = 0.999850
+    ///   AD → matrix (Pre 1 → Line 1 = ×1) → DA: digital, ≈ unity at 1 kHz
+    ///   DA (150 Ω) → monitor amp (10 kΩ):    10 000/10 150          = 0.985222
+    /// ⇒ 0.01 × 0.985222² × 0.999850² = 9.7037 mV peak at Line Out 1 — and **zero DC**: the
+    /// 37.86 V pedestal is common-mode, cancelled at the preamp's difference *before* its clamp.
+    /// Off, both mic legs sit at 0 V, so only the AD's dither (~30 µV LSB) reaches the tap.
+    #[test]
+    fn phantom_config_powers_the_mic_through_the_8i6() {
+        // Peak and mean at Line Out 1 over the tail blocks (params long settled, tone in steady
+        // state). Each 384-sample block at 384 kHz is 1 ms = exactly one 1 kHz period, so the block
+        // peak is the amplitude and the block mean is the DC.
+        let run = |phantom: f32| {
+            let mut scene = build_patch(&mics_into_8i6(phantom, &["mic"]), BLOCK_LEN, rate(), 0)
+                .expect("mic → 8i6 builds with 48V either way (XLR seats in the combo jack)");
+            // Route Pre 1 → Line Out 1: crosspoint (in 0, out 8) = exposed id 8 + 0·14 + 8 = 16.
+            let xpoint = *scene.param("if", 16).first().expect("matrix crosspoint");
+            let mut params = ParamQueue::with_capacity(1);
+            params.set(xpoint, 1.0);
+            let mut events = EventQueue::with_capacity(1);
+            let mut out = VoltageBuffer::zeros(BLOCK_LEN, rate());
+            let (mut peak, mut mean) = (0.0_f32, 0.0_f64);
+            for block in 0..48 {
+                scene
+                    .schedule_mut()
+                    .process_io(&mut out, &mut params, &mut events);
+                if block >= 32 {
+                    for &v in out.as_slice() {
+                        peak = peak.max(v.abs());
+                        mean += f64::from(v);
+                    }
+                }
+            }
+            (peak, (mean / (16.0 * BLOCK_LEN as f64)) as f32)
+        };
+
+        // 48V off: the mic is dead — only converter dither at the tap, no tone.
+        let (dead_peak, _) = run(0.0);
+        assert!(
+            dead_peak < 1e-3,
+            "unfed mic must be dead, got {dead_peak} V"
+        );
+
+        // 48V on: the capsule tone arrives at the hand-calc amplitude, with no DC.
+        let (peak, dc) = run(1.0);
+        assert!(
+            (peak - 9.7037e-3).abs() < 2e-4,
+            "hand calc 9.7037 mV at Line Out 1, got {peak} V"
+        );
+        assert!(dc.abs() < 1e-4, "pedestal must not leak: DC = {dc} V");
+    }
+
+    /// The 8i6's 48V is **one switch over both preamps** (the real unit's single global button):
+    /// two mics into the two combo inputs and the *one* `phantom` key wakes both. Observed at the
+    /// post-preamp input meters' block-peak readouts (ids 1 and 3). Hand calc: 10 mV ×
+    /// 0.985222 (mic→preamp divider, 10 000/10 150) × 0.999850 (preamp→meter divider) = 9.8507 mV
+    /// peak ⇒ 20·log10(0.0098507/0.774597 V) = −37.91 dBu on both meters. Off, both mics are dead
+    /// and both meters sit at the −60 dB reading floor.
+    #[test]
+    fn one_phantom_key_engages_both_preamps() {
+        let peaks = |phantom: f32| {
+            let mut scene = build_patch(
+                &mics_into_8i6(phantom, &["mic1", "mic2"]),
+                BLOCK_LEN,
+                rate(),
+                0,
+            )
+            .expect("two mics → 8i6 builds");
+            let mut out = VoltageBuffer::zeros(BLOCK_LEN, rate());
+            for _ in 0..4 {
+                scene.schedule_mut().process(&mut out);
+            }
+            let in1 = scene.readout("if", 1).expect("In 1 Peak readout");
+            let in2 = scene.readout("if", 3).expect("In 2 Peak readout");
+            (
+                scene.schedule().readout_value(in1).expect("In 1 value"),
+                scene.schedule().readout_value(in2).expect("In 2 value"),
+            )
+        };
+
+        let (in1, in2) = peaks(1.0);
+        assert!((in1 - (-37.91)).abs() < 0.1, "In 1 Peak {in1} dBu");
+        assert!((in2 - (-37.91)).abs() < 0.1, "In 2 Peak {in2} dBu");
+
+        let (in1, in2) = peaks(0.0);
+        assert!(in1 <= -60.0 + 1e-3, "dead mic 1 at the floor, got {in1}");
+        assert!(in2 <= -60.0 + 1e-3, "dead mic 2 at the floor, got {in2}");
+    }
+
     /// A cabled connection assembles (the cable's R·C rides the edge). Smoke test that the cable path
     /// builds and runs; the electrical effect itself is the engine's own tested concern.
     #[test]

@@ -34,9 +34,9 @@
 
 use crate::scene::ConfigSetting;
 use engine::{
-    AdConverter, BitDepth, DaConverter, DigitalDemux, DigitalMeter, DigitalMux, Domain, EqBand,
-    EventThru, GainStage, Graph, InputZ, Matrix, MicPreamp, Node, NodeId, Ohms, ParamId, ReadoutId,
-    SampleRate, Speaker, SynthVoice, ThreeBandEq, Volts, VuMeter,
+    AdConverter, BitDepth, CondenserMic, DaConverter, DigitalDemux, DigitalMeter, DigitalMux,
+    Domain, EqBand, EventThru, GainStage, Graph, InputZ, Matrix, MicPreamp, Node, NodeId, Ohms,
+    ParamId, ReadoutId, SampleRate, Speaker, SynthVoice, ThreeBandEq, Volts, VuMeter,
 };
 use serde::Serialize;
 
@@ -430,23 +430,35 @@ struct ReadoutUi {
 const PREAMP_LINE_Z_OHMS: f32 = 10_000.0;
 const PREAMP_INST_Z_OHMS: f32 = 1_500_000.0;
 
+/// The 8i6's 48V phantom key — **one switch feeding both preamps** (the real 3rd-gen 8i6 has a
+/// single global 48V button; contrast the per-channel INST keys). 48V is **structural** like INST:
+/// engaging it changes the DC bias topology, so a toggle recompiles rather than smoothing a param
+/// (the Story 5.8 design note). Acoustically safe — the pedestal cancels at every balanced
+/// receiver in both states, so the swap can't click.
+const PHANTOM_KEY: &str = "phantom";
+
 /// Build one 8i6 preamp — a [`MicPreamp`] whose input impedance is selected by the `inst_key`
-/// structural toggle (`>= 0.5` ⇒ instrument/hi-Z, else line). Its default (`0.0` = line) reproduces
-/// the pre-INST 10 kΩ behavior. Both faces are **balanced** (a combo jack's XLR and TRS paths both
-/// carry the pair); an unbalanced source still seats via the engine's grounding edge, with the
-/// *same* loading gain — the differential Z plays exactly the role the unbalanced Z did.
+/// structural toggle (`>= 0.5` ⇒ instrument/hi-Z, else line), and whose +48 V phantom feed is
+/// engaged by the **shared** [`PHANTOM_KEY`] toggle (both preamps read the same key). Defaults
+/// (`0.0` = line, phantom off) reproduce the pre-INST/pre-48V behavior. Both faces are **balanced**
+/// (a combo jack's XLR and TRS paths both carry the pair); an unbalanced source still seats via the
+/// engine's grounding edge, with the *same* loading gain — the differential Z plays exactly the
+/// role the unbalanced Z did.
 fn scarlett_preamp(cfg: &DeviceConfig, inst_key: &str) -> Box<dyn Node> {
     let z_ohms = if cfg.get_or(inst_key, 0.0) >= 0.5 {
         PREAMP_INST_Z_OHMS
     } else {
         PREAMP_LINE_Z_OHMS
     };
-    Box::new(MicPreamp::new(
-        1.0,
-        Volts::new(10.0),
-        InputZ::balanced(Ohms::new(z_ohms)),
-        Ohms::new(150.0),
-    ))
+    Box::new(
+        MicPreamp::new(
+            1.0,
+            Volts::new(10.0),
+            InputZ::balanced(Ohms::new(z_ohms)),
+            Ohms::new(150.0),
+        )
+        .with_phantom(cfg.get_or(PHANTOM_KEY, 0.0) >= 0.5),
+    )
 }
 
 /// The 8i6's AD/DA/gain building blocks, factored out of the (large) entry. The AD's input impedance
@@ -571,6 +583,51 @@ const CATALOG: &[CatalogEntry] = &[
             label: "MIDI Out",
             kind: PortKind::Midi,
             connector: Connector::Din5,
+        }],
+        delayed_outputs: &[],
+        readouts: &[],
+        configs: &[],
+    },
+    // A condenser microphone — the catalog face of `engine::CondenserMic` (Story 5.8). A balanced
+    // XLR mic-level source that is **dead until phantom-fed**: the node declares its P48 DC load on
+    // its output port and `compile` resolves the operating point against whatever engaged supply
+    // faces it (the 8i6's 48V config) — power arrives from the patch, never a flag. Acoustics are
+    // out of scope until the deferred "air link" story, so the capsule is a declared boundary
+    // stand-in — a deterministic sine — and the params are labelled honestly as that capsule tone.
+    CatalogEntry {
+        type_id: "condenser_mic",
+        name: "Condenser Mic",
+        // A large-diaphragm studio condenser stood on the desk: LDC bodies run ~45–60 mm across
+        // (the classic U 87 is 56 mm) and ~200 mm long including the grille; the footprint is the
+        // body cylinder, so depth = width.
+        form_factor: FormFactor::Desktop {
+            width_mm: 50.0,
+            height_mm: 200.0,
+            depth_mm: 50.0,
+        },
+        // 10 mV capsule tone (typical mic level) from a 150 Ω balanced source (the classic mic
+        // output impedance).
+        nodes: &[|_cfg| Box::new(CondenserMic::new(Volts::new(0.01), Ohms::new(150.0)))],
+        internal: &[],
+        params: &[
+            ParamUi {
+                label: "Tone Level",
+                unit: "V",
+                kind: ParamKind::Knob,
+            },
+            ParamUi {
+                label: "Tone Freq",
+                unit: "Hz",
+                kind: ParamKind::Knob,
+            },
+        ],
+        param_groups: &[],
+        param_grid: None,
+        inputs: &[],
+        outputs: &[PortUi {
+            label: "Out",
+            kind: PortKind::Mic,
+            connector: Connector::Xlr,
         }],
         delayed_outputs: &[],
         readouts: &[],
@@ -906,7 +963,8 @@ const CATALOG: &[CatalogEntry] = &[
     // computer and its third output drives a DA whose analog monitor bus fans out to a line output and a
     // headphone amp; MIDI passes through. The web faceplate splits the exposed face across two chassis
     // faces (front: combo inputs + phones; back: line/USB/MIDI + power), and the routing matrix is
-    // driven from the Focusrite Control focus surface. 48V/phantom is still omitted (not modeled).
+    // driven from the Focusrite Control focus surface. 48V phantom (Story 5.8) is the shared
+    // `PHANTOM_KEY` structural config: one switch engages both preamps' P48 supplies at build.
     CatalogEntry {
         type_id: "scarlett_8i6",
         name: "Scarlett 8i6",
@@ -1451,6 +1509,11 @@ const CATALOG: &[CatalogEntry] = &[
         // INST/hi-Z per preamp: a structural toggle selecting the channel's input impedance (line
         // vs instrument), read by the preamp builders. Default off (line-level), reproducing today's
         // behavior. AIR/PAD are runtime *params* on the preamp, not structural configs.
+        //
+        // 48V (`PHANTOM_KEY`): the phantom supply, **one switch over both preamps** (the real unit
+        // has one global button; contrast the per-channel INST keys). Structural like INST — the DC
+        // bias topology changes, so toggling recompiles (the Story 5.8 design note). Default off:
+        // an unfed condenser mic is dead, and non-phantom sources are unaffected either way.
         configs: &[
             ConfigUi {
                 key: "inst1",
@@ -1461,6 +1524,12 @@ const CATALOG: &[CatalogEntry] = &[
             ConfigUi {
                 key: "inst2",
                 label: "Inst 2",
+                kind: ConfigKind::Toggle,
+                default: 0.0,
+            },
+            ConfigUi {
+                key: PHANTOM_KEY,
+                label: "48V",
                 kind: ConfigKind::Toggle,
                 default: 0.0,
             },
@@ -2337,6 +2406,84 @@ mod tests {
         assert_eq!(spk.outputs, vec![(spk.nodes[0], 0)]);
     }
 
+    /// The condenser mic's port/param remap (the single-node source case, like the speaker's but
+    /// with no inputs at all): one node, no internal edges, the balanced output exposed as device
+    /// output 0, and the two capsule-tone params (node-local LEVEL/FREQ) as device params 0/1.
+    #[test]
+    fn condenser_mic_expands_and_maps() {
+        let mut g = Graph::new();
+        let mic = instantiate("condenser_mic", &DeviceConfig::EMPTY, &mut g)
+            .expect("condenser_mic is in the catalog");
+
+        assert_eq!(mic.nodes.len(), 1, "one internal node");
+        assert_eq!(g.connection_count(), 0, "no internal edges");
+        assert!(mic.inputs.is_empty(), "a mic has no inputs");
+        assert_eq!(mic.outputs, vec![(mic.nodes[0], 0)]);
+        assert_eq!(
+            mic.params,
+            vec![
+                vec![(mic.nodes[0], CondenserMic::LEVEL)],
+                vec![(mic.nodes[0], CondenserMic::FREQ)],
+            ]
+        );
+        assert!(mic.readouts.is_empty(), "the mic measures nothing");
+    }
+
+    /// The condenser mic's descriptor face: a balanced (2-conductor) analog XLR output styled as a
+    /// mic jack, no inputs, no configs — and the capsule-tone params carrying the engine's construction
+    /// truth (10 mV level default, 1 kHz frequency default).
+    #[test]
+    fn condenser_mic_descriptor_face() {
+        let mic = descriptors()
+            .into_iter()
+            .find(|d| d.type_id == "condenser_mic")
+            .expect("condenser_mic is in the catalog");
+
+        assert_eq!(mic.ports.len(), 1, "one port: the XLR out");
+        let out = &mic.ports[0];
+        assert_eq!(out.direction, PortDirection::Output);
+        assert_eq!(out.domain, PortDomain::Analog);
+        assert_eq!(out.channels, 2, "balanced = two conductors");
+        assert_eq!(out.kind, PortKind::Mic);
+        assert_eq!(out.connector, Connector::Xlr);
+
+        // The capsule tone: level (constructed 10 mV) and frequency (1 kHz default), engine truth.
+        assert_eq!(mic.params.len(), 2);
+        assert_eq!(mic.params[0].label, "Tone Level");
+        assert_eq!(mic.params[0].unit, "V");
+        assert_eq!(mic.params[0].default, 0.01);
+        assert_eq!(mic.params[1].label, "Tone Freq");
+        assert_eq!(mic.params[1].unit, "Hz");
+        assert_eq!(mic.params[1].default, 1_000.0);
+
+        assert!(mic.configs.is_empty(), "no structural options on the mic");
+        assert!(mic.readouts.is_empty());
+    }
+
+    /// The 8i6 exposes the shared 48V toggle: **one** `phantom` key (both preamps read it — the real
+    /// unit's single global button), structural like the per-channel INST keys, default off.
+    #[test]
+    fn scarlett_8i6_exposes_the_shared_phantom_config() {
+        let dev = descriptors()
+            .into_iter()
+            .find(|d| d.type_id == "scarlett_8i6")
+            .expect("scarlett_8i6 is in the catalog");
+
+        let phantom = dev
+            .configs
+            .iter()
+            .find(|c| c.key == "phantom")
+            .expect("the 8i6 offers the 48V config");
+        assert_eq!(phantom.label, "48V");
+        assert_eq!(phantom.kind, ConfigKind::Toggle);
+        assert_eq!(phantom.default, 0.0, "48V boots off");
+        assert_eq!(
+            dev.configs.iter().filter(|c| c.key == "phantom").count(),
+            1,
+            "one shared key, not one per preamp"
+        );
+    }
+
     /// The full Scarlett 8i6 expands into its 24 internal nodes wired by 36 internal edges, and its
     /// exposed face maps to the right `(NodeId, …)`. This pins the big remap: 9 inputs (2 combo, 4 line,
     /// S/PDIF, USB return, MIDI-in), 9 outputs (USB send, S/PDIF, 4 line, 2 phones, MIDI-out), the
@@ -2539,6 +2686,7 @@ mod tests {
             "digital_meter",
             "scarlett_8i6",
             "computer",
+            "condenser_mic",
         ] {
             assert!(json.contains(type_id), "catalog missing {type_id}");
         }
@@ -2552,9 +2700,13 @@ mod tests {
         // The 8i6's front inputs are combo jacks; its USB ports use the USB connector.
         assert!(json.contains("combo"));
         assert!(json.contains("usb"));
-        // Structural config toggles serialize (the 8i6's INST keys) — the web renders them.
+        // Structural config toggles serialize (the 8i6's INST + shared 48V keys) — the web renders
+        // them.
         assert!(json.contains("configs"));
         assert!(json.contains("inst1"));
+        assert!(json.contains("phantom"));
+        // The mic's XLR connector serializes for the jack-fit check.
+        assert!(json.contains(r#""connector":"xlr""#));
         assert!(json.contains("toggle"), "ConfigKind serializes camelCase");
     }
 
