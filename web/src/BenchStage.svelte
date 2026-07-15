@@ -42,8 +42,10 @@
     patch: PatchController;
     // The stage's coordinate seam, bound out to the Workbench for jack measurement + pointer routing.
     api?: WorldApi;
+    // Remove a supporting device from the bench (never the DUT — the caller guards it). Hot-swaps.
+    onRemove?: (id: string) => void;
   }
-  let { session, desc, patch, api = $bindable() }: Props = $props();
+  let { session, desc, patch, api = $bindable(), onRemove }: Props = $props();
 
   // The bench's CableLayout for the shared cable-view geometry. Everything is in view, and **every jack
   // anchors at its measured centre** (`faceAnchorable: () => true`) — including one on a device's hidden
@@ -317,6 +319,16 @@
                 >
                   ⟲ {facing === "back" ? "front" : "back"}
                 </button>
+                {#if onRemove}
+                  <button
+                    type="button"
+                    class="flip-btn remove-btn"
+                    aria-label="remove {bd.desc.name}"
+                    onclick={() => onRemove?.(bd.id)}
+                  >
+                    ✕ remove
+                  </button>
+                {/if}
               </DeviceChrome>
             {/if}
             {#if isDut}<span class="dev-name muted">{bd.desc.name}</span>{/if}
@@ -538,6 +550,11 @@
   }
   .flip-btn:hover {
     background: var(--ae-bg-panel-2);
+  }
+  /* Remove a supporting device — same chip as flip, tinted on hover so the destructive action reads. */
+  .remove-btn:hover {
+    color: var(--ae-signal-danger, #d9534f);
+    border-color: var(--ae-signal-danger, #d9534f);
   }
   /* The device box at natural (1 px/mm) size; the faceplate fills it, the surface transform scales it.
      A size container (as WorldView's `.content` is) so the faceplate scales its internals — knobs, jacks,

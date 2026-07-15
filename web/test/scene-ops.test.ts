@@ -4,6 +4,7 @@ import type { ConnectVerdict } from "../src/connections";
 import type { LayoutCtx } from "../src/projection";
 import type { Connection } from "../src/scene";
 import {
+  addBenchDevice,
   addDevice,
   addSpace,
   cablesFor,
@@ -317,6 +318,40 @@ describe("removeDevice", () => {
     });
     removeDevice(scene, "amp1");
     expect(scene.patch.devices.map((d) => d.id)).toEqual(["amp1"]); // untouched
+  });
+
+  it("also drops the device's bench offset (workbench cleanup)", () => {
+    const scene = makeScene({
+      devices: [
+        { id: "amp1", typeId: "amp" },
+        { id: "amp2", typeId: "amp" },
+      ],
+      output: { device: "amp1", port: 0 },
+    });
+    scene.ui.bench = { amp1: { x: 1, y: 2 }, amp2: { x: 3, y: 4 } };
+    removeDevice(scene, "amp2");
+    expect(scene.ui.bench.amp2).toBeUndefined();
+    expect(scene.ui.bench.amp1).toEqual({ x: 1, y: 2 }); // survivor untouched
+  });
+});
+
+describe("addBenchDevice", () => {
+  it("appends an unwired instance and returns a unique id", () => {
+    const scene = makeScene({ devices: [{ id: "dev", typeId: "amp" }] });
+    const id = addBenchDevice(scene, "amp");
+    expect(id).toBe("amp-1");
+    expect(scene.patch.devices).toContainEqual({ id: "amp-1", typeId: "amp" });
+    expect(scene.patch.connections).toEqual([]); // unwired
+  });
+
+  it("bumps the suffix past an existing same-type instance", () => {
+    const scene = makeScene({
+      devices: [
+        { id: "amp-1", typeId: "amp" },
+        { id: "amp-2", typeId: "amp" },
+      ],
+    });
+    expect(addBenchDevice(scene, "amp")).toBe("amp-3");
   });
 });
 

@@ -10,7 +10,7 @@
   import { isFocusable } from "./focus";
   import { wireKeyboardInput } from "./keyboard-input.svelte";
   import { PatchController } from "./patch-controller.svelte";
-  import { eventsInputDriven } from "./scene-ops";
+  import { addBenchDevice, eventsInputDriven, removeDevice } from "./scene-ops";
   import { SceneSession } from "./session.svelte";
   import { footprint } from "./spatial";
   import { decodeScene, encodeScene } from "./url-scene";
@@ -150,6 +150,25 @@
     session.hotSwap();
   }
 
+  // --- Bench gear (add / remove) --------------------------------------------------------------------
+  // The supporting cast is no longer fixed: any catalog device can join the bench. Add appends an unwired
+  // instance to the stack; remove drops it (never the DUT — the bench is about it — and `removeDevice`
+  // itself guards the monitored tap). Both change the runnable patch, so both hot-swap.
+  function addDevice(typeId: string): void {
+    addBenchDevice(session.scene, typeId);
+    session.hotSwap();
+  }
+  function removeBenchDevice(id: string): void {
+    if (id === BENCH_DEVICE) return;
+    if (focusedDevice === id) focusedDevice = null;
+    removeDevice(session.scene, id);
+    session.hotSwap();
+  }
+  // Close the containing <details> menu after a chip click (so it doesn't linger open over the stage).
+  function closeMenu(e: Event): void {
+    (e.currentTarget as HTMLElement | null)?.closest("details")?.removeAttribute("open");
+  }
+
   // --- Keyboard / keybed ----------------------------------------------------------------------------
   // Every bench device with an events (MIDI) input — the keybed's possible targets (the synth source, the
   // DUT if it's an instrument, and anything else added). "Send to" picks which one(s) the notes play.
@@ -242,6 +261,25 @@
           ⛶ Open
         </button>
       {/if}
+      <!-- Add gear to the bench (the supporting cast is no longer fixed) — the same catalog palette the
+           scene view uses, tucked in a drawer. Each chip appends an unwired instance to the stack. -->
+      <details class="menu">
+        <summary>+ Add</summary>
+        <div class="menu-panel palette">
+          {#each session.catalog as d (d.typeId)}
+            <button
+              type="button"
+              class="add-chip"
+              onclick={(e) => {
+                addDevice(d.typeId);
+                closeMenu(e);
+              }}
+            >
+              {d.name}
+            </button>
+          {/each}
+        </div>
+      </details>
       <!-- Listen: which analog output feeds the monitor (the audible tap). Patching is jack-only, so this
            picks the tap without overloading a jack click. -->
       <label class="listen">
@@ -267,7 +305,13 @@
       </button>
       <button type="button" class="back" onclick={() => navigate("/")}>← scene view</button>
     </header>
-    <BenchStage {session} desc={requested} {patch} bind:api={benchApi} />
+    <BenchStage
+      {session}
+      desc={requested}
+      {patch}
+      onRemove={removeBenchDevice}
+      bind:api={benchApi}
+    />
     {#if eventInputs.length > 0}
       <!-- Play the rig via the shared keybed + QWERTY (same session.playNote / heldNotes as the scene
            view). "Send to" targets the MIDI inputs; the strip is sticky at the bottom and collapsible. -->
@@ -446,6 +490,58 @@
     border-radius: var(--ae-radius-control);
   }
   .open-focus:hover {
+    background: var(--ae-bg-panel);
+  }
+  /* "+ Add" gear palette — a chip-triggered drawer, mirroring the scene view's toolbar menu. */
+  .menu {
+    position: relative;
+  }
+  .menu > summary {
+    list-style: none;
+    cursor: pointer;
+    user-select: none;
+    padding: 0.4em 1em;
+    font-size: 0.85rem;
+    color: var(--ae-text-strong);
+    background: var(--ae-bg-chip);
+    border: 1px solid var(--ae-line-chip);
+    border-radius: var(--ae-radius-control);
+  }
+  .menu > summary::-webkit-details-marker {
+    display: none;
+  }
+  .menu[open] > summary,
+  .menu > summary:hover {
+    background: var(--ae-bg-panel);
+  }
+  .menu-panel {
+    position: absolute;
+    top: calc(100% + 0.35rem);
+    z-index: 20;
+    display: flex;
+    gap: 0.5rem;
+    padding: 0.6rem;
+    background: var(--ae-bg-panel);
+    border: 1px solid var(--ae-line-panel);
+    border-radius: var(--ae-radius-control);
+    box-shadow: 0 8px 24px rgb(0 0 0 / 0.35);
+  }
+  .palette {
+    flex-wrap: wrap;
+    align-items: center;
+    max-width: 24rem;
+  }
+  .add-chip {
+    font: inherit;
+    font-size: 0.75rem;
+    padding: 0.2rem 0.6rem;
+    border: 1px solid var(--ae-line-chip);
+    border-radius: 12px;
+    background: var(--ae-bg-chip);
+    color: var(--ae-text-strong);
+    cursor: pointer;
+  }
+  .add-chip:hover {
     background: var(--ae-bg-panel);
   }
   /* Device focus overlay — fixed full-viewport modal (the bench has no single relative stage container to

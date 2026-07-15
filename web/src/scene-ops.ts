@@ -228,8 +228,22 @@ export function addDevice(ctx: LayoutCtx, placedItems: PlacedItem[], typeId: str
   ctx.scene.ui.placements[id] = { space: ctx.space, wall, position, facing: "front" };
 }
 
+// Add a catalog device to the **workbench** bench: a new instance appended to the flat stack (source →
+// DUT → monitor → …added gear), unwired, reading silence until patched. Unlike the scene view's
+// `addDevice`, a bench device gets no wall/rack placement — the bench is one flat layout, so its offset
+// and facing live lazily in `scene.ui.bench` (created on first drag/flip) and it just appends to the
+// stack. **Caller must hot-swap.** Returns the new instance id.
+export function addBenchDevice(scene: Scene, typeId: string): string {
+  let n = 1;
+  while (scene.patch.devices.some((d) => d.id === `${typeId}-${n}`)) n++;
+  const id = `${typeId}-${n}`;
+  scene.patch.devices.push({ id, typeId });
+  return id;
+}
+
 // Remove a device (never the output tap, which would invalidate the patch): drop it from the patch, its
-// connections, and its placement. Anything it fed now reads silence. **Caller must hot-swap.**
+// connections, its placement, and any bench offset. Anything it fed now reads silence. **Caller must
+// hot-swap.**
 export function removeDevice(scene: Scene, id: string): void {
   if (scene.patch.output.device === id) return;
   scene.patch.devices = scene.patch.devices.filter((d) => d.id !== id);
@@ -237,6 +251,7 @@ export function removeDevice(scene: Scene, id: string): void {
     (c) => c.from.device !== id && c.to.device !== id,
   );
   delete scene.ui.placements[id];
+  if (scene.ui.bench) delete scene.ui.bench[id];
 }
 
 // Add a rack — purely UI furniture (the engine has no racks), so no hot-swap.
