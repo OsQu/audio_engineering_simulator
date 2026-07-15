@@ -25,6 +25,7 @@
   import type { DeviceDescriptor } from "./catalog";
   import { cablePathData } from "./connections";
   import { deviceUi } from "./device-ui";
+  import { isFocusable } from "./focus";
   import type { PatchController } from "./patch-controller.svelte";
   import { effectiveFacing } from "./projection";
   import type { Connection } from "./scene";
@@ -44,8 +45,10 @@
     api?: WorldApi;
     // Remove a supporting device from the bench (never the DUT — the caller guards it). Hot-swaps.
     onRemove?: (id: string) => void;
+    // Open a device's large focus surface (the scene view's per-device "open"). The DUT included.
+    onOpen?: (id: string) => void;
   }
-  let { session, desc, patch, api = $bindable(), onRemove }: Props = $props();
+  let { session, desc, patch, api = $bindable(), onRemove, onOpen }: Props = $props();
 
   // The bench's CableLayout for the shared cable-view geometry. Everything is in view, and **every jack
   // anchors at its measured centre** (`faceAnchorable: () => true`) — including one on a device's hidden
@@ -307,27 +310,42 @@
               },
             }}
           >
-            {#if !isDut}
-              <!-- Rotate control in the shared hover header (same pattern as the scene view): appears
-                     above the device on hover. The DUT shows both faces at once, so it has no header. -->
+            <!-- Shared hover header (same pattern as the scene view): appears above the device on hover.
+                   Every focusable device gets an "open" chip (its large focus surface) — including the
+                   DUT, mirroring the scene view's per-device open (no special global button). A
+                   supporting device also rotates front↔back and can be removed; the DUT shows both
+                   faces at once, so it only opens — it never flips or is removed. -->
+            {#if isFocusable(bd.desc) || !isDut}
               <DeviceChrome>
-                <button
-                  type="button"
-                  class="flip-btn"
-                  aria-label="rotate {bd.desc.name}"
-                  onclick={() => flipDevice(bd.id)}
-                >
-                  ⟲ {facing === "back" ? "front" : "back"}
-                </button>
-                {#if onRemove}
+                {#if onOpen && isFocusable(bd.desc)}
                   <button
                     type="button"
-                    class="flip-btn remove-btn"
-                    aria-label="remove {bd.desc.name}"
-                    onclick={() => onRemove?.(bd.id)}
+                    class="flip-btn open-btn"
+                    aria-label="open {bd.desc.name}"
+                    onclick={() => onOpen?.(bd.id)}
                   >
-                    ✕ remove
+                    ⛶ open
                   </button>
+                {/if}
+                {#if !isDut}
+                  <button
+                    type="button"
+                    class="flip-btn"
+                    aria-label="rotate {bd.desc.name}"
+                    onclick={() => flipDevice(bd.id)}
+                  >
+                    ⟲ {facing === "back" ? "front" : "back"}
+                  </button>
+                  {#if onRemove}
+                    <button
+                      type="button"
+                      class="flip-btn remove-btn"
+                      aria-label="remove {bd.desc.name}"
+                      onclick={() => onRemove?.(bd.id)}
+                    >
+                      ✕ remove
+                    </button>
+                  {/if}
                 {/if}
               </DeviceChrome>
             {/if}
@@ -550,6 +568,10 @@
   }
   .flip-btn:hover {
     background: var(--ae-bg-panel-2);
+  }
+  /* "Open" reads as the primary chrome action (sit down at the device) — emphasised over flip/remove. */
+  .open-btn {
+    font-weight: 600;
   }
   /* Remove a supporting device — same chip as flip, tinted on hover so the destructive action reads. */
   .remove-btn:hover {

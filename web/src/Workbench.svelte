@@ -254,13 +254,8 @@
     <header class="head">
       <span class="name">{requested.name}</span>
       <span class="muted">{requested.typeId}</span>
-      <!-- Open the DUT's focus surface (for the 8i6, the Focusrite Control routing matrix). Only shown for
-           a device that has one — a converter/speaker has none. -->
-      {#if isFocusable(requested)}
-        <button type="button" class="open-focus" onclick={() => (focusedDevice = BENCH_DEVICE)}>
-          ⛶ Open
-        </button>
-      {/if}
+      <!-- Open is now a per-device chip in each device's hover header (BenchStage), mirroring the scene
+           view — no special global button. -->
       <!-- Add gear to the bench (the supporting cast is no longer fixed) — the same catalog palette the
            scene view uses, tucked in a drawer. Each chip appends an unwired instance to the stack. -->
       <details class="menu">
@@ -310,6 +305,7 @@
       desc={requested}
       {patch}
       onRemove={removeBenchDevice}
+      onOpen={(id) => (focusedDevice = id)}
       bind:api={benchApi}
     />
     {#if eventInputs.length > 0}
@@ -477,20 +473,6 @@
   .muted {
     color: var(--ae-text-muted);
     font-size: 0.85rem;
-  }
-  /* "Open" opens the DUT's focus surface — a chip-styled header button, emphasised so it reads as the
-     primary action (sit down at the device). */
-  .open-focus {
-    font: inherit;
-    padding: 0.4em 1em;
-    cursor: pointer;
-    color: var(--ae-text-strong);
-    background: var(--ae-bg-chip);
-    border: 1px solid var(--ae-line-chip);
-    border-radius: var(--ae-radius-control);
-  }
-  .open-focus:hover {
-    background: var(--ae-bg-panel);
   }
   /* "+ Add" gear palette — a chip-triggered drawer, mirroring the scene view's toolbar menu. */
   .menu {
