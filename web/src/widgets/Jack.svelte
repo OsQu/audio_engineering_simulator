@@ -32,10 +32,6 @@
 >
   <!-- `data-jack` = "device:direction:portId" — the cable overlay measures this element's centre. -->
   <span class="connector" data-jack={`${device}:${port.direction}:${port.id}`}></span>
-  {#if port.channels > 1}
-    <!-- One jack carries many channels (a multichannel digital connector) — badge the lane count. -->
-    <span class="lanes" title={`${port.channels} channels`}>×{port.channels}</span>
-  {/if}
 </div>
 
 <style>
@@ -48,21 +44,6 @@
     align-items: center;
     gap: var(--jack-gap, clamp(1px, 3cqh, 0.2rem));
     min-width: 0;
-  }
-  /* Lane-count badge for a multichannel connector, pinned to the connector's top-right corner. */
-  .lanes {
-    position: absolute;
-    top: -0.15rem;
-    right: -0.15rem;
-    padding: 0 0.2rem;
-    border-radius: 0.5rem;
-    background: var(--ae-signal-digital);
-    color: var(--ae-bg-panel, #000);
-    font-family: var(--ae-font-ui);
-    font-size: var(--jack-lane-font, clamp(4px, 12cqh, 0.5rem));
-    font-weight: 700;
-    line-height: 1.4;
-    pointer-events: none;
   }
   .connector {
     /* `--conn` is the connector diameter (the mm `--jack`, else the legacy container-relative size). The
