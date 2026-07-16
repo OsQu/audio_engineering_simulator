@@ -595,10 +595,14 @@ _Tasks to be elaborated when we reach this Epic._
       computer `(0,0)`); surfaced as `PortDescriptor.duplex_partner` (→ JS `duplexPartner?`). `Connection`
       gains `duplex: bool`; `build_patch` expands a duplex connection into both directed edges (the
       reverse via each jack's partner), erroring `BuildError::NotDuplex` on a non-duplex port. Loss
-      accounting stays 1:1 with scene connections (reverse leg untracked — it's digital). TS mirrors
-      (`scene.ts`, `catalog.ts`) synced; typecheck green. **Remaining:** the web faceplate should draw the
-      8i6/computer USB as **one** USB-C jack (not separate USB In/Out) and plugging it should author one
-      `duplex` connection — look-and-feel work in `Scarlett8i6.svelte` / patching, verified in-browser.
+      accounting stays 1:1 with scene connections (reverse leg untracked — it's digital). **Web faceplate
+      DONE (pending in-browser verify):** a `DuplexSocket` renders the 8i6/computer USB as **one** USB-C
+      jack (`Jack` carries a `data-jack-alt` for the partner leg so a cable anchors either direction at
+      the one jack); `evaluateConnection` joins two duplex jacks into a `duplex:true` connection and
+      **skips the feedback-loop check** (a duplex link is a cycle by design). Vitest + typecheck green.
+      _Scoping note:_ only a **duplex** drag bypasses the web's `wouldCreateCycle`; a one-way digital loop
+      authored in the UI is still conservatively rejected there even though the engine (post-#2) would
+      auto-break it — a small follow-up to make the web cycle check domain-aware if it matters.
   - **Calibration — most of this is already right.** Per-strand fidelity is correctly _absent_: digital
     edges get no electrical solve (no `Lifted`/per-conductor one-pole/common-mode — that machinery is
     analog-only); a digital edge is an ideal lossless copy. Multichannel-behind-one-connector already
