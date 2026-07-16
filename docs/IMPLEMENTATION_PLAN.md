@@ -574,75 +574,11 @@ _Tasks to be elaborated when we reach this Epic._
 - **Story 5.8** — 48V phantom power: balanced preamp front-end, a patchable condenser mic, and the
   compile-time phantom DC operating-point solve (retiring the mic's self-`powered` flag).
   ✅ **Complete** (on `e5-s8/phantom-power`, Validate met; see the Story block below).
-- **Story 5.9** — **Bidirectional digital transport & simplified L2 forwarding** _(in progress — #1
-  (duplex) + #2 (topology-derived delay) pulled in; (c)/(d)/(e) still deferred)._ Digital connections were
-  unidirectional (one `OutputPort` → one `InputPort`, an `EdgeKind::DigitalRoute` sample copy), so a
-  duplex link (USB-C, Ethernet) is authored as two separate edges. Real digital links carry data **both
-  directions over one physical connector**, and audio-over-ethernet forwards **addressed packets**
-  through switches, not fixed positional channels. This story gathers the model for a **simplified
-  OSI-Layer-2** link/forwarding layer — the layer **beneath** Story 5.2's IP/subscription (Dante/AES67)
-  layer.
-  - **Decisions settled + landed (2026-07, `e5-s9/duplex-digital-transport`).** Two decisions, both
-    implemented on the Rust side:
-    - **#2 topology-derived delay — DONE (engine).** `compile` auto-breaks any residual **digital** cycle
-      by delaying the lowest-index digital edge on it (deterministic); an all-analog cycle still rejects
-      as `CompileError::Cycle`. `delayed_outputs` is **kept as a hint**: a build-declared latent output
-      (the DAW/computer) is pre-marked `delayed` and excluded, so `compile` only breaks what the author
-      didn't, and the block of latency lands on the physically-correct leg. New: `topo::reaches`; engine
-      tests for a digital cycle auto-compiling and an auto-broken self-loop integrating one block/block.
-    - **#1 duplex single-connector — Rust core DONE; faceplate pending.** Chosen fidelity: **one duplex
-      jack** per device. `CatalogEntry.duplex_links: &[(out_id, in_id)]` declares a jack (8i6 `(0,7)`,
-      computer `(0,0)`); surfaced as `PortDescriptor.duplex_partner` (→ JS `duplexPartner?`). `Connection`
-      gains `duplex: bool`; `build_patch` expands a duplex connection into both directed edges (the
-      reverse via each jack's partner), erroring `BuildError::NotDuplex` on a non-duplex port. Loss
-      accounting stays 1:1 with scene connections (reverse leg untracked — it's digital). **Web faceplate
-      DONE (pending in-browser verify):** a `DuplexSocket` renders the 8i6/computer USB as **one** USB-C
-      jack (`Jack` carries a `data-jack-alt` for the partner leg so a cable anchors either direction at
-      the one jack); `evaluateConnection` joins two duplex jacks into a `duplex:true` connection and
-      **skips the feedback-loop check** (a duplex link is a cycle by design). Vitest + typecheck green.
-      _Scoping note:_ only a **duplex** drag bypasses the web's `wouldCreateCycle`; a one-way digital loop
-      authored in the UI is still conservatively rejected there even though the engine (post-#2) would
-      auto-break it — a small follow-up to make the web cycle check domain-aware if it matters.
-  - **Calibration — most of this is already right.** Per-strand fidelity is correctly _absent_: digital
-    edges get no electrical solve (no `Lifted`/per-conductor one-pole/common-mode — that machinery is
-    analog-only); a digital edge is an ideal lossless copy. Multichannel-behind-one-connector already
-    exists (`AudioFormat.channels`, `DigitalMux`/`DigitalDemux`, the 8i6's single 8-ch USB send + 6-ch
-    return). The **only** trait digital inherited from the analog cable is the **unidirectional edge** —
-    and that is the **DAG invariant** (§5 core decisions), not a leftover: a wire carrying live data both
-    ways in one block is a cycle. So a duplex link is an **authoring-layer** construct that lowers to two
-    engine edges (reusing the delayed-edge primitive) — never a bidirectional datapath.
-  - **(a) Duplex single-connector port/cable — near-term, separable, engine-free.** One connector exposing
-    both an out-bundle and an in-bundle (asymmetric counts OK — USB is 8-send/6-return), and one cable the
-    user plugs that expands to two graph edges at `build_patch`. Devices/scene/UI layer only; no engine
-    change. Highest UX value, lowest risk, cleanly ahead of the networking work.
-  - **(b) Topology-derived delay placement — the real engine gap.** Today `delayed` is a **device**
-    property (`CatalogEntry.delayed_outputs`; the `computer` hardcodes its USB out as always-delayed).
-    Whether a return leg needs delay is a **graph** property — does it close a cycle? A duplex link with no
-    loop needs none; the same port in a loopback does. Want `compile` to **detect cycles and place the
-    delay where the loop closes** (or reject), instead of the device pre-declaring it.
-  - **(c) Positional lanes vs. addressed flows — the net-new carrier concept.** The lane model is
-    positional (source lane _k_ → dest lane _k_), which is perfect for interfaces/ADAT/USB (a fixed
-    compile-time channel bundle). An L2 switch forwards by **address**, not position: an ingress flow
-    carries a destination and the switch picks egress from a forwarding/subscription table. Nothing in
-    `SampleBuffer`/`Lane` carries a flow identity today. This is the heart of the work — don't approximate
-    AoE as "just a wider port"; decide whether it reuses `Sample` lanes + a routing table or gets its own
-    addressed carrier variant.
-  - **(d) Channel-count equality is an interface-only rule.** `build.rs`'s `DigitalChannelMismatch`
-    (`from.channels == to.channels`) is right for a point-to-point cable, wrong for a switch (forwards a
-    subset) and for per-direction duplex. It moves from an edge invariant to a per-flow/per-direction check.
-  - **(e) Clock domains (Story 5.3) are the true prerequisite for a _faithful_ duplex/AoE link.** Two
-    independently-clocked devices on one link are an async boundary; the return-leg latency is really
-    elastic-FIFO slip, not a fixed block (today: one clock domain, cross-rate rejected as
-    `ClockCrossingUnsupported`). The one-block delayed edge is a stand-in; "clock not locked → dropouts"
-    depends on 5.3.
-  - **Design leanings (confirm at planning).** Treat subscription changes as **recompile-on-change**
-    (structural, like INST/48V toggles) to keep the schedule a static DAG; the within-device 14×14
-    `Matrix` is the runtime-routing precedent for the between-device forwarding table. Make consequences
-    **emergent** — per-hop latency, **bandwidth exhaustion** (too many channels on a link → dropouts),
-    **missing/wrong subscription** (silence), **clock-not-locked** (with 5.3). **Skip** MAC/VLAN/QoS
-    internals and frame encoding unless they produce an audible/measurable consequence (no flagging —
-    §4/§9). A "simplified L2 forward" ≈ a switch device with N duplex ports + a forwarding table (ingress
-    flow → egress port(s)) + a link bandwidth budget + per-hop latency.
+- **Story 5.9** — **Bidirectional digital transport & simplified L2 forwarding.** Part 1 — **duplex
+  single-connector links** (USB-C = one jack, both directions) + **topology-derived delay** (`compile`
+  auto-breaks digital cycles) — ✅ **delivered & verified in-browser** (see the Story 5.9 block below).
+  The L2 forwarding layer proper — addressed flows, switches, clock domains — remains **deferred**
+  (feeds Story 5.2/5.3; the design work is parked in the Story 5.9 block).
 
 ### Story 5.7 — Per-device faceplate UIs — ✅ **Complete**
 
@@ -1100,6 +1036,109 @@ structural; the notable in-task design choices, for future reference:
   one-line skin. Field note: a config widget whose key misses the descriptor renders nothing —
   a stale WASM artifact thus shows as a zero-width div; a dev-mode warning in that branch is a
   candidate hardening (IMPROVEMENTS.md).
+
+### Story 5.9 (part 1) — Duplex digital transport & topology-derived delay — ✅ **Delivered**
+
+_The broader Story 5.9 is a **simplified OSI-Layer-2** link/forwarding layer beneath Story 5.2's
+IP/subscription (Dante/AES67) layer. **Part 1** — bidirectional single-connector links + automatic
+latency insertion — is delivered here; the L2 forwarding proper (addressed flows, switches, clock
+domains) stays deferred to 5.2/5.3 (see "Deferred" below, where the idea-gathering is kept intact)._
+
+_Goal:_ Digital connections were unidirectional (one `OutputPort` → one `InputPort`, an
+`EdgeKind::DigitalRoute` sample copy), so a duplex link (USB-C, Ethernet) had to be authored as two
+separate one-way cables. Make one physical connector carry **both directions** (the 8i6/computer USB as
+one USB-C jack), and make digital feedback loops **robust** — a monitoring loop through a duplex link
+must build and sound without the author hand-placing a delayed edge.
+
+_Calibration — most of this was already right:_ per-strand fidelity is correctly **absent** (a digital
+edge is an ideal lossless copy — no `Lifted`/per-conductor one-pole/common-mode; that machinery is
+analog-only); multichannel-behind-one-connector already existed (`AudioFormat.channels`,
+`DigitalMux`/`DigitalDemux`, the 8i6's 8-ch send + 6-ch return). The **only** trait digital inherited
+from the analog cable was the **unidirectional edge** — and that is the **DAG invariant** (§5), not a
+leftover: a wire carrying live data both ways in one block is a cycle. So a duplex link is an
+**authoring-layer** construct that lowers to two engine edges; the engine datapath stays unidirectional.
+
+_Design decisions (settled before building):_
+
+- **#2 delay is topology-derived, in `compile` (keep the hint).** `compile` auto-breaks any residual
+  **digital** cycle by delaying the lowest-index digital edge on it (deterministic; a delayed edge is an
+  ideal digital copy carrying one block of round-trip latency, physical only on a buffered digital link).
+  An all-analog cycle has nowhere to carry the latency and still rejects as `CompileError::Cycle`.
+  `delayed_outputs` stays a **hint**: a build-declared latent output (the DAW/computer) is pre-marked
+  `delayed` and excluded, so `compile` only breaks what the author didn't — and the block of latency
+  lands on the physically-correct leg (playback trails input). _Rejected: pure topology (drop
+  `delayed_outputs`)_ — arbitrary latency placement within a loop. _Rejected: keep it device-declared_ —
+  fragile to topology the author didn't foresee (a duplex link between two non-latent devices never
+  breaks).
+- **#1 fidelity: one duplex jack.** A device declares an `(output, input)` pair as one connector; the web
+  draws one USB-C jack and one cable; the engine still sees two edges.
+
+_Shipped:_
+
+- **#2 (engine).** `topo::reaches` (compile-time reachability); an auto-break loop in `compile` (step 5c)
+  that delays a digital edge on each residual cycle; `CompileError::Cycle` re-documented as the
+  unbreakable (analog-feedback) case. Oracles: a digital 2-cycle of ideal edges auto-compiles; an
+  auto-broken digital self-loop integrates one block/block (identical to a manual delayed edge); an
+  all-analog cycle still errors; the computer monitoring loop's latency still lands on the playback leg.
+- **#1 (Rust core).** `CatalogEntry.duplex_links: &[(out_id, in_id)]` (8i6 `(0,7)`, computer `(0,0)`) →
+  `PortDescriptor.duplex_partner` (JS `duplexPartner?`, `skip_serializing_if` so one-way jacks omit it);
+  `Connection.duplex: bool`; `build_patch` expands a duplex connection into **both** directed edges (the
+  reverse via each jack's partner), erroring `BuildError::NotDuplex` on a non-duplex port; connection-loss
+  accounting stays 1:1 with scene connections (the digital reverse leg is untracked). Oracle: one duplex
+  USB connection builds the full mic→8i6→computer→8i6→speaker loop and is audible; a duplex flag on a
+  one-way jack errors.
+- **#1 (web).** `DuplexSocket.svelte` renders the 8i6/computer USB as one jack; `Jack` carries a
+  `data-jack-alt` for the partner leg and `jack-anchors` registers it at the same centre, so a cable
+  anchors either direction at the one jack; `evaluateConnection` joins two duplex jacks into a
+  `duplex:true` connection and **skips the feedback-loop check** (a duplex link is a cycle by design);
+  `patching` carries `duplexPartner` through; the faceplate guardrail credits a `DuplexSocket` as placing
+  both its ports.
+- **Follow-up bug fixed in-story.** `commitCable` rebuilt the stored `Connection` from `from`/`to` only,
+  **silently dropping `duplex`** → every duplex cable committed one-way (no return leg → silent). Fixed to
+  spread the whole verdict connection; regression test in `scene-ops.test.ts`. Found via a user-reported
+  no-sound patch; the engine/build side was correct from the first commit — the symptom was UI
+  persistence.
+
+_Validate:_ the 8i6 and computer each show **one** USB-C jack; plugging **one** cable authors a `duplex`
+connection that `build_patch` expands to both edges, and the mic monitoring loop closes and sounds; a
+UI-authored digital 2-cycle auto-compiles while an analog cycle still errors; the full Rust gate (`cargo
+fmt --check && cargo lint && cargo test && cargo wasm && cargo docs`) plus web `check`/`typecheck`/`test`
+pass; verified in-browser (delete + re-plug the USB-C cable → sound).
+
+*Delivered:* #1 + #2 across five commits on `e5-s9/duplex-digital-transport`; Validate met in-browser.
+Notable finding: the one-way-cable symptom was a UI persistence bug (`commitCable` dropping `duplex`),
+not an engine/build defect — the duplex expansion + auto-break were correct throughout.
+
+_Deferred to 5.2 / 5.3 (the rest of the L2 vision — idea-gathering kept intact):_
+
+- **(c) Addressed flows — the net-new carrier concept.** The lane model is positional (source lane _k_ →
+  dest lane _k_), right for interfaces/ADAT/USB (a fixed compile-time bundle). An L2 **switch** forwards by
+  **address**, not position: an ingress flow carries a destination, the switch picks egress from a
+  forwarding/subscription table. Nothing in `SampleBuffer`/`Lane` carries a flow identity. The heart of the
+  networking work — decide whether it reuses `Sample` lanes + a routing table or gets its own addressed
+  carrier.
+- **(d) Channel-count equality is interface-only.** `build_patch`'s `ChannelCountMismatch` (equal counts)
+  is right for a point-to-point cable, wrong for a switch (forwards a subset) and for per-direction duplex
+  — it becomes a per-flow/per-direction check, not an edge invariant.
+- **(e) Clock domains are the true prerequisite (5.3).** Two independently-clocked devices on one link are
+  an async boundary; the return leg's latency is really elastic-FIFO slip, not a fixed block (today: one
+  clock domain, cross-rate rejected as `ClockCrossingUnsupported`). The one-block delayed edge is a
+  stand-in; "clock not locked → dropouts" depends on 5.3.
+- **Design leanings for the switch (confirm at 5.2 planning):** subscription changes as
+  **recompile-on-change** (structural, like INST/48V) to keep the DAG static; the within-device 14×14
+  `Matrix` is the runtime-routing precedent for the between-device table; make consequences **emergent**
+  (per-hop latency, bandwidth exhaustion → dropouts, missing subscription → silence, clock-not-locked);
+  **skip** MAC/VLAN/QoS/frame encoding unless they produce an audible/measurable consequence (no flagging —
+  §4/§9).
+
+_Open decisions (non-blocking):_
+
+- **(i)** `SCHEMA_VERSION` was **not** bumped for duplex, so a pre-duplex saved scene with a one-way USB
+  link loads verbatim (silent monitoring). Left as-is because a one-way USB is a *legal* patch — decide
+  whether to bump (force-discard stale benches) when it bites.
+- **(ii)** the web's `wouldCreateCycle` still rejects a **one-way** digital loop authored by drag even
+  though the engine (post-#2) would auto-break it; only duplex bypasses it today. Make the web cycle check
+  domain-aware if UI-authored digital loops become a case.
 
 ---
 
