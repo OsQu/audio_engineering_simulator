@@ -6,15 +6,22 @@ use crate::param::{ParamDecl, ParamId, Params};
 use crate::port::{AudioFormat, DigitalFace, InputPort, OutputPort};
 use crate::signal::{BitDepth, Lane, SampleRate};
 
-/// A **routing matrix**: `n` mono digital inputs × `m` mono digital outputs, with an `n·m` grid of
-/// **crosspoint gains**. Output `j` is `Σ_i in_i · g[i][j]` — each output a gain-weighted sum of the
-/// inputs, so the same node expresses a router (one unity crosspoint per output), a mixer (several), or
-/// a mute (all zero). The gains are smoothed control params, so re-routing is **click-free and needs no
-/// recompile** — the runtime-switchable-routing seam from `catalog.rs` (routing "lives inside a node
-/// behind a control param"), as opposed to user-repatching, which is a graph edit.
+/// A **routing matrix**: `n` digital inputs × `m` digital outputs, with an `n·m` grid of **crosspoint
+/// gains**. Output `j` is `Σ_i in_i · g[i][j]` — each output a gain-weighted sum of the inputs, so the
+/// same node expresses a router (one unity crosspoint per output), a mixer (several), or a mute (all
+/// zero). The gains are smoothed control params, so re-routing is **click-free and needs no recompile**
+/// — the runtime-switchable-routing seam from `catalog.rs` (routing "lives inside a node behind a
+/// control param"), as opposed to user-repatching, which is a graph edit.
 ///
 /// This is a simplification of a real digital mixer (no per-output pan/solo/metering, just gains), the
 /// "correct-enough, never false" line: the routing and level are real, the console features are not.
+///
+/// The **port face** is chosen at construction: [`new`](Self::new) exposes `n + m` mono ports (one
+/// connector per channel, individually patchable — the 8i6's per-jack mixer), while
+/// [`new_single_ports`](Self::new_single_ports) bundles the lanes into a single `n`-lane input and
+/// `m`-lane output port (one fat connector per side — the dynamic computer's USB bus). `process` is
+/// identical for both: the schedule flattens ports to lanes, so it sees the same `n`-in / `m`-out lane
+/// array regardless of the face.
 ///
 /// The crosspoint from input `i` to output `j` is param [`crosspoint(i, j)`](Self::crosspoint); all
 /// ports share one `rate`/`bits`. Accumulation is `f64` (the summing-precision rule). `n` inputs; `m`
@@ -41,20 +48,13 @@ impl Matrix {
         ParamId((i * m_out + j) as u32)
     }
 
-    /// A matrix of `n_in` × `m_out` mono `rate`/`bits` channels, with `defaults` the initial crosspoint
-    /// gains (row-major, `i·m_out + j`) — the routing it sits at until the host moves a crosspoint. A
-    /// device authors identity-ish defaults here to reproduce its fixed routing.
+    /// Validates the construction invariants shared by both faces. Called by each constructor
+    /// **before** it builds its ports, so this `Matrix`-level message wins over the lower-level
+    /// [`AudioFormat`] channel check that `new_single_ports` would otherwise trip on a zero count.
     ///
     /// # Panics
-    /// Panics unless `n_in ≥ 1`, `m_out ≥ 1`, and `defaults.len() == n_in · m_out`. Construction-time.
-    #[must_use]
-    pub fn new(
-        rate: SampleRate,
-        bits: BitDepth,
-        n_in: usize,
-        m_out: usize,
-        defaults: Vec<f32>,
-    ) -> Self {
+    /// Panics unless `n_in ≥ 1`, `m_out ≥ 1`, and `defaults.len() == n_in · m_out`.
+    fn validate(n_in: usize, m_out: usize, defaults: &[f32]) {
         assert!(n_in >= 1 && m_out >= 1, "Matrix needs ≥1 input and output");
         assert!(
             defaults.len() == n_in * m_out,
@@ -62,7 +62,19 @@ impl Matrix {
             n_in * m_out,
             defaults.len()
         );
-        let mono = DigitalFace::new(AudioFormat::new(rate, bits, 1));
+    }
+
+    /// The shared construction core: builds the `n_in · m_out` crosspoint param decls (row-major,
+    /// `i·m_out + j`) and assembles the node around the caller's already-built port faces. Both public
+    /// constructors funnel through here and differ *only* in the ports they pass — `process` sees the
+    /// same flat lane array either way. Assumes [`validate`](Self::validate) has already run.
+    fn assemble(
+        n_in: usize,
+        m_out: usize,
+        defaults: Vec<f32>,
+        inputs: Vec<InputPort>,
+        outputs: Vec<OutputPort>,
+    ) -> Self {
         let mut param_decls = Vec::with_capacity(n_in * m_out);
         for i in 0..n_in {
             for j in 0..m_out {
@@ -75,13 +87,71 @@ impl Matrix {
                 });
             }
         }
+
         Self {
             m_out,
             defaults,
             param_decls,
-            inputs: (0..n_in).map(|_| mono.into()).collect(),
-            outputs: (0..m_out).map(|_| mono.into()).collect(),
+            inputs,
+            outputs,
         }
+    }
+
+    /// A matrix of `n_in` × `m_out` **mono** `rate`/`bits` ports — one connector per channel, each
+    /// patched independently. This is the face a real interface's per-jack routing wants (e.g. the
+    /// 8i6's 14×14 mixer). `defaults` are the initial crosspoint gains (row-major, `i·m_out + j`) — the
+    /// routing it sits at until the host moves a crosspoint; a device authors identity-ish defaults
+    /// here to reproduce its fixed routing. For a single lane-bundled port per side (the dynamic
+    /// computer's USB connector), see [`new_single_ports`](Self::new_single_ports).
+    ///
+    /// # Panics
+    /// Panics unless `n_in ≥ 1`, `m_out ≥ 1`, and `defaults.len() == n_in · m_out`. Construction-time.
+    #[must_use]
+    pub fn new(
+        rate: SampleRate,
+        bits: BitDepth,
+        n_in: usize,
+        m_out: usize,
+        defaults: Vec<f32>,
+    ) -> Self {
+        Self::validate(n_in, m_out, &defaults);
+        let mono = DigitalFace::new(AudioFormat::new(rate, bits, 1));
+        Self::assemble(
+            n_in,
+            m_out,
+            defaults,
+            (0..n_in).map(|_| mono.into()).collect(),
+            (0..m_out).map(|_| mono.into()).collect(),
+        )
+    }
+
+    /// A matrix whose lanes are **bundled into one port per side**: a single `n_in`-lane input port and
+    /// a single `m_out`-lane output port, rather than [`new`](Self::new)'s `n_in + m_out` mono ports.
+    /// This is the fat multichannel connector the dynamic computer patches its USB bus through — the
+    /// whole bus is one edge in the graph. The crosspoint grid, params, defaults, and `process` are
+    /// identical to `new`; only the declared port face differs (`process` sees the same flat lane array
+    /// once the schedule flattens ports to lanes). `defaults` are row-major (`i·m_out + j`).
+    ///
+    /// # Panics
+    /// Panics unless `n_in ≥ 1`, `m_out ≥ 1`, and `defaults.len() == n_in · m_out`. Construction-time.
+    #[must_use]
+    pub fn new_single_ports(
+        rate: SampleRate,
+        bits: BitDepth,
+        n_in: usize,
+        m_out: usize,
+        defaults: Vec<f32>,
+    ) -> Self {
+        Self::validate(n_in, m_out, &defaults);
+        let input_face = DigitalFace::new(AudioFormat::new(rate, bits, n_in as u16));
+        let output_face = DigitalFace::new(AudioFormat::new(rate, bits, m_out as u16));
+        Self::assemble(
+            n_in,
+            m_out,
+            defaults,
+            vec![input_face.into()],
+            vec![output_face.into()],
+        )
     }
 }
 
@@ -230,5 +300,72 @@ mod tests {
     #[should_panic(expected = "n_in·m_out")]
     fn rejects_wrong_default_length() {
         let _ = Matrix::new(fs(), bits(), 2, 2, vec![1.0, 0.0]); // needs 4
+    }
+
+    #[test]
+    fn single_ports_bundles_lanes_into_one_port_per_side() {
+        // The lane-bundled face: one input port carrying all n_in lanes and one output port carrying
+        // all m_out lanes (the dynamic computer's fat USB connector), vs `new`'s n_in + m_out separate
+        // mono jacks. Same n·m crosspoint params either way.
+        let mx = Matrix::new_single_ports(fs(), bits(), 3, 2, vec![0.0; 6]);
+        assert_eq!(mx.inputs().len(), 1);
+        assert_eq!(mx.outputs().len(), 1);
+        assert_eq!(mx.inputs()[0].lane_count(), 3);
+        assert_eq!(mx.outputs()[0].lane_count(), 2);
+        assert_eq!(mx.params().len(), 6);
+        assert_eq!(mx.inputs()[0].domain(), Domain::DigitalAudio);
+        assert_eq!(mx.outputs()[0].domain(), Domain::DigitalAudio);
+    }
+
+    #[test]
+    fn single_ports_route_and_sum_like_the_mono_face() {
+        // process consumes the same flat &[Lane] regardless of which face declared it, so the weighted
+        // sums are identical to the mono matrix. 3 inputs × 2 outputs; routing set via defaults (run
+        // outside a schedule, so the decl defaults are the per-sample fallback). Crosspoints row-major
+        // (i·m_out + j): (0,0)=1.0, (1,1)=1.0, (2,0)=0.5, rest 0 → out0 fans in in0 and a half of in2.
+        // Hand calc with in = [0.4, 0.2, 0.8]:
+        //   out0 = 0.4·1.0 + 0.2·0.0 + 0.8·0.5 = 0.8
+        //   out1 = 0.4·0.0 + 0.2·1.0 + 0.8·0.0 = 0.2
+        let mut mx =
+            Matrix::new_single_ports(fs(), bits(), 3, 2, vec![1.0, 0.0, 0.0, 1.0, 0.5, 0.0]);
+        let input = ins(&[0.4, 0.2, 0.8], 8);
+        let mut out = outs(2, 8);
+        mx.process(&Params::EMPTY, &input, &mut out);
+        assert!(
+            out[0]
+                .sample()
+                .as_slice()
+                .iter()
+                .all(|&s| (s - 0.8).abs() < 1e-6),
+            "out0 = in0 + in2·0.5 = 0.8"
+        );
+        assert!(
+            out[1]
+                .sample()
+                .as_slice()
+                .iter()
+                .all(|&s| (s - 0.2).abs() < 1e-6),
+            "out1 = in1 = 0.2"
+        );
+    }
+
+    #[test]
+    fn single_ports_identity_defaults_route_each_lane_to_its_own() {
+        // Diagonal (identity) defaults on a square 2×2 single-ports matrix: lane k → lane k, the
+        // loopback the dynamic computer sits at before the host moves a crosspoint.
+        let mut mx = Matrix::new_single_ports(fs(), bits(), 2, 2, vec![1.0, 0.0, 0.0, 1.0]);
+        let input = ins(&[0.3, -0.6], 8);
+        let mut out = outs(2, 8);
+        mx.process(&Params::EMPTY, &input, &mut out);
+        assert!(out[0].sample().as_slice().iter().all(|&s| s == 0.3));
+        assert!(out[1].sample().as_slice().iter().all(|&s| s == -0.6));
+    }
+
+    #[test]
+    #[should_panic(expected = "n_in·m_out")]
+    fn single_ports_rejects_wrong_default_length() {
+        // With valid n_in/m_out but a mismatched defaults length, `validate` fires the Matrix-level
+        // message — proving it runs before the port faces are built (which would otherwise be fine).
+        let _ = Matrix::new_single_ports(fs(), bits(), 2, 2, vec![1.0, 0.0]); // needs 4
     }
 }
