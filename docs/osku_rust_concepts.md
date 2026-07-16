@@ -332,6 +332,17 @@ fn measure_gain<F>(/* ... */) -> f32 where F: FnMut(&mut VoltageBuffer) { ... } 
 
 Rule of thumb: widen with `From`/`.into()`, narrow with `as`.
 
+**`From` on your own types (and why `.into()` works):** `From` isn't just numeric — implement it
+between domain types and the conversion becomes a named, one-place construction rule
+(`impl From<DigitalFace> for InputPort` in `port.rs`). Three cooperating pieces:
+- **Implement `From`, never `Into`.** std's blanket impl `impl<T, U> Into<U> for T where U: From<T>`
+  hands you `.into()` for free — and only in that direction.
+- **Inference picks the target from context.** `DigitalFace` converts to `InputPort` *or*
+  `OutputPort`; in `inputs: [face.into()]` the field type selects the impl. The same expression
+  resolves differently in the `outputs` field — and a bare `let x = face.into();` won't compile
+  ("type annotations needed").
+- A `Copy` source (like `DigitalFace`) can be `.into()`-ed repeatedly; a non-`Copy` one is moved.
+
 **Methods on primitives:** `u1.ln()`, `x.sqrt()`, `x.cos()`, `f.to_bits()` (raw bit pattern,
 handy for exact float comparison).
 
@@ -363,6 +374,15 @@ buf.as_mut_slice().iter_mut().enumerate()            // iter_mut() → &mut f32 
 (0..8).map(|_| rng.next_u32()).collect::<Vec<_>>()   // build a collection
 items.iter().map(|x| ...).reduce(Ohms::parallel)     // fold w/o seed → Option; method as the op
 ```
+**Building a collection from a count — ranges are iterators:** `(0..n)` implements `Iterator`
+directly (no `.iter()`), so "N of something" is `(0..n).map(|k| …).collect()`. When each number
+yields *several* items, **`flat_map`** (map + flatten) splices them into one stream — the meter's
+interleaved per-lane readouts: `(0..usize::from(channels)).flat_map(|k| [peak_decl(k),
+rms_decl(k)]).collect()` (arrays iterate by value since Rust 2021). Plain `map` there would
+collect a `Vec<[T; 2]>`. Beware the range's item type: `0..channels` on a `u16` yields `u16`s —
+widen the bound (`0..usize::from(channels)`) or the uses. With two+ loop variables a
+`with_capacity` + `for`/`push` loop is often clearer (`Matrix::new`'s crosspoint grid).
+
 **`reduce` vs function items:** `Iterator::reduce` folds with **no initial value** — it seeds
 from the first element and returns `Option<T>` (`None` if empty). And a **function/method path**
 (`Ohms::parallel`) can be passed anywhere a closure is expected, as long as its signature matches
