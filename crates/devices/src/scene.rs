@@ -95,6 +95,12 @@ pub struct Connection {
     /// Optional cable on this edge; omitted ⇒ ideal wire.
     #[serde(default)]
     pub cable: Option<CableSpec>,
+    /// **Duplex** link: one physical connector (USB-C, Ethernet) carrying both directions. When set,
+    /// `from`/`to` name one direction (an output → an input, each half of a **duplex jack**), and the
+    /// build adds the *reverse* leg too — the partner output of `to`'s device → the partner input of
+    /// `from`'s device — so a single stored cable becomes both engine edges. Omitted ⇒ a one-way wire.
+    #[serde(default)]
+    pub duplex: bool,
 }
 
 /// A reference to one **device-level** port: a device instance id plus the port index on that
@@ -159,6 +165,7 @@ mod tests {
                     resistance_ohms: 150.0,
                     capacitance_farads: 0.5,
                 }),
+                duplex: false,
             }],
             output: PortRef {
                 device: "spk".into(),

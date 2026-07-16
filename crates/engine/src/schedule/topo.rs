@@ -37,6 +37,30 @@ pub(super) fn topo_sort(node_count: usize, deps: &[(usize, usize)]) -> Option<Ve
     (order.len() == node_count).then_some(order)
 }
 
+/// `true` if `dst` is reachable from `src` by following **one or more** edges in `deps` (the same
+/// `(from, to)` form as [`topo_sort`]). Used by `compile` to decide whether an edge `from → to`
+/// closes a cycle: it does exactly when `from` is reachable from `to`. A self-loop (`src == dst`
+/// with the edge present) counts as reachable. Compile-time only — allocates, never on the hot path.
+pub(super) fn reaches(node_count: usize, deps: &[(usize, usize)], src: usize, dst: usize) -> bool {
+    let mut successors: Vec<Vec<usize>> = vec![Vec::new(); node_count];
+    for &(from, to) in deps {
+        successors[from].push(to);
+    }
+    // Start one step out from `src` so the empty path never counts — reachability requires ≥1 edge.
+    let mut seen = vec![false; node_count];
+    let mut stack = successors[src].clone();
+    while let Some(n) = stack.pop() {
+        if n == dst {
+            return true;
+        }
+        if !seen[n] {
+            seen[n] = true;
+            stack.extend(successors[n].iter().copied());
+        }
+    }
+    false
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -94,5 +118,26 @@ mod tests {
     #[test]
     fn a_self_loop_is_a_cycle() {
         assert!(topo_sort(1, &[(0, 0)]).is_none());
+    }
+
+    #[test]
+    fn reaches_follows_a_path_but_needs_at_least_one_edge() {
+        // 0 → 1 → 2: 0 reaches 1 and 2; 2 reaches neither; a node doesn't reach itself with no loop.
+        let deps = [(0, 1), (1, 2)];
+        assert!(reaches(3, &deps, 0, 1));
+        assert!(reaches(3, &deps, 0, 2));
+        assert!(!reaches(3, &deps, 2, 0));
+        assert!(
+            !reaches(3, &deps, 0, 0),
+            "no path back to self ⇒ not reachable"
+        );
+    }
+
+    #[test]
+    fn reaches_detects_the_back_edge_of_a_cycle() {
+        // Edge a→b is (0,1); the back edge b→a is (1,0). With both present, b reaches a — so the
+        // edge a→b closes a cycle, which is exactly the test `compile` makes. A self-loop counts too.
+        assert!(reaches(2, &[(0, 1), (1, 0)], 1, 0));
+        assert!(reaches(1, &[(0, 0)], 0, 0), "self-loop reaches itself");
     }
 }

@@ -51,6 +51,12 @@ export interface Connection {
   to: PortRef;
   /** Optional cable (series R + shunt C); omit for an ideal wire. */
   cable?: CableSpec;
+  /**
+   * Duplex link: one physical connector (USB-C, Ethernet) carrying both directions. When true,
+   * `from`/`to` name one direction (each half of a duplex jack) and the build adds the reverse leg
+   * too — so one stored cable becomes both engine edges. Omit for a one-way wire.
+   */
+  duplex?: boolean;
 }
 
 /** A reference to one device-level port: a device instance id + the port index. */

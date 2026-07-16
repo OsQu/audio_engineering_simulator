@@ -186,6 +186,14 @@ pub struct PortDescriptor {
     /// monitoring loop *through* it (interface → DAW → interface) can close without a same-block
     /// feedback cycle. Always `false` for inputs and for ordinary outputs.
     pub delayed: bool,
+    /// The port on the **other** direction that shares this port's physical connector — a **duplex**
+    /// jack (USB-C, Ethernet), which carries data both ways over one connector. For an output it is the
+    /// paired input's id; for an input, the paired output's id. `None` for an ordinary one-way jack. A
+    /// duplex [`scene::Connection`](crate::scene::Connection) between two duplex jacks expands to the
+    /// two directed engine edges; the UI draws one jack and one cable. Omitted from the JS descriptor
+    /// for an ordinary jack (so it reads as `duplexPartner?: number`, not `null`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub duplex_partner: Option<u32>,
 }
 
 /// One scalar readout a device exposes for the host to display (a meter value read back over the
@@ -349,6 +357,10 @@ struct CatalogEntry {
     /// [`engine::Graph::connect_delayed`], letting a monitoring loop *through* the device close without
     /// a cycle. Empty for every ordinary device; only a latency source (the `computer`) lists one.
     delayed_outputs: &'static [u32],
+    /// **Duplex jacks**: `(output_id, input_id)` pairs where one physical connector (USB-C, Ethernet)
+    /// carries both directions. Each pair surfaces as a `duplex_partner` on both descriptors, and a
+    /// duplex connection to it expands to two engine edges. Empty for a device with only one-way jacks.
+    duplex_links: &'static [(u32, u32)],
     /// One per *exposed* readout (all node readouts, concatenated in node order). Empty for a device
     /// that measures nothing.
     readouts: &'static [ReadoutUi],
@@ -551,6 +563,7 @@ const CATALOG: &[CatalogEntry] = &[
             connector: Connector::QuarterInch,
         }],
         delayed_outputs: &[],
+        duplex_links: &[],
         readouts: &[],
         configs: &[],
     },
@@ -585,6 +598,7 @@ const CATALOG: &[CatalogEntry] = &[
             connector: Connector::Din5,
         }],
         delayed_outputs: &[],
+        duplex_links: &[],
         readouts: &[],
         configs: &[],
     },
@@ -630,6 +644,7 @@ const CATALOG: &[CatalogEntry] = &[
             connector: Connector::Xlr,
         }],
         delayed_outputs: &[],
+        duplex_links: &[],
         readouts: &[],
         configs: &[],
     },
@@ -671,6 +686,7 @@ const CATALOG: &[CatalogEntry] = &[
             connector: Connector::QuarterInch,
         }],
         delayed_outputs: &[],
+        duplex_links: &[],
         readouts: &[],
         configs: &[],
     },
@@ -704,6 +720,7 @@ const CATALOG: &[CatalogEntry] = &[
             connector: Connector::Digital,
         }],
         delayed_outputs: &[],
+        duplex_links: &[],
         readouts: &[],
         configs: &[],
     },
@@ -739,6 +756,7 @@ const CATALOG: &[CatalogEntry] = &[
             connector: Connector::Digital,
         }],
         delayed_outputs: &[],
+        duplex_links: &[],
         readouts: &[],
         configs: &[],
     },
@@ -774,6 +792,7 @@ const CATALOG: &[CatalogEntry] = &[
             connector: Connector::QuarterInch,
         }],
         delayed_outputs: &[],
+        duplex_links: &[],
         readouts: &[],
         configs: &[],
     },
@@ -806,6 +825,7 @@ const CATALOG: &[CatalogEntry] = &[
             connector: Connector::QuarterInch,
         }],
         delayed_outputs: &[],
+        duplex_links: &[],
         readouts: &[],
         configs: &[],
     },
@@ -880,6 +900,7 @@ const CATALOG: &[CatalogEntry] = &[
             connector: Connector::QuarterInch,
         }],
         delayed_outputs: &[],
+        duplex_links: &[],
         readouts: &[],
         configs: &[],
     },
@@ -906,6 +927,7 @@ const CATALOG: &[CatalogEntry] = &[
             connector: Connector::QuarterInch,
         }],
         delayed_outputs: &[],
+        duplex_links: &[],
         readouts: &[
             ReadoutUi {
                 label: "VU",
@@ -945,6 +967,7 @@ const CATALOG: &[CatalogEntry] = &[
             connector: Connector::Digital,
         }],
         delayed_outputs: &[],
+        duplex_links: &[],
         readouts: &[
             ReadoutUi {
                 label: "Peak",
@@ -1485,6 +1508,8 @@ const CATALOG: &[CatalogEntry] = &[
             },
         ],
         delayed_outputs: &[],
+        // The single USB-C jack is duplex: USB Out (output 0) + USB In (input 7) are one connector.
+        duplex_links: &[(0, 7)],
         // Input meters on combo 1/2 (nodes 22,23), each a VuMeter exposing VU + peak-dBu — in node
         // order, so the four exposed readouts are In 1 (VU, Peak) then In 2 (VU, Peak). The web
         // faceplate renders these as the level ring around each preamp's gain knob.
@@ -1803,6 +1828,8 @@ const CATALOG: &[CatalogEntry] = &[
         // from it are **delayed**: `build_patch` wires them with round-trip latency, letting the
         // interface → computer → interface monitoring loop close without a same-block cycle.
         delayed_outputs: &[0],
+        // The single USB-C jack is duplex: USB Out (0) + USB In (0) are one physical connector.
+        duplex_links: &[(0, 0)],
         // Per-lane send meters, in node order: each meter contributes (Peak, RMS) in decl order.
         readouts: &[
             ReadoutUi {
@@ -2144,6 +2171,12 @@ fn describe(entry: &CatalogEntry) -> DeviceDescriptor {
             kind: ui.kind,
             connector: ui.connector,
             delayed: false, // inputs are never a latency source
+            // Paired output, if this input is half of a duplex jack.
+            duplex_partner: entry
+                .duplex_links
+                .iter()
+                .find(|(_, in_id)| *in_id == i as u32)
+                .map(|(out_id, _)| *out_id),
         });
     let outputs = face
         .outputs
@@ -2159,6 +2192,12 @@ fn describe(entry: &CatalogEntry) -> DeviceDescriptor {
             kind: ui.kind,
             connector: ui.connector,
             delayed: entry.delayed_outputs.contains(&(i as u32)),
+            // Paired input, if this output is half of a duplex jack.
+            duplex_partner: entry
+                .duplex_links
+                .iter()
+                .find(|(out_id, _)| *out_id == i as u32)
+                .map(|(_, in_id)| *in_id),
         });
     let ports = inputs.chain(outputs).collect();
 

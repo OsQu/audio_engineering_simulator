@@ -78,6 +78,11 @@ export interface PortDescriptor {
    *  playback trails its input). The build wires such edges delayed, letting a monitoring loop through
    *  the device close without a cycle. `false` for inputs and ordinary outputs. */
   delayed: boolean;
+  /** The port on the **other** direction sharing this port's physical connector — a **duplex** jack
+   *  (USB-C, Ethernet) carrying both directions. For an output it's the paired input's id; for an
+   *  input, the paired output's id. Absent for an ordinary one-way jack. A duplex connection to it
+   *  expands to two engine edges; draw it as one jack. */
+  duplexPartner?: number;
 }
 
 /** One scalar readout: engine truth (id) + UI label/unit. The host reads its live value back by

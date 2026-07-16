@@ -3,7 +3,7 @@
 //! This is where the per-device chassis seam ([`instantiate`]) meets the whole scene. [`build_patch`]:
 //! 1. **instantiates** each device into a fresh `Graph` (1..N nodes + internal edges), keying its
 //!    [`BuiltDevice`] map by the scene device id;
-//! 2. **remaps** each scene [`Connection`](crate::Connection) — addressed by `(device, device-port)` — through those maps
+//! 2. **remaps** each scene [`Connection`] — addressed by `(device, device-port)` — through those maps
 //!    to concrete node-port edges, and likewise the output tap;
 //! 3. **compiles** (fixed seed → reproducible); and
 //! 4. **resolves** the generic control surface: `(device, param id) → ParamHandle` and
@@ -30,7 +30,7 @@ use crate::catalog::{
     BuiltDevice, Connector, DeviceConfig, DeviceDescriptor, PortDescriptor, PortDirection,
     PortDomain, connectors_compatible, descriptors, instantiate,
 };
-use crate::scene::{Patch, PortRef};
+use crate::scene::{CableSpec, Connection, Patch, PortRef};
 
 /// Why assembling a [`Patch`] failed — all caught off the audio thread (the hot path never sees a
 /// patch). Each variant names the offending scene element so the UI can point at it.
@@ -70,6 +70,9 @@ pub enum BuildError {
         from_channels: u16,
         to_channels: u16,
     },
+    /// A connection is flagged **duplex** but one of its endpoints isn't a duplex jack (no
+    /// `duplex_partner`), so there's no paired port to carry the reverse leg. Names the offending port.
+    NotDuplex { device: String, port: u32 },
     /// The engine rejected the assembled graph (domain mismatch, cycle, indivisible rate, …).
     Compile(CompileError),
 }
@@ -112,6 +115,9 @@ impl fmt::Display for BuildError {
                 f,
                 "digital channel-count mismatch: {from:?} ({from_channels} ch) -> {to:?} ({to_channels} ch)"
             ),
+            Self::NotDuplex { device, port } => {
+                write!(f, "device {device:?} port {port} is not a duplex jack")
+            }
             Self::Compile(e) => write!(f, "compile error: {e:?}"),
         }
     }
@@ -139,7 +145,7 @@ pub struct BuiltScene {
     /// device id → its `ReadoutHandle`s, indexed by **device-level readout id**. Absent for devices
     /// that expose no readouts (measure nothing) — the node→host mirror of `params`.
     readouts: BTreeMap<String, Vec<ReadoutHandle>>,
-    /// Per scene [`Connection`](crate::Connection) (same index as `patch.connections`): the edge's
+    /// Per scene [`Connection`] (same index as `patch.connections`): the edge's
     /// **loading loss** in dB (`20·log10` of the baked resistive divider gain, so ≤ 0 dB — an
     /// attenuation), or `None` for a digital/event connection (ideal, no resistive loading). The
     /// static analog-domain readout the UI shows per cable.
@@ -298,6 +304,119 @@ fn resolve_input(
         })
 }
 
+/// Resolve and add one directed edge (output `from` → input `to`) to the graph: the same-domain
+/// connector-shape and digital channel-count checks, then dispatch to the right `connect_*` — delayed
+/// if the source is a round-trip-latency output, cabled if a cable is given, else an ideal wire. Shared
+/// by an ordinary connection and by each leg of a duplex link.
+fn add_edge(
+    graph: &mut Graph,
+    devices: &BTreeMap<String, BuiltDevice>,
+    descs: &BTreeMap<String, DeviceDescriptor>,
+    types: &BTreeMap<&str, &str>,
+    from: &PortRef,
+    to: &PortRef,
+    cable: &Option<CableSpec>,
+) -> Result<(), BuildError> {
+    let (from_node, from_port) = resolve_output(devices, from)?;
+    let (to_node, to_port) = resolve_input(devices, to)?;
+
+    // Same-domain physical-fit checks (a cross-domain wire is the engine's `DomainMismatch` at compile,
+    // mirroring the UI's domain-then-connector precedence). Both ports resolved above.
+    if let (Some(fp), Some(tp)) = (
+        port_descriptor(descs, types, &from.device, PortDirection::Output, from.port),
+        port_descriptor(descs, types, &to.device, PortDirection::Input, to.port),
+    ) && fp.domain == tp.domain
+    {
+        // Connector-shape compatibility — a hard mechanical constraint (an XLR won't seat in a ¼" jack).
+        if !connectors_compatible(fp.connector, tp.connector) {
+            return Err(BuildError::ConnectorMismatch {
+                from: from.device.clone(),
+                to: to.device.clone(),
+                from_connector: fp.connector,
+                to_connector: tp.connector,
+            });
+        }
+        // A digital link must carry the same channel count on both ends (an 8-wide send can't feed a
+        // 2-wide return). The engine enforces this too (`LaneCountMismatch`); surfacing it here gives a
+        // legible, pre-compile error the web mirror can also show live.
+        if fp.domain == PortDomain::Digital && fp.channels != tp.channels {
+            return Err(BuildError::ChannelCountMismatch {
+                from: from.device.clone(),
+                to: to.device.clone(),
+                from_channels: fp.channels,
+                to_channels: tp.channels,
+            });
+        }
+    }
+
+    // A **round-trip-latency** output (a computer/DAW's playback, one block behind its input) wires
+    // through a delayed edge — the *hint* that places the block of latency on the physically-correct
+    // leg; `compile` would otherwise auto-break the cycle at some digital edge. Latency is a digital
+    // round-trip, so it overrides any cable (a delayed edge is an ideal copy).
+    let delayed = port_descriptor(descs, types, &from.device, PortDirection::Output, from.port)
+        .is_some_and(|fp| fp.delayed);
+
+    match (delayed, cable) {
+        (true, _) => graph.connect_delayed(from_node, from_port, to_node, to_port),
+        (false, Some(cable)) => graph.connect_cabled(
+            from_node,
+            from_port,
+            to_node,
+            to_port,
+            Cable::new(
+                Ohms::new(cable.resistance_ohms),
+                Farads::new(cable.capacitance_farads),
+            ),
+        ),
+        (false, None) => graph.connect_ideal(from_node, from_port, to_node, to_port),
+    }
+    Ok(())
+}
+
+/// The **reverse leg** of a duplex connection. Given `conn` (device X's output → device Y's input, each
+/// half of a duplex jack), returns the refs for the return edge: device Y's paired **output** → device
+/// X's paired **input**. Errors [`BuildError::NotDuplex`] if either endpoint isn't a duplex jack.
+fn duplex_reverse(
+    descs: &BTreeMap<String, DeviceDescriptor>,
+    types: &BTreeMap<&str, &str>,
+    conn: &Connection,
+) -> Result<(PortRef, PortRef), BuildError> {
+    let x_in = port_descriptor(
+        descs,
+        types,
+        &conn.from.device,
+        PortDirection::Output,
+        conn.from.port,
+    )
+    .and_then(|p| p.duplex_partner)
+    .ok_or_else(|| BuildError::NotDuplex {
+        device: conn.from.device.clone(),
+        port: conn.from.port,
+    })?;
+    let y_out = port_descriptor(
+        descs,
+        types,
+        &conn.to.device,
+        PortDirection::Input,
+        conn.to.port,
+    )
+    .and_then(|p| p.duplex_partner)
+    .ok_or_else(|| BuildError::NotDuplex {
+        device: conn.to.device.clone(),
+        port: conn.to.port,
+    })?;
+    Ok((
+        PortRef {
+            device: conn.to.device.clone(),
+            port: y_out,
+        },
+        PortRef {
+            device: conn.from.device.clone(),
+            port: x_in,
+        },
+    ))
+}
+
 /// Assemble a runnable [`Patch`] into a compiled [`BuiltScene`] at the given block length, analog
 /// `rate`, and `seed`. See the module docs for the four steps; all failures surface as [`BuildError`].
 ///
@@ -349,78 +468,34 @@ pub fn build_patch(
     //    devices' internal edges) so its baked loading loss can be read back after compile.
     let mut connection_edges: Vec<usize> = Vec::with_capacity(patch.connections.len());
     for conn in &patch.connections {
-        let (from_node, from_port) = resolve_output(&devices, &conn.from)?;
-        let (to_node, to_port) = resolve_input(&devices, &conn.to)?;
-
-        // Same-domain physical-fit checks (a cross-domain wire is the engine's `DomainMismatch` at
-        // compile below, mirroring the UI's domain-then-connector precedence). Both ports resolved
-        // above, so the descriptors are present.
-        if let (Some(fp), Some(tp)) = (
-            port_descriptor(
-                &descs,
-                &types,
-                &conn.from.device,
-                PortDirection::Output,
-                conn.from.port,
-            ),
-            port_descriptor(
-                &descs,
-                &types,
-                &conn.to.device,
-                PortDirection::Input,
-                conn.to.port,
-            ),
-        ) && fp.domain == tp.domain
-        {
-            // Connector-shape compatibility — a hard mechanical constraint (an XLR won't seat in a ¼"
-            // jack).
-            if !connectors_compatible(fp.connector, tp.connector) {
-                return Err(BuildError::ConnectorMismatch {
-                    from: conn.from.device.clone(),
-                    to: conn.to.device.clone(),
-                    from_connector: fp.connector,
-                    to_connector: tp.connector,
-                });
-            }
-            // A digital link must carry the same number of channels on both ends (an 8-wide send can't
-            // feed a 2-wide return). The engine enforces this too (`LaneCountMismatch`); surfacing it
-            // here gives a legible, pre-compile error that the web mirror can also show live.
-            if fp.domain == PortDomain::Digital && fp.channels != tp.channels {
-                return Err(BuildError::ChannelCountMismatch {
-                    from: conn.from.device.clone(),
-                    to: conn.to.device.clone(),
-                    from_channels: fp.channels,
-                    to_channels: tp.channels,
-                });
-            }
-        }
-
-        // A **round-trip-latency** output (a computer/DAW's playback, one block behind its input) wires
-        // through a delayed edge, so a monitoring loop *through* it closes without a same-block cycle.
-        // Latency is a digital round-trip, so it overrides any cable (a delayed edge is an ideal copy).
-        let delayed = port_descriptor(
+        // Record the **forward** edge's index so its baked loading loss reads back 1:1 with
+        // `patch.connections`. A duplex link's reverse leg is added to the graph below but not tracked
+        // here (it's digital — no resistive loss to report), keeping the loss vector aligned.
+        connection_edges.push(graph.connection_count());
+        add_edge(
+            &mut graph,
+            &devices,
             &descs,
             &types,
-            &conn.from.device,
-            PortDirection::Output,
-            conn.from.port,
-        )
-        .is_some_and(|fp| fp.delayed);
+            &conn.from,
+            &conn.to,
+            &conn.cable,
+        )?;
 
-        connection_edges.push(graph.connection_count());
-        match (delayed, &conn.cable) {
-            (true, _) => graph.connect_delayed(from_node, from_port, to_node, to_port),
-            (false, Some(cable)) => graph.connect_cabled(
-                from_node,
-                from_port,
-                to_node,
-                to_port,
-                Cable::new(
-                    Ohms::new(cable.resistance_ohms),
-                    Farads::new(cable.capacitance_farads),
-                ),
-            ),
-            (false, None) => graph.connect_ideal(from_node, from_port, to_node, to_port),
+        // A duplex connector carries both directions over one physical cable: add the return leg
+        // (device Y's paired output → device X's paired input). The two edges form a digital cycle,
+        // which `compile` breaks with one block of round-trip latency.
+        if conn.duplex {
+            let (rev_from, rev_to) = duplex_reverse(&descs, &types, conn)?;
+            add_edge(
+                &mut graph,
+                &devices,
+                &descs,
+                &types,
+                &rev_from,
+                &rev_to,
+                &conn.cable,
+            )?;
         }
     }
     let (out_node, out_port) = resolve_output(&devices, &patch.output)?;
@@ -538,6 +613,16 @@ mod tests {
                 port: to_port,
             },
             cable: None,
+            duplex: false,
+        }
+    }
+
+    /// A **duplex** connection — one physical connector carrying both directions. Same as [`conn`] but
+    /// with the `duplex` flag set, so `build_patch` also adds the reverse leg.
+    fn conn_duplex(from: &str, from_port: u32, to: &str, to_port: u32) -> Connection {
+        Connection {
+            duplex: true,
+            ..conn(from, from_port, to, to_port)
         }
     }
 
@@ -811,9 +896,11 @@ mod tests {
 
     /// The classic playable loop **closes through the computer**: synth → 8i6 (record) → computer
     /// (loopback) → 8i6 (USB return → monitor) → speaker. The computer's USB output is a **round-trip
-    /// latency** source, so `build_patch` wires the return edge delayed — which is the only reason the
-    /// loop builds at all (an undelayed version is `Err(Compile(Cycle))`, confirmed during design). This
-    /// also exercises a **multichannel digital delayed edge** end-to-end (8-lane send, 6-lane return).
+    /// latency** source, so `build_patch` wires the return edge delayed — placing the block of latency
+    /// on the physically-correct leg (the DAW's playback trailing its input). `compile` would in any
+    /// case auto-break the resulting digital cycle by delaying one of its edges; the declared-latent
+    /// output is the *hint* that fixes **which** leg carries it. This also exercises a **multichannel
+    /// digital delayed edge** end-to-end (8-lane send, 6-lane return).
     /// The monitor is powered on and the 8i6 matrix is left at its identity default (Pre1→USB1 on the
     /// record side, DAW1→Line1 on the playback side), so the note returns to Line Out 1 and is audible.
     #[test]
@@ -872,6 +959,85 @@ mod tests {
         );
     }
 
+    /// The same playable loop, but the two USB connections collapse into **one duplex cable**: a single
+    /// duplex `Connection` (8i6 USB Out → computer USB In) that `build_patch` expands into both the 8-ch
+    /// send *and* the 6-ch return (computer USB Out → 8i6 USB In, resolved through each jack's
+    /// `duplex_partner`). The loop only sounds if **both** legs carry signal, so audibility proves the
+    /// reverse leg was added; and `connection_losses` stays 1:1 with the scene's connections.
+    #[test]
+    fn a_duplex_usb_cable_carries_both_send_and_return() {
+        let patch = Patch {
+            devices: vec![
+                device("synth", "synth_voice"),
+                device("if", "scarlett_8i6"),
+                device("computer", "computer"),
+                device("spk", "speaker"),
+            ],
+            connections: vec![
+                conn("synth", 0, "if", 0),
+                conn_duplex("if", 0, "computer", 0), // ONE duplex USB-C cable = 8-ch send + 6-ch return
+                conn("if", 2, "spk", 0),
+            ],
+            output: PortRef {
+                device: "spk".into(),
+                port: 0,
+            },
+        };
+        let mut scene =
+            build_patch(&patch, BLOCK_LEN, rate(), 0).expect("the duplex round-trip loop builds");
+        assert_eq!(
+            scene.connection_losses().len(),
+            3,
+            "one tracked loss per scene connection — the duplex reverse leg isn't double-counted"
+        );
+
+        // Power the 8i6 on and open the monitor; the identity matrix routes the note through the loop.
+        let power: Vec<_> = scene.param("if", 205).to_vec();
+        let monitor: Vec<_> = scene.param("if", 204).to_vec();
+        let ev = scene.event_input("synth").expect("synth event input");
+        let mut events = EventQueue::with_capacity(4);
+        events.push(
+            0,
+            ev,
+            EventMessage::NoteOn {
+                note: NOTE,
+                velocity: 100,
+            },
+        );
+        let mut params = ParamQueue::with_capacity(20);
+        for h in power.iter().chain(monitor.iter()) {
+            params.set(*h, 1.0);
+        }
+        let mut out = VoltageBuffer::zeros(BLOCK_LEN, rate());
+        let mut peak = 0.0_f32;
+        for _ in 0..128 {
+            scene
+                .schedule_mut()
+                .process_io(&mut out, &mut params, &mut events);
+            peak = out.as_slice().iter().fold(peak, |p, &v| p.max(v.abs()));
+        }
+        assert!(
+            peak > 0.01,
+            "the duplex cable's send and return both carry signal, so the note is audible, got {peak}"
+        );
+    }
+
+    /// A `duplex` flag on a jack that isn't duplex (the synth's analog output has no `duplex_partner`)
+    /// is rejected — there's no paired port to carry the reverse leg.
+    #[test]
+    fn duplex_on_a_non_duplex_jack_errors() {
+        let patch = Patch {
+            devices: vec![device("synth", "synth_voice"), device("if", "scarlett_8i6")],
+            connections: vec![conn_duplex("synth", 0, "if", 0)],
+            output: PortRef {
+                device: "if".into(),
+                port: 2,
+            },
+        };
+        let err = build_patch(&patch, BLOCK_LEN, rate(), 0).unwrap_err();
+        assert!(matches!(err, BuildError::NotDuplex { .. }), "got {err:?}");
+    }
+
     /// The INST/hi-Z structural config toggles a preamp's input impedance, which the loading divider
     /// bakes at compile — so the *same* patch, built with `inst1` off vs on, yields a **different**
     /// connection loss on a high-output-impedance source feeding preamp 1. A synth (≈1 Ω Zout) is too
@@ -906,6 +1072,7 @@ mod tests {
                     resistance_ohms: 10_000.0,
                     capacitance_farads: 0.0,
                 }),
+                duplex: false,
             }],
             output: PortRef {
                 device: "if".into(),

@@ -9,10 +9,13 @@
 //! validation and error reporting live in graph construction and `compile`, never the hot
 //! path). The engine solves connections **locally** (no global nodal solve), so the *scheduled*
 //! graph is a DAG — a same-block cycle is a wiring mistake the compiler rejects rather than a
-//! feedback path to solve. The one escape hatch is [`Graph::connect_delayed`]: a **delayed edge**
-//! carries one block of latency, is cut from the topological sort, and so may close a loop (a
-//! round-trip through a latent device — an interface ↔ DAW monitoring loop) without a same-block
-//! feedback solve. The invariant holds: the schedule stays acyclic; only bounded latency is added.
+//! feedback path to solve. The escape hatch is a **delayed edge**: it carries one block of latency,
+//! is cut from the topological sort, and so may close a loop (a round-trip through a latent device —
+//! an interface ↔ DAW monitoring loop) without a same-block feedback solve. A delayed edge is set
+//! two ways: explicitly via [`Graph::connect_delayed`], or **automatically by `compile`**, which
+//! breaks any residual cycle by delaying a **digital** edge on it (a digital link is buffered, so a
+//! block of latency there is physical; an all-analog loop has nowhere to put it and is rejected). The
+//! invariant holds either way: the schedule stays acyclic; only bounded latency is added.
 
 use crate::electrical::Cable;
 use crate::node::Node;

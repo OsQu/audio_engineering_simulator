@@ -1274,6 +1274,88 @@ mod digital_seam {
         assert!(sink_in.sample().as_slice().iter().all(|&s| s == 0.5));
     }
 
+    /// A digital `out = in + 1` node — the digital twin of the analog `Accumulator`. One digital in,
+    /// one digital out; used to exercise auto-broken digital feedback loops.
+    struct DigitalAccumulator {
+        inputs: [InputPort; 1],
+        outputs: [OutputPort; 1],
+    }
+    impl DigitalAccumulator {
+        fn new(format: AudioFormat) -> Self {
+            Self {
+                inputs: [DigitalFace::new(format).into()],
+                outputs: [DigitalFace::new(format).into()],
+            }
+        }
+    }
+    impl Node for DigitalAccumulator {
+        fn inputs(&self) -> &[InputPort] {
+            &self.inputs
+        }
+        fn outputs(&self) -> &[OutputPort] {
+            &self.outputs
+        }
+        fn process(&mut self, _p: &Params, inputs: &[Lane], outputs: &mut [Lane]) {
+            let src = inputs[0].sample().as_slice();
+            let dst = outputs[0].sample_mut().as_mut_slice();
+            for (o, &i) in dst.iter_mut().zip(src) {
+                *o = i + 1.0;
+            }
+        }
+    }
+
+    /// A two-node **digital** loop `A → B → A` wired with two **ideal** edges compiles: `compile`
+    /// auto-breaks the cycle by delaying one digital edge (the digital-transport analogue of a
+    /// buffered round-trip). The all-analog twin of this topology is rejected (`rejects_a_cycle`) —
+    /// only a digital link can carry the block of latency that cuts the loop.
+    #[test]
+    fn a_digital_cycle_of_ideal_edges_auto_compiles() {
+        let mut g = Graph::new();
+        let atap = g.add(TestSource::new(Volts::new(1.0), Ohms::new(150.0)));
+        g.set_output(atap, 0); // analog tap so the schedule is well-formed
+        let a = g.add(DigitalAccumulator::new(fmt(48_000.0)));
+        let b = g.add(DigitalAccumulator::new(fmt(48_000.0)));
+        g.connect_ideal(a, 0, b, 0);
+        g.connect_ideal(b, 0, a, 0);
+        assert!(
+            compile(g, 16, analog_rate(), 0).is_ok(),
+            "a digital 2-cycle is auto-broken at a digital edge, so it compiles"
+        );
+    }
+
+    /// A **digital self-loop** `acc → acc` wired with an *ideal* edge — no `connect_delayed` — turns the
+    /// `out = in + 1` accumulator into a one-block integrator, exactly as the manually-delayed analog
+    /// self-loop does. Proof the auto-inserted delay is functionally identical: reads *last* block's
+    /// output, so after N blocks the sample value is N. (A zero-block cut would be a rejected cycle.)
+    #[test]
+    fn an_auto_broken_digital_self_loop_integrates_one_block_at_a_time() {
+        let mut g = Graph::new();
+        let atap = g.add(TestSource::new(Volts::new(1.0), Ohms::new(150.0)));
+        g.set_output(atap, 0); // analog tap drives `process`; the digital loop runs alongside
+        let acc = g.add(DigitalAccumulator::new(fmt(48_000.0)));
+        g.connect_ideal(acc, 0, acc, 0); // ideal self-loop — compile must auto-delay it
+        let mut sched = compile(g, 16, analog_rate(), 0).expect("ideal digital self-loop compiles");
+
+        let mut out = VoltageBuffer::zeros(16, analog_rate());
+        for expected in 1..=5 {
+            sched.process(&mut out);
+            // The accumulator owns the only digital output lane in the pool.
+            let acc_out = sched
+                .output_pool
+                .iter()
+                .find(|l| matches!(l, Lane::Sample(_)))
+                .expect("the accumulator's digital output lane");
+            assert!(
+                acc_out
+                    .sample()
+                    .as_slice()
+                    .iter()
+                    .all(|&s| (s - expected as f32).abs() < 1e-6),
+                "block {expected}: auto-broken loop should have integrated to {expected}"
+            );
+        }
+    }
+
     #[test]
     fn rejects_domain_mismatch() {
         // An analog output into a digital input: no physics bridges domains on a wire.

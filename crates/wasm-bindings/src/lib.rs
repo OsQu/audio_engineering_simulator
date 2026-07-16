@@ -427,6 +427,7 @@ mod tests {
                 port: to_port,
             },
             cable: None,
+            duplex: false,
         }
     }
 
