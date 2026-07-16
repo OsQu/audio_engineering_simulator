@@ -579,6 +579,9 @@ _Tasks to be elaborated when we reach this Epic._
   auto-breaks digital cycles) — ✅ **delivered & verified in-browser** (see the Story 5.9 block below).
   The L2 forwarding layer proper — addressed flows, switches, clock domains — remains **deferred**
   (feeds Story 5.2/5.3; the design work is parked in the Story 5.9 block).
+- **Story 5.10** — **Dynamic computer I/O**: the computer stops hardcoding the 8i6's USB shape and
+  adapts to the attached interface's **published** channel counts (lane-aware engine nodes +
+  config-driven host enumeration). 🚧 **In progress** (planned; see the Story block below).
 
 ### Story 5.7 — Per-device faceplate UIs — ✅ **Complete**
 
@@ -1139,6 +1142,119 @@ _Open decisions (non-blocking):_
 - **(ii)** the web's `wouldCreateCycle` still rejects a **one-way** digital loop authored by drag even
   though the engine (post-#2) would auto-break it; only duplex bypasses it today. Make the web cycle check
   domain-aware if UI-authored digital loops become a case.
+
+### Story 5.10 — Dynamic computer I/O — 🚧 **In progress**
+
+_Goal:_ The `computer` hardcodes the 8i6's USB shape — 8 sends / 6 returns baked into its catalog
+entry as 11 nodes, 22 hand-wired internal edges, and statically authored meter/grid labels. A real
+computer has no channel count of its own: it enumerates whatever the attached interface's driver
+publishes. Make the computer **adapt to the attached interface**. The publication half already exists —
+`PortDescriptor.channels` is engine truth derived from the port face's `lane_count()` — so this story
+builds the consumption half: the computer's shape is **derived from the published face of what's
+plugged in** (PROJECT_PLAN's derive-from-the-model rule; no parallel channel constant), with the
+catalog owning specs and the web owning enumeration + look & feel (the Epic-4/5 layer rule). Payoff:
+any future interface (a 2i2, a big rack unit) works against the same computer with no new peer device.
+
+_Watch out:_
+
+- **Hot-path contracts hold:** sized nodes allocate at construction only; `process` stays
+  alloc-free/panic-free (per-lane loops, no per-N dispatch or growth).
+- **Id stability is the trap.** The meter's per-lane readout ids must keep `(0, 1)` at n = 1 (the
+  8i6's own meters address `PEAK_DBFS`/`RMS_DBFS`); matrix crosspoint ids are row-major `i·m + j`, so
+  a change of M **reshuffles every id** — never remap saved params across a re-enumeration, reset
+  them (design note below).
+- **The "exposed face is config-independent" invariant is deliberately retired** (`instantiate`/
+  `describe` docs, `descriptors()` built from `DeviceConfig::EMPTY`). Update the docs and the
+  alignment-pinning tests to the new contract — don't work around them.
+- **Don't touch the 8i6's own matrix face.** Its 14×14 `Matrix` genuinely needs mono ports (inputs
+  arrive on separate wires from separate ADs/preamps); only the computer wants the lane-port variant.
+- The type-level `descriptors()` catalog listing keeps working, showing the default (EMPTY-config)
+  face.
+- **Scope guards:** one USB port per computer (no hub); computer↔computer USB does **not** enumerate
+  (both keep their configured/default shape — the equal-count check still guards the edge); per
+  5.9's deferred (d), `ChannelCountMismatch` equality stays the right point-to-point rule and the
+  backstop for hand-authored patches.
+
+_Design notes (settled at planning):_
+
+- **Multichannel-port nodes keep the topology shape fixed — no imperative-builder `CatalogEntry`.**
+  The computer's node count only varied with N because meters/matrix speak mono ports (forcing the
+  demux + N meter nodes + mux). With lane-aware nodes the entry is **two nodes and one internal
+  edge** regardless of counts — meter-bank(N) → lane-matrix(N→M); the demux/mux disappear (they
+  existed only to adapt lanes to mono ports). The static entry suffices: `NodeBuilder` already
+  receives `&DeviceConfig`, so the builders construct sized nodes. _Rejected: the catalog module
+  doc's anticipated "imperative-builder variant"_ — dynamic node/edge lists are heavier machinery
+  than the problem needs; it stays available for a future genuinely-variable topology.
+- **Channel counts are structural config (`usb_sends` / `usb_returns`), written by host-side
+  enumeration.** When the UI connects/disconnects the USB duplex cable it reads the interface's
+  published port `channels` and writes the computer instance's config (rebuilding via the existing
+  config→recompile path). A loaded patch never enumerates — config serializes in the patch, so the
+  IR stays self-describing. _Rejected: `build_patch` negotiation (sizing the computer from whatever
+  is cabled to it)_ — breaks the compositional per-device expansion and makes a patch's meaning
+  depend on inference rather than what's written.
+- **Unattached default: 2×2 — the built-in sound card.** Realistic (a DAW with no interface shows
+  the built-in device). Existing computer tests set 8×6 config explicitly; pre-story bench URLs that
+  relied on the implicit 8×6 break (accepted, not a bug). _Rejected: keeping 8×6_ — the default
+  would encode one specific interface.
+- **Loopback default: diagonal over min(N, M)** (send k → return k) — the 8i6 matrix's own
+  identity-default philosophy; every return carries signal out of the box. _Rejected: today's
+  first-two-lanes-only loopback._
+- **The config keys are hidden (host-driven).** Not declared in `configs`/`ConfigDescriptor` —
+  undeclared keys already flow through the IR and `DeviceConfig::get_or` (no new `ConfigKind`
+  widget needed); the faceplate displays the *detected* counts read-only, derived from the
+  per-instance descriptor. You don't type your computer's channel count; you plug in an interface.
+- **The descriptor becomes per-instance.** `describe` grows a config-aware path exported over wasm
+  (`describe_device(type_id, configs)`); the type catalog keeps the default face. Readout labels
+  ("Send k Peak/RMS") and the `GridSpec` row/col names are **generated** from the built face's
+  counts — the same synthesis precedent as the grid's crosspoint labels.
+- **Re-enumeration resets the matrix params to the loopback default.** Crosspoint ids reshuffle with
+  M, so remapping saved `ParamSetting`s is wrong-headed — and a reset is what a real DAW does when
+  the I/O device changes. Within one saved patch, config + params serialize together, so ids stay
+  self-consistent.
+- **Enumeration lives in web TS (`scene-ops`).** An authoring-layer act like
+  `commitCable`/`disconnect`, sitting next to them with Vitest coverage; Rust's
+  `ChannelCountMismatch` stays the backstop. _Rejected: a devices-crate helper over wasm_ — extra
+  marshalling for ~10 lines of logic the TS layer already has the data for.
+
+- **Task 5.10.1 — Engine: multichannel `DigitalMeter`.** Grow the meter to N lanes: one N-lane
+  input, one N-lane exact-passthrough output, per-lane Peak/RMS readouts at ids `(2k, 2k+1)` — n = 1
+  preserves today's face and the `PEAK_DBFS`/`RMS_DBFS` constants (keep `new` mono or grow an arg;
+  call-site ripple is small either way). _Done:_ oracles — distinct per-lane constants read back as
+  hand-calc'd dBFS (lanes at 1.0 / 0.5 / 0.25 → 0 / −6.02 / −12.04 dBFS peak, calc in comment; a
+  full-scale sine's RMS = peak − 3.01 dB); n = 1 matches today's meter exactly; no-alloc test still
+  green; engine gate green.
+- **Task 5.10.2 — Engine: lane-port `Matrix`.** A construction variant whose face is one N-lane
+  input / one M-lane output (instead of N + M mono ports), sharing the crosspoint-param and
+  f64-summing core; crosspoint ids unchanged (row-major `i·m + j`). _Done:_ oracles — hand-calc'd
+  gain-weighted sums across lanes match the mono-port matrix under the same gains; diagonal defaults
+  route k → k; engine gate green.
+- **Task 5.10.3 — Devices: the config-driven computer.** Rewrite the entry to
+  meter-bank(N) → lane-matrix(N→M) with N/M from `usb_sends`/`usb_returns` (default 2×2, diagonal
+  loopback); generated readout + grid labels sized from the built face; retire the
+  config-independent-face invariant in the `instantiate`/`describe` docs; existing computer loop
+  tests set 8×6 config explicitly. _Done:_ oracles — the default computer expands 2×2 (4 readouts,
+  4 crosspoints, USB port channels 2/2); an 8×6-config computer reproduces today's playable-loop and
+  duplex-cable tests unchanged; a mismatched hand-authored patch still errors
+  `ChannelCountMismatch`; alignment-pinning tests updated; devices gate green.
+- **Task 5.10.4 — wasm + devices: per-instance descriptor.** Config-aware `describe`; wasm export
+  `describe_device(type_id, configs)`; TS mirror in `catalog.ts`. _Done:_ the descriptor for an
+  8×6-config computer carries 16 readouts / 48 grid params / 8-ch + 6-ch USB port faces; the
+  EMPTY-config type catalog is unchanged; `cargo wasm` + full gate green.
+- **Task 5.10.5 — Web: enumeration + adaptive faceplate.** `scene-ops` enumeration on USB duplex
+  connect/disconnect (and interface removal): peer's published `channels` → computer config, matrix
+  params reset to default, rebuild; `Computer.svelte`/`ComputerMixer.svelte` consume the
+  per-instance descriptor (meters/grid resize; detected counts displayed read-only). _Done:_ Vitest
+  for enumeration (connect 8i6 → 8×6; disconnect → 2×2; computer↔computer → no-op); in-browser —
+  plugging the 8i6's single USB-C re-enumerates the computer (meters/grid resize) and the monitoring
+  loop still sounds through the diagonal loopback, unplugging returns it to 2×2; `pnpm run format` +
+  web `check`/`typecheck`/`test` green.
+
+_Validate:_ an unattached computer presents **2×2** (its built-in audio); plugging the 8i6's single
+USB-C cable **re-enumerates** it to 8 sends / 6 returns — the send meters and routing grid resize, and
+the monitoring loop closes and sounds through the diagonal loopback; unplugging returns it to 2×2;
+every channel count derives from the interface's **published** port face (no parallel constant
+anywhere); the full Rust gate (`cargo fmt --check && cargo lint && cargo test && cargo wasm && cargo
+docs`) plus web `check`/`typecheck`/`test` pass; verified in-browser.
 
 ---
 
