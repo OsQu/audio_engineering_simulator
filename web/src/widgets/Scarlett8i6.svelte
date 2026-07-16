@@ -28,6 +28,7 @@
   import Place from "./layout/Place.svelte";
   import Row from "./layout/Row.svelte";
   import Led from "./Led.svelte";
+  import DuplexSocket from "./DuplexSocket.svelte";
   import Legend from "./Legend.svelte";
   import Socket from "./Socket.svelte";
 
@@ -139,13 +140,10 @@
           <Socket dir="output" id={1} size={9} />
         </Col>
       </Col>
-      <!-- USB (one connector): the 8-lane send + 6-lane return cluster. -->
+      <!-- USB-C: one physical connector, the 8-lane send + 6-lane return in both directions (duplex). -->
       <Col gap={1.5}>
         <Legend text="USB" />
-        <Col gap={2.5}>
-          <Socket dir="output" id={0} size={9} />
-          <Socket dir="input" id={7} size={9} />
-        </Col>
+        <DuplexSocket outId={0} inId={7} size={9} />
       </Col>
       <!-- MIDI (DIN) thru. -->
       <Col gap={1.5}>

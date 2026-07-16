@@ -191,6 +191,60 @@ describe("evaluateConnection — legality", () => {
   });
 });
 
+describe("evaluateConnection — duplex (USB-C)", () => {
+  // A duplex jack is bound to its output side, carrying the paired input id as `duplexPartner`.
+  const dup = (device: string, outPort: number, inPartner: number): Endpoint => ({
+    device,
+    port: outPort,
+    direction: "output",
+    domain: "digital",
+    connector: "usb",
+    channels: 8,
+    duplexPartner: inPartner,
+  });
+
+  it("joins two duplex jacks into one duplex connection (from = out, to = partner input)", () => {
+    const v = evaluateConnection(dup("if", 0, 7), dup("computer", 0, 0), []);
+    expect(v.ok).toBe(true);
+    if (v.ok) {
+      expect(v.connection).toEqual({
+        from: { device: "if", port: 0 },
+        to: { device: "computer", port: 0 },
+        duplex: true,
+      });
+      expect(v.replaces).toBeNull();
+    }
+  });
+
+  it("is accepted even though it forms a cycle — the engine breaks the digital loop with latency", () => {
+    // A one-way digital edge closing this loop would be rejected by wouldCreateCycle; a duplex link
+    // (which is a cycle by design) is not, because build_patch + compile handle it.
+    const existing: Connection[] = [conn("if", 1, "computer", 5)];
+    const v = evaluateConnection(dup("if", 0, 7), dup("computer", 0, 0), existing);
+    expect(v.ok).toBe(true);
+  });
+
+  it("rejects a duplex jack patched to an ordinary one-way jack", () => {
+    const v = evaluateConnection(dup("if", 0, 7), inp("meter", 0, "digital", "digital"), []);
+    expect(v.ok).toBe(false);
+    if (!v.ok) expect(v.reason).toMatch(/duplex/);
+  });
+
+  it("rejects a duplex jack patched to itself", () => {
+    const v = evaluateConnection(dup("if", 0, 7), dup("if", 0, 7), []);
+    expect(v.ok).toBe(false);
+  });
+
+  it("replaces the existing duplex cable when a jack is re-patched", () => {
+    const existing: Connection[] = [
+      { from: { device: "if", port: 0 }, to: { device: "computer", port: 0 }, duplex: true },
+    ];
+    const v = evaluateConnection(dup("if", 0, 7), dup("laptop", 0, 0), existing);
+    expect(v.ok).toBe(true);
+    if (v.ok) expect(v.replaces).toEqual(existing[0]);
+  });
+});
+
 describe("wouldCreateCycle / feedback-loop rejection", () => {
   // A → B → C already wired.
   const chain = [conn("a", 0, "b", 0), conn("b", 0, "c", 0)];

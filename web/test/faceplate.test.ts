@@ -25,10 +25,16 @@ function literalParamIds(src: string): number[] {
     .sort((a, b) => a - b);
 }
 
-/** Input / output port ids a source places via Socket, by direction. */
+/** Input / output port ids a source places, by direction. A plain `Socket` places one directed port;
+ *  a `DuplexSocket` (USB-C — one connector, both directions) places an output (`outId`) *and* an input
+ *  (`inId`) at once, so it counts toward whichever direction is asked. */
 function portIds(src: string, dir: "input" | "output"): number[] {
   const re = new RegExp(`<Socket\\b[^>]*?\\bdir="${dir}"[^>]*?\\bid=\\{(\\d+)\\}`, "g");
-  return [...src.matchAll(re)].map((m) => Number(m[1])).sort((a, b) => a - b);
+  const ids = [...src.matchAll(re)].map((m) => Number(m[1]));
+  const dupAttr = dir === "output" ? "outId" : "inId";
+  const dupRe = new RegExp(`<DuplexSocket\\b[^>]*?\\b${dupAttr}=\\{(\\d+)\\}`, "g");
+  ids.push(...[...src.matchAll(dupRe)].map((m) => Number(m[1])));
+  return ids.sort((a, b) => a - b);
 }
 
 /** Structural config keys a source places via ConfigSwitch (focus surfaces) or ConfigButton

@@ -13,9 +13,9 @@
   import { makeHandle } from "../device-handle";
   import { skinFor } from "../skin";
   import Chassis from "./Chassis.svelte";
+  import DuplexSocket from "./DuplexSocket.svelte";
   import Legend from "./Legend.svelte";
   import Reading from "./Reading.svelte";
-  import Socket from "./Socket.svelte";
 
   let props: DeviceUiProps = $props();
   const skin = $derived(skinFor(props.typeId));
@@ -47,8 +47,7 @@
       <div class="section">
         <Legend text="USB" />
         <div class="row">
-          <Socket dir="input" id={0} />
-          <Socket dir="output" id={0} />
+          <DuplexSocket outId={0} inId={0} />
         </div>
       </div>
     </div>

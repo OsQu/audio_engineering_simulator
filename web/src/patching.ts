@@ -62,6 +62,7 @@ export function endpointFromJackKey(
     domain: pd.domain,
     connector: pd.connector,
     channels: pd.channels,
+    duplexPartner: pd.duplexPartner,
   };
 }
 

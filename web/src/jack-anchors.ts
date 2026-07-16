@@ -25,7 +25,16 @@ export function measureJacks(api: WorldApi): Record<string, JackAnchor> {
     if (r.width === 0 && r.height === 0) continue; // not laid out / hidden
     const pt = api.clientToSurface(r.left + r.width / 2, r.top + r.height / 2);
     const face = el.closest<HTMLElement>("[data-face]")?.dataset.face;
-    next[key] = { x: pt.x, y: pt.y, face: face === "front" ? "front" : "back" };
+    const anchor = {
+      x: pt.x,
+      y: pt.y,
+      face: face === "front" ? ("front" as const) : ("back" as const),
+    };
+    next[key] = anchor;
+    // A duplex jack (USB-C) is one connector carrying both directions: register its partner key at the
+    // same centre so a cable anchors to either leg at this single jack.
+    const alt = el.dataset.jackAlt;
+    if (alt) next[alt] = anchor;
   }
   return next;
 }

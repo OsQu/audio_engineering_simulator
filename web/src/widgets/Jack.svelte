@@ -2,7 +2,7 @@
   // A back-panel connector, rendered from a port descriptor. Styled by connector `kind` (color) and
   // carrier `domain` (round for analog/events, square-ish for digital). **Display-only** in Story 4.2 —
   // drag-to-connect patching lands in 4.4; this just establishes the jack vocabulary and labels.
-  import type { PortDescriptor } from "../catalog";
+  import type { PortDescriptor, PortDirection } from "../catalog";
 
   interface Props {
     /** Owning device instance id — with the port, tags the connector so the cable layer can locate it. */
@@ -11,8 +11,12 @@
     /** Physical connector diameter in **mm** (real-gear sizing, scaled by the world/bench zoom). When
      *  omitted, keeps the legacy container-relative sizing. */
     size?: number;
+    /** A **duplex** jack's other-direction port (USB-C carries both ways over one connector). When set,
+     *  the connector also carries a `data-jack-alt` for that port, so the cable layer anchors a cable to
+     *  *either* leg of the duplex link at this one jack. */
+    alt?: { direction: PortDirection; id: number };
   }
-  let { device, port, size }: Props = $props();
+  let { device, port, size, alt }: Props = $props();
 
   // Physical sizing off the mm connector diameter; `null` ⇒ CSS falls back to the container-relative values.
   const sizeVars = $derived(
@@ -30,8 +34,13 @@
   title={`${port.kind} · ${port.domain}`}
   style={sizeVars}
 >
-  <!-- `data-jack` = "device:direction:portId" — the cable overlay measures this element's centre. -->
-  <span class="connector" data-jack={`${device}:${port.direction}:${port.id}`}></span>
+  <!-- `data-jack` = "device:direction:portId" — the cable overlay measures this element's centre.
+       `data-jack-alt` mirrors the duplex partner's key so the same jack anchors either leg. -->
+  <span
+    class="connector"
+    data-jack={`${device}:${port.direction}:${port.id}`}
+    data-jack-alt={alt ? `${device}:${alt.direction}:${alt.id}` : undefined}
+  ></span>
 </div>
 
 <style>

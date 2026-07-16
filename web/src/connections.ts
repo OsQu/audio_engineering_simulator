@@ -38,6 +38,10 @@ export interface Endpoint {
   /** Lane count (digital channels). A digital connection needs equal counts on both ends — an 8-wide
    *  send can't feed a 2-wide return. Mirrors `build_patch`'s `ChannelCountMismatch`. */
   channels: number;
+  /** If this is one half of a **duplex** jack (USB-C, Ethernet — one connector, both directions), the
+   *  paired port's id on the other direction. A duplex endpoint is bound to its **output** side, so this
+   *  is the paired **input** id. Absent for an ordinary one-way jack. Mirrors `PortDescriptor.duplexPartner`. */
+  duplexPartner?: number;
 }
 
 /** The verdict on a proposed connection. On success it carries the **oriented** `Connection`
@@ -85,6 +89,45 @@ export function evaluateConnection(
   b: Endpoint,
   existing: Connection[],
 ): ConnectVerdict {
+  // A **duplex** link (USB-C, Ethernet): one physical connector carries both directions. Both jacks
+  // are duplex (each bound to its output side), so the drag authors a single duplex `Connection` that
+  // `build_patch` expands into both edges. It intentionally forms a cycle — the engine breaks it with
+  // one block of round-trip latency — so the feedback-loop check below is deliberately skipped.
+  const aDup = a.duplexPartner !== undefined;
+  const bDup = b.duplexPartner !== undefined;
+  if (aDup || bDup) {
+    if (!aDup || !bDup) {
+      return { ok: false, reason: "a duplex (USB-C) cable needs a duplex jack on both ends" };
+    }
+    if (a.domain !== b.domain) {
+      return { ok: false, reason: `domain mismatch: ${a.domain} → ${b.domain}` };
+    }
+    if (!connectorsCompatible(a.connector, b.connector)) {
+      return { ok: false, reason: `connector mismatch: ${a.connector} → ${b.connector}` };
+    }
+    if (a.device === b.device) {
+      return { ok: false, reason: "can't patch a device to itself" };
+    }
+    // Orient: `a` is the drag source (its output side → `b`'s input side). Symmetric — `build_patch`
+    // adds the reverse leg from each jack's partner, so drag direction doesn't change the result.
+    const from: PortRef = { device: a.device, port: a.port };
+    const to: PortRef = { device: b.device, port: b.duplexPartner as number };
+    // A duplex jack carries exactly one cable: a new one on either jack replaces the existing duplex
+    // link that touches it. (Channel-count per direction is checked at build — the endpoints here only
+    // carry the output-side width, so the exact per-leg match is `build_patch`'s `ChannelCountMismatch`.)
+    const touches = (c: Connection, dev: string, outPort: number, inPort: number): boolean =>
+      (c.from.device === dev && c.from.port === outPort) ||
+      (c.to.device === dev && c.to.port === inPort);
+    const replaces =
+      existing.find(
+        (c) =>
+          c.duplex &&
+          (touches(c, a.device, a.port, a.duplexPartner as number) ||
+            touches(c, b.device, b.port, b.duplexPartner as number)),
+      ) ?? null;
+    return { ok: true, connection: { from, to, duplex: true }, replaces };
+  }
+
   // Orient: exactly one output and one input. (Rejects output→output and input→input.)
   let out: Endpoint;
   let inp: Endpoint;
