@@ -94,7 +94,9 @@ export function commitCable(
     const rk = connKey(v.replaces);
     conns = conns.filter((c) => connKey(c) !== rk);
   }
-  const conn: Connection = { from: v.connection.from, to: v.connection.to };
+  // Preserve every field the verdict carries — notably `duplex` (a USB-C link expands to both edges at
+  // build); reconstructing from `from`/`to` alone silently dropped it, leaving a one-way cable.
+  const conn: Connection = { ...v.connection };
   if (connectionDomain(scene, catalog, conn) === "analog") {
     const cable = cablesFor(scene, catalog, cables, conn)[0];
     if (cable) conn.cable = cableSpec(cable);

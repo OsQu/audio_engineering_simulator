@@ -76,7 +76,40 @@ const MIDI: DeviceDescriptor = {
   readouts: [],
   configs: [],
 };
-const CATALOG = [AMP, MIDI];
+// An interface with a single duplex USB-C jack (one connector, both directions), like the 8i6/computer.
+const IFACE: DeviceDescriptor = {
+  typeId: "iface",
+  name: "Interface",
+  formFactor: { kind: "rackmount", rackUnits: 1 },
+  params: [],
+  ports: [
+    {
+      id: 0,
+      label: "USB",
+      direction: "output",
+      domain: "digital",
+      channels: 8,
+      kind: "digital",
+      connector: "usb",
+      delayed: false,
+      duplexPartner: 0,
+    },
+    {
+      id: 0,
+      label: "USB",
+      direction: "input",
+      domain: "digital",
+      channels: 8,
+      kind: "digital",
+      connector: "usb",
+      delayed: false,
+      duplexPartner: 0,
+    },
+  ],
+  readouts: [],
+  configs: [],
+};
+const CATALOG = [AMP, MIDI, IFACE];
 
 const CABLES: CableType[] = [
   {
@@ -182,6 +215,30 @@ describe("commitCable", () => {
     const conn = { from: { device: "m1", port: 0 }, to: { device: "amp2", port: 0 } };
     expect(connectionDomain(scene, CATALOG, conn)).toBe("events");
     commitCable(scene, CATALOG, CABLES, { ok: true, connection: conn, replaces: null });
+    expect(scene.patch.connections[0].cable).toBeUndefined();
+  });
+
+  it("preserves the duplex flag on a USB-C link (and adds no cable — it's digital)", () => {
+    // Regression: commitCable rebuilt the connection from from/to alone, dropping `duplex`, so a
+    // USB-C cable committed as a one-way link (no return leg → silence). It must survive commit.
+    const scene = makeScene({
+      devices: [
+        { id: "if1", typeId: "iface" },
+        { id: "pc1", typeId: "iface" },
+      ],
+    });
+    const v: ConnectVerdict = {
+      ok: true,
+      connection: {
+        from: { device: "if1", port: 0 },
+        to: { device: "pc1", port: 0 },
+        duplex: true,
+      },
+      replaces: null,
+    };
+    commitCable(scene, CATALOG, CABLES, v);
+    expect(scene.patch.connections).toHaveLength(1);
+    expect(scene.patch.connections[0].duplex).toBe(true);
     expect(scene.patch.connections[0].cable).toBeUndefined();
   });
 
