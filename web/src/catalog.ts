@@ -135,7 +135,7 @@ export function connectorsCompatible(a: Connector, b: Connector): boolean {
 
 /** A cable type the UI offers when wiring an analog connection — a realistic R·C preset (physical
  *  content authored on the Rust side, `crates/devices/src/cables.rs`) plus a connector kind for styling.
- *  Fetched via the wasm `cable_catalog()`CodeLLDB export. The chosen R·C rides the connection as a `CableSpec`;
+ *  Fetched via the wasm `cable_catalog()` export. The chosen R·C rides the connection as a `CableSpec`;
  *  the engine's loading loss + treble rolloff emerge from it. Realistic cables into today's low-Z sources
  *  are inaudible by design (the effect is a numeric oracle; audible payoff arrives with Epic 5's high-Z
  *  sources). Field names are camelCase, matching the Rust `#[serde(rename_all = "camelCase")]`. */
