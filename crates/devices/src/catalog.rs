@@ -950,6 +950,7 @@ const CATALOG: &[CatalogEntry] = &[
             Box::new(DigitalMeter::new(
                 SampleRate::new(HOST_RATE_HZ),
                 BitDepth::new(BITS),
+                1,
             ))
         }],
         internal: &[],
@@ -1597,48 +1598,56 @@ const CATALOG: &[CatalogEntry] = &[
                 Box::new(DigitalMeter::new(
                     SampleRate::new(HOST_RATE_HZ),
                     BitDepth::new(BITS),
+                    1,
                 ))
             }, // send 1 meter
             |_cfg| {
                 Box::new(DigitalMeter::new(
                     SampleRate::new(HOST_RATE_HZ),
                     BitDepth::new(BITS),
+                    1,
                 ))
             }, // send 2
             |_cfg| {
                 Box::new(DigitalMeter::new(
                     SampleRate::new(HOST_RATE_HZ),
                     BitDepth::new(BITS),
+                    1,
                 ))
             }, // send 3
             |_cfg| {
                 Box::new(DigitalMeter::new(
                     SampleRate::new(HOST_RATE_HZ),
                     BitDepth::new(BITS),
+                    1,
                 ))
             }, // send 4
             |_cfg| {
                 Box::new(DigitalMeter::new(
                     SampleRate::new(HOST_RATE_HZ),
                     BitDepth::new(BITS),
+                    1,
                 ))
             }, // send 5
             |_cfg| {
                 Box::new(DigitalMeter::new(
                     SampleRate::new(HOST_RATE_HZ),
                     BitDepth::new(BITS),
+                    1,
                 ))
             }, // send 6
             |_cfg| {
                 Box::new(DigitalMeter::new(
                     SampleRate::new(HOST_RATE_HZ),
                     BitDepth::new(BITS),
+                    1,
                 ))
             }, // send 7
             |_cfg| {
                 Box::new(DigitalMeter::new(
                     SampleRate::new(HOST_RATE_HZ),
                     BitDepth::new(BITS),
+                    1,
                 ))
             }, // send 8
             // The DAW mixer: 8 send lanes in, 6 return lanes out. Loopback default — send 1 → return 1,
