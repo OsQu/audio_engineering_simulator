@@ -32,6 +32,8 @@
 //! **Construction config is fixed per type:** builders bake realistic electrical values; only the
 //! nodes' smoothed `params()` are user-facing. Field names are camelCase on the JS side.
 
+use std::borrow::Cow;
+
 use crate::scene::ConfigSetting;
 use engine::{
     AdConverter, BitDepth, CondenserMic, DaConverter, DigitalDemux, DigitalMeter, DigitalMux,
@@ -422,13 +424,19 @@ struct GridSpec {
 enum GridAxis {
     /// Hand-authored names, one per matrix lane on this axis (the 8i6's fixed 14×14).
     Named(&'static [&'static str]),
+    Generated {
+        prefix: &'static str,
+    },
 }
 
 impl GridAxis {
     /// The axis names, in lane order.
-    fn names(&self) -> impl Iterator<Item = &'static str> + '_ {
+    fn names(&self, count: usize) -> Vec<Cow<'static, str>> {
         match self {
-            GridAxis::Named(names) => names.iter().copied(),
+            GridAxis::Named(names) => names.iter().map(|&s| Cow::Borrowed(s)).collect(),
+            GridAxis::Generated { prefix } => (1..=count)
+                .map(|k| Cow::Owned(format!("{prefix} {k}")))
+                .collect(),
         }
     }
 }
@@ -436,10 +444,18 @@ impl GridAxis {
 impl GridSpec {
     /// The generated `"{input} → {output}"` labels, row-major — one per crosspoint, in matrix
     /// crosspoint id order.
-    fn labels(&self) -> impl Iterator<Item = String> + '_ {
+    fn labels(&self, n_in: usize, m_out: usize) -> Vec<String> {
         self.inputs
-            .names()
-            .flat_map(move |i| self.outputs.names().map(move |o| format!("{i} → {o}")))
+            .names(n_in)
+            .iter()
+            .flat_map(move |i| {
+                self.outputs
+                    .names(m_out)
+                    .iter()
+                    .map(move |o| format!("{i} → {o}"))
+                    .collect::<Vec<_>>()
+            })
+            .collect()
     }
 }
 
@@ -459,13 +475,32 @@ struct ReadoutUi {
 enum ReadoutSpec {
     /// Hand-authored labels, one per exposed readout, in exposed order.
     Static(&'static [ReadoutUi]),
+    PerLane {
+        lane_prefix: &'static str,
+        per: &'static [ReadoutUi],
+    },
 }
 
 impl ReadoutSpec {
     /// The readout UIs, in exposed order.
-    fn iter(&self) -> impl Iterator<Item = &ReadoutUi> + '_ {
+    fn iter(&self, count: usize) -> Vec<(String, String)> {
         match self {
-            ReadoutSpec::Static(uis) => uis.iter(),
+            ReadoutSpec::Static(uis) => uis
+                .iter()
+                .map(|ui| (ui.label.into(), ui.unit.into()))
+                .collect(),
+            ReadoutSpec::PerLane { lane_prefix, per } => (1..=count)
+                .flat_map(move |channel_index| {
+                    per.iter().map(move |t| {
+                        let label = t.label;
+
+                        (
+                            format!("{lane_prefix} {channel_index} {label}"),
+                            t.unit.into(),
+                        )
+                    })
+                })
+                .collect(),
         }
     }
 }
@@ -1827,8 +1862,12 @@ fn describe(entry: &CatalogEntry) -> DeviceDescriptor {
         .map(|ui| (ui.label.to_owned(), ui.unit.to_owned(), ui.kind))
         .collect();
     if let Some(grid) = &entry.param_grid {
+        let n_in = face.inputs.iter().map(|i| usize::from(i.channels)).sum();
+        let m_out = face.outputs.iter().map(|o| usize::from(o.channels)).sum();
+
         param_ui.extend(
-            grid.labels()
+            grid.labels(n_in, m_out)
+                .into_iter()
                 .map(|label| (label, grid.unit.to_owned(), grid.kind)),
         );
     }
@@ -1903,7 +1942,7 @@ fn describe(entry: &CatalogEntry) -> DeviceDescriptor {
     let readouts = face
         .readouts
         .iter()
-        .zip(entry.readouts.iter())
+        .zip(entry.readouts.iter(1))
         .enumerate()
         .map(|(i, (_, ui))| ReadoutDescriptor {
             id: i as u32,
@@ -1952,7 +1991,7 @@ mod tests {
             let grid = entry
                 .param_grid
                 .as_ref()
-                .map_or(0, |g| g.inputs.names().count() * g.outputs.names().count());
+                .map_or(0, |g| g.inputs.names(1).len() * g.outputs.names(1).len());
             assert_eq!(
                 entry.params.len() + grid + entry.param_groups.len(),
                 face.params.len(),
