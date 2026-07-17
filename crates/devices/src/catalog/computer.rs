@@ -95,10 +95,8 @@ pub(super) const COMPUTER: CatalogEntry = CatalogEntry {
     // The 8×6 routing matrix (node 9, the only param-contributing node). Sends (rows) × returns
     // (cols); rendered as a grid, driven at runtime, loopback by default.
     param_grid: Some(GridSpec {
-        inputs: GridAxis::Named(&[
-            "Send 1", "Send 2", "Send 3", "Send 4", "Send 5", "Send 6", "Send 7", "Send 8",
-        ]),
-        outputs: GridAxis::Named(&["Ret 1", "Ret 2", "Ret 3", "Ret 4", "Ret 5", "Ret 6"]),
+        inputs: GridAxis::Generated { prefix: "Send" },
+        outputs: GridAxis::Generated { prefix: "Return" },
         kind: ParamKind::Knob,
         unit: "×",
     }),
@@ -120,72 +118,19 @@ pub(super) const COMPUTER: CatalogEntry = CatalogEntry {
     // The single USB-C jack is duplex: USB Out (0) + USB In (0) are one physical connector.
     duplex_links: &[(0, 0)],
     // Per-lane send meters, in node order: each meter contributes (Peak, RMS) in decl order.
-    readouts: ReadoutSpec::Static(&[
-        ReadoutUi {
-            label: "Send 1 Peak",
-            unit: "dBFS",
-        },
-        ReadoutUi {
-            label: "Send 1 RMS",
-            unit: "dBFS",
-        },
-        ReadoutUi {
-            label: "Send 2 Peak",
-            unit: "dBFS",
-        },
-        ReadoutUi {
-            label: "Send 2 RMS",
-            unit: "dBFS",
-        },
-        ReadoutUi {
-            label: "Send 3 Peak",
-            unit: "dBFS",
-        },
-        ReadoutUi {
-            label: "Send 3 RMS",
-            unit: "dBFS",
-        },
-        ReadoutUi {
-            label: "Send 4 Peak",
-            unit: "dBFS",
-        },
-        ReadoutUi {
-            label: "Send 4 RMS",
-            unit: "dBFS",
-        },
-        ReadoutUi {
-            label: "Send 5 Peak",
-            unit: "dBFS",
-        },
-        ReadoutUi {
-            label: "Send 5 RMS",
-            unit: "dBFS",
-        },
-        ReadoutUi {
-            label: "Send 6 Peak",
-            unit: "dBFS",
-        },
-        ReadoutUi {
-            label: "Send 6 RMS",
-            unit: "dBFS",
-        },
-        ReadoutUi {
-            label: "Send 7 Peak",
-            unit: "dBFS",
-        },
-        ReadoutUi {
-            label: "Send 7 RMS",
-            unit: "dBFS",
-        },
-        ReadoutUi {
-            label: "Send 8 Peak",
-            unit: "dBFS",
-        },
-        ReadoutUi {
-            label: "Send 8 RMS",
-            unit: "dBFS",
-        },
-    ]),
+    readouts: ReadoutSpec::PerLane {
+        lane_prefix: "Send",
+        per: &[
+            ReadoutUi {
+                label: "Peak",
+                unit: "dBFS",
+            },
+            ReadoutUi {
+                label: "RMS",
+                unit: "dBFS",
+            },
+        ],
+    },
     configs: &[],
 };
 
