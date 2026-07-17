@@ -3,7 +3,8 @@ use engine::{BitDepth, DigitalMeter, Matrix, SampleRate};
 use crate::{
     Connector, DeviceConfig, ParamKind, PortKind,
     catalog::{
-        BITS, CatalogEntry, FormFactor, GridSpec, HOST_RATE_HZ, InternalEdge, PortUi, ReadoutUi,
+        BITS, CatalogEntry, FormFactor, GridAxis, GridSpec, HOST_RATE_HZ, InternalEdge, PortUi,
+        ReadoutSpec, ReadoutUi,
     },
 };
 
@@ -94,10 +95,10 @@ pub(super) const COMPUTER: CatalogEntry = CatalogEntry {
     // The 8×6 routing matrix (node 9, the only param-contributing node). Sends (rows) × returns
     // (cols); rendered as a grid, driven at runtime, loopback by default.
     param_grid: Some(GridSpec {
-        inputs: &[
+        inputs: GridAxis::Named(&[
             "Send 1", "Send 2", "Send 3", "Send 4", "Send 5", "Send 6", "Send 7", "Send 8",
-        ],
-        outputs: &["Ret 1", "Ret 2", "Ret 3", "Ret 4", "Ret 5", "Ret 6"],
+        ]),
+        outputs: GridAxis::Named(&["Ret 1", "Ret 2", "Ret 3", "Ret 4", "Ret 5", "Ret 6"]),
         kind: ParamKind::Knob,
         unit: "×",
     }),
@@ -119,7 +120,7 @@ pub(super) const COMPUTER: CatalogEntry = CatalogEntry {
     // The single USB-C jack is duplex: USB Out (0) + USB In (0) are one physical connector.
     duplex_links: &[(0, 0)],
     // Per-lane send meters, in node order: each meter contributes (Peak, RMS) in decl order.
-    readouts: &[
+    readouts: ReadoutSpec::Static(&[
         ReadoutUi {
             label: "Send 1 Peak",
             unit: "dBFS",
@@ -184,7 +185,7 @@ pub(super) const COMPUTER: CatalogEntry = CatalogEntry {
             label: "Send 8 RMS",
             unit: "dBFS",
         },
-    ],
+    ]),
     configs: &[],
 };
 

@@ -363,9 +363,9 @@ struct CatalogEntry {
     /// carries both directions. Each pair surfaces as a `duplex_partner` on both descriptors, and a
     /// duplex connection to it expands to two engine edges. Empty for a device with only one-way jacks.
     duplex_links: &'static [(u32, u32)],
-    /// One per *exposed* readout (all node readouts, concatenated in node order). Empty for a device
-    /// that measures nothing.
-    readouts: &'static [ReadoutUi],
+    /// The device's exposed readout labels — one per *exposed* readout (all node readouts, concatenated
+    /// in node order). `Static(&[])` for a device that measures nothing.
+    readouts: ReadoutSpec,
     /// Structural config toggles the device offers (INST/hi-Z etc.), read by the node builders and
     /// surfaced to the UI via the descriptor. Empty for a device with no structural options.
     configs: &'static [ConfigUi],
@@ -409,12 +409,28 @@ struct ParamGroup {
 /// exposed params, so a device using a grid must make its `Matrix` the *last param-contributing node*;
 /// the web focus surface renders them as a grid, deriving rows/cols from the `" → "` labels.
 struct GridSpec {
-    /// Input (row) names, in matrix input order.
-    inputs: &'static [&'static str],
-    /// Output (column) names, in matrix output order.
-    outputs: &'static [&'static str],
+    /// Input (row) axis, in matrix input order.
+    inputs: GridAxis,
+    /// Output (column) axis, in matrix output order.
+    outputs: GridAxis,
     kind: ParamKind,
     unit: &'static str,
+}
+
+/// A grid axis (a matrix's rows or columns): today only [`Named`](GridAxis::Named) hand-authored
+/// labels — one per lane on the axis.
+enum GridAxis {
+    /// Hand-authored names, one per matrix lane on this axis (the 8i6's fixed 14×14).
+    Named(&'static [&'static str]),
+}
+
+impl GridAxis {
+    /// The axis names, in lane order.
+    fn names(&self) -> impl Iterator<Item = &'static str> + '_ {
+        match self {
+            GridAxis::Named(names) => names.iter().copied(),
+        }
+    }
 }
 
 impl GridSpec {
@@ -422,8 +438,8 @@ impl GridSpec {
     /// crosspoint id order.
     fn labels(&self) -> impl Iterator<Item = String> + '_ {
         self.inputs
-            .iter()
-            .flat_map(move |i| self.outputs.iter().map(move |o| format!("{i} → {o}")))
+            .names()
+            .flat_map(move |i| self.outputs.names().map(move |o| format!("{i} → {o}")))
     }
 }
 
@@ -436,6 +452,22 @@ struct PortUi {
 struct ReadoutUi {
     label: &'static str,
     unit: &'static str,
+}
+
+/// How a device's exposed readouts are labeled: today only [`Static`](ReadoutSpec::Static)
+/// hand-authored labels (one per exposed readout).
+enum ReadoutSpec {
+    /// Hand-authored labels, one per exposed readout, in exposed order.
+    Static(&'static [ReadoutUi]),
+}
+
+impl ReadoutSpec {
+    /// The readout UIs, in exposed order.
+    fn iter(&self) -> impl Iterator<Item = &ReadoutUi> + '_ {
+        match self {
+            ReadoutSpec::Static(uis) => uis.iter(),
+        }
+    }
 }
 
 /// The 8i6 preamp input impedances. Line-level (default) keeps today's 10 kΩ; instrument/hi-Z (INST
@@ -566,7 +598,7 @@ const CATALOG: &[CatalogEntry] = &[
         }],
         delayed_outputs: &[],
         duplex_links: &[],
-        readouts: &[],
+        readouts: ReadoutSpec::Static(&[]),
         configs: &[],
     },
     // A standalone MIDI controller: a keybed with no sound of its own that *produces* a performance
@@ -601,7 +633,7 @@ const CATALOG: &[CatalogEntry] = &[
         }],
         delayed_outputs: &[],
         duplex_links: &[],
-        readouts: &[],
+        readouts: ReadoutSpec::Static(&[]),
         configs: &[],
     },
     // A condenser microphone — the catalog face of `engine::CondenserMic` (Story 5.8). A balanced
@@ -647,7 +679,7 @@ const CATALOG: &[CatalogEntry] = &[
         }],
         delayed_outputs: &[],
         duplex_links: &[],
-        readouts: &[],
+        readouts: ReadoutSpec::Static(&[]),
         configs: &[],
     },
     CatalogEntry {
@@ -689,7 +721,7 @@ const CATALOG: &[CatalogEntry] = &[
         }],
         delayed_outputs: &[],
         duplex_links: &[],
-        readouts: &[],
+        readouts: ReadoutSpec::Static(&[]),
         configs: &[],
     },
     CatalogEntry {
@@ -723,7 +755,7 @@ const CATALOG: &[CatalogEntry] = &[
         }],
         delayed_outputs: &[],
         duplex_links: &[],
-        readouts: &[],
+        readouts: ReadoutSpec::Static(&[]),
         configs: &[],
     },
     CatalogEntry {
@@ -759,7 +791,7 @@ const CATALOG: &[CatalogEntry] = &[
         }],
         delayed_outputs: &[],
         duplex_links: &[],
-        readouts: &[],
+        readouts: ReadoutSpec::Static(&[]),
         configs: &[],
     },
     CatalogEntry {
@@ -795,7 +827,7 @@ const CATALOG: &[CatalogEntry] = &[
         }],
         delayed_outputs: &[],
         duplex_links: &[],
-        readouts: &[],
+        readouts: ReadoutSpec::Static(&[]),
         configs: &[],
     },
     CatalogEntry {
@@ -828,7 +860,7 @@ const CATALOG: &[CatalogEntry] = &[
         }],
         delayed_outputs: &[],
         duplex_links: &[],
-        readouts: &[],
+        readouts: ReadoutSpec::Static(&[]),
         configs: &[],
     },
     // The minimal **multi-node** device, proving the chassis seam: two analog gain stages in series
@@ -903,7 +935,7 @@ const CATALOG: &[CatalogEntry] = &[
         }],
         delayed_outputs: &[],
         duplex_links: &[],
-        readouts: &[],
+        readouts: ReadoutSpec::Static(&[]),
         configs: &[],
     },
     // A voltage-native VU meter — bridging inline analog meter (unity passthrough). Its two readouts
@@ -930,7 +962,7 @@ const CATALOG: &[CatalogEntry] = &[
         }],
         delayed_outputs: &[],
         duplex_links: &[],
-        readouts: &[
+        readouts: ReadoutSpec::Static(&[
             ReadoutUi {
                 label: "VU",
                 unit: "VU",
@@ -939,7 +971,7 @@ const CATALOG: &[CatalogEntry] = &[
                 label: "Peak",
                 unit: "dBu",
             },
-        ],
+        ]),
         configs: &[],
     },
     // A digital level meter — inline passthrough on a digital channel, reporting peak and RMS in
@@ -971,7 +1003,7 @@ const CATALOG: &[CatalogEntry] = &[
         }],
         delayed_outputs: &[],
         duplex_links: &[],
-        readouts: &[
+        readouts: ReadoutSpec::Static(&[
             ReadoutUi {
                 label: "Peak",
                 unit: "dBFS",
@@ -980,7 +1012,7 @@ const CATALOG: &[CatalogEntry] = &[
                 label: "RMS",
                 unit: "dBFS",
             },
-        ],
+        ]),
         configs: &[],
     },
     // A simplified Focusrite Scarlett 8i6 — the first **mixed-face, multi-I/O** interface (Story 5.7).
@@ -1362,14 +1394,14 @@ const CATALOG: &[CatalogEntry] = &[
         // The routing matrix's crosspoints (node 21, the last param-contributing node): 14 inputs ×
         // 14 outputs, labels generated as "input → output". Rendered as a grid in Focusrite Control.
         param_grid: Some(GridSpec {
-            inputs: &[
+            inputs: GridAxis::Named(&[
                 "Pre 1", "Pre 2", "Line 3", "Line 4", "Line 5", "Line 6", "SPDIF L", "SPDIF R",
                 "DAW 1", "DAW 2", "DAW 3", "DAW 4", "DAW 5", "DAW 6",
-            ],
-            outputs: &[
+            ]),
+            outputs: GridAxis::Named(&[
                 "USB 1", "USB 2", "USB 3", "USB 4", "USB 5", "USB 6", "USB 7", "USB 8", "Line 1",
                 "Line 2", "Line 3", "Line 4", "SPDIF L", "SPDIF R",
-            ],
+            ]),
             kind: ParamKind::Knob,
             unit: "×",
         }),
@@ -1516,7 +1548,7 @@ const CATALOG: &[CatalogEntry] = &[
         // Input meters on combo 1/2 (nodes 22,23), each a VuMeter exposing VU + peak-dBu — in node
         // order, so the four exposed readouts are In 1 (VU, Peak) then In 2 (VU, Peak). The web
         // faceplate renders these as the level ring around each preamp's gain knob.
-        readouts: &[
+        readouts: ReadoutSpec::Static(&[
             ReadoutUi {
                 label: "In 1 VU",
                 unit: "VU",
@@ -1533,7 +1565,7 @@ const CATALOG: &[CatalogEntry] = &[
                 label: "In 2 Peak",
                 unit: "dBu",
             },
-        ],
+        ]),
         // INST/hi-Z per preamp: a structural toggle selecting the channel's input impedance (line
         // vs instrument), read by the preamp builders. Default off (line-level), reproducing today's
         // behavior. AIR/PAD are runtime *params* on the preamp, not structural configs.
@@ -1871,7 +1903,7 @@ fn describe(entry: &CatalogEntry) -> DeviceDescriptor {
     let readouts = face
         .readouts
         .iter()
-        .zip(entry.readouts)
+        .zip(entry.readouts.iter())
         .enumerate()
         .map(|(i, (_, ui))| ReadoutDescriptor {
             id: i as u32,
@@ -1920,7 +1952,7 @@ mod tests {
             let grid = entry
                 .param_grid
                 .as_ref()
-                .map_or(0, |g| g.inputs.len() * g.outputs.len());
+                .map_or(0, |g| g.inputs.names().count() * g.outputs.names().count());
             assert_eq!(
                 entry.params.len() + grid + entry.param_groups.len(),
                 face.params.len(),
@@ -1940,7 +1972,7 @@ mod tests {
                 entry.type_id
             );
             assert_eq!(
-                entry.readouts.len(),
+                entry.readouts.iter().count(),
                 face.readouts.len(),
                 "{} readouts",
                 entry.type_id
