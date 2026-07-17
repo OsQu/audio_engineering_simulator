@@ -1842,14 +1842,17 @@ pub fn instantiate(type_id: &str, config: &DeviceConfig, g: &mut Graph) -> Optio
 /// (called once at UI startup).
 #[must_use]
 pub fn descriptors() -> Vec<DeviceDescriptor> {
-    CATALOG.iter().map(describe).collect()
+    CATALOG
+        .iter()
+        .map(|entry| describe(entry, &DeviceConfig::EMPTY))
+        .collect()
 }
 
 /// Build one descriptor: numeric param fields + port domains from the exposed face, labels from the entry.
-fn describe(entry: &CatalogEntry) -> DeviceDescriptor {
+fn describe(entry: &CatalogEntry, config: &DeviceConfig) -> DeviceDescriptor {
     // The type-catalog descriptor is built with the EMPTY config — the device's *default* face (2×2
     // for the config-driven computer). A per-instance, config-aware descriptor is a later story.
-    let face = expand(entry, &DeviceConfig::EMPTY);
+    let face = expand(entry, config);
     let n_in = face.inputs.iter().map(|i| usize::from(i.channels)).sum();
     let m_out = face.outputs.iter().map(|o| usize::from(o.channels)).sum();
 
@@ -1948,8 +1951,8 @@ fn describe(entry: &CatalogEntry) -> DeviceDescriptor {
         .enumerate()
         .map(|(i, (_, (label, unit)))| ReadoutDescriptor {
             id: i as u32,
-            label: label,
-            unit: unit,
+            label,
+            unit,
         })
         .collect();
 
@@ -1974,6 +1977,10 @@ fn describe(entry: &CatalogEntry) -> DeviceDescriptor {
         readouts,
         configs,
     }
+}
+
+pub(crate) fn describe_device(type_id: &str, config: &DeviceConfig) -> Option<DeviceDescriptor> {
+    entry(type_id).map(|entry| describe(entry, config))
 }
 
 #[cfg(test)]
@@ -2087,7 +2094,7 @@ mod tests {
     fn descriptors_carry_engine_truth() {
         for entry in CATALOG {
             let face = expand(entry, &DeviceConfig::EMPTY);
-            let desc = describe(entry);
+            let desc = describe(entry, &DeviceConfig::EMPTY);
 
             for (i, (pd, ep)) in desc.params.iter().zip(&face.params).enumerate() {
                 assert_eq!(pd.id, i as u32, "{} param id", entry.type_id);

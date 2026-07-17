@@ -28,7 +28,7 @@ use engine::{
 
 use crate::catalog::{
     BuiltDevice, Connector, DeviceConfig, DeviceDescriptor, PortDescriptor, PortDirection,
-    PortDomain, connectors_compatible, descriptors, instantiate,
+    PortDomain, connectors_compatible, describe_device, instantiate,
 };
 use crate::scene::{CableSpec, Connection, Patch, PortRef};
 
@@ -453,9 +453,13 @@ pub fn build_patch(
 
     // Connector taxonomy (per device type) + scene-id → type-id, for the connector-compatibility gate
     // below. Cold path (a user gesture), so rebuilding the catalog descriptors here is fine.
-    let descs: BTreeMap<String, DeviceDescriptor> = descriptors()
-        .into_iter()
-        .map(|d| (d.type_id.clone(), d))
+    let descs: BTreeMap<String, DeviceDescriptor> = patch
+        .devices
+        .iter()
+        .filter_map(|d| {
+            describe_device(&d.type_id, &DeviceConfig::new(&d.config))
+                .map(|device| (d.type_id.clone(), device))
+        })
         .collect();
     let types: BTreeMap<&str, &str> = patch
         .devices
