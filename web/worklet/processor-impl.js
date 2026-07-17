@@ -20,6 +20,20 @@ const LEVEL_REPORT_EVERY = 8;
 // scalars (each meter node's VU/dBu/dBFS), read from the engine's node→host readout lane.
 const READOUT_REPORT_EVERY = 8;
 
+// The per-instance device descriptors, keyed by scene device id: each device described against *its
+// own* config, so a config-driven face (the computer's usb_sends/usb_returns) reports its actual shape
+// (channels/params/readouts), not the type catalog's default. Recomputed whenever the scene builds or
+// hot-swaps. `config` is optional in the IR — default to [] (every key falls back to its default).
+function deviceDescriptors(devices) {
+  if (typeof wasm_bindgen.describe_device !== "function")
+    throw new Error("describe_device missing from glue");
+  const map = {};
+  for (const device of devices) {
+    map[device.id] = wasm_bindgen.describe_device(device.typeId, device.config ?? []);
+  }
+  return map;
+}
+
 class SceneProcessor extends AudioWorkletProcessor {
   constructor(options) {
     super();
@@ -92,6 +106,12 @@ class SceneProcessor extends AudioWorkletProcessor {
               // The new scene's connection losses go live at the next render_quantum swap; flag a
               // post-swap re-send so the page's static readouts (cable inspector / levels panel) refresh.
               this.lossesDirty = true;
+              // The new scene may have resized a config-driven face (e.g. the computer re-enumerated to
+              // an attached interface), so re-push the per-instance descriptors for the faceplates.
+              this.port.postMessage({
+                type: "deviceDescriptors",
+                deviceDescriptors: deviceDescriptors(d.patch.devices),
+              });
             } catch (err) {
               this.port.postMessage({
                 type: "error",
@@ -112,6 +132,8 @@ class SceneProcessor extends AudioWorkletProcessor {
         cables,
         // Static per-connection loading loss (dB, or null for digital) for the initial scene.
         losses: this.engine.connection_losses(),
+        // Per-instance device descriptors (by scene id), sized to each device's config.
+        deviceDescriptors: deviceDescriptors(patch.devices),
       });
     } catch (err) {
       this.port.postMessage({
