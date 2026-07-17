@@ -1,11 +1,41 @@
-use engine::{BitDepth, DigitalDemux, DigitalMeter, DigitalMux, Matrix, SampleRate};
+use engine::{BitDepth, DigitalMeter, Matrix, SampleRate};
 
 use crate::{
-    Connector, ParamKind, PortKind,
+    Connector, DeviceConfig, ParamKind, PortKind,
     catalog::{
         BITS, CatalogEntry, FormFactor, GridSpec, HOST_RATE_HZ, InternalEdge, PortUi, ReadoutUi,
     },
 };
+
+const USB_SENDS: &str = "usb_sends";
+const USB_RETURNS: &str = "usb_returns";
+// Configs are floats
+const DEFAULT_USB_CHANNELS_CONFIG: f32 = 2.0;
+
+fn usb_channel_count(cfg: &DeviceConfig) -> (usize, usize) {
+    let sends = cfg
+        .get_or(USB_SENDS, DEFAULT_USB_CHANNELS_CONFIG)
+        .round()
+        .max(1.0) as usize;
+
+    let returns = cfg
+        .get_or(USB_RETURNS, DEFAULT_USB_CHANNELS_CONFIG)
+        .round()
+        .max(1.0) as usize;
+
+    (sends, returns)
+}
+
+/// Diagonal loopback crosspoint defaults for an `n_in`→`m_out` matrix: send k → return k at unity for
+/// k < min(n_in, m_out), silent elsewhere (row-major `i·m_out + j`). Every return carries signal out
+/// of the box — the 8i6 matrix's identity-default philosophy.
+fn loopback_defaults(n_in: usize, m_out: usize) -> Vec<f32> {
+    let mut d = vec![0.0; n_in * m_out];
+    for k in 0..n_in.min(m_out) {
+        d[k * m_out + k] = 1.0;
+    }
+    d
+}
 
 // The `computer` — the 8i6's USB peer, without which a multichannel USB port has no legal partner
 // and the 8i6 can't be played end-to-end. Minimal but faithful: it presents the mirror of the 8i6's
@@ -33,229 +63,32 @@ pub(super) const COMPUTER: CatalogEntry = CatalogEntry {
         depth_mm: 175.0,
     },
     nodes: &[
-        |_cfg| {
-            Box::new(DigitalDemux::new(
-                SampleRate::new(HOST_RATE_HZ),
-                BitDepth::new(BITS),
-                8,
-            ))
-        }, // USB in (8 send lanes)
-        |_cfg| {
+        |cfg| {
+            let (sends, _returns) = usb_channel_count(cfg);
             Box::new(DigitalMeter::new(
                 SampleRate::new(HOST_RATE_HZ),
                 BitDepth::new(BITS),
-                1,
+                sends as u16,
             ))
-        }, // send 1 meter
-        |_cfg| {
-            Box::new(DigitalMeter::new(
+        },
+        |cfg| {
+            let (sends, returns) = usb_channel_count(cfg);
+            Box::new(Matrix::new_single_ports(
                 SampleRate::new(HOST_RATE_HZ),
                 BitDepth::new(BITS),
-                1,
+                sends,
+                returns,
+                loopback_defaults(sends, returns),
             ))
-        }, // send 2
-        |_cfg| {
-            Box::new(DigitalMeter::new(
-                SampleRate::new(HOST_RATE_HZ),
-                BitDepth::new(BITS),
-                1,
-            ))
-        }, // send 3
-        |_cfg| {
-            Box::new(DigitalMeter::new(
-                SampleRate::new(HOST_RATE_HZ),
-                BitDepth::new(BITS),
-                1,
-            ))
-        }, // send 4
-        |_cfg| {
-            Box::new(DigitalMeter::new(
-                SampleRate::new(HOST_RATE_HZ),
-                BitDepth::new(BITS),
-                1,
-            ))
-        }, // send 5
-        |_cfg| {
-            Box::new(DigitalMeter::new(
-                SampleRate::new(HOST_RATE_HZ),
-                BitDepth::new(BITS),
-                1,
-            ))
-        }, // send 6
-        |_cfg| {
-            Box::new(DigitalMeter::new(
-                SampleRate::new(HOST_RATE_HZ),
-                BitDepth::new(BITS),
-                1,
-            ))
-        }, // send 7
-        |_cfg| {
-            Box::new(DigitalMeter::new(
-                SampleRate::new(HOST_RATE_HZ),
-                BitDepth::new(BITS),
-                1,
-            ))
-        }, // send 8
-        // The DAW mixer: 8 send lanes in, 6 return lanes out. Loopback default — send 1 → return 1,
-        // send 2 → return 2 (ids 0 and 1·6+1 = 7), all other crosspoints muted.
-        |_cfg| {
-            let mut d = vec![0.0; 8 * 6];
-            d[0] = 1.0; // crosspoint (send 1, return 1) = 0·6 + 0
-            d[7] = 1.0; // crosspoint (send 2, return 2) = 1·6 + 1
-            Box::new(Matrix::new(
-                SampleRate::new(HOST_RATE_HZ),
-                BitDepth::new(BITS),
-                8,
-                6,
-                d,
-            ))
-        },
-        |_cfg| {
-            Box::new(DigitalMux::new(
-                SampleRate::new(HOST_RATE_HZ),
-                BitDepth::new(BITS),
-                6,
-            ))
-        }, // USB out (6 return lanes)
-    ],
-    // demux lane k → meter k → matrix input k (k = 0..8); matrix output j → mux input j (j = 0..6).
-    internal: &[
-        // demux (node 0) → the 8 send meters (nodes 1–8)
-        InternalEdge {
-            from_node: 0,
-            from_port: 0,
-            to_node: 1,
-            to_port: 0,
-        },
-        InternalEdge {
-            from_node: 0,
-            from_port: 1,
-            to_node: 2,
-            to_port: 0,
-        },
-        InternalEdge {
-            from_node: 0,
-            from_port: 2,
-            to_node: 3,
-            to_port: 0,
-        },
-        InternalEdge {
-            from_node: 0,
-            from_port: 3,
-            to_node: 4,
-            to_port: 0,
-        },
-        InternalEdge {
-            from_node: 0,
-            from_port: 4,
-            to_node: 5,
-            to_port: 0,
-        },
-        InternalEdge {
-            from_node: 0,
-            from_port: 5,
-            to_node: 6,
-            to_port: 0,
-        },
-        InternalEdge {
-            from_node: 0,
-            from_port: 6,
-            to_node: 7,
-            to_port: 0,
-        },
-        InternalEdge {
-            from_node: 0,
-            from_port: 7,
-            to_node: 8,
-            to_port: 0,
-        },
-        // send meters (nodes 1–8) → matrix (node 9) inputs 0–7
-        InternalEdge {
-            from_node: 1,
-            from_port: 0,
-            to_node: 9,
-            to_port: 0,
-        },
-        InternalEdge {
-            from_node: 2,
-            from_port: 0,
-            to_node: 9,
-            to_port: 1,
-        },
-        InternalEdge {
-            from_node: 3,
-            from_port: 0,
-            to_node: 9,
-            to_port: 2,
-        },
-        InternalEdge {
-            from_node: 4,
-            from_port: 0,
-            to_node: 9,
-            to_port: 3,
-        },
-        InternalEdge {
-            from_node: 5,
-            from_port: 0,
-            to_node: 9,
-            to_port: 4,
-        },
-        InternalEdge {
-            from_node: 6,
-            from_port: 0,
-            to_node: 9,
-            to_port: 5,
-        },
-        InternalEdge {
-            from_node: 7,
-            from_port: 0,
-            to_node: 9,
-            to_port: 6,
-        },
-        InternalEdge {
-            from_node: 8,
-            from_port: 0,
-            to_node: 9,
-            to_port: 7,
-        },
-        // matrix (node 9) outputs 0–5 → USB-out mux (node 10) inputs 0–5
-        InternalEdge {
-            from_node: 9,
-            from_port: 0,
-            to_node: 10,
-            to_port: 0,
-        },
-        InternalEdge {
-            from_node: 9,
-            from_port: 1,
-            to_node: 10,
-            to_port: 1,
-        },
-        InternalEdge {
-            from_node: 9,
-            from_port: 2,
-            to_node: 10,
-            to_port: 2,
-        },
-        InternalEdge {
-            from_node: 9,
-            from_port: 3,
-            to_node: 10,
-            to_port: 3,
-        },
-        InternalEdge {
-            from_node: 9,
-            from_port: 4,
-            to_node: 10,
-            to_port: 4,
-        },
-        InternalEdge {
-            from_node: 9,
-            from_port: 5,
-            to_node: 10,
-            to_port: 5,
         },
     ],
+    internal: &[InternalEdge {
+        // DigitalMeter -> Matrix
+        from_node: 0,
+        from_port: 0,
+        to_node: 1,
+        to_port: 0,
+    }],
     // All exposed params are the matrix's 48 crosspoints (the meters have none), generated below.
     params: &[],
     // The 8×6 routing matrix (node 9, the only param-contributing node). Sends (rows) × returns
