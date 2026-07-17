@@ -1236,10 +1236,17 @@ _Design notes (settled at planning):_
   4 crosspoints, USB port channels 2/2); an 8×6-config computer reproduces today's playable-loop and
   duplex-cable tests unchanged; a mismatched hand-authored patch still errors
   `ChannelCountMismatch`; alignment-pinning tests updated; devices gate green.
-- **Task 5.10.4 — wasm + devices: per-instance descriptor.** Config-aware `describe`; wasm export
-  `describe_device(type_id, configs)`; TS mirror in `catalog.ts`. _Done:_ the descriptor for an
-  8×6-config computer carries 16 readouts / 48 grid params / 8-ch + 6-ch USB port faces; the
-  EMPTY-config type catalog is unchanged; `cargo wasm` + full gate green.
+  **Note (pulled forward from 5.10.4):** `build_patch`'s pre-compile channel-count check read the
+  config-blind *type* descriptor (computer always 2×2), so an 8×6 loop was wrongly rejected. Fixed by
+  making `describe` config-aware and adding the `describe_device(type_id, config)` seam, then keying
+  `build_patch`'s `descs` by scene id from each device's config (dropping the `types` indirection). So
+  the Rust-side config-aware descriptor already exists and is tested here.
+- **Task 5.10.4 — wasm: export the per-instance descriptor.** The config-aware `describe` +
+  `describe_device(type_id, config)` seam **already landed in 5.10.3** (build_patch needed it), so this
+  task is now just the **wasm export** of `describe_device(type_id, configs)` + the **TS mirror** in
+  `catalog.ts`. _Done:_ the descriptor for an 8×6-config computer carries 16 readouts / 48 grid params
+  / 8-ch + 6-ch USB port faces over the wasm boundary; the EMPTY-config type catalog is unchanged;
+  `cargo wasm` + full gate green.
 - **Task 5.10.5 — Web: enumeration + adaptive faceplate.** `scene-ops` enumeration on USB duplex
   connect/disconnect (and interface removal): peer's published `channels` → computer config, matrix
   params reset to default, rebuild; `Computer.svelte`/`ComputerMixer.svelte` consume the

@@ -1979,7 +1979,7 @@ fn describe(entry: &CatalogEntry, config: &DeviceConfig) -> DeviceDescriptor {
     }
 }
 
-pub(crate) fn describe_device(type_id: &str, config: &DeviceConfig) -> Option<DeviceDescriptor> {
+pub fn describe_device(type_id: &str, config: &DeviceConfig) -> Option<DeviceDescriptor> {
     entry(type_id).map(|entry| describe(entry, config))
 }
 

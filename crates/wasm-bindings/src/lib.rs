@@ -46,6 +46,16 @@ pub fn cable_catalog() -> Result<JsValue, JsValue> {
     serde_wasm_bindgen::to_value(&cable_types()).map_err(Into::into)
 }
 
+#[wasm_bindgen]
+pub fn describe_device(type_id: String, configs: JsValue) -> Result<JsValue, JsValue> {
+    let settings: Vec<devices::ConfigSetting> = serde_wasm_bindgen::from_value(configs)?;
+
+    let descriptor = devices::describe_device(&type_id, &devices::DeviceConfig::new(&settings))
+        .ok_or_else(|| JsValue::from_str("Device not found"))?;
+
+    serde_wasm_bindgen::to_value(&descriptor).map_err(Into::into)
+}
+
 /// Deserialize a runnable [`Patch`] from the structured JS object the UI posts to the worklet.
 ///
 /// The fallible ingress: a malformed patch returns `Err` rather than panicking on the audio thread.

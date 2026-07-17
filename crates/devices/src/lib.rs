@@ -21,7 +21,7 @@ pub use cables::{CableType, cable_types};
 pub use catalog::{
     BuiltDevice, ConfigDescriptor, ConfigKind, Connector, DeviceConfig, DeviceDescriptor,
     ParamDescriptor, ParamKind, PortDescriptor, PortDirection, PortDomain, PortKind,
-    connectors_compatible, descriptors, instantiate,
+    connectors_compatible, describe_device, descriptors, instantiate,
 };
 pub use scene::{
     CableSpec, ConfigSetting, Connection, DeviceInstance, ParamSetting, Patch, PortRef,
