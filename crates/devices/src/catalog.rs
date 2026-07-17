@@ -483,7 +483,7 @@ enum ReadoutSpec {
 
 impl ReadoutSpec {
     /// The readout UIs, in exposed order.
-    fn iter(&self, count: usize) -> Vec<(String, String)> {
+    fn label(&self, count: usize) -> Vec<(String, String)> {
         match self {
             ReadoutSpec::Static(uis) => uis
                 .iter()
@@ -1847,6 +1847,8 @@ pub fn descriptors() -> Vec<DeviceDescriptor> {
 fn describe(entry: &CatalogEntry) -> DeviceDescriptor {
     // The exposed face is config-independent, so the descriptor is built with the empty config.
     let face = expand(entry, &DeviceConfig::EMPTY);
+    let n_in = face.inputs.iter().map(|i| usize::from(i.channels)).sum();
+    let m_out = face.outputs.iter().map(|o| usize::from(o.channels)).sum();
 
     // Params, exposed (position) order — the id is the position, matching how the host addresses a
     // param (`BuiltScene::param(device, id)` indexes the exposed handle vec), not the node-local
@@ -1862,9 +1864,6 @@ fn describe(entry: &CatalogEntry) -> DeviceDescriptor {
         .map(|ui| (ui.label.to_owned(), ui.unit.to_owned(), ui.kind))
         .collect();
     if let Some(grid) = &entry.param_grid {
-        let n_in = face.inputs.iter().map(|i| usize::from(i.channels)).sum();
-        let m_out = face.outputs.iter().map(|o| usize::from(o.channels)).sum();
-
         param_ui.extend(
             grid.labels(n_in, m_out)
                 .into_iter()
@@ -1942,12 +1941,12 @@ fn describe(entry: &CatalogEntry) -> DeviceDescriptor {
     let readouts = face
         .readouts
         .iter()
-        .zip(entry.readouts.iter(1))
+        .zip(entry.readouts.label(n_in))
         .enumerate()
-        .map(|(i, (_, ui))| ReadoutDescriptor {
+        .map(|(i, (_, (label, unit)))| ReadoutDescriptor {
             id: i as u32,
-            label: ui.label.to_owned(),
-            unit: ui.unit.to_owned(),
+            label: label,
+            unit: unit,
         })
         .collect();
 
@@ -2011,7 +2010,7 @@ mod tests {
                 entry.type_id
             );
             assert_eq!(
-                entry.readouts.iter().count(),
+                entry.readouts.label(1).len(),
                 face.readouts.len(),
                 "{} readouts",
                 entry.type_id
