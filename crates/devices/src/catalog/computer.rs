@@ -143,7 +143,7 @@ mod tests {
 
     use super::loopback_defaults;
     use crate::scene::ConfigSetting;
-    use crate::{DeviceConfig, PortDirection, descriptors, instantiate};
+    use crate::{DeviceConfig, PortDirection, describe_device, descriptors, instantiate};
 
     /// The loopback default routes send k → return k on the diagonal, but only over `min(sends,
     /// returns)` lanes — every return carries a signal, no send is left dangling a default.
@@ -252,5 +252,57 @@ mod tests {
         assert_eq!(dev.nodes.len(), 2, "still meter-bank + matrix");
         assert_eq!(dev.params.len(), 48, "8×6 crosspoints");
         assert_eq!(dev.readouts.len(), 16, "8 send lanes × (peak, rms)");
+    }
+
+    /// The **per-instance** descriptor — `describe_device` with the attached interface's shape as
+    /// config — scales to 8×6: 8-ch / 6-ch USB port faces, 48 grid crosspoints, 16 (Peak, RMS)
+    /// readouts, labels generated to the new counts, and the diagonal loopback over `min(8, 6) = 6`.
+    /// (The type catalog's EMPTY-config descriptor stays 2×2 — the seam wasm exports for the faceplate.)
+    #[test]
+    fn configured_computer_descriptor_is_8x6() {
+        let settings = [
+            ConfigSetting {
+                key: "usb_sends".into(),
+                value: 8.0,
+            },
+            ConfigSetting {
+                key: "usb_returns".into(),
+                value: 6.0,
+            },
+        ];
+        let dev = describe_device("computer", &DeviceConfig::new(&settings))
+            .expect("computer is in the catalog");
+
+        let usb_in = dev
+            .ports
+            .iter()
+            .find(|p| p.direction == PortDirection::Input)
+            .expect("a USB input");
+        let usb_out = dev
+            .ports
+            .iter()
+            .find(|p| p.direction == PortDirection::Output)
+            .expect("a USB output");
+        assert_eq!(usb_in.channels, 8, "8 send lanes");
+        assert_eq!(usb_out.channels, 6, "6 return lanes");
+
+        // 8×6 → 48 crosspoints; labels generated to the new extents (last id 47 = 7·6 + 5).
+        assert_eq!(dev.params.len(), 48);
+        assert_eq!(dev.params[0].label, "Send 1 → Return 1");
+        assert_eq!(dev.params[47].label, "Send 8 → Return 6");
+
+        // 8 send lanes × (Peak, RMS) → 16 readouts, lane-then-measure (last = lane 8's RMS).
+        assert_eq!(dev.readouts.len(), 16);
+        assert_eq!(dev.readouts[15].label, "Send 8 RMS");
+
+        // Diagonal loopback over min(8, 6) = 6: crosspoint (k, k) at id k·6 + k is unity, rest muted.
+        for (id, p) in dev.params.iter().enumerate() {
+            let expected = if (0..6).any(|k| k * 6 + k == id) {
+                1.0
+            } else {
+                0.0
+            };
+            assert_eq!(p.default, expected, "crosspoint {id} default");
+        }
     }
 }

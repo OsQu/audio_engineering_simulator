@@ -1497,4 +1497,33 @@ mod tests {
             "got {err:?}"
         );
     }
+
+    /// The channel-count guard is **config-aware**: a default (2×2) computer — not the 8×6 one the loop
+    /// tests configure — can't legally receive the 8i6's 8-lane USB send. `build_patch` reads the
+    /// computer's *instance* face (2-wide), so the mismatch surfaces as a legible `ChannelCountMismatch`
+    /// pre-compile, the flip side of the 8×6 tests that prove the matching shape is accepted.
+    #[test]
+    fn a_default_computer_cannot_receive_the_interfaces_wide_send() {
+        let patch = Patch {
+            devices: vec![device("if", "scarlett_8i6"), device("computer", "computer")],
+            // 8i6 USB send (8 ch) → default computer USB in (2 ch): a channel-count mismatch.
+            connections: vec![conn("if", 0, "computer", 0)],
+            output: PortRef {
+                device: "computer".into(),
+                port: 0,
+            },
+        };
+        let err = build_patch(&patch, BLOCK_LEN, rate(), 0).unwrap_err();
+        assert!(
+            matches!(
+                err,
+                BuildError::ChannelCountMismatch {
+                    from_channels: 8,
+                    to_channels: 2,
+                    ..
+                }
+            ),
+            "got {err:?}"
+        );
+    }
 }
