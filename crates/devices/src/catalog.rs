@@ -60,7 +60,7 @@ impl<'a> DeviceConfig<'a> {
     }
 
     /// The empty config — every key falls back to its default. Used to build a device's descriptor
-    /// (the exposed face is config-independent) and by config-free devices.
+    /// (the default face — the type catalog's descriptor is built from it) and by config-free devices.
     pub const EMPTY: DeviceConfig<'static> = DeviceConfig { settings: &[] };
 
     /// The value for `key`, or `default` if the instance didn't set it.
@@ -1796,8 +1796,10 @@ fn expand(entry: &CatalogEntry, config: &DeviceConfig) -> Expansion {
 ///
 /// The chassis-seam primitive: `build_patch` calls this per device with the instance's config, then
 /// uses the returned [`BuiltDevice`] to remap inter-device connections and resolve control handles.
-/// The exposed face is config-independent (a config changes baked values/topology, not which
-/// ports/params exist), so the returned map is stable across config choices.
+/// Most devices' exposed face is config-independent (a config changes baked values, not which
+/// ports/params exist), but a **channel-count config** can resize it — the `computer`'s
+/// `usb_sends`/`usb_returns` grow its port lanes, crosspoints, and readouts — so the returned map is
+/// built for *this* config, not a canonical one.
 pub fn instantiate(type_id: &str, config: &DeviceConfig, g: &mut Graph) -> Option<BuiltDevice> {
     let entry = entry(type_id)?;
     let Expansion {
@@ -1845,7 +1847,8 @@ pub fn descriptors() -> Vec<DeviceDescriptor> {
 
 /// Build one descriptor: numeric param fields + port domains from the exposed face, labels from the entry.
 fn describe(entry: &CatalogEntry) -> DeviceDescriptor {
-    // The exposed face is config-independent, so the descriptor is built with the empty config.
+    // The type-catalog descriptor is built with the EMPTY config — the device's *default* face (2×2
+    // for the config-driven computer). A per-instance, config-aware descriptor is a later story.
     let face = expand(entry, &DeviceConfig::EMPTY);
     let n_in = face.inputs.iter().map(|i| usize::from(i.channels)).sum();
     let m_out = face.outputs.iter().map(|o| usize::from(o.channels)).sum();
@@ -1985,12 +1988,16 @@ mod tests {
     fn catalog_aligns_with_exposed_face() {
         for entry in CATALOG {
             let face = expand(entry, &DeviceConfig::EMPTY);
+            // Generated labels size to the built face, so materialize with the same counts `describe`
+            // uses (summed exposed-port channels) before comparing to the face.
+            let n_in: usize = face.inputs.iter().map(|p| usize::from(p.channels)).sum();
+            let m_out: usize = face.outputs.iter().map(|p| usize::from(p.channels)).sum();
             // The exposed param face is the ungrouped UIs ++ the generated matrix crosspoints ++ one
             // entry per group.
             let grid = entry
                 .param_grid
                 .as_ref()
-                .map_or(0, |g| g.inputs.names(1).len() * g.outputs.names(1).len());
+                .map_or(0, |g| g.labels(n_in, m_out).len());
             assert_eq!(
                 entry.params.len() + grid + entry.param_groups.len(),
                 face.params.len(),
@@ -2010,7 +2017,7 @@ mod tests {
                 entry.type_id
             );
             assert_eq!(
-                entry.readouts.label(1).len(),
+                entry.readouts.label(n_in).len(),
                 face.readouts.len(),
                 "{} readouts",
                 entry.type_id

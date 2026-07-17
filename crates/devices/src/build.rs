@@ -635,6 +635,28 @@ mod tests {
         }
     }
 
+    /// A `computer` sized to the 8i6's USB shape — 8 sends / 6 returns — written as the hidden
+    /// `usb_sends`/`usb_returns` structural config (what web enumeration writes on USB connect). The
+    /// default computer is the built-in 2×2 card, which wouldn't match the 8i6's 8-ch send / 6-ch
+    /// return; these round-trip tests need the interface's shape.
+    fn computer_8x6(id: &str) -> DeviceInstance {
+        DeviceInstance {
+            id: id.into(),
+            type_id: "computer".into(),
+            params: vec![],
+            config: vec![
+                crate::scene::ConfigSetting {
+                    key: "usb_sends".into(),
+                    value: 8.0,
+                },
+                crate::scene::ConfigSetting {
+                    key: "usb_returns".into(),
+                    value: 6.0,
+                },
+            ],
+        }
+    }
+
     /// The pinned canonical patch as a scene: `synth → AD → DA → speaker`, tapped at the speaker.
     fn canonical_patch() -> Patch {
         Patch {
@@ -909,7 +931,7 @@ mod tests {
             devices: vec![
                 device("synth", "synth_voice"),
                 device("if", "scarlett_8i6"),
-                device("computer", "computer"),
+                computer_8x6("computer"),
                 device("spk", "speaker"),
             ],
             connections: vec![
@@ -970,7 +992,7 @@ mod tests {
             devices: vec![
                 device("synth", "synth_voice"),
                 device("if", "scarlett_8i6"),
-                device("computer", "computer"),
+                computer_8x6("computer"),
                 device("spk", "speaker"),
             ],
             connections: vec![
