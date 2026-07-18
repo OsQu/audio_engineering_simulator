@@ -1377,18 +1377,36 @@ _Design notes (settled at planning):_
   `Matrix` route/sum/level core where it can. The pure-loopback `Matrix` default is retired. _Node
   decomposition (deck as one node vs. monitor-matrix + player + out-matrix) is an execution choice_ — one
   node keeps the transport/rings/codec cohesive; the executor may split if the hot path stays clean.
-- **WAV codec is a small wasm-safe writer/reader in the engine** (minimal canonical header + PCM at the
-  DAW's own digital rate/bit depth; raw f32 PCM is an acceptable fallback). **Not** native `hound` (harness
-  crate, native-only) — this must build to `wasm32`. Stored files are real WAVs (a nice-to-have: they could
-  be downloaded/inspected). _Rejected: host-side WAV encoding_ — puts audio semantics in the host, against
-  the seam decision.
+- **WAV codec is a small hand-rolled wasm-safe writer/reader in the engine** (a fixed canonical 44-byte
+  header + PCM). Format is **32-bit IEEE float** (`WAVE_FORMAT_IEEE_FLOAT`, tag 3) — matches the DAW's own
+  `f32` `SampleBuffer` storage, so encode→decode is **bit-exact** (no quantization step). Mono now, a
+  `channels` field for stereo later. Decode is **total** (foreign bytes from host storage → `WavError`, never
+  a panic; unknown chunks skipped). Stored files are real WAVs (nice-to-have: downloadable/inspectable).
+  _Rejected: host-side WAV encoding_ — puts audio semantics in the host, against the seam decision.
+  _Rejected: reusing `hound` (the community standard, already a `harness` dep) in the engine_ — it would
+  compile to `wasm32` (pure Rust over `Read`/`Write`/`Seek`, supports float), but fits this use poorly: (a)
+  its `WavWriter`+`finalize()`-`Seek` shape means holding the **whole take in a `Cursor<Vec<u8>>` in WASM
+  memory** until finalize — exactly what the per-block streaming-to-disk model forbids; (b) it allocates and
+  isn't shaped for the pre-sized, alloc-free, per-quantum framing this seam needs next to the audio thread;
+  (c) the engine is deliberately dependency-lean and wasm-clean (the reason `hound` was quarantined to
+  `harness`), and a dep to save ~90 lines of a *fixed-format* header + `f32::to_le_bytes` is a bad trade; (d)
+  a crate's value is decoding **arbitrary** WAV variants, but we only ever decode files we wrote at one fixed
+  format — variant-handling we'd never exercise. **Tipping point:** if we ever import arbitrary user WAVs
+  (odd bit depths, ADPCM, extensible headers), switch to `hound` (or `symphonia` for broad decode) rather
+  than grow a hand parser.
 - **The "simple mixer" is the matrix gains + faders — no new mixing concept.** Per-track level, per-crosspoint
   route gain, and a master level are all `Matrix`-style × gains, surfaced as faders in the focus view (the
   5.7.9 `RoutingGrid` precedent). Setting levels only; no EQ/dynamics/pan.
 - **Storage transport: `postMessage` byte chunks to start, SAB later if needed.** The byte rings cross the
   worklet↔main boundary; begin with per-quantum `postMessage` of byte chunks (the current param/event
   transport shape), promote to a `SharedArrayBuffer` ring (the deferred Epic-3 SAB work) only if disk-rate
-  bulk transfer demands it. Recorded per-block payload is small (128 frames).
+  bulk transfer demands it. Recorded per-block payload is small (128 frames). The `ByteRing` is hand-rolled
+  and **single-threaded-shaped today** (like `EventQueue` is just a `Vec`), with a custom **all-or-nothing
+  whole-frame** `write`/`read` guarantee (a slow consumer drops a whole block, a slow producer underruns a
+  whole block — PCM never tears). _Rejected (for now): an audio-SPSC crate (`rtrb`/`ringbuf`)_ — `rtrb` gives
+  element streaming **without** the whole-frame framing guarantee, and it's lock-free machinery not needed
+  until the SAB upgrade. The `write`/`read` interface is shaped so `rtrb` can be evaluated to slot **beneath**
+  it when that upgrade lands.
 - **Known simplifications (not bugs):** mono tracks only; one clip per track (record replaces); no timeline
   editing/seeking-into-a-clip beyond transport seek; input monitoring is a per-track gate (not latency-
   compensated against the round-trip); the DAW clock is still the single domain today (drift vs. the
