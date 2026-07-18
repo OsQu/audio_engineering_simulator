@@ -5,6 +5,7 @@
 //! the voltage math rather than being flagged. See `PROJECT_PLAN.md` for the design;
 //! this crate stays portable to `wasm32` (no `std::thread`, no ambient `std::time`).
 
+mod byte_ring;
 mod dsp;
 mod electrical;
 mod fir;
@@ -20,7 +21,9 @@ mod schedule;
 mod signal;
 #[cfg(test)]
 mod test_util;
+mod wav;
 
+pub use byte_ring::ByteRing;
 pub use dsp::{Biquad, PeakEnvelope};
 pub use electrical::{
     Cable, Farads, InputZ, Ohms, OnePole, OutputZ, PhantomLoad, PhantomSupply, Thevenin,
@@ -46,3 +49,4 @@ pub use signal::{
     AnalogRate, BitDepth, ClockDomainId, Domain, EventBuffer, EventMessage, Lane, SampleBuffer,
     SampleRate, TimedEvent, VoltageBuffer, Volts,
 };
+pub use wav::{WAV_HEADER_LEN, WavError, WavSpec, decode_wav, encode_wav, wav_header};
