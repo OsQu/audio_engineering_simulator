@@ -1,13 +1,15 @@
 <script lang="ts">
-  // The `computer` faceplate (Story 5.7.8) — the 8i6's USB peer, drawn as a plain box: it exists so the
-  // multichannel USB cluster has a legal partner and the interface can be played end-to-end. The **front**
-  // is the DAW's per-lane input meters (the 8 metered "send" lanes it records); the **back** carries the
-  // one USB connector split into its input (8-lane send) and output (6-lane return) jacks. The DAW
-  // routing itself (the loopback matrix's crosspoints) lives on the focus surface (ComputerMixer.svelte) —
-  // a full mixing UI is future work, so this is deliberately minimal. Exposed face from the Rust
-  // `computer` entry: params 0–47 are the 8×6 send→return crosspoints (loopback by default); readouts
-  // 0–15 are the 8 send meters (Peak/RMS each); ports are USB In (input 0, 8-lane) and USB Out
-  // (output 0, 6-lane).
+  // The `computer` faceplate (Story 5.7.8; config-driven since 5.10) — the interface's USB peer, drawn as
+  // a plain box: it exists so the multichannel USB cluster has a legal partner and the interface can be
+  // played end-to-end. The **front** is the DAW's per-lane input meters (one per metered "send" lane it
+  // records); the **back** carries the one USB connector split into its input (send) and output (return)
+  // jacks. The DAW routing itself (the loopback matrix's crosspoints) lives on the focus surface
+  // (ComputerMixer.svelte) — a full mixing UI is future work, so this is deliberately minimal.
+  //
+  // Everything is **data-driven from the props** (the *per-instance* descriptor): the computer has no
+  // fixed channel count — it adopts the attached interface's published USB shape (default 2×2, the 8i6
+  // makes it 8 sends × 6 returns). So the meter strip renders whatever `readouts` it's handed, and the
+  // USB jacks carry the descriptor's lane counts.
   import { untrack } from "svelte";
   import type { DeviceUiProps } from "../device-ui";
   import { makeHandle } from "../device-handle";

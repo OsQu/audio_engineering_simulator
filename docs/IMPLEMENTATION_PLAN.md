@@ -581,7 +581,7 @@ _Tasks to be elaborated when we reach this Epic._
   (feeds Story 5.2/5.3; the design work is parked in the Story 5.9 block).
 - **Story 5.10** — **Dynamic computer I/O**: the computer stops hardcoding the 8i6's USB shape and
   adapts to the attached interface's **published** channel counts (lane-aware engine nodes +
-  config-driven host enumeration). 🚧 **In progress** (planned; see the Story block below).
+  config-driven host enumeration). ✅ **Done** (see the Story block below).
 
 ### Story 5.7 — Per-device faceplate UIs — ✅ **Complete**
 
@@ -1143,7 +1143,7 @@ _Open decisions (non-blocking):_
   though the engine (post-#2) would auto-break it; only duplex bypasses it today. Make the web cycle check
   domain-aware if UI-authored digital loops become a case.
 
-### Story 5.10 — Dynamic computer I/O — 🚧 **In progress**
+### Story 5.10 — Dynamic computer I/O — ✅ **Done**
 
 _Goal:_ The `computer` hardcodes the 8i6's USB shape — 8 sends / 6 returns baked into its catalog
 entry as 11 nodes, 22 hand-wired internal edges, and statically authored meter/grid labels. A real
@@ -1254,7 +1254,12 @@ _Design notes (settled at planning):_
   for enumeration (connect 8i6 → 8×6; disconnect → 2×2; computer↔computer → no-op); in-browser —
   plugging the 8i6's single USB-C re-enumerates the computer (meters/grid resize) and the monitoring
   loop still sounds through the diagonal loopback, unplugging returns it to 2×2; `pnpm run format` +
-  web `check`/`typecheck`/`test` green.
+  web `check`/`typecheck`/`test` green. **Note:** enumeration is a *gesture* (connect/disconnect), but
+  the default scene ships the 8i6 pre-cabled to the computer — a loaded patch never enumerates, so the
+  default scene **authors** the computer's 8×6 config (`scene-store.ts`, `SCHEMA_VERSION` 16→17). The
+  per-instance descriptor is delivered to the UI by the worklet pushing a `deviceDescriptors` map (by
+  scene id) on build and each hot-swap → `session.deviceDescriptors` → `session.descriptorOf(id)`, which
+  the faceplate/focus render sites prefer over the static type catalog.
 
 _Validate:_ an unattached computer presents **2×2** (its built-in audio); plugging the 8i6's single
 USB-C cable **re-enumerates** it to 8 sends / 6 returns — the send meters and routing grid resize, and

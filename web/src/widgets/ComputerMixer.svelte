@@ -1,12 +1,12 @@
 <script lang="ts">
   // The `computer`'s focus surface — a minimal "DAW mixer": the send meters plus the loopback routing
-  // matrix (the `Matrix` node's crosspoints, defaulting to send 1→return 1, send 2→return 2). It's an app
+  // matrix (the `Matrix` node's crosspoints, defaulting to the diagonal send k → return k). It's an app
   // window, not the metal box, so it publishes the `DeviceHandle` itself (no `Chassis`) and composes the
   // shared bound widgets. The routing grid is data-rendered by `RoutingGrid` (rows = sends, cols =
-  // returns, each cell a crosspoint knob); its ids aren't literal in the source, so the guardrail covers
-  // them via a **declared range** (0–47). A real DAW UI (transport, tracks, pan/solo) is future work —
-  // this exists so the loopback is visible and adjustable. Exposed ids: params 0–47 crosspoints, readouts
-  // 0–15 the 8 send meters.
+  // returns, each cell a crosspoint knob), sized from the *per-instance* descriptor's `params` — the
+  // computer adopts the attached interface's shape (default 2×2; the 8i6 makes it 8 × 6 = 48 crosspoints
+  // / 16 send-meter readouts). A real DAW UI (transport, tracks, pan/solo) is future work — this exists
+  // so the loopback is visible and adjustable.
   import { untrack } from "svelte";
   import { makeHandle, setDeviceHandle } from "../device-handle";
   import type { DeviceUiProps } from "../device-ui";
