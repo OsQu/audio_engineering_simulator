@@ -582,6 +582,10 @@ _Tasks to be elaborated when we reach this Epic._
 - **Story 5.10** — **Dynamic computer I/O**: the computer stops hardcoding the 8i6's USB shape and
   adapts to the attached interface's **published** channel counts (lane-aware engine nodes +
   config-driven host enumeration). ✅ **Done** (see the Story block below).
+- **Story 5.11** — **Computer as a minimal DAW**: the computer grows arbitrary mono tracks that arm to
+  USB sends, record to WAV files on disk (OPFS), and play back to USB returns through an in-sim routing
+  matrix + simple level mixer, with a transport (play/stop/record) clocked by the **in-simulation digital
+  domain**. Host is dumb byte storage; the sim owns all audio. 🚧 **In progress** (see the Story block below).
 
 ### Story 5.7 — Per-device faceplate UIs — ✅ **Complete**
 
@@ -1267,6 +1271,196 @@ the monitoring loop closes and sounds through the diagonal loopback; unplugging 
 every channel count derives from the interface's **published** port face (no parallel constant
 anywhere); the full Rust gate (`cargo fmt --check && cargo lint && cargo test && cargo wasm && cargo
 docs`) plus web `check`/`typecheck`/`test` pass; verified in-browser.
+
+### Story 5.11 — Computer as a minimal DAW — 🚧 **In progress**
+
+_Goal:_ Bring the `computer` forward from a fixed monitoring loopback into a **minimal, honest DAW** — the
+digital hub a real audio interface plugs into. It grows an **arbitrary number of mono tracks**; each track
+**arms** to a USB send (the interface's inputs), **records** its audio to a **file on disk**, and **plays
+that file back** to a USB return (the interface's outputs), through an **in-simulation routing matrix** and
+a **simple level mixer**. A single **transport** (play / stop / record) drives it, clocked by the
+**in-simulation digital clock domain** — not the host's capture clock. Anchors to PROJECT_PLAN §4 (the
+computer is a black-box device on real digital ports), §5.6 (clock is a real rate inside the sim, not a
+label), and §2's "**Not a DAW**" non-goal — which this story respects by staying strictly at the
+**signal-path** altitude (record → route → level → play), the routing/monitoring/gain-staging lesson, with
+production features (timeline editing, clip slicing, automation, tempo/grid, per-track plugins) explicitly
+out. Retires the `computer`'s diagonal-loopback `Matrix` default (Story 5.10) in favour of a track deck.
+
+_Why it serves the learning goal (reconciling §2's non-goal):_ record-arm, send/return assignment, input
+monitoring, the routing matrix, and gain-staging in and out of the interface are **core audio-engineering
+routing knowledge** — impractical to explore with real gear. This is that lesson made hands-on, not a music
+production tool. The scope ceiling below is the guardrail that keeps it honest to the non-goal.
+
+_Watch out:_
+
+- **Clock: the transport runs on the in-sim digital domain, never the host.** The one running counter today
+  (`Schedule::sample_pos`, `schedule.rs:318`) is the **analog-rate** external-event clock; `SampleBuffer`
+  carries **no** position (only `SampleRate`/`BitDepth`/`ClockDomainId`, always `ClockDomainId::SINGLE`).
+  The DAW playhead is a **new digital-domain sample counter** advancing the digital block length (**128
+  samples @ 48 kHz**, analog 1024 ÷ M = 8; `alloc_lane`, `schedule.rs:1181-1228`) per processed block when
+  playing. Frame it as the digital domain's **own** counter (forward-compatible with Story 5.3, where the
+  DAW clock can drift from the interface clock) — do **not** map it onto the host `AudioContext.currentTime`
+  or the analog `sample_pos`. Epic 3 already concluded a transport must ride the engine's own sample clock +
+  a shared reference, not host time (`EPIC_3_NOTES.md:391-398`).
+- **Host = dumb byte storage; the sim owns all audio.** The **only** thing crossing the sim↔host boundary is
+  **opaque file bytes** ("append these bytes to file X" / "read bytes of file X" → OPFS). The `computer`
+  (in the sim) **WAV-encodes** recorded samples and **WAV-decodes** playback bytes itself, in the digital
+  domain; format, rate, timeline, and mix never leak to the host. A real DAW writes WAVs to disk; OPFS is
+  that disk. _One nuance, not a layer break:_ the UI may decode a stored WAV **host-side purely to draw a
+  waveform thumbnail** — a filesystem read for display, not the host doing audio.
+- **No unbounded engine buffer; the audio thread never blocks on disk.** Recording **streams per block**:
+  `process` writes the block's samples to a **pre-allocated ring** (zero-alloc); off the hot path the sim
+  WAV-encodes into an **outbound byte ring** the host drains to OPFS asynchronously. Playback is the mirror
+  (host fills an **inbound byte ring** ahead of the playhead; the sim decodes per block into a playback
+  ring; `process` reads it). Disk slowness surfaces as an honest under/overrun, not an audio glitch. The
+  whole take **never** lives in engine memory.
+- **Hot-path contracts hold.** `process` stays zero-alloc / panic-free / branch-light (sample rings only).
+  WAV encode/decode and ring servicing run **off** `process` (like the readout-lane refresh / capture),
+  with pre-sized scratch — no allocation on any path once compiled. Fixed known format ⇒ decode is a total
+  fixed transform.
+- **Determinism holds.** Playback bytes are **external input** on the same footing as note events — same
+  fed stream ⇒ identical output. Recording is a pure tap (no effect on the live signal). No ambient entropy.
+- **Don't break the default scene.** The mic/synth → 8i6 → computer → 8i6 → monitor loop must keep sounding:
+  the default computer ships **one track input-monitoring send 1 → master (return 1)**, transport stopped,
+  nothing recorded. This retires the all-diagonal loopback (a behaviour change — bump `SCHEMA_VERSION`). The
+  **delayed USB-return output** (`delayed_outputs`, one block of round-trip latency) is unchanged.
+- **Mono now, stereo later (door open).** A track owns a **list of lanes** (1 today); a stereo track is 2
+  lanes later — additive. No API that assumes one-lane-per-track.
+- **Scope guards:** signal-path + a simple level mixer (faders) only. **OUT:** timeline editing, clip
+  slicing/arranging, automation, tempo/grid/quantize, per-track inserts/plugins, undo, multi-clip-per-track.
+  One transport, tracks share it. No punch ranges — record = write from the playhead while transport rolls.
+
+_Design notes (settled at planning):_
+
+- **The mixing/routing/transport lives in the simulation, not the host (the headline decision).** The
+  `computer` device owns the routing matrix (track → return), the per-track + master **level faders**, the
+  input monitoring, and the digital-clock playhead. The host supplies only **raw file bytes** and issues
+  transport **commands**; it does no audio. This aligns with the clocking call (the digital domain owns its
+  timeline and mix bus) and the Epic-4/5 layer rule (engine = signal, web = app/UI + now the disk).
+  _Rejected: a host-side mixer_ (engine exposes send lanes + injects pre-mixed return streams) — thinner
+  engine, but the mixer/timeline wouldn't be "in the sim" and the transport clock would drift toward host
+  ownership, against §5.6.
+- **One bidirectional file-byte seam, not two audio taps.** Earlier framing had the engine stream raw audio
+  samples to the host (record) and take samples back (playback) — which leaks audio format/rate/timeline to
+  the host. Superseded: the seam is **opaque bytes for file storage** (SPSC-shaped byte rings each
+  direction, bounded, under/overrun-on-pressure, serviced off the hot path), the host an OPFS filesystem.
+  The sim owns the WAV codec. This also keeps the deferred **Story 4.7 waveform probe** independent — it's a
+  different (display) mechanism, unbuilt here.
+- **The transport playhead is a `u64` digital-domain counter, host-mirrored, engine-authoritative.** The
+  engine advances it deterministically (128/block **while rolling**); the host predicts it (knows start
+  position + roll state, same block advance) to pre-fill/drain byte rings without per-block feedback; on
+  seek/stop the host resyncs; the engine's count is truth if they ever diverge (e.g. an overrun). This is
+  the "carry a shared clock reference over the transport" conclusion (`EPIC_3_NOTES.md:391-398`), realized
+  on the digital clock. Resembles the event `sample_pos`/`drain_due` shape (`schedule.rs:451-488`) — a due
+  region `[pos, pos+block]` — but on the digital rate.
+- **Overdub is the correctness bar: transport = rolling/stopped + an _independent_ record-enable (not a
+  play-vs-record mode).** A real DAW records new tracks **while playing back already-recorded ones**. So
+  playback and record are **independent per-track concerns processed every rolling block on the one
+  playhead** — not mutually-exclusive global modes. While rolling: every track holding file data at the
+  playhead **plays** (decode → route/sum → returns) **and**, in the very same block, every **armed +
+  record-enabled** track **captures** its assigned send to its own file. This must **emerge** from the
+  per-track structure (a track that plays and a track that records are just different per-track states in
+  the same deck loop), not be special-cased. _Rejected: a global record mode that supersedes playback_ — it
+  would forbid overdubbing, the core multitrack act. Consequence for the seam (below): the byte streams are
+  **per-track**, so N tracks can play distinct files while another writes its own. Known simplification: an
+  overdubbed take lands at the **monitored** position — offset by the uncompensated round-trip latency (AD +
+  USB + delayed return); record-latency compensation is out of scope (a later/5.3-era concern).
+- **Tracks are config-driven node sizing, exactly like 5.10's USB channels.** A hidden `track_count` config
+  (written by the web track model) sizes the deck; per-track routing/level/arm/monitor are runtime params
+  (no recompile), the `Matrix` runtime-routing precedent (5.7.9). Adding/removing a track is a structural
+  config change → recompile-on-change (the INST/48V/usb-channels pattern). _Rejected: a fixed max track
+  count_ — encodes an arbitrary ceiling; config-driven is the established idiom.
+- **The DAW deck is a new engine node; the `computer` catalog entry wires it (+ the send meter).** The
+  `computer` becomes: `DigitalMeter(N sends)` (kept — the DAW input meters) → **`TrackDeck`** (the net-new
+  node): per track = playback(decoded file) + optional input-monitor(assigned send), routed/summed/leveled
+  to the assigned return (default → master = return 1), M return lanes out. The `TrackDeck` reuses the
+  `Matrix` route/sum/level core where it can. The pure-loopback `Matrix` default is retired. _Node
+  decomposition (deck as one node vs. monitor-matrix + player + out-matrix) is an execution choice_ — one
+  node keeps the transport/rings/codec cohesive; the executor may split if the hot path stays clean.
+- **WAV codec is a small wasm-safe writer/reader in the engine** (minimal canonical header + PCM at the
+  DAW's own digital rate/bit depth; raw f32 PCM is an acceptable fallback). **Not** native `hound` (harness
+  crate, native-only) — this must build to `wasm32`. Stored files are real WAVs (a nice-to-have: they could
+  be downloaded/inspected). _Rejected: host-side WAV encoding_ — puts audio semantics in the host, against
+  the seam decision.
+- **The "simple mixer" is the matrix gains + faders — no new mixing concept.** Per-track level, per-crosspoint
+  route gain, and a master level are all `Matrix`-style × gains, surfaced as faders in the focus view (the
+  5.7.9 `RoutingGrid` precedent). Setting levels only; no EQ/dynamics/pan.
+- **Storage transport: `postMessage` byte chunks to start, SAB later if needed.** The byte rings cross the
+  worklet↔main boundary; begin with per-quantum `postMessage` of byte chunks (the current param/event
+  transport shape), promote to a `SharedArrayBuffer` ring (the deferred Epic-3 SAB work) only if disk-rate
+  bulk transfer demands it. Recorded per-block payload is small (128 frames).
+- **Known simplifications (not bugs):** mono tracks only; one clip per track (record replaces); no timeline
+  editing/seeking-into-a-clip beyond transport seek; input monitoring is a per-track gate (not latency-
+  compensated against the round-trip); the DAW clock is still the single domain today (drift vs. the
+  interface is a Story 5.3 concern); OPFS-only (native harness may use real files behind the same seam).
+
+- **Task 5.11.1 — Engine: the file-byte transport seam.** Bounded, SPSC-shaped **per-track byte streams**
+  in each direction between the deck and the host (outbound = each recording track's bytes to store;
+  inbound = each playing track's file bytes) — **indexed by track** so N tracks play distinct files while
+  another writes its own (the overdub requirement), serviced **off** the hot path (drop/underrun-on-pressure,
+  no `process` involvement), host side opaque. Plus the wasm-safe **WAV codec** (writer/reader, minimal
+  header + PCM, or raw f32). _Done:_ oracles — a known sample block WAV-encodes then decodes back
+  **sample-exact** (hand-checked header + PCM bytes in a comment); two tracks' inbound streams decode
+  independently without cross-talk while a third's outbound stream fills; ring under/overrun is bounded and
+  lossy-not-panicky; no-alloc test green (rings pre-allocated; `process` untouched); `cargo wasm` green (no
+  native-only dep).
+- **Task 5.11.2 — Engine: transport + digital-domain playhead.** A `u64` digital-domain sample counter with
+  a **rolling/stopped** transport + **seek**, and an **independent record-enable** (per-track arm decides who
+  writes). Advances the digital block length per processed block **while rolling** (playback *and* any armed
+  record happen on the same rolling playhead — no play-vs-record mode); recording writes are further gated by
+  per-track arm + record-enable, playback reads by whether a track has file data. _Done:_ oracles — playhead
+  advances **128/block @ 48 kHz** while rolling and holds while stopped (hand calc: analog 1024 ÷ M = 8);
+  seek repositions exactly; record-enable toggles writes **without** stopping playback (the overdub gate);
+  deterministic across runs.
+- **Task 5.11.3 — Engine: the `TrackDeck` node.** Config-driven `T` mono tracks; per track = playback(from
+  the inbound decoded ring) + optional input-monitor(assigned send lane), routed/summed/leveled to the
+  assigned return (default track t → return 1 = master), N send lanes in + M return lanes out; per-track
+  arm/monitor/input-assign/output-assign/level + master level as runtime params; recording writes the armed
+  tracks' assigned-send samples to their outbound streams. Each track's playback, monitor, and record are
+  **independent per-track work done every rolling block** (so play-while-record emerges from the loop).
+  Reuse the `Matrix` route/sum/level core. _Done:_ oracles (hand-calc, analog domain style) — two tracks →
+  return 1 **sum** at set gains; a track's monitor passes its assigned send at unity when monitoring, silent
+  when not; playback samples appear on the assigned return at the level gain; **overdub oracle** — one track
+  playing a fed file and a second armed track both process in the same block (the player's return output is
+  unchanged while the recorder's outbound stream fills); default deck (1 track) monitors send 1 → return 1;
+  no-alloc + panic-free `process`.
+- **Task 5.11.4 — Devices: rebuild `computer` as the DAW.** Rewrite the catalog entry to
+  `DigitalMeter(N)` → `TrackDeck(T, N→M)` with `T` from a hidden `track_count` config (default **1**), USB
+  N/M from 5.10's `usb_sends`/`usb_returns` (default 2×2); generated readout/label synthesis for tracks;
+  default = built-in 2×2 with one send-1→master monitor track; the 8i6-attached default scene keeps its
+  playable loop. Retire the diagonal-loopback default. _Done:_ oracles — default computer expands to
+  meter + deck with 1 track / master return 1 and stays audible in the loop test; an N-track config sizes
+  the deck; alignment-pinning + `instantiate` remap tests updated; `ChannelCountMismatch` backstop intact;
+  devices gate green.
+- **Task 5.11.5 — wasm: export the DAW seams.** On `SceneEngine`: drain the outbound byte ring / fill the
+  inbound byte ring (zero-copy views, by device id), transport commands (play/stop/record/seek), a playhead
+  getter, and the per-instance descriptor already carrying the track face. _Done:_ the byte rings and
+  transport round-trip across the wasm boundary for an N-track computer; the EMPTY-config type catalog
+  unchanged; `cargo wasm` + full Rust gate green.
+- **Task 5.11.6 — Web: OPFS storage + track model + transport UI + level mixer + waveform.** OPFS-backed
+  take files (worker + sync access handles) draining/filling the byte rings around the playhead; a host-side
+  **track model** (create/remove tracks → `track_count` config + recompile; arm; input/output assign; level);
+  **transport controls** (record/play/stop); the **simple level mixer** (faders = deck params) + routing in
+  the focus view (the 5.7.9 `RoutingGrid` precedent); a **waveform** view decoding stored WAVs host-side for
+  display only. Vitest for the host track/transport/storage logic (incl. concurrent OPFS read of playing
+  files + write of a recording file via per-file sync access handles). _Done:_ in-browser — arm a track to
+  the mic/synth send, hit record, stop, play it back through the monitoring loop and hear it; **then
+  overdub — with that take playing, arm a second track and record it, and hear both together on the next
+  playback** (the DAW pressure test); a track sums into master; unplug/replug still sound; `pnpm run format`
+  + web `check`/`typecheck`/`test` green.
+
+_Validate:_ the `computer` presents an **arbitrary number of mono tracks**; a track **armed** to a USB send
+**records to a WAV file on disk (OPFS)** while the transport rolls, and **plays that file back** to a USB
+return through the **in-sim routing matrix + level mixer**, audible through the interface monitoring loop;
+the **transport** (rolling/stopped + record-enable) is clocked by the **in-simulation digital domain**
+(playhead advances 128 digital samples/block, never touching the host clock); **overdub works — a new track
+records while already-recorded tracks play back on the same playhead**, and both are heard together
+afterward (the DAW pressure test); the **only** sim↔host data is **opaque file bytes** (host stores; the sim
+owns WAV encode/decode, routing, levels, timeline); the recorded take **never lives whole in engine memory**
+and the audio thread never blocks on disk; the default scene's mic/synth loop
+still sounds (one default monitor track); mono-now with a lane-list door open for stereo; hot path stays
+zero-alloc / panic-free and deterministic; the full Rust gate (`cargo fmt --check && cargo lint && cargo
+test && cargo wasm && cargo docs`) plus web `check`/`typecheck`/`test` pass; verified in-browser.
 
 ---
 
