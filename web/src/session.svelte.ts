@@ -74,6 +74,8 @@ export class SceneSession {
   // Static per-connection loading loss in dB (or null for digital/event connections), by connection
   // index (matching scene.patch.connections order). Seeded on `ready`, refreshed after each hot-swap.
   losses = $state<(number | null)[]>([]);
+  // Up-to-date device descriptors built with current configuration
+  deviceDescriptors = $state<Record<string, DeviceDescriptor>>({});
   // Signal-path latency in ms (the whole-engine group delay: schedule chain + capture), from the
   // `ready` message. A single engine scalar — held here so a view (the bench debug header) can show it
   // without recomputing. The scene view's status line already renders the fuller `latencySummary`.
@@ -247,10 +249,14 @@ export class SceneSession {
           onLosses: (l) => {
             this.losses = l;
           },
+          onDeviceDescriptors: (deviceDescriptors) => {
+            this.deviceDescriptors = deviceDescriptors;
+          },
           onReady: (r: ReadyMessage, sendFn) => {
             this.catalog = r.catalog;
             this.cables = r.cables;
             this.losses = r.losses;
+            this.deviceDescriptors = r.deviceDescriptors;
             this.latencyMs = r.signalPathLatencyMs;
             this.send = sendFn;
             this.ready = true;
