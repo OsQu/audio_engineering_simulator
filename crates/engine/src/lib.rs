@@ -21,6 +21,7 @@ mod schedule;
 mod signal;
 #[cfg(test)]
 mod test_util;
+mod transport;
 mod wav;
 
 pub use byte_ring::ByteRing;
@@ -49,4 +50,5 @@ pub use signal::{
     AnalogRate, BitDepth, ClockDomainId, Domain, EventBuffer, EventMessage, Lane, SampleBuffer,
     SampleRate, TimedEvent, VoltageBuffer, Volts,
 };
+pub use transport::Transport;
 pub use wav::{WAV_HEADER_LEN, WavError, WavSpec, decode_wav, encode_wav, wav_header};
