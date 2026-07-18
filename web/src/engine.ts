@@ -30,6 +30,7 @@ export type ReadyMessage = {
   /** Per scene connection (same index as the patch's connection list): loading loss in dB, or `null`
    *  for a digital/event connection (ideal, no resistive loading). */
   losses: (number | null)[];
+  deviceDescriptors: Record<string, DeviceDescriptor>;
 };
 
 /** Live device meter readings, posted ~47×/s: one entry per metering device, `[deviceId, values]`
@@ -60,6 +61,11 @@ export type HealthMessage = {
 export type LevelMessage = {
   type: "level";
   peak: number;
+};
+
+export type DeviceDescriptorMessage = {
+  type: "deviceDescriptors";
+  deviceDescriptors: Record<string, DeviceDescriptor>;
 };
 
 /** Handle returned by `startEngine` for host-side controls that sit *outside* the simulation. */
