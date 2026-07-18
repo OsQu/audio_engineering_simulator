@@ -94,6 +94,8 @@ export interface EngineHandlers {
   /** Refreshed per-connection loading loss (dB, or `null`) after a structural edit. Optional, like
    *  `onReadouts`. The initial losses arrive on `ready`. */
   onLosses?: (losses: (number | null)[]) => void;
+  /** Fired when the engine reports updated device descriptors. */
+  onDeviceDescriptors?: (deviceDescriptors: Record<string, DeviceDescriptor>) => void;
 }
 
 /** Compose the end-to-end latency line from the engine group delay + the browser's measured latency. */
@@ -175,6 +177,8 @@ export async function startEngine(
     } else if (d?.type === "error") {
       handlers.onStatus(`worklet error: ${d.message}`);
       console.error("worklet error:", d.message, "\n", d.stack);
+    } else if (d?.type === "deviceDescriptors") {
+      handlers.onDeviceDescriptors?.((d as DeviceDescriptorMessage).deviceDescriptors);
     }
   };
   // A monitor-gain node **outside the simulation**: it scales the final output for comfortable
