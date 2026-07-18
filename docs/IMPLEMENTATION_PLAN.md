@@ -1365,6 +1365,25 @@ _Design notes (settled at planning):_
   **per-track**, so N tracks can play distinct files while another writes its own. Known simplification: an
   overdubbed take lands at the **monitored** position — offset by the uncompensated round-trip latency (AD +
   USB + delayed return); record-latency compensation is out of scope (a later/5.3-era concern).
+- **Clock provenance: the DAW's rate is the interface's, carried in the data — the transport hardcodes no
+  rate (traced from code at planning).** What sets the digital rate is the **converter**, not the transport:
+  the analog rate is the single `compile(graph, block_len, analog_rate, seed)` parameter (384 kHz); each
+  `AdConverter`/`DaConverter` carries its own `SampleRate` (a distinct newtype from `AnalogRate`) and the AD
+  **stamps** it onto the `SampleBuffer` it produces (`ad.rs` "opens a clock domain"); `compile`'s `alloc_lane`
+  (`schedule.rs`) then derives `M = analog/digital`, sizes the digital lane to `block_len / M` (128 @ 48 kHz),
+  and every digital→digital edge is compile-checked equal-rate (`ClockCrossingUnsupported` otherwise). So
+  `Transport::advance(frames)` takes the frame count as an **argument** — the deck passes the **runtime
+  digital lane length** (`SampleBuffer::len()` of its USB lanes = `block_len / M` for whatever the interface
+  feeds), never a `128` constant. This models **"the DAW follows the interface clock"** (the realistic USB
+  case — the interface is the master, the computer slaves), so the "external clock → interface → DAW" story is
+  the current mechanism, not a future one, and needs zero transport redesign. **What is _not_ emergent yet —
+  all Story 5.3, already scoped there, none blocked by 5.11:** (1) a device declaring a **clock source**
+  (`Internal`/`RecoverFrom`/`WordClock`) — `port.rs` flags `DigitalFace` as where the clock role will live;
+  (2) `ClockDomainId::SINGLE` is hardcoded in `alloc_lane` (one domain ⇒ no drift, no async-boundary FIFO/
+  slip); (3) cross-rate edges are **rejected, not resampled** (no SRC); (4) the DAW node rates are statically
+  authored at 48 kHz in the catalog rather than **derived** from the interface's published port rate (the
+  rate-axis analogue of 5.10's channel-count derivation — a no-op today since everything is 48 kHz). Building
+  5.11 on the rate-agnostic `advance(frames)` keeps all four cleanly deferable.
 - **Tracks are config-driven node sizing, exactly like 5.10's USB channels.** A hidden `track_count` config
   (written by the web track model) sizes the deck; per-track routing/level/arm/monitor are runtime params
   (no recompile), the `Matrix` runtime-routing precedent (5.7.9). Adding/removing a track is a structural
