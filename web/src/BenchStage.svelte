@@ -158,7 +158,7 @@
   const devices = $derived<BenchDevice[]>(
     session.scene.patch.devices
       .map((d) => {
-        const found = session.catalog.find((c) => c.typeId === d.typeId);
+        const found = session.descriptorOf(d.id);
         return found ? { id: d.id, desc: found } : null;
       })
       .filter((x): x is BenchDevice => x !== null),

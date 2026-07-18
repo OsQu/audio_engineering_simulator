@@ -275,7 +275,7 @@
   const focused = $derived.by(() => {
     if (focusedDevice === null) return null;
     const device = deviceById(scene, focusedDevice);
-    const desc = device ? descriptorFor(session.catalog, device.typeId) : undefined;
+    const desc = device ? session.descriptorOf(device.id) : undefined;
     if (!device || !desc || !isFocusable(desc)) return null;
     return { device, desc };
   });
@@ -835,7 +835,7 @@
             {/if}
           {:else}
             {@const device = deviceById(scene, itemId)}
-            {@const desc = device ? descriptorFor(session.catalog, device.typeId) : undefined}
+            {@const desc = device ? session.descriptorOf(device.id) : undefined}
             {@const place = scene.ui.placements[itemId]}
             {#if device && desc && place}
               <!-- The device's registered faceplate (its own component, or the generic Panel). -->

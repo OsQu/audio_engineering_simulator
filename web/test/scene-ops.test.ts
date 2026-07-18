@@ -12,6 +12,7 @@ import {
   connectionDomain,
   connKey,
   disconnect,
+  enumerateComputerUsb,
   moveDeviceToSpace,
   removeDevice,
   removeRack,
@@ -514,5 +515,124 @@ describe("addDevice", () => {
     expect(scene.patch.devices.map((d) => d.id)).toEqual(["amp-1", "amp-2"]);
     expect(scene.ui.placements["amp-2"].space).toBe("s1");
     expect(scene.ui.placements["amp-2"].facing).toBe("front");
+  });
+});
+
+// A minimal `computer` (built-in 2×2 default) and an 8i6-shaped interface (8-lane USB send / 6-lane
+// USB return), for the USB enumeration tests.
+const COMPUTER: DeviceDescriptor = {
+  typeId: "computer",
+  name: "Computer",
+  formFactor: { kind: "desktop", widthMm: 240, heightMm: 28, depthMm: 175 },
+  params: [],
+  ports: [
+    {
+      id: 0,
+      label: "USB In",
+      direction: "input",
+      domain: "digital",
+      channels: 2,
+      kind: "digital",
+      connector: "usb",
+      delayed: false,
+      duplexPartner: 0,
+    },
+    {
+      id: 0,
+      label: "USB Out",
+      direction: "output",
+      domain: "digital",
+      channels: 2,
+      kind: "digital",
+      connector: "usb",
+      delayed: true,
+      duplexPartner: 0,
+    },
+  ],
+  readouts: [],
+  configs: [],
+};
+// The 8i6's USB face: 8-lane send (output), 6-lane return (input).
+const IFACE_8x6: DeviceDescriptor = {
+  ...IFACE,
+  typeId: "iface86",
+  ports: [
+    { ...IFACE.ports[0], channels: 8 },
+    { ...IFACE.ports[1], channels: 6 },
+  ],
+};
+const USB_CAT = [COMPUTER, IFACE_8x6];
+
+// A single duplex USB cable from `from`'s USB output to `to`'s USB input.
+const usbCable = (from: string, to: string): Connection => ({
+  from: { device: from, port: 0 },
+  to: { device: to, port: 0 },
+  duplex: true,
+});
+const deviceOf = (scene: Scene, id: string) =>
+  scene.patch.devices.find((d) => d.id === id) ?? expect.fail(`no device ${id}`);
+
+describe("enumerateComputerUsb", () => {
+  it("adopts the attached interface's send/return counts and resets the matrix", () => {
+    const conn = usbCable("if", "pc");
+    const scene = makeScene({
+      devices: [
+        { id: "if", typeId: "iface86" },
+        { id: "pc", typeId: "computer" },
+      ],
+      connections: [conn],
+    });
+    // A stale routing override, to prove re-enumeration resets it.
+    deviceOf(scene, "pc").params = [{ id: 0, value: 0.5 }];
+
+    const changed = enumerateComputerUsb(scene, USB_CAT, conn);
+
+    expect(changed).toBe(true);
+    const pc = deviceOf(scene, "pc");
+    expect(pc.config).toEqual([
+      { key: "usb_sends", value: 8 },
+      { key: "usb_returns", value: 6 },
+    ]);
+    expect(pc.params).toEqual([]); // matrix reset to the loopback default
+  });
+
+  it("reverts to the built-in 2×2 when the interface is unplugged", () => {
+    const conn = usbCable("if", "pc");
+    // The cable is already gone (disconnect removed it); the computer still carries its 8×6 config.
+    const scene = makeScene({
+      devices: [
+        { id: "if", typeId: "iface86" },
+        { id: "pc", typeId: "computer" },
+      ],
+      connections: [],
+    });
+    deviceOf(scene, "pc").config = [
+      { key: "usb_sends", value: 8 },
+      { key: "usb_returns", value: 6 },
+    ];
+
+    const changed = enumerateComputerUsb(scene, USB_CAT, conn);
+
+    expect(changed).toBe(true);
+    expect(deviceOf(scene, "pc").config).toEqual([
+      { key: "usb_sends", value: 2 },
+      { key: "usb_returns", value: 2 },
+    ]);
+  });
+
+  it("is a no-op for a computer↔computer USB link (neither adapts)", () => {
+    const conn = usbCable("pc1", "pc2");
+    const scene = makeScene({
+      devices: [
+        { id: "pc1", typeId: "computer" },
+        { id: "pc2", typeId: "computer" },
+      ],
+      connections: [conn],
+    });
+
+    const changed = enumerateComputerUsb(scene, USB_CAT, conn);
+
+    expect(changed).toBe(false); // both keep the default 2×2 — no config written
+    expect(deviceOf(scene, "pc1").config).toBeUndefined();
   });
 });

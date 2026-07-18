@@ -15,7 +15,7 @@ import {
 import { type ConnectVerdict, cableSpec } from "./connections";
 import { wallSpawn } from "./placement";
 import { deviceById, FRAME_MARGIN, type LayoutCtx, type PlacedItem, rackById } from "./projection";
-import type { Connection } from "./scene";
+import type { Connection, DeviceInstance } from "./scene";
 import { type BenchWatch, flip, newSpace, type Scene } from "./scene-store";
 import { footprint, RACK_DEPTH_MM, RACK_UNIT_MM, RACK_WIDTH_MM, type Size3 } from "./spatial";
 
@@ -108,6 +108,96 @@ export function commitCable(
 export function disconnect(scene: Scene, c: Connection): void {
   const k = connKey(c);
   scene.patch.connections = scene.patch.connections.filter((x) => connKey(x) !== k);
+}
+
+// --- Computer USB enumeration ---------------------------------------------------------------------
+// A `computer` has no channel count of its own — it adopts whatever the attached interface publishes.
+// After a USB duplex cable to a computer is committed or removed, re-derive that computer's
+// `usb_sends`/`usb_returns` structural config from the interface now on the other end (or revert to the
+// built-in 2×2 when nothing's attached), resetting its routing matrix to the loopback default. This is
+// the derive-from-the-published-face rule made a live gesture (plugging a cable); Rust's
+// `ChannelCountMismatch` stays the backstop. Config → recompile, so the **caller must hot-swap**.
+const COMPUTER_TYPE = "computer";
+const USB_SENDS_KEY = "usb_sends";
+const USB_RETURNS_KEY = "usb_returns";
+const DEFAULT_USB_CHANNELS = 2; // the built-in sound card, shown when nothing is attached
+
+const isComputer = (scene: Scene, deviceId: string): boolean =>
+  deviceById(scene, deviceId)?.typeId === COMPUTER_TYPE;
+
+// The channel counts a device publishes on its USB jack — its USB **output** (the "send", → the
+// computer's `usb_sends`) and USB **input** (the "return", → `usb_returns`) lane counts, from its
+// descriptor. `null` if it has no USB output/input pair.
+function usbShape(
+  scene: Scene,
+  catalog: DeviceDescriptor[],
+  deviceId: string,
+): { sends: number; returns: number } | null {
+  const dev = deviceById(scene, deviceId);
+  const desc = dev ? descriptorFor(catalog, dev.typeId) : undefined;
+  if (!desc) return null;
+  const send = desc.ports.find((p) => p.direction === "output" && p.connector === "usb");
+  const ret = desc.ports.find((p) => p.direction === "input" && p.connector === "usb");
+  return send && ret ? { sends: send.channels, returns: ret.channels } : null;
+}
+
+// The non-computer interface currently cabled to `computerId` over USB (the peer of its one duplex USB
+// link), or `null` if nothing's attached. A computer↔computer USB link is deliberately skipped — neither
+// side adapts to the other (the equal-count check still guards that edge).
+function attachedInterface(
+  scene: Scene,
+  catalog: DeviceDescriptor[],
+  computerId: string,
+): string | null {
+  for (const c of scene.patch.connections) {
+    if (!c.duplex) continue;
+    const ends = [c.from.device, c.to.device];
+    if (!ends.includes(computerId)) continue;
+    const peer = ends.find((id) => id !== computerId);
+    if (!peer || isComputer(scene, peer)) continue;
+    if (connectionConnector(scene, catalog, c) !== "usb") continue;
+    return peer;
+  }
+  return null;
+}
+
+// The computer's current `(sends, returns)` from its config, defaulting to the built-in 2×2.
+function currentUsb(dev: DeviceInstance): [number, number] {
+  const get = (key: string): number =>
+    dev.config?.find((cs) => cs.key === key)?.value ?? DEFAULT_USB_CHANNELS;
+  return [get(USB_SENDS_KEY), get(USB_RETURNS_KEY)];
+}
+
+// Re-enumerate the computer end of `conn` (if either end is a computer) against the interface now cabled
+// to it: adopt the peer's published send/return counts, or fall back to 2×2 with nothing attached.
+// Returns whether the shape changed. On a change the matrix is reset to the loopback default — the
+// crosspoint ids reshuffle with the return count, so saved overrides no longer map (reset, not remap).
+// A no-op for a connection touching no computer, or a computer↔computer USB link. **Caller must hot-swap.**
+export function enumerateComputerUsb(
+  scene: Scene,
+  catalog: DeviceDescriptor[],
+  conn: Connection,
+): boolean {
+  const computerId = [conn.from.device, conn.to.device].find((id) => isComputer(scene, id));
+  if (!computerId) return false;
+
+  const peer = attachedInterface(scene, catalog, computerId);
+  const shape = peer ? usbShape(scene, catalog, peer) : null;
+  const sends = shape?.sends ?? DEFAULT_USB_CHANNELS;
+  const returns = shape?.returns ?? DEFAULT_USB_CHANNELS;
+
+  const dev = deviceById(scene, computerId);
+  if (!dev) return false;
+  const [curSends, curReturns] = currentUsb(dev);
+  if (curSends === sends && curReturns === returns) return false; // unchanged — keep the routing
+
+  dev.config = [
+    ...(dev.config ?? []).filter((cs) => cs.key !== USB_SENDS_KEY && cs.key !== USB_RETURNS_KEY),
+    { key: USB_SENDS_KEY, value: sends },
+    { key: USB_RETURNS_KEY, value: returns },
+  ];
+  dev.params = []; // reset crosspoints to the construction loopback default
+  return true;
 }
 
 // Set (or clear, `""` ⇒ ideal wire) the cable type on a connection — the cable's R·C is baked into the

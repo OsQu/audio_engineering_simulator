@@ -120,15 +120,21 @@ export class PatchController {
     this.dragCable = patching.cancel();
   }
 
-  // Commit a hovered/clicked connection verdict into the scene, then hot-swap the engine.
+  // Commit a hovered/clicked connection verdict into the scene, then hot-swap the engine. If the cable
+  // is a USB link to a computer, re-enumerate its channel shape from the attached interface first (so the
+  // rebuild sizes its meters/matrix to the interface).
   commitCable(v: ConnectVerdict): void {
     sceneOps.commitCable(this.#session.scene, this.#session.catalog, this.#session.cables, v);
+    if (v.ok)
+      sceneOps.enumerateComputerUsb(this.#session.scene, this.#session.catalog, v.connection);
     this.#session.hotSwap();
   }
 
-  // Remove a connection, then hot-swap. The view wraps this to also clear its cable-inspector selection.
+  // Remove a connection, then hot-swap. Unplugging a USB link from a computer re-enumerates it back to
+  // its built-in 2×2. The view wraps this to also clear its cable-inspector selection.
   disconnect(c: Connection): void {
     sceneOps.disconnect(this.#session.scene, c);
+    sceneOps.enumerateComputerUsb(this.#session.scene, this.#session.catalog, c);
     this.#session.hotSwap();
   }
 

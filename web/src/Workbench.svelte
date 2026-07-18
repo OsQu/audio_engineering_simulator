@@ -173,8 +173,7 @@
   // Every bench device with an events (MIDI) input — the keybed's possible targets (the synth source, the
   // DUT if it's an instrument, and anything else added). "Send to" picks which one(s) the notes play.
   function descOf(deviceId: string) {
-    const inst = session.scene.patch.devices.find((d) => d.id === deviceId);
-    return inst ? session.catalog.find((c) => c.typeId === inst.typeId) : undefined;
+    return session.descriptorOf(deviceId);
   }
   const eventInputs = $derived(
     session.scene.patch.devices

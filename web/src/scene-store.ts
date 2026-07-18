@@ -17,8 +17,11 @@ import type { Room, Vec3, Wall } from "./spatial";
  *  discarded to bring every studio up to the new default. (v14 grew the 8i6 to the full 206-param unit
  *  and added the `computer` peer.)
  *  v16: the stock devices (synth_voice / midi_controller / speaker / computer) were shrunk to compact,
- *  8i6-scale footprints and given proper faceplates, so their placements changed — discard stale v15. */
-export const SCHEMA_VERSION = 16;
+ *  8i6-scale footprints and given proper faceplates, so their placements changed — discard stale v15.
+ *  v17: the computer became config-driven (Story 5.10) — the default scene now authors its 8×6 USB
+ *  config to match the attached 8i6; a stale v16 computer has no config and builds as a 2×2 that can't
+ *  receive the 8-lane send. */
+export const SCHEMA_VERSION = 17;
 
 /** A space (room) in the studio — a UI grouping over the one engine graph (the engine never knows
  *  about rooms). A space is a **rectangular room**: gear stands against one of four walls, each an
@@ -170,7 +173,17 @@ export function defaultScene(): Scene {
           { id: 205, value: 1.0 }, // Power
         ],
       },
-      { id: "computer", typeId: "computer" },
+      // The computer adopts the attached 8i6's published USB shape (8-lane send / 6-lane return) — a
+      // loaded patch never enumerates, so the config is authored here (it's what USB-connect enumeration
+      // would write). Without it the computer is the built-in 2×2 card and the 8-lane send wouldn't fit.
+      {
+        id: "computer",
+        typeId: "computer",
+        config: [
+          { key: "usb_sends", value: 8 },
+          { key: "usb_returns", value: 6 },
+        ],
+      },
       { id: "spk", typeId: "speaker" },
     ],
     connections: [

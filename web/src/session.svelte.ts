@@ -10,6 +10,7 @@ import {
   type CableType,
   configDefault,
   type DeviceDescriptor,
+  descriptorFor,
   type ParamDescriptor,
 } from "./catalog";
 import {
@@ -160,6 +161,16 @@ export class SceneSession {
   // The current value of a device-local param (live override else descriptor default), bound to the map.
   paramValue(deviceId: string, desc: DeviceDescriptor, id: number): number {
     return params.paramValue(this.paramValues, deviceId, desc, id);
+  }
+
+  // The descriptor to render a *placed* device with: its per-instance (config-sized) descriptor if the
+  // engine has reported one, else the static type descriptor. A config-driven face (the computer's USB
+  // shape) resizes with its config; every other device's per-instance descriptor equals its type one.
+  descriptorOf(deviceId: string): DeviceDescriptor | undefined {
+    const perInstance = this.deviceDescriptors[deviceId];
+    if (perInstance) return perInstance;
+    const dev = this.scene.patch.devices.find((d) => d.id === deviceId);
+    return dev ? descriptorFor(this.catalog, dev.typeId) : undefined;
   }
 
   // A knob move touches all three param lanes at once — the live map (UI), the scene (for save), and the
