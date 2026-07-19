@@ -1385,6 +1385,15 @@ _Design notes (settled at planning):_
   **per-track**, so N tracks can play distinct files while another writes its own. Known simplification: an
   overdubbed take lands at the **monitored** position — offset by the uncompensated round-trip latency (AD +
   USB + delayed return); record-latency compensation is out of scope (a later/5.3-era concern).
+- **Multiple `computer`s in one scene must just work — keep the sim honest, don't special-case a single
+  DAW.** A scene can hold more than one interface + computer, so nothing may assume "the" DAW. The
+  two-computer case should **emerge** from per-device state, exactly like overdub emerges from per-track
+  state: each `computer` resolves its **own** DAW node by device id (`BuiltScene::daw(device)` already does),
+  its transport / tracks / faders / takes are per-device, and the host keys everything it stores or routes by
+  **`(deviceId, track)`**, never a bare track index. _(Surfaced concretely at 5.11.6: OPFS take files are
+  `take-<encoded deviceId>-<track>.wav`, so two computers' track 0 are independent files — a single-DAW
+  filename would have silently overwritten one take with the other.)_ The test bar: adding a second computer
+  needs no new code path — it records/plays independently because the design was per-device all along.
 - **Clock provenance: the DAW's rate is the interface's, carried in the data — the transport hardcodes no
   rate (traced from code at planning).** What sets the digital rate is the **converter**, not the transport:
   the analog rate is the single `compile(graph, block_len, analog_rate, seed)` parameter (384 kHz); each
