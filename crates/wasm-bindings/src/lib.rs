@@ -46,6 +46,96 @@ pub fn cable_catalog() -> Result<JsValue, JsValue> {
     serde_wasm_bindgen::to_value(&cable_types()).map_err(Into::into)
 }
 
+// --- WAV codec bridge: the sim owns encode/decode; the host is dumb byte storage. ----------------
+//
+// The DAW records to / plays back from **WAV files on disk (OPFS)**, but the simulation owns the byte
+// format (Story 5.11). These thin wrappers over `engine`'s `wav` module let the host: build a streaming
+// take file's header up front (`wav_header`, patched with the true length at stop), decode a stored
+// take back to samples for playback + the waveform view (`decode_wav`), and one-shot encode
+// (`encode_wav`). Byte format authority stays in Rust; JS never hand-rolls a RIFF header.
+
+/// The canonical WAV header length (bytes) this codec writes — the offset at which PCM frames begin,
+/// so the host can append raw frames after it and seek past it on read.
+#[wasm_bindgen]
+#[must_use]
+pub fn wav_header_len() -> usize {
+    engine::WAV_HEADER_LEN
+}
+
+/// Build the WAV header for a mono/`channels`-wide, `sample_rate_hz` take declaring `data_bytes` of PCM
+/// to follow. The host writes it at offset 0 when a take file is created (with a placeholder length),
+/// then overwrites it with the true `data_bytes` at stop — the streaming-record path.
+#[wasm_bindgen]
+#[must_use]
+pub fn wav_header(sample_rate_hz: u32, channels: u16, data_bytes: u32) -> Vec<u8> {
+    let spec = engine::WavSpec {
+        sample_rate_hz,
+        channels,
+    };
+    engine::wav_header(spec, data_bytes).to_vec()
+}
+
+/// One-shot encode `samples` (interleaved if multi-channel) into a complete WAV byte blob (header +
+/// PCM). The whole-buffer counterpart to streaming — handy for export / tests.
+#[wasm_bindgen]
+#[must_use]
+pub fn encode_wav(samples: &[f32], sample_rate_hz: u32, channels: u16) -> Vec<u8> {
+    let spec = engine::WavSpec {
+        sample_rate_hz,
+        channels,
+    };
+    engine::encode_wav(samples, spec)
+}
+
+/// A decoded WAV: its `f32` samples plus the format facts the host needs (rate, channel count).
+#[wasm_bindgen]
+pub struct DecodedWav {
+    samples: Vec<f32>,
+    sample_rate_hz: u32,
+    channels: u16,
+}
+
+#[wasm_bindgen]
+impl DecodedWav {
+    /// The decoded samples (interleaved if multi-channel) as a `Float32Array` — for playback framing
+    /// and the waveform view.
+    #[wasm_bindgen(getter)]
+    #[must_use]
+    pub fn samples(&self) -> Vec<f32> {
+        self.samples.clone()
+    }
+
+    /// Sample rate in whole Hz.
+    #[wasm_bindgen(getter)]
+    #[must_use]
+    pub fn sample_rate_hz(&self) -> u32 {
+        self.sample_rate_hz
+    }
+
+    /// Interleaved channel count (1 = mono).
+    #[wasm_bindgen(getter)]
+    #[must_use]
+    pub fn channels(&self) -> u16 {
+        self.channels
+    }
+}
+
+/// Decode a stored WAV blob into its samples + spec. Total: a malformed/foreign file throws a legible
+/// error (the bytes come back from host file storage), never a panic.
+///
+/// # Errors
+/// Throws with the [`engine::WavError`] variant if the bytes aren't a valid 32-bit-float WAV.
+#[wasm_bindgen]
+pub fn decode_wav(bytes: &[u8]) -> Result<DecodedWav, JsValue> {
+    let (samples, spec) =
+        engine::decode_wav(bytes).map_err(|e| JsValue::from_str(&format!("invalid WAV: {e:?}")))?;
+    Ok(DecodedWav {
+        samples,
+        sample_rate_hz: spec.sample_rate_hz,
+        channels: spec.channels,
+    })
+}
+
 #[wasm_bindgen]
 pub fn describe_device(type_id: String, configs: JsValue) -> Result<JsValue, JsValue> {
     let settings: Vec<devices::ConfigSetting> = serde_wasm_bindgen::from_value(configs)?;
@@ -434,6 +524,16 @@ impl SceneEngine {
         self.current
             .daw(device)
             .is_some_and(|daw| daw.transport().is_recording())
+    }
+
+    /// `device`'s DAW track count — the valid `track` index range is `0..track_count` (0 if `device`
+    /// isn't a DAW). The host reads it to lay out the mixer's track strips; it changes only on a
+    /// structural edit (the `track_count` config → recompile).
+    #[must_use]
+    pub fn track_count(&mut self, device: &str) -> u32 {
+        self.current
+            .daw(device)
+            .map_or(0, |daw| daw.track_count() as u32)
     }
 
     /// Assign track `track`'s record/monitor source to send lane `lane`. No-op if `device` isn't a
@@ -840,6 +940,38 @@ mod tests {
             engine.drain_record("computer", 0).is_empty(),
             "nothing recorded yet"
         );
+    }
+
+    /// `track_count` reports the DAW's track count by device id (0 for a non-DAW), and the WAV codec
+    /// bridge round-trips samples bit-exactly — the host's byte-storage seam (sim owns the format).
+    #[test]
+    fn track_count_and_wav_codec_bridge() {
+        let mut engine = SceneEngine::from_patch(&daw_loop_patch()).expect("builds");
+        assert_eq!(
+            engine.track_count("computer"),
+            1,
+            "default computer = 1 track"
+        );
+        assert_eq!(engine.track_count("synth"), 0, "a non-DAW has no tracks");
+
+        assert_eq!(wav_header_len(), 44);
+        let samples = [0.0_f32, 0.5, -0.5, 1.0];
+        let wav = encode_wav(&samples, 48_000, 1);
+        assert_eq!(wav.len(), 44 + samples.len() * 4, "header + f32 frames");
+        let decoded = decode_wav(&wav).expect("valid WAV");
+        assert_eq!(decoded.samples(), samples);
+        assert_eq!(decoded.sample_rate_hz(), 48_000);
+        assert_eq!(decoded.channels(), 1);
+
+        // A streaming header declares its PCM length; the host patches it at stop.
+        let header = wav_header(48_000, 1, (samples.len() * 4) as u32);
+        assert_eq!(
+            &header[..44],
+            &wav[..44],
+            "streaming header == one-shot header"
+        );
+        // (Decode's error path builds a `JsValue`, unavailable off wasm32 — foreign-byte rejection is
+        // covered by `engine`'s own `wav` tests and exercised in-browser.)
     }
 
     /// The DAW seam is total on a non-DAW device (or unknown id): every op is a no-op, getters read
