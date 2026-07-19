@@ -1482,17 +1482,23 @@ _Design notes (settled at planning):_
   (silent stopped); record captures the armed send only when rolling + record-enabled; **overdub oracle** —
   track 0's playback lane carries its file **unchanged** while track 1 records its send in the same block;
   transport advances by the runtime lane length. Alloc-free (rings pre-allocated; stack `[u8;4]`), panic-free.
-- **Task 5.11.4 — Devices: rebuild `computer` as the DAW.** Rewrite the catalog entry to the crossbar chain
-  `DigitalMeter(N)` → `MultitrackRecorder(N → N+T)` → `Matrix::new_single_ports(N+T → M)` → USB out (delayed),
-  with `T` from a hidden `track_count` config (default **1**) and USB N/M from 5.10's `usb_sends`/`usb_returns`
-  (default 2×2). The `Matrix` default is the **crossbar loopback**: `send 0 → return 0` and each
-  `playback → return 0` at unity (keeps the mic/synth monitoring loop audible), everything else 0 — retiring
-  the old diagonal send-k→return-k default. Generated readout/label synthesis for the send meters + the
-  crosspoint grid (rows = N sends + T track playbacks, cols = M returns). _Done:_ oracles — default computer
-  expands to meter + recorder(1 track) + a 3×2 crossbar and stays audible in the loop test; an N-track config
-  sizes recorder + crossbar; alignment-pinning + `instantiate` remap tests updated; `ChannelCountMismatch`
-  backstop intact;
-  devices gate green.
+- **Task 5.11.4 — Devices: rebuild `computer` as the DAW.** ✅ **Done.** Rewrote the catalog entry to the
+  crossbar chain `DigitalMeter(N)` → `MultitrackRecorder(N → N+T)` → `Matrix::new_single_ports(N+T → M)` → USB
+  out (delayed), with `T` from a hidden `track_count` config (default **1**) and USB N/M from 5.10's
+  `usb_sends`/`usb_returns` (default 2×2). The `Matrix` default is the **crossbar loopback**: `send 0 → return
+  0` and each `playback → return 0` at unity (keeps the mic/synth monitoring loop audible), everything else 0
+  — retiring the old diagonal send-k→return-k default. Generated grid labels `"In i → Return j"` (rows = the
+  N+T mixer inputs, cols = M returns) + the per-lane send meters. _Infra fix:_ `describe` now sizes the grid's
+  **rows from the matrix's own crosspoint count** (`crosspoints / m_out`), not the input-port face — because a
+  crossbar's inputs (N+T) exceed the device's input ports (N); `GridAxis::Named` self-sizes so the 8i6's
+  hand-named 14×14 is untouched (the alignment guard was updated to mirror this). _Delivered oracles:_ default
+  computer = meter + recorder(1 track) + a 3×2 crossbar, USB in/out = 2/2, 6 crosspoints, still audible in the
+  playable-loop test; `track_count`=4 → an (N+4)×M crossbar; `configured` 8×6 → a 9×6 crossbar (54
+  crosspoints); `ChannelCountMismatch` + duplex backstops intact; **the deferred 5.11.3 no-alloc proof landed
+  here** — a direct `no_alloc.rs` check of the recorder's rolling+recording ring paths. Full Rust gate green
+  (engine 360 + devices 60). **Note for 5.11.6:** the crossbar retires the diagonal default and reshapes the
+  matrix crosspoint ids ((N+T)×M), so a saved scene's stored matrix `ParamSetting`s are stale → **bump
+  `SCHEMA_VERSION`** (discard + rebuild) when the web lands.
 - **Task 5.11.5 — wasm: export the DAW seams.** On `SceneEngine`: drain the outbound byte ring / fill the
   inbound byte ring (zero-copy views, by device id), transport commands (play/stop/record/seek), a playhead
   getter, and the per-instance descriptor already carrying the track face. _Done:_ the byte rings and

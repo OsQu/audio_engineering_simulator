@@ -1853,6 +1853,8 @@ fn describe(entry: &CatalogEntry, config: &DeviceConfig) -> DeviceDescriptor {
     // The type-catalog descriptor is built with the EMPTY config — the device's *default* face (2×2
     // for the config-driven computer). A per-instance, config-aware descriptor is a later story.
     let face = expand(entry, config);
+    // Exposed input/output lane totals — `n_in` labels the per-lane readouts (e.g. one Peak/RMS pair
+    // per send lane); `m_out` is the grid's column (return) count.
     let n_in = face.inputs.iter().map(|i| usize::from(i.channels)).sum();
     let m_out = face.outputs.iter().map(|o| usize::from(o.channels)).sum();
 
@@ -1870,8 +1872,19 @@ fn describe(entry: &CatalogEntry, config: &DeviceConfig) -> DeviceDescriptor {
         .map(|ui| (ui.label.to_owned(), ui.unit.to_owned(), ui.kind))
         .collect();
     if let Some(grid) = &entry.param_grid {
+        // The grid's columns are the matrix outputs (the return lanes, `m_out`); its rows are the
+        // matrix *inputs*, which for a crossbar mixer exceed the device's input ports (it folds in
+        // track playbacks as well as the live sends). So size the rows from the matrix's own
+        // crosspoint count — the trailing ungrouped params — over `m_out`, not from the input face.
+        // (`GridAxis::Named` ignores these counts, so the 8i6's hand-named 14×14 is unaffected.)
+        let grid_crosspoints = face
+            .params
+            .len()
+            .saturating_sub(entry.params.len())
+            .saturating_sub(entry.param_groups.len());
+        let grid_rows = grid_crosspoints.checked_div(m_out).unwrap_or(0);
         param_ui.extend(
-            grid.labels(n_in, m_out)
+            grid.labels(grid_rows, m_out)
                 .into_iter()
                 .map(|label| (label, grid.unit.to_owned(), grid.kind)),
         );
@@ -1995,16 +2008,24 @@ mod tests {
     fn catalog_aligns_with_exposed_face() {
         for entry in CATALOG {
             let face = expand(entry, &DeviceConfig::EMPTY);
-            // Generated labels size to the built face, so materialize with the same counts `describe`
-            // uses (summed exposed-port channels) before comparing to the face.
+            // Generated labels size to the built face, so materialize the grid with the same counts
+            // `describe` uses: columns = exposed return lanes, rows = the matrix's own crosspoints over
+            // the columns (so a crossbar whose inputs exceed the input ports still aligns). `Named`
+            // axes ignore the counts and self-size, so this still checks the 8i6's hand-named 14×14.
             let n_in: usize = face.inputs.iter().map(|p| usize::from(p.channels)).sum();
             let m_out: usize = face.outputs.iter().map(|p| usize::from(p.channels)).sum();
+            let grid_crosspoints = face
+                .params
+                .len()
+                .saturating_sub(entry.params.len())
+                .saturating_sub(entry.param_groups.len());
+            let grid_rows = grid_crosspoints.checked_div(m_out).unwrap_or(0);
             // The exposed param face is the ungrouped UIs ++ the generated matrix crosspoints ++ one
             // entry per group.
             let grid = entry
                 .param_grid
                 .as_ref()
-                .map_or(0, |g| g.labels(n_in, m_out).len());
+                .map_or(0, |g| g.labels(grid_rows, m_out).len());
             assert_eq!(
                 entry.params.len() + grid + entry.param_groups.len(),
                 face.params.len(),

@@ -14,9 +14,10 @@
 )]
 
 use engine::{
-    AnalogRate, BalancedDriver, BalancedReceiver, Cable, DcBlocker, EventMessage, EventQueue,
-    EventThru, Farads, GainStage, Graph, InputZ, NoiseDensity, Ohms, ParamQueue, PassiveSum,
-    SynthVoice, TestSource, VoltageBuffer, Volts, compile,
+    AnalogRate, BalancedDriver, BalancedReceiver, BitDepth, Cable, ClockDomainId, DcBlocker,
+    EventMessage, EventQueue, EventThru, Farads, GainStage, Graph, InputZ, Lane, MultitrackRecorder,
+    Node, NoiseDensity, Ohms, ParamQueue, Params, PassiveSum, SampleBuffer, SampleRate, SynthVoice,
+    TestSource, VoltageBuffer, Volts, compile,
 };
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -55,6 +56,7 @@ fn rate() -> AnalogRate {
 fn process_paths_are_allocation_free() {
     analog_chain_is_allocation_free();
     voice_with_events_and_params_is_allocation_free();
+    multitrack_recorder_is_allocation_free();
 }
 
 fn analog_chain_is_allocation_free() {
@@ -128,6 +130,52 @@ fn analog_chain_is_allocation_free() {
         before,
         after,
         "process() allocated {} time(s) over 128 blocks",
+        after - before
+    );
+}
+
+fn multitrack_recorder_is_allocation_free() {
+    // The DAW record/playback hot path: while rolling *and* recording, `process` streams a playback
+    // PCM frame out of each track's inbound ring and a record frame into its outbound ring per sample,
+    // passes the sends through, and advances the transport — all of which must stay off the allocator.
+    // Driven directly (not via a schedule) since the transport/rings are node-owned; the rings are fed
+    // in setup, then under/overrun (silence / dropped frames) inside the measured loop — never allocate.
+    let rate = SampleRate::new(48_000.0);
+    let bits = BitDepth::new(24);
+    let (n_sends, n_tracks) = (2, 1);
+    let mut rec = MultitrackRecorder::new(rate, bits, n_sends, n_tracks);
+    rec.playback_ring_mut(0)
+        .expect("track 0")
+        .write(&vec![0u8; 4096]); // some playback to stream; underruns to silence later (no alloc)
+    rec.set_armed(0, true);
+    rec.transport_mut().play();
+    rec.transport_mut().set_record_enabled(true);
+
+    let block = 128;
+    let inputs: Vec<Lane> = (0..n_sends)
+        .map(|_| {
+            Lane::Sample(SampleBuffer::from_samples(
+                vec![0.5; block],
+                rate,
+                bits,
+                ClockDomainId::SINGLE,
+            ))
+        })
+        .collect();
+    let mut outputs: Vec<Lane> = (0..n_sends + n_tracks)
+        .map(|_| Lane::Sample(SampleBuffer::zeros(block, rate, bits, ClockDomainId::SINGLE)))
+        .collect();
+
+    let before = ALLOCS.load(Ordering::Relaxed);
+    for _ in 0..128 {
+        rec.process(&Params::EMPTY, &inputs, &mut outputs);
+    }
+    let after = ALLOCS.load(Ordering::Relaxed);
+
+    assert_eq!(
+        before,
+        after,
+        "MultitrackRecorder::process allocated {} time(s) over 128 blocks",
         after - before
     );
 }
