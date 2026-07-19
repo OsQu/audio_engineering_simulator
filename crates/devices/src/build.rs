@@ -22,8 +22,8 @@ use std::collections::btree_map::Entry;
 use std::fmt;
 
 use engine::{
-    AnalogRate, Cable, CompileError, EventInputId, Farads, Graph, NodeId, Ohms, ParamHandle,
-    ReadoutHandle, Schedule, compile,
+    AnalogRate, Cable, CompileError, DawControl, EventInputId, Farads, Graph, NodeId, Ohms,
+    ParamHandle, ReadoutHandle, Schedule, compile,
 };
 
 use crate::catalog::{
@@ -145,6 +145,11 @@ pub struct BuiltScene {
     /// device id → its `ReadoutHandle`s, indexed by **device-level readout id**. Absent for devices
     /// that expose no readouts (measure nothing) — the node→host mirror of `params`.
     readouts: BTreeMap<String, Vec<ReadoutHandle>>,
+    /// device id → the [`NodeId`] of its DAW node (the one whose [`daw`](engine::Node::daw) is `Some`),
+    /// for devices that carry one (only the `computer`). The transport/track/byte seam the schedule's
+    /// handle stores can't reach — resolved by probing each device's nodes at build (see
+    /// [`daw`](Self::daw)).
+    daw_nodes: BTreeMap<String, NodeId>,
     /// Per scene [`Connection`] (same index as `patch.connections`): the edge's
     /// **loading loss** in dB (`20·log10` of the baked resistive divider gain, so ≤ 0 dB — an
     /// attenuation), or `None` for a digital/event connection (ideal, no resistive loading). The
@@ -203,6 +208,16 @@ impl BuiltScene {
             .get(device)
             .and_then(|handles| handles.get(readout_id as usize))
             .copied()
+    }
+
+    /// Resolve `device` to its live [`DawControl`] surface — the off-block seam onto its transport,
+    /// tracks, and file-byte streams — or `None` if the device isn't a DAW. Routes `device → node →
+    /// daw()` through the compiled schedule. Off the hot path (a host gesture between blocks).
+    pub fn daw(&mut self, device: &str) -> Option<&mut dyn DawControl> {
+        // Copy the `NodeId` out first so the immutable `daw_nodes` borrow ends before the mutable
+        // `schedule` borrow (`NodeId` is `Copy`).
+        let node = *self.daw_nodes.get(device)?;
+        self.schedule.node_mut(node)?.daw()
     }
 
     /// A snapshot of every metering device's current readings: `(device id, values in readout-id
@@ -524,7 +539,7 @@ pub fn build_patch(
     graph.set_output(out_node, out_port);
 
     // 3. Compile (fixed seed → reproducible). Engine validation (domain, cycles, rates) lands here.
-    let schedule = compile(graph, block_len, rate, seed)?;
+    let mut schedule = compile(graph, block_len, rate, seed)?;
 
     // 3b. Read back each connection's baked loading loss (analog only; digital/event → None), by the
     //     graph edge index recorded above — the static analog-domain readout the UI surfaces.
@@ -581,12 +596,30 @@ pub fn build_patch(
         }
     }
 
+    // 5. Resolve each device's DAW node (if any) by probing its nodes for the one whose `daw()` hook
+    //    answers `Some` — the transport/track/byte seam that lives inside the node, not in a handle
+    //    store. Needs `&mut schedule` (the hook is `&mut self`), so it's its own pass after the
+    //    immutable handle resolution above.
+    let mut daw_nodes = BTreeMap::new();
+    for device in &patch.devices {
+        let built = &devices[&device.id];
+        if let Some(&node) = built.nodes.iter().find(|&&node| {
+            schedule
+                .node_mut(node)
+                .and_then(engine::Node::daw)
+                .is_some()
+        }) {
+            daw_nodes.insert(device.id.clone(), node);
+        }
+    }
+
     Ok(BuiltScene {
         schedule,
         params,
         events,
         readouts,
         connection_losses,
+        daw_nodes,
     })
 }
 
@@ -982,6 +1015,53 @@ mod tests {
         assert!(
             peak > 0.01,
             "the note returns through the computer to the speaker, got {peak}"
+        );
+    }
+
+    /// The `device → node → daw()` resolution: the `computer` in a built scene resolves to a live
+    /// [`DawControl`] surface (only its recorder node's `daw()` answers `Some`), a non-DAW device
+    /// resolves to `None`, and an unknown id resolves to `None`. Driving the transport over the facade
+    /// mutates the compiled schedule's node, so a subsequent lookup sees the state — the seam the wasm
+    /// layer drives.
+    #[test]
+    fn built_scene_resolves_the_computer_daw() {
+        let patch = Patch {
+            devices: vec![
+                device("synth", "synth_voice"),
+                device("if", "scarlett_8i6"),
+                computer_8x6("computer"),
+                device("spk", "speaker"),
+            ],
+            connections: vec![
+                conn("synth", 0, "if", 0),
+                conn("if", 0, "computer", 0),
+                conn("computer", 0, "if", 7),
+                conn("if", 2, "spk", 0),
+            ],
+            output: PortRef {
+                device: "spk".into(),
+                port: 0,
+            },
+        };
+        let mut scene = build_patch(&patch, BLOCK_LEN, rate(), 0).expect("the loop builds");
+
+        // The synth is not a DAW; an unknown id resolves to nothing.
+        assert!(scene.daw("synth").is_none(), "a synth exposes no DAW");
+        assert!(
+            scene.daw("nope").is_none(),
+            "an unknown device resolves to None"
+        );
+
+        // The computer resolves to its recorder facade — an 8-send / (default) 1-track DAW.
+        let daw = scene.daw("computer").expect("the computer is a DAW");
+        assert_eq!(daw.track_count(), 1, "default track_count");
+        assert!(!daw.transport().is_rolling(), "boots stopped");
+        daw.transport_mut().play();
+
+        // A second resolution sees the mutation persisted on the schedule's node.
+        assert!(
+            scene.daw("computer").unwrap().transport().is_rolling(),
+            "transport state persists on the compiled node"
         );
     }
 

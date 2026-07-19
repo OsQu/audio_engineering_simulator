@@ -372,6 +372,122 @@ impl SceneEngine {
         serde_wasm_bindgen::to_value(self.current.connection_losses()).map_err(Into::into)
     }
 
+    // --- DAW control: transport, tracks, and file-byte streams by device id (+ track). ------------
+    //
+    // These reach a recorder node's internal state (transport / faders / byte rings) — the state the
+    // param/event/readout stores can't hold — through the live scene's `device → node → daw()`
+    // resolver. Each is off the hot path (a host gesture between quanta); a device that isn't a DAW,
+    // or an out-of-range track, is a silent no-op (or a zero/empty read). Positions cross as `f64`
+    // (exact to 2^53 samples — millennia at 48 kHz), converted to the transport's `u64` internally.
+
+    /// Start (or resume) `device`'s transport rolling. No-op if `device` isn't a DAW.
+    pub fn transport_play(&mut self, device: &str) {
+        if let Some(daw) = self.current.daw(device) {
+            daw.transport_mut().play();
+        }
+    }
+
+    /// Stop `device`'s transport (the playhead holds — no rewind). No-op if `device` isn't a DAW.
+    pub fn transport_stop(&mut self, device: &str) {
+        if let Some(daw) = self.current.daw(device) {
+            daw.transport_mut().stop();
+        }
+    }
+
+    /// Enable or disable recording on `device`, independently of rolling (armed tracks capture only
+    /// when both hold — the overdub gate). No-op if `device` isn't a DAW.
+    pub fn transport_record_enable(&mut self, device: &str, on: bool) {
+        if let Some(daw) = self.current.daw(device) {
+            daw.transport_mut().set_record_enabled(on);
+        }
+    }
+
+    /// Jump `device`'s playhead to digital-sample position `pos` (negative clamps to 0). No-op if
+    /// `device` isn't a DAW.
+    pub fn transport_seek(&mut self, device: &str, pos: f64) {
+        if let Some(daw) = self.current.daw(device) {
+            daw.transport_mut().seek(pos.max(0.0) as u64);
+        }
+    }
+
+    /// `device`'s playhead in digital samples (0.0 if `device` isn't a DAW). The worklet polls this to
+    /// drive the transport display.
+    #[must_use]
+    pub fn playhead(&mut self, device: &str) -> f64 {
+        self.current
+            .daw(device)
+            .map_or(0.0, |daw| daw.transport().playhead() as f64)
+    }
+
+    /// Whether `device`'s transport is rolling (`false` if `device` isn't a DAW).
+    #[must_use]
+    pub fn is_rolling(&mut self, device: &str) -> bool {
+        self.current
+            .daw(device)
+            .is_some_and(|daw| daw.transport().is_rolling())
+    }
+
+    /// Whether `device` is capturing this block — rolling **and** record-enabled (`false` if `device`
+    /// isn't a DAW).
+    #[must_use]
+    pub fn is_recording(&mut self, device: &str) -> bool {
+        self.current
+            .daw(device)
+            .is_some_and(|daw| daw.transport().is_recording())
+    }
+
+    /// Assign track `track`'s record/monitor source to send lane `lane`. No-op if `device` isn't a
+    /// DAW or the track is out of range.
+    pub fn set_track_input(&mut self, device: &str, track: u32, lane: u32) {
+        if let Some(daw) = self.current.daw(device) {
+            daw.set_track_input(track as usize, lane as usize);
+        }
+    }
+
+    /// Arm or disarm track `track` for recording. No-op if `device` isn't a DAW or the track is out
+    /// of range.
+    pub fn set_track_armed(&mut self, device: &str, track: u32, armed: bool) {
+        if let Some(daw) = self.current.daw(device) {
+            daw.set_track_armed(track as usize, armed);
+        }
+    }
+
+    /// Enable or disable input monitoring for track `track`. No-op if `device` isn't a DAW or the
+    /// track is out of range.
+    pub fn set_track_monitoring(&mut self, device: &str, track: u32, on: bool) {
+        if let Some(daw) = self.current.daw(device) {
+            daw.set_track_monitoring(track as usize, on);
+        }
+    }
+
+    /// Set track `track`'s fader to `level` (de-zippered, clamped to the recorder's gain range). No-op
+    /// if `device` isn't a DAW or the track is out of range.
+    pub fn set_track_level(&mut self, device: &str, track: u32, level: f32) {
+        if let Some(daw) = self.current.daw(device) {
+            daw.set_track_level(track as usize, level);
+        }
+    }
+
+    /// Feed `bytes` of raw PCM into track `track`'s **playback** stream, ahead of the playhead.
+    /// Returns `true` if stored, `false` if it didn't fit whole (retry next block), the track is out
+    /// of range, or `device` isn't a DAW. The worklet calls this per block from OPFS read-ahead.
+    pub fn feed_playback(&mut self, device: &str, track: u32, bytes: &[u8]) -> bool {
+        self.current
+            .daw(device)
+            .is_some_and(|daw| daw.feed_playback(track as usize, bytes))
+    }
+
+    /// Drain **all** buffered raw PCM from track `track`'s **record** stream (a whole number of `f32`
+    /// frames), for the worklet to append to an OPFS file. Empty if nothing is buffered, the track is
+    /// out of range, or `device` isn't a DAW.
+    #[must_use]
+    pub fn drain_record(&mut self, device: &str, track: u32) -> Vec<u8> {
+        self.current
+            .daw(device)
+            .map(|daw| daw.drain_record(track as usize))
+            .unwrap_or_default()
+    }
+
     /// Pointer to the captured host block in WASM linear memory. JS builds **one**
     /// `new Float32Array(memory.buffer, out_ptr(), out_len())` view after construction and reads it
     /// every quantum — zero-copy. `as_ptr` is safe Rust; the only `unsafe` is JS-side building the
@@ -415,7 +531,7 @@ mod tests {
     use super::*;
 
     // --- SceneEngine: built from a scene, controlled generically, hot-swappable. -------------------
-    use devices::{Connection, DeviceInstance, ParamSetting, Patch, PortRef};
+    use devices::{ConfigSetting, Connection, DeviceInstance, ParamSetting, Patch, PortRef};
 
     fn dev(id: &str, type_id: &str) -> DeviceInstance {
         DeviceInstance {
@@ -634,6 +750,118 @@ mod tests {
         assert_eq!(engine.out_len(), 128); // 1024 / 8
         assert_eq!(engine.host_rate_hz(), 48_000.0);
         assert!(!engine.out_ptr().is_null());
+    }
+
+    /// The playable loop that closes through a DAW `computer` (8×6 USB, default 1 track): synth → 8i6
+    /// → computer (loopback) → 8i6 monitor → speaker. The computer is the scene's DAW; the synth and
+    /// interface are not — the fixture for the `SceneEngine` DAW-seam tests.
+    fn daw_loop_patch() -> Patch {
+        let computer = DeviceInstance {
+            id: "computer".into(),
+            type_id: "computer".into(),
+            params: vec![],
+            config: vec![
+                ConfigSetting {
+                    key: "usb_sends".into(),
+                    value: 8.0,
+                },
+                ConfigSetting {
+                    key: "usb_returns".into(),
+                    value: 6.0,
+                },
+            ],
+        };
+        Patch {
+            devices: vec![
+                dev("synth", "synth_voice"),
+                dev("if", "scarlett_8i6"),
+                computer,
+                dev("spk", "speaker"),
+            ],
+            connections: vec![
+                conn("synth", 0, "if", 0),
+                conn("if", 0, "computer", 0),
+                conn("computer", 0, "if", 7),
+                conn("if", 2, "spk", 0),
+            ],
+            output: PortRef {
+                device: "spk".into(),
+                port: 0,
+            },
+        }
+    }
+
+    /// The DAW control seam by device id: the transport rolls/stops/seeks and gates recording, the
+    /// playhead advances one digital block (128 = 1024/8) per rendered quantum, and the byte streams
+    /// forward to the recorder — all through `device → node → daw()`.
+    #[test]
+    fn scene_engine_drives_the_daw_transport_and_streams() {
+        let mut engine = SceneEngine::from_patch(&daw_loop_patch()).expect("the DAW loop builds");
+
+        // Boots stopped at 0.
+        assert_eq!(engine.playhead("computer"), 0.0);
+        assert!(!engine.is_rolling("computer"));
+        assert!(!engine.is_recording("computer"));
+
+        // Play, then a rendered quantum advances the playhead one digital block.
+        engine.transport_play("computer");
+        assert!(engine.is_rolling("computer"));
+        engine.render_quantum();
+        assert_eq!(
+            engine.playhead("computer"),
+            128.0,
+            "1024 analog / M=8 = 128 digital"
+        );
+
+        // Record-enable is independent of rolling (the overdub gate).
+        engine.transport_record_enable("computer", true);
+        assert!(engine.is_recording("computer"));
+
+        // Seek repositions precisely (stopped, so it holds).
+        engine.transport_stop("computer");
+        engine.transport_seek("computer", 5000.0);
+        assert_eq!(engine.playhead("computer"), 5000.0);
+
+        // The byte streams forward: feeding a playback chunk to a real track is accepted; draining an
+        // idle record stream is empty; the track controls are no-ops that don't panic.
+        engine.set_track_input("computer", 0, 3);
+        engine.set_track_armed("computer", 0, true);
+        engine.set_track_monitoring("computer", 0, false);
+        engine.set_track_level("computer", 0, 0.5);
+        let take: Vec<u8> = [0.1_f32, 0.2, 0.3]
+            .iter()
+            .flat_map(|s| s.to_le_bytes())
+            .collect();
+        assert!(
+            engine.feed_playback("computer", 0, &take),
+            "the chunk fits the playback ring"
+        );
+        assert!(
+            engine.drain_record("computer", 0).is_empty(),
+            "nothing recorded yet"
+        );
+    }
+
+    /// The DAW seam is total on a non-DAW device (or unknown id): every op is a no-op, getters read
+    /// their zero/false, `feed_playback` reports not-stored, and `drain_record` is empty — never a panic.
+    #[test]
+    fn scene_engine_daw_seam_is_inert_on_non_daw_devices() {
+        let mut engine = SceneEngine::from_patch(&daw_loop_patch()).expect("builds");
+
+        for id in ["synth", "if", "nope"] {
+            engine.transport_play(id); // no-op
+            engine.set_track_level(id, 0, 0.5); // no-op
+            assert_eq!(engine.playhead(id), 0.0, "{id} has no playhead");
+            assert!(!engine.is_rolling(id), "{id} never rolls");
+            assert!(!engine.is_recording(id));
+            assert!(
+                !engine.feed_playback(id, 0, &[0, 0, 0, 0]),
+                "{id} stores nothing"
+            );
+            assert!(engine.drain_record(id, 0).is_empty(), "{id} drains nothing");
+        }
+        // The real DAW is unaffected by the inert calls on its neighbours.
+        assert!(!engine.is_rolling("computer"));
     }
 
     /// A canonical patch with a `vu_meter` inline (`synth → vu → ad → da → spk`), tapped at the

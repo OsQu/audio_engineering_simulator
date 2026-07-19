@@ -1274,13 +1274,13 @@ docs`) plus web `check`/`typecheck`/`test` pass; verified in-browser.
 
 ### Story 5.11 — Computer as a minimal DAW — 🚧 **In progress**
 
-_Progress:_ Tasks **5.11.1–5.11.4 ✅ done and committed** (the whole engine + devices side): the file-byte
-seam + WAV codec, the digital-domain transport, the `MultitrackRecorder` channel-strip node, and the
-`computer` rebuilt as the 5-node channel-strip DAW (all green: engine 362 · devices 60). **5.11.5 🚧 (wasm
-seam) — design scoped, no code yet**; **5.11.6 (web) pending**. The mixer topology evolved twice mid-story
-(one-in-one-out → `(N+T)→M` crossbar → **channel-strip** `tracks → Matrix(T→M)`); the channel-strip model
-is final (see the headline note). The Rust side is complete; what remains is **wasm export (5.11.5)** and
-the **web DAW/OPFS UI (5.11.6)**.
+_Progress:_ Tasks **5.11.1–5.11.5 ✅ done** (the whole Rust side): the file-byte
+seam + WAV codec, the digital-domain transport, the `MultitrackRecorder` channel-strip node, the
+`computer` rebuilt as the 5-node channel-strip DAW, and the **wasm DAW seam** (all green: engine 364 ·
+devices 61 · wasm-bindings 11). **5.11.6 (web) pending** — the last task. The mixer topology evolved
+twice mid-story (one-in-one-out → `(N+T)→M` crossbar → **channel-strip** `tracks → Matrix(T→M)`); the
+channel-strip model is final (see the headline note). The Rust side is complete; what remains is the
+**web DAW/OPFS UI (5.11.6)**.
 
 _Goal:_ Bring the `computer` forward from a fixed monitoring loopback into a **minimal, honest DAW** — the
 digital hub a real audio interface plugs into. It grows an **arbitrary number of mono tracks**; each track
@@ -1518,21 +1518,24 @@ _Design notes (settled at planning):_
   5.11.6:** the crossbar (now `T→M`) reshapes the matrix crosspoint ids and retires the diagonal default, so a
   saved scene's stored matrix `ParamSetting`s are stale → **bump `SCHEMA_VERSION`** (discard + rebuild) when the
   web lands.
-- **Task 5.11.5 — wasm: export the DAW seams.** 🚧 **In progress** (design scoped from exploration; no code
-  yet). On `SceneEngine`, expose by **device id (+ track)**: transport commands
-  (play/stop/record-enable/seek) + a playhead getter; the per-track control seam
-  (`set_track_level`/`set_armed`/`set_monitoring`/`set_input`); and the byte transport
-  (`feed_playback(device, track, &[u8])` / `drain_record(device, track) -> Vec<u8>`).
-  _Design settled at exploration:_
-  - **Reaching the recorder needs a new hook — the transport/rings/faders are node-internal, not in any
-    handle store.** The schedule's existing seams (`param`→`ParamHandle`, `event_input`→`EventInputId`,
-    `readout`→`ReadoutHandle`; `BuiltScene::{param,event_input,readout}` by device id) all resolve to
-    schedule-owned stores, **not** to a node. Plan: add a defaulted `Node`-trait hook
-    `fn daw(&mut self) -> Option<&mut dyn DawControl> { None }` (the phantom-hook / `group_delay` precedent),
-    a `DawControl` trait carrying the DAW ops, and `MultitrackRecorder` overriding it. Add
-    `Schedule::node_mut(NodeId) -> Option<&mut dyn Node>` and a `BuiltScene` device→DAW-node resolver (walk
-    the device's node ids, pick the one whose `daw()` is `Some`). `SceneEngine` then routes each JS call
-    `device → node → daw()`.
+- **Task 5.11.5 — wasm: export the DAW seams.** ✅ **Done.** On `SceneEngine`, exposed by **device id
+  (+ track)**: transport commands (`transport_play`/`transport_stop`/`transport_record_enable`/
+  `transport_seek`) + `playhead`/`is_rolling`/`is_recording` getters; the per-track control seam
+  (`set_track_level`/`set_track_armed`/`set_track_monitoring`/`set_track_input`); and the byte transport
+  (`feed_playback(device, track, &[u8]) -> bool` / `drain_record(device, track) -> Vec<u8>`).
+  _As built:_
+  - **The new hook, as designed.** A defaulted `Node`-trait hook `fn daw(&mut self) -> Option<&mut dyn
+    DawControl> { None }` (the phantom-hook / `group_delay` precedent) beside a `DawControl` trait
+    (`crates/engine/src/daw.rs`) carrying the ops — transport access, per-track controls, and the byte
+    `feed_playback`/`drain_record` facade; `MultitrackRecorder` overrides both (forwards to its inherent
+    methods / rings). `Schedule::node_mut(NodeId) -> Option<&mut (dyn Node + 'static)>` plus a
+    `BuiltScene::daw(device)` resolver (probes each device's node ids at build for the one whose `daw()`
+    is `Some`, stored in a `daw_nodes` map). `SceneEngine` routes each JS call `device → node → daw()`.
+    _Gotcha:_ `node_mut`'s object needs the `'static` lifetime (the boxed nodes are `dyn Node + 'static`;
+    an elided `+ '_` fails on `&mut` invariance).
+  - **Positions cross as `f64`** (exact to 2^53 samples — millennia at 48 kHz), converted to the
+    transport's `u64` internally — friendlier for JS than a BigInt `u64`. The getters take `&mut self`
+    (reaching the node needs `node_mut`); off the hot path, so fine.
   - **Byte transport is copied chunks, NOT zero-copy** (correcting the earlier note): a `ByteRing` wraps
     around, so it has no contiguous region to view — and the postMessage-start model doesn't need zero-copy.
     JS passes/receives `&[u8]`/`Vec<u8>` (wasm-bindgen copy); per-block payload is tiny (~512 B/track). The
@@ -1541,7 +1544,8 @@ _Design notes (settled at planning):_
     track's record ring → post to main → OPFS append; and feed every track's playback ring from bytes main
     pre-fed (OPFS read ahead of the playhead).
   _Done:_ the byte rings + transport + track controls round-trip across the wasm boundary for an N-track
-  computer; the EMPTY-config type catalog unchanged; `cargo wasm` + full Rust gate green.
+  computer; the seam is total on non-DAW devices (silent no-ops); the EMPTY-config type catalog unchanged;
+  full Rust gate green (engine 364 · devices 61 · wasm-bindings 11 · `cargo wasm`/`docs`).
 - **Task 5.11.6 — Web: OPFS storage + track model + transport UI + level mixer + waveform.** OPFS-backed
   take files (worker + sync access handles) draining/filling the byte rings around the playhead; a host-side
   **track model** (create/remove tracks → `track_count` config + recompile; arm; input/output assign; level);

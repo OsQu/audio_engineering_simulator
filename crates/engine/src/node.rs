@@ -63,6 +63,7 @@ pub use sum::PassiveSum;
 pub use synth::SynthVoice;
 pub use vu_meter::VuMeter;
 
+use crate::daw::DawControl;
 use crate::electrical::{PhantomLoad, PhantomSupply};
 use crate::param::{ParamDecl, Params};
 use crate::port::{InputPort, OutputPort};
@@ -189,6 +190,20 @@ pub trait Node {
     /// [`Schedule::group_delay_samples`]: crate::Schedule::group_delay_samples
     fn group_delay_samples(&self) -> f64 {
         0.0
+    }
+
+    /// This node's [`DawControl`] surface, if it is a DAW/recorder — the off-block seam onto its
+    /// transport, tracks, and file-byte streams. Default `None`: an ordinary node exposes no DAW.
+    ///
+    /// The state a DAW node owns (the [`Transport`](crate::Transport), per-track faders/arm/monitor,
+    /// the playback/record byte rings) can't be reached through the schedule's param/event/readout
+    /// stores — it lives *inside the node* — so the host resolves `device → node → daw()` and drives
+    /// it here (via [`Schedule::node_mut`](crate::Schedule::node_mut)). The same defaulted-hook shape
+    /// as [`phantom_supply`](Self::phantom_supply)/[`group_delay_samples`](Self::group_delay_samples):
+    /// off the hot path, most nodes use the no-op default and only
+    /// [`MultitrackRecorder`] overrides it.
+    fn daw(&mut self) -> Option<&mut dyn DawControl> {
+        None
     }
 
     /// Whether this is a **per-conductor** processor the compiler may replicate across the

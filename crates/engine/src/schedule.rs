@@ -396,6 +396,16 @@ impl Schedule {
         }
     }
 
+    /// A node by its [`NodeId`], mutable — the escape hatch to a node's own control surface (e.g. a
+    /// DAW recorder's [`daw`](crate::Node::daw)) for state the schedule's param/event/readout stores
+    /// don't hold. `None` if the id is out of range. Node ids survive `compile` unchanged (lifting
+    /// preserves each node's index), so a [`NodeId`] from graph construction still addresses the same
+    /// node here. Off the hot path — a host gesture between blocks, never `process`.
+    #[must_use]
+    pub fn node_mut(&mut self, node: NodeId) -> Option<&mut (dyn Node + 'static)> {
+        self.nodes.get_mut(node.0).map(Box::as_mut)
+    }
+
     /// The latest snapshot value for `handle` — the reading from the most recently processed block —
     /// or `None` if the handle is foreign / out of range. Off the hot path: the host polls it after
     /// [`process_io`](Self::process_io). Total over a stale handle, like the param/event drains.

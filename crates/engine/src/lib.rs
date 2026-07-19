@@ -6,6 +6,7 @@
 //! this crate stays portable to `wasm32` (no `std::thread`, no ambient `std::time`).
 
 mod byte_ring;
+mod daw;
 mod dsp;
 mod electrical;
 mod fir;
@@ -25,6 +26,7 @@ mod transport;
 mod wav;
 
 pub use byte_ring::ByteRing;
+pub use daw::{DawControl, drain_ring};
 pub use dsp::{Biquad, PeakEnvelope};
 pub use electrical::{
     Cable, Farads, InputZ, Ohms, OnePole, OutputZ, PhantomLoad, PhantomSupply, Thevenin,

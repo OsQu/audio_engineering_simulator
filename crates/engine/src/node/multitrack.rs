@@ -44,6 +44,7 @@
 
 use super::Node;
 use crate::byte_ring::ByteRing;
+use crate::daw::{DawControl, drain_ring};
 use crate::param::{Params, Smoother, smooth_samples};
 use crate::port::{AudioFormat, DigitalFace, InputPort, OutputPort};
 use crate::signal::{BitDepth, Lane, SampleRate};
@@ -276,6 +277,54 @@ impl Node for MultitrackRecorder {
         // One digital block consumed — advance the transport (a no-op while stopped).
         self.transport.advance(digital_len as u64);
     }
+
+    fn daw(&mut self) -> Option<&mut dyn DawControl> {
+        Some(self)
+    }
+}
+
+/// The recorder **is** the DAW control surface: the host reaches its transport, per-track channel
+/// controls, and file-byte streams over this facade (resolved `device → node → daw()`). Every method
+/// is off the hot path (host gestures between blocks) and total (bad track/lane ⇒ no-op / empty drain).
+impl DawControl for MultitrackRecorder {
+    fn track_count(&self) -> usize {
+        self.n_tracks
+    }
+
+    fn transport(&self) -> &Transport {
+        &self.transport
+    }
+
+    fn transport_mut(&mut self) -> &mut Transport {
+        &mut self.transport
+    }
+
+    fn set_track_input(&mut self, track: usize, lane: usize) {
+        self.set_input(track, lane);
+    }
+
+    fn set_track_armed(&mut self, track: usize, armed: bool) {
+        self.set_armed(track, armed);
+    }
+
+    fn set_track_monitoring(&mut self, track: usize, monitoring: bool) {
+        self.set_monitoring(track, monitoring);
+    }
+
+    fn set_track_level(&mut self, track: usize, level: f32) {
+        MultitrackRecorder::set_track_level(self, track, level);
+    }
+
+    fn feed_playback(&mut self, track: usize, bytes: &[u8]) -> bool {
+        self.inbound.get_mut(track).is_some_and(|r| r.write(bytes))
+    }
+
+    fn drain_record(&mut self, track: usize) -> Vec<u8> {
+        self.outbound
+            .get_mut(track)
+            .map(drain_ring)
+            .unwrap_or_default()
+    }
 }
 
 #[cfg(test)]
@@ -305,7 +354,14 @@ mod tests {
 
     fn tracks_out(t: usize, len: usize) -> Vec<Lane> {
         (0..t)
-            .map(|_| Lane::Sample(SampleBuffer::zeros(len, fs(), bits(), ClockDomainId::SINGLE)))
+            .map(|_| {
+                Lane::Sample(SampleBuffer::zeros(
+                    len,
+                    fs(),
+                    bits(),
+                    ClockDomainId::SINGLE,
+                ))
+            })
             .collect()
     }
 
@@ -339,8 +395,14 @@ mod tests {
         let ins = sends(&[0.3, -0.6], 8);
         let mut outs = tracks_out(2, 8);
         r.process(&Params::EMPTY, &ins, &mut outs);
-        assert!(outs[0].sample().as_slice().iter().all(|&s| s == 0.3), "track 0 = send 0");
-        assert!(outs[1].sample().as_slice().iter().all(|&s| s == -0.6), "track 1 = send 1");
+        assert!(
+            outs[0].sample().as_slice().iter().all(|&s| s == 0.3),
+            "track 0 = send 0"
+        );
+        assert!(
+            outs[1].sample().as_slice().iter().all(|&s| s == -0.6),
+            "track 1 = send 1"
+        );
     }
 
     #[test]
@@ -373,7 +435,11 @@ mod tests {
             r.process(&Params::EMPTY, &ins, &mut outs); // 4×128 = 512 ≫ 240-sample glide
         }
         assert!(
-            outs[0].sample().as_slice().iter().all(|&s| (s - 0.4).abs() < 1e-6),
+            outs[0]
+                .sample()
+                .as_slice()
+                .iter()
+                .all(|&s| (s - 0.4).abs() < 1e-6),
             "0.8 · 0.5 = 0.4 after the fader settles"
         );
     }
@@ -389,7 +455,10 @@ mod tests {
 
         let mut outs = tracks_out(1, 4);
         r.process(&Params::EMPTY, &ins, &mut outs);
-        assert!(outs[0].sample().as_slice().iter().all(|&s| s == 0.0), "stopped ⇒ silent");
+        assert!(
+            outs[0].sample().as_slice().iter().all(|&s| s == 0.0),
+            "stopped ⇒ silent"
+        );
 
         r.transport_mut().play();
         let mut outs = tracks_out(1, 4);
@@ -405,7 +474,11 @@ mod tests {
 
         let mut outs = tracks_out(1, 4);
         r.process(&Params::EMPTY, &ins, &mut outs);
-        assert_eq!(r.record_ring_mut(0).unwrap().len(), 0, "stopped ⇒ nothing captured");
+        assert_eq!(
+            r.record_ring_mut(0).unwrap().len(),
+            0,
+            "stopped ⇒ nothing captured"
+        );
 
         r.transport_mut().play();
         r.transport_mut().set_record_enabled(true);
@@ -439,6 +512,82 @@ mod tests {
         let mut bytes = vec![0u8; 16];
         assert!(r.record_ring_mut(1).unwrap().read(&mut bytes));
         assert_eq!(unpcm(&bytes), vec![0.9; 4], "track 1 recorded its send");
+    }
+
+    /// The `DawControl` facade reaches the same state as the inherent methods: `daw()` resolves, its
+    /// transport drives playback, and `feed_playback`/`drain_record` round-trip a take's bytes through
+    /// the trait — the exact path the wasm seam uses (`device → node → daw()`).
+    #[test]
+    fn daw_control_facade_round_trips_transport_and_bytes() {
+        let mut r = MultitrackRecorder::new(fs(), bits(), 2, 2);
+        let daw = r.daw().expect("the recorder exposes a DAW surface");
+        assert_eq!(daw.track_count(), 2);
+
+        // Feed track 0 a playback take, monitor off, roll — the channel carries it (unity fader).
+        daw.set_track_monitoring(0, false);
+        let take = [0.1, 0.2, 0.3, 0.4];
+        assert!(daw.feed_playback(0, &pcm(&take)), "the take fits the ring");
+        daw.transport_mut().play();
+        assert!(daw.transport().is_rolling());
+
+        let ins = sends(&[0.0, 0.0], 4);
+        let mut outs = tracks_out(2, 4);
+        r.process(&Params::EMPTY, &ins, &mut outs);
+        assert_eq!(
+            outs[0].sample().as_slice(),
+            &take,
+            "playback fed over the facade plays back"
+        );
+
+        // Arm track 1, record-enable, capture its send, then drain the record stream over the facade.
+        let daw = r.daw().expect("still a DAW after processing");
+        daw.set_track_input(1, 1);
+        daw.set_track_armed(1, true);
+        daw.transport_mut().set_record_enabled(true);
+        assert!(daw.transport().is_recording());
+
+        let ins = sends(&[0.0, 0.7], 4);
+        let mut outs = tracks_out(2, 4);
+        r.process(&Params::EMPTY, &ins, &mut outs);
+
+        let captured = r.daw().unwrap().drain_record(1);
+        assert_eq!(
+            unpcm(&captured),
+            vec![0.7; 4],
+            "the armed send drains back through the facade"
+        );
+        assert!(
+            r.daw().unwrap().drain_record(1).is_empty(),
+            "a second drain is empty"
+        );
+    }
+
+    /// A bad track index is a total no-op over the facade — never a panic — and `feed_playback`
+    /// reports the drop when a chunk can't fit the ring whole.
+    #[test]
+    fn daw_control_facade_is_total_on_bad_track_and_full_ring() {
+        let mut r = MultitrackRecorder::new(fs(), bits(), 1, 1);
+        let daw = r.daw().unwrap();
+        // Out-of-range track: every op is a silent no-op / empty drain.
+        daw.set_track_input(9, 0);
+        daw.set_track_armed(9, true);
+        daw.set_track_monitoring(9, false);
+        daw.set_track_level(9, 0.5);
+        assert!(
+            !daw.feed_playback(9, &pcm(&[0.1])),
+            "no such track ⇒ not stored"
+        );
+        assert!(
+            daw.drain_record(9).is_empty(),
+            "no such track ⇒ empty drain"
+        );
+
+        // A chunk larger than the ring drops whole (all-or-nothing), reported as false.
+        let huge = vec![0u8; MultitrackRecorder::STREAM_RING_BYTES + 4];
+        assert!(
+            !daw.feed_playback(0, &huge),
+            "an oversized chunk doesn't fit"
+        );
     }
 
     #[test]

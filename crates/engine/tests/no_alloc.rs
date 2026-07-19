@@ -15,9 +15,9 @@
 
 use engine::{
     AnalogRate, BalancedDriver, BalancedReceiver, BitDepth, Cable, ClockDomainId, DcBlocker,
-    EventMessage, EventQueue, EventThru, Farads, GainStage, Graph, InputZ, Lane, MultitrackRecorder,
-    Node, NoiseDensity, Ohms, ParamQueue, Params, PassiveSum, SampleBuffer, SampleRate, SynthVoice,
-    TestSource, VoltageBuffer, Volts, compile,
+    EventMessage, EventQueue, EventThru, Farads, GainStage, Graph, InputZ, Lane,
+    MultitrackRecorder, Node, NoiseDensity, Ohms, ParamQueue, Params, PassiveSum, SampleBuffer,
+    SampleRate, SynthVoice, TestSource, VoltageBuffer, Volts, compile,
 };
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -164,7 +164,14 @@ fn multitrack_recorder_is_allocation_free() {
         })
         .collect();
     let mut outputs: Vec<Lane> = (0..n_tracks)
-        .map(|_| Lane::Sample(SampleBuffer::zeros(block, rate, bits, ClockDomainId::SINGLE)))
+        .map(|_| {
+            Lane::Sample(SampleBuffer::zeros(
+                block,
+                rate,
+                bits,
+                ClockDomainId::SINGLE,
+            ))
+        })
         .collect();
 
     let before = ALLOCS.load(Ordering::Relaxed);
