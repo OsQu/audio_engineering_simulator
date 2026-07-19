@@ -3,8 +3,8 @@ use engine::{BitDepth, DigitalMeter, Matrix, MultitrackRecorder, SampleRate};
 use crate::{
     Connector, DeviceConfig, ParamKind, PortKind,
     catalog::{
-        BITS, CatalogEntry, FormFactor, GridAxis, GridSpec, HOST_RATE_HZ, InternalEdge, PortUi,
-        ReadoutSpec, ReadoutUi,
+        BITS, CatalogEntry, FormFactor, GridAxis, GridSpec, HOST_RATE_HZ, InternalEdge, MeterBank,
+        PortUi, ReadoutSpec, ReadoutUi,
     },
 };
 
@@ -36,18 +36,15 @@ fn track_count(cfg: &DeviceConfig) -> usize {
         .max(1.0) as usize
 }
 
-/// Crossbar routing defaults for the computer's `(n_sends + n_tracks) → m_returns` mixer: monitor
-/// **send 0 → return 0** (master) and route **every track playback → return 0**, everything else
-/// muted (row-major `i·m_returns + j`; rows `0..n_sends` are the live sends, `n_sends..` the track
-/// playbacks). So out of the box the default scene's mic/synth (send 0) is heard on master, and any
-/// recorded track plays back to master — the crossbar replacement for the old diagonal loopback.
-fn crossbar_defaults(n_sends: usize, n_tracks: usize, m_returns: usize) -> Vec<f32> {
-    let n_in = n_sends + n_tracks;
-    let mut d = vec![0.0; n_in * m_returns];
+/// Crossbar routing defaults for the DAW's `n_tracks → m_returns` bus matrix: route **every track →
+/// return 0** (master) at unity, everything else muted (row-major `t·m_returns + j`). So out of the
+/// box every track channel is heard on master — and the default scene's one monitor track (send 0)
+/// carries the mic/synth to the monitors.
+fn crossbar_defaults(n_tracks: usize, m_returns: usize) -> Vec<f32> {
+    let mut d = vec![0.0; n_tracks * m_returns];
     if m_returns > 0 {
-        d[0] = 1.0; // send 0 → return 0
         for t in 0..n_tracks {
-            d[(n_sends + t) * m_returns] = 1.0; // track t playback → return 0
+            d[t * m_returns] = 1.0; // track t → return 0 (master)
         }
     }
     d
@@ -55,23 +52,22 @@ fn crossbar_defaults(n_sends: usize, n_tracks: usize, m_returns: usize) -> Vec<f
 
 // The `computer` — the interface's USB peer, and a minimal **DAW**. A real computer has no channel
 // count of its own; it adapts to whatever the attached interface's driver publishes. So its shape is
-// **config-driven**: hidden `usb_sends` / `usb_returns` keys (written by web-side enumeration on USB
-// connect) size the USB bus, and a hidden `track_count` key sizes the DAW's tracks. Unattached it
-// defaults to **2×2** (the built-in sound card) with **1** track.
+// **config-driven**: hidden `usb_sends` / `usb_returns` keys size the USB bus and `track_count` sizes
+// the DAW's tracks. Unattached it defaults to **2×2** (the built-in sound card) with **1** track.
 //
-// It is a **three-node, lane-bundled chassis**, the crossbar-router + record/playback split:
-//   * node 0 — a `DigitalMeter(N)` metering every send lane (the DAW's input meters);
-//   * node 1 — a `MultitrackRecorder(N → N+T)`: it records armed sends to files and plays track
-//     files back, owning the transport; its output bus is the N sends **passed through** (for the
-//     mixer to monitor) followed by T track **playbacks**;
-//   * node 2 — a `Matrix((N+T) → M)` crossbar: the "simple mixer", routing/leveling any source
-//     (live send or track playback) to any return via per-crosspoint gains. Its default is the
-//     crossbar loopback (send 0 → return 0, playbacks → return 0), so the classic monitoring loop
-//     closes out of the box: mic/synth → preamp → AD → USB → computer → USB return → DA → monitor.
-// Two internal edges chain them (meter → recorder → matrix). Routing lives in the `Matrix` (not the
-// recorder) so track count is independent of the interface's channel count (30 tracks fold to a
-// 2-lane master; a track can fan out to an aux return) — the honest mixer+multitrack topology. The
-// transport, arm, and record/playback file streams are driven over the wasm seam, not as params.
+// It is a **five-node, lane-bundled chassis** — the channel-strip mixer topology:
+//   * node 0 — `DigitalMeter(N)`: the DAW's **send input meters** (pre-fader, for record levels);
+//   * node 1 — `MultitrackRecorder(N → T)`: T **track channels**, each `(playback + monitored send)
+//     × per-track fader`; records armed sends; owns the transport;
+//   * node 2 — `DigitalMeter(T)`: the **per-track after-fader meters**;
+//   * node 3 — `Matrix(T → M)`: the **bus crossbar**, routing/summing track channels to the returns
+//     (default: every track → return 0 = master), fan-out/aux by adding crosspoints;
+//   * node 4 — `DigitalMeter(M)`: the **return / bus meters**.
+// Four internal edges chain them. Faders live on the *tracks* (a real desk trims live inputs at the
+// preamp, not the DAW); routing lives in the `Matrix`; so track count is independent of the
+// interface's channel count (30 tracks fold to a 2-lane master; a track fans out to an aux return).
+// The transport, arm, monitor, input-assign, track faders, and record/playback file streams are all
+// driven over the wasm control seam, not as params.
 pub(super) const COMPUTER: CatalogEntry = CatalogEntry {
     type_id: "computer",
     name: "Computer",
@@ -83,7 +79,7 @@ pub(super) const COMPUTER: CatalogEntry = CatalogEntry {
         depth_mm: 175.0,
     },
     nodes: &[
-        // 0 — send meters (the DAW's input meters), all N lanes behind one port.
+        // 0 — send input meters (pre-fader), all N send lanes behind one port.
         |cfg| {
             let (sends, _returns) = usb_channel_count(cfg);
             Box::new(DigitalMeter::new(
@@ -92,7 +88,7 @@ pub(super) const COMPUTER: CatalogEntry = CatalogEntry {
                 sends as u16,
             ))
         },
-        // 1 — the multitrack recorder: N sends in → N+T lanes out (sends passed through + playbacks).
+        // 1 — the track channels: N sends in → T post-fader channels out.
         |cfg| {
             let (sends, _returns) = usb_channel_count(cfg);
             let tracks = track_count(cfg);
@@ -103,43 +99,71 @@ pub(super) const COMPUTER: CatalogEntry = CatalogEntry {
                 tracks,
             ))
         },
-        // 2 — the crossbar mixer: (N sends + T playbacks) → M returns.
+        // 2 — per-track after-fader meters.
         |cfg| {
-            let (sends, returns) = usb_channel_count(cfg);
+            let tracks = track_count(cfg);
+            Box::new(DigitalMeter::new(
+                SampleRate::new(HOST_RATE_HZ),
+                BitDepth::new(BITS),
+                tracks as u16,
+            ))
+        },
+        // 3 — the bus crossbar: T track channels → M returns.
+        |cfg| {
+            let (_sends, returns) = usb_channel_count(cfg);
             let tracks = track_count(cfg);
             Box::new(Matrix::new_single_ports(
                 SampleRate::new(HOST_RATE_HZ),
                 BitDepth::new(BITS),
-                sends + tracks,
+                tracks,
                 returns,
-                crossbar_defaults(sends, tracks, returns),
+                crossbar_defaults(tracks, returns),
+            ))
+        },
+        // 4 — return / bus meters.
+        |cfg| {
+            let (_sends, returns) = usb_channel_count(cfg);
+            Box::new(DigitalMeter::new(
+                SampleRate::new(HOST_RATE_HZ),
+                BitDepth::new(BITS),
+                returns as u16,
             ))
         },
     ],
     internal: &[
-        // DigitalMeter -> MultitrackRecorder
+        // send meter -> recorder -> track meter -> crossbar -> return meter
         InternalEdge {
             from_node: 0,
             from_port: 0,
             to_node: 1,
             to_port: 0,
         },
-        // MultitrackRecorder -> Matrix
         InternalEdge {
             from_node: 1,
             from_port: 0,
             to_node: 2,
             to_port: 0,
         },
+        InternalEdge {
+            from_node: 2,
+            from_port: 0,
+            to_node: 3,
+            to_port: 0,
+        },
+        InternalEdge {
+            from_node: 3,
+            from_port: 0,
+            to_node: 4,
+            to_port: 0,
+        },
     ],
-    // All exposed params are the crossbar's `(N+T)·M` crosspoints (the meter and recorder have none),
-    // generated by the grid; the recorder is a no-param node.
+    // All exposed params are the crossbar's `T·M` crosspoints (the meters and recorder have none),
+    // generated by the grid.
     params: &[],
-    // The crossbar (node 2, the only param-contributing node). Rows = the N+T mixer inputs (sends
-    // then track playbacks), cols = the M returns; labels generated from the built face's counts (the
-    // row count is derived from the matrix's crosspoints, not the USB-In face — see `describe`).
+    // The bus crossbar (node 3, the only param-contributing node). Rows = the T track channels, cols
+    // = the M returns; the row count is derived from the matrix's crosspoints (see `describe`).
     param_grid: Some(GridSpec {
-        inputs: GridAxis::Generated { prefix: "In" },
+        inputs: GridAxis::Generated { prefix: "Track" },
         outputs: GridAxis::Generated { prefix: "Return" },
         kind: ParamKind::Knob,
         unit: "×",
@@ -161,20 +185,49 @@ pub(super) const COMPUTER: CatalogEntry = CatalogEntry {
     delayed_outputs: &[0],
     // The single USB-C jack is duplex: USB Out (0) + USB In (0) are one physical connector.
     duplex_links: &[(0, 0)],
-    // Per-lane send meters, in node order: each meter contributes (Peak, RMS) in decl order.
-    readouts: ReadoutSpec::PerLane {
-        lane_prefix: "Send",
-        per: &[
-            ReadoutUi {
-                label: "Peak",
-                unit: "dBFS",
-            },
-            ReadoutUi {
-                label: "RMS",
-                unit: "dBFS",
-            },
-        ],
-    },
+    // Three meter banks, in node order: send inputs (node 0), per-track after-fader (node 2), and
+    // return/bus (node 4). Each bank's lane count derives from its meter node's readout count.
+    readouts: ReadoutSpec::PerNode(&[
+        MeterBank {
+            prefix: "Send",
+            per: &[
+                ReadoutUi {
+                    label: "Peak",
+                    unit: "dBFS",
+                },
+                ReadoutUi {
+                    label: "RMS",
+                    unit: "dBFS",
+                },
+            ],
+        },
+        MeterBank {
+            prefix: "Track",
+            per: &[
+                ReadoutUi {
+                    label: "Peak",
+                    unit: "dBFS",
+                },
+                ReadoutUi {
+                    label: "RMS",
+                    unit: "dBFS",
+                },
+            ],
+        },
+        MeterBank {
+            prefix: "Return",
+            per: &[
+                ReadoutUi {
+                    label: "Peak",
+                    unit: "dBFS",
+                },
+                ReadoutUi {
+                    label: "RMS",
+                    unit: "dBFS",
+                },
+            ],
+        },
+    ]),
     configs: &[],
 };
 
@@ -186,60 +239,69 @@ mod tests {
     use crate::scene::ConfigSetting;
     use crate::{DeviceConfig, PortDirection, describe_device, descriptors, instantiate};
 
-    /// The crossbar default monitors send 0 → return 0 and routes every track playback → return 0,
-    /// muting everything else (row-major `i·m + j`; rows `0..n_sends` = sends, `n_sends..` = tracks).
+    /// The crossbar default routes every track → return 0 (master), muting everything else
+    /// (row-major `t·m + j`).
     #[test]
-    fn crossbar_defaults_route_send0_and_playbacks_to_master() {
-        // 2 sends + 1 track → 3 rows × 2 cols. Unity at (send0,ret0)=id 0 and (playback0,ret0)=id
-        // (2+0)·2 = 4; everything else muted.
-        assert_eq!(
-            crossbar_defaults(2, 1, 2),
-            vec![1.0, 0.0, 0.0, 0.0, 1.0, 0.0]
-        );
-
-        // 2 sends + 2 tracks → 4 rows × 2 cols: (send0,ret0)=id 0, (pb0,ret0)=id 4, (pb1,ret0)=id 6.
-        assert_eq!(
-            crossbar_defaults(2, 2, 2),
-            vec![1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 1.0, 0.0]
-        );
+    fn crossbar_defaults_route_every_track_to_master() {
+        // 1 track × 2 returns: track 0 → return 0 = id 0.
+        assert_eq!(crossbar_defaults(1, 2), vec![1.0, 0.0]);
+        // 3 tracks × 2 returns: (0,0)=id 0, (1,0)=id 2, (2,0)=id 4 at unity.
+        assert_eq!(crossbar_defaults(3, 2), vec![1.0, 0.0, 1.0, 0.0, 1.0, 0.0]);
     }
 
-    /// Unattached, the `computer` is the **built-in 2×2 sound card** with **1** track: a three-node
-    /// chassis — meter(2) → recorder(2→3) → crossbar(3→2) — wired by two lane-bundled internal edges.
-    /// USB in exposes the meter; USB out the crossbar; 6 crosspoints (3 inputs × 2 returns) and 4
-    /// (Peak, RMS) send readouts, no dangling ports.
+    /// Unattached, the `computer` is the **built-in 2×2 / 1-track DAW**: a five-node chassis — send
+    /// meter(2) → recorder(2→1) → track meter(1) → crossbar(1→2) → return meter(2) — wired by four
+    /// internal edges. USB in exposes the send meter; USB out the return meter; 2 crosspoints (1
+    /// track × 2 returns) and 10 readouts (2 sends + 1 track + 2 returns, each Peak+RMS).
     #[test]
     fn default_computer_is_the_2x2_one_track_daw() {
         let mut g = Graph::new();
         let dev = instantiate("computer", &DeviceConfig::EMPTY, &mut g)
             .expect("computer is in the catalog");
 
-        assert_eq!(dev.nodes.len(), 3, "meter + recorder + crossbar");
-        assert_eq!(g.connection_count(), 2, "two lane-bundled internal edges");
+        assert_eq!(
+            dev.nodes.len(),
+            5,
+            "send meter + recorder + track meter + crossbar + return meter"
+        );
+        assert_eq!(g.connection_count(), 4, "four lane-bundled internal edges");
 
-        assert_eq!(dev.inputs, vec![(dev.nodes[0], 0)], "USB in = meter");
-        assert_eq!(dev.outputs, vec![(dev.nodes[2], 0)], "USB out = crossbar");
+        assert_eq!(dev.inputs, vec![(dev.nodes[0], 0)], "USB in = send meter");
+        assert_eq!(
+            dev.outputs,
+            vec![(dev.nodes[4], 0)],
+            "USB out = return meter"
+        );
 
-        // Crossbar (2 sends + 1 track) × 2 returns = 6 crosspoints, all on the matrix (node 2).
-        assert_eq!(dev.params.len(), (2 + 1) * 2, "3×2 crosspoints");
+        // Crossbar (1 track × 2 returns) = 2 crosspoints, all on the matrix (node 3).
+        assert_eq!(dev.params.len(), 2, "1 track × 2 returns = 2 crosspoints");
         assert!(
             dev.params
                 .iter()
-                .all(|t| t.len() == 1 && t[0].0 == dev.nodes[2]),
+                .all(|t| t.len() == 1 && t[0].0 == dev.nodes[3]),
             "every exposed param is a crossbar crosspoint"
         );
 
-        // 2 send lanes × (Peak, RMS) → 4 readouts, all on the meter (node 0).
-        assert_eq!(dev.readouts.len(), 4, "2 send lanes × (peak, rms)");
-        assert!(
-            dev.readouts.iter().all(|r| r.0 == dev.nodes[0]),
-            "every readout is on the meter"
+        // Readouts: 2 sends + 1 track + 2 returns, each (Peak, RMS) → 2·(2+1+2) = 10.
+        assert_eq!(dev.readouts.len(), 2 * (2 + 1 + 2));
+        // Banks land on nodes 0 (sends), 2 (tracks), 4 (returns).
+        assert_eq!(
+            dev.readouts[0].0, dev.nodes[0],
+            "first readout on the send meter"
+        );
+        assert_eq!(
+            dev.readouts[4].0, dev.nodes[2],
+            "track readout on the track meter"
+        );
+        assert_eq!(
+            dev.readouts[6].0, dev.nodes[4],
+            "return readout on the return meter"
         );
     }
 
     /// The type-catalog descriptor (EMPTY config) advertises the default 2×2 / 1-track face: USB ports
-    /// carry 2 lanes each, the crossbar is 3 inputs × 2 returns with generated labels, defaulting to
-    /// the crossbar loopback.
+    /// carry 2 lanes each, the crossbar is 1 track × 2 returns with generated labels, and the three
+    /// meter banks label Send/Track/Return.
     #[test]
     fn default_computer_descriptor_is_2x2_one_track() {
         let dev = descriptors()
@@ -260,25 +322,25 @@ mod tests {
         assert_eq!(usb_in.channels, 2, "USB in = 2 send lanes");
         assert_eq!(usb_out.channels, 2, "USB out = 2 return lanes");
 
-        // 3 inputs (2 sends + 1 track playback) × 2 returns = 6 crosspoints, labels "In i → Return j".
-        assert_eq!(dev.params.len(), 6);
-        assert_eq!(dev.params[0].label, "In 1 → Return 1");
-        assert_eq!(dev.params[5].label, "In 3 → Return 2");
+        // 1 track × 2 returns = 2 crosspoints, labels "Track i → Return j".
+        assert_eq!(dev.params.len(), 2);
+        assert_eq!(dev.params[0].label, "Track 1 → Return 1");
+        assert_eq!(dev.params[1].label, "Track 1 → Return 2");
+        // Default routes track 0 → return 0 (id 0) at unity; track 0 → return 1 muted.
+        assert_eq!(dev.params[0].default, 1.0);
+        assert_eq!(dev.params[1].default, 0.0);
 
-        // 2 send lanes × (Peak, RMS) → 4 readouts.
-        assert_eq!(dev.readouts.len(), 4);
+        // Readouts: Send 1/2, Track 1, Return 1/2, each Peak+RMS (10 total).
+        assert_eq!(dev.readouts.len(), 10);
         assert_eq!(dev.readouts[0].label, "Send 1 Peak");
         assert_eq!(dev.readouts[3].label, "Send 2 RMS");
-
-        // Crossbar loopback default: (send0,ret0)=id 0 and (track0-playback,ret0)=id 2·2 = 4 at unity.
-        for (id, p) in dev.params.iter().enumerate() {
-            let expected = if id == 0 || id == 4 { 1.0 } else { 0.0 };
-            assert_eq!(p.default, expected, "crosspoint {id} default");
-        }
+        assert_eq!(dev.readouts[4].label, "Track 1 Peak");
+        assert_eq!(dev.readouts[6].label, "Return 1 Peak");
+        assert_eq!(dev.readouts[9].label, "Return 2 RMS");
     }
 
-    /// Attaching an interface writes `usb_sends`/`usb_returns` config; with the default 1 track the
-    /// computer re-sizes to a meter(8) → recorder(8→9) → crossbar(9→6) — 54 crosspoints, 16 readouts.
+    /// Attaching an 8×6 interface (default 1 track): send meter(8) → recorder(8→1) → track meter(1) →
+    /// crossbar(1→6) → return meter(6). 6 crosspoints; 2·(8+1+6) = 30 readouts.
     #[test]
     fn configured_computer_expands_to_8x6() {
         let settings = [
@@ -295,17 +357,17 @@ mod tests {
         let mut g = Graph::new();
         let dev = instantiate("computer", &config, &mut g).expect("computer is in the catalog");
 
-        assert_eq!(dev.nodes.len(), 3, "still meter + recorder + crossbar");
+        assert_eq!(dev.nodes.len(), 5);
+        assert_eq!(dev.params.len(), 6, "1 track × 6 returns = 6 crosspoints");
         assert_eq!(
-            dev.params.len(),
-            (8 + 1) * 6,
-            "(8 sends + 1 track) × 6 returns = 54"
+            dev.readouts.len(),
+            2 * (8 + 1 + 6),
+            "8 sends + 1 track + 6 returns, each ×2"
         );
-        assert_eq!(dev.readouts.len(), 16, "8 send lanes × (peak, rms)");
     }
 
     /// `track_count` sizes the DAW independently of the USB channels: 8 sends / 6 returns / 4 tracks →
-    /// a recorder emitting 8+4 lanes and a (8+4)×6 crossbar (72 crosspoints).
+    /// a recorder emitting 4 channels, a 4×6 crossbar (24 crosspoints), and a 4-lane track meter.
     #[test]
     fn track_count_config_sizes_the_daw() {
         let settings = [
@@ -325,18 +387,23 @@ mod tests {
         let mut g = Graph::new();
         let dev = instantiate("computer", &DeviceConfig::new(&settings), &mut g)
             .expect("computer is in the catalog");
-        assert_eq!(dev.nodes.len(), 3);
+        assert_eq!(dev.nodes.len(), 5);
         assert_eq!(
             dev.params.len(),
-            (8 + 4) * 6,
-            "(8 sends + 4 tracks) × 6 returns = 72"
+            4 * 6,
+            "4 tracks × 6 returns = 24 crosspoints"
+        );
+        assert_eq!(
+            dev.readouts.len(),
+            2 * (8 + 4 + 6),
+            "8 sends + 4 tracks + 6 returns, each ×2"
         );
     }
 
-    /// The **per-instance** descriptor scales to an 8×6 / 1-track interface: 8-ch / 6-ch USB faces, a
-    /// 9×6 crossbar (54 crosspoints), 16 readouts, and the crossbar loopback default.
+    /// The **per-instance** descriptor scales to an 8×6 / 4-track interface: 8-ch / 6-ch USB faces, a
+    /// 4×6 crossbar (24 crosspoints, "Track i → Return j"), and Send/Track/Return meter banks.
     #[test]
-    fn configured_computer_descriptor_is_8x6() {
+    fn configured_computer_descriptor_is_8x6_four_tracks() {
         let settings = [
             ConfigSetting {
                 key: "usb_sends".into(),
@@ -345,6 +412,10 @@ mod tests {
             ConfigSetting {
                 key: "usb_returns".into(),
                 value: 6.0,
+            },
+            ConfigSetting {
+                key: "track_count".into(),
+                value: 4.0,
             },
         ];
         let dev = describe_device("computer", &DeviceConfig::new(&settings))
@@ -360,22 +431,19 @@ mod tests {
             .iter()
             .find(|p| p.direction == PortDirection::Output)
             .expect("a USB output");
-        assert_eq!(usb_in.channels, 8, "8 send lanes");
-        assert_eq!(usb_out.channels, 6, "6 return lanes");
+        assert_eq!(usb_in.channels, 8);
+        assert_eq!(usb_out.channels, 6);
 
-        // (8 sends + 1 track) × 6 returns = 54 crosspoints; last id 53 = 8·6 + 5 = "In 9 → Return 6".
-        assert_eq!(dev.params.len(), 54);
-        assert_eq!(dev.params[0].label, "In 1 → Return 1");
-        assert_eq!(dev.params[53].label, "In 9 → Return 6");
+        // 4 tracks × 6 returns = 24 crosspoints; last id 23 = 3·6 + 5 = "Track 4 → Return 6".
+        assert_eq!(dev.params.len(), 24);
+        assert_eq!(dev.params[0].label, "Track 1 → Return 1");
+        assert_eq!(dev.params[23].label, "Track 4 → Return 6");
 
-        // 8 send lanes × (Peak, RMS) → 16 readouts.
-        assert_eq!(dev.readouts.len(), 16);
-        assert_eq!(dev.readouts[15].label, "Send 8 RMS");
-
-        // Crossbar loopback default: (send0,ret0)=id 0 and (track0-playback,ret0)=id 8·6 = 48 at unity.
-        for (id, p) in dev.params.iter().enumerate() {
-            let expected = if id == 0 || id == 48 { 1.0 } else { 0.0 };
-            assert_eq!(p.default, expected, "crosspoint {id} default");
-        }
+        // Readouts: 2·(8 sends + 4 tracks + 6 returns) = 36.
+        assert_eq!(dev.readouts.len(), 36);
+        assert_eq!(dev.readouts[0].label, "Send 1 Peak");
+        assert_eq!(dev.readouts[16].label, "Track 1 Peak"); // after 8 sends × 2
+        assert_eq!(dev.readouts[24].label, "Return 1 Peak"); // after +4 tracks × 2
+        assert_eq!(dev.readouts[35].label, "Return 6 RMS");
     }
 }

@@ -148,6 +148,7 @@ fn multitrack_recorder_is_allocation_free() {
         .expect("track 0")
         .write(&vec![0u8; 4096]); // some playback to stream; underruns to silence later (no alloc)
     rec.set_armed(0, true);
+    rec.set_track_level(0, 0.5); // a mid-glide fader so `value_at`/`advance` run in the measured loop
     rec.transport_mut().play();
     rec.transport_mut().set_record_enabled(true);
 
@@ -162,7 +163,7 @@ fn multitrack_recorder_is_allocation_free() {
             ))
         })
         .collect();
-    let mut outputs: Vec<Lane> = (0..n_sends + n_tracks)
+    let mut outputs: Vec<Lane> = (0..n_tracks)
         .map(|_| Lane::Sample(SampleBuffer::zeros(block, rate, bits, ClockDomainId::SINGLE)))
         .collect();
 

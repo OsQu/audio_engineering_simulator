@@ -470,34 +470,47 @@ struct ReadoutUi {
     unit: &'static str,
 }
 
-/// How a device's exposed readouts are labeled: today only [`Static`](ReadoutSpec::Static)
-/// hand-authored labels (one per exposed readout).
+/// One per-lane meter bank: `"{prefix} {lane} {measure}"` for each lane × each `per` measure. A
+/// metering node (a `DigitalMeter`) contributes one bank; its lane count is *derived* from that
+/// node's exposed-readout count ÷ `per.len()`, so a config-driven meter (whose lane count isn't a
+/// port total — e.g. the DAW's per-*track* meter) labels correctly without a separate count source.
+struct MeterBank {
+    prefix: &'static str,
+    per: &'static [ReadoutUi],
+}
+
+/// How a device's exposed readouts are labeled.
 enum ReadoutSpec {
     /// Hand-authored labels, one per exposed readout, in exposed order.
     Static(&'static [ReadoutUi]),
-    PerLane {
-        lane_prefix: &'static str,
-        per: &'static [ReadoutUi],
-    },
+    /// One **meter bank per metering node**, in node order (matching the exposed readouts' node
+    /// order). Each bank labels `"{prefix} {lane} {measure}"`; a device with a send meter, a per-track
+    /// meter, and a return meter lists three banks (`Send`s, `Track`s, `Return`s).
+    PerNode(&'static [MeterBank]),
 }
 
 impl ReadoutSpec {
-    /// The readout UIs, in exposed order.
-    fn label(&self, count: usize) -> Vec<(String, String)> {
+    /// The readout UIs, in exposed order. `node_readout_counts` is the number of exposed readouts each
+    /// **metering node** contributes, in node order — a [`PerNode`](ReadoutSpec::PerNode) bank pairs
+    /// with the node at its position and sizes itself from that count ÷ `per.len()`.
+    fn label(&self, node_readout_counts: &[usize]) -> Vec<(String, String)> {
         match self {
             ReadoutSpec::Static(uis) => uis
                 .iter()
                 .map(|ui| (ui.label.into(), ui.unit.into()))
                 .collect(),
-            ReadoutSpec::PerLane { lane_prefix, per } => (1..=count)
-                .flat_map(move |channel_index| {
-                    per.iter().map(move |t| {
-                        let label = t.label;
-
-                        (
-                            format!("{lane_prefix} {channel_index} {label}"),
-                            t.unit.into(),
-                        )
+            ReadoutSpec::PerNode(banks) => banks
+                .iter()
+                .zip(node_readout_counts)
+                .flat_map(|(bank, &node_count)| {
+                    let lanes = node_count / bank.per.len().max(1);
+                    (1..=lanes).flat_map(move |lane| {
+                        bank.per.iter().map(move |t| {
+                            (
+                                format!("{} {} {}", bank.prefix, lane, t.label),
+                                t.unit.into(),
+                            )
+                        })
                     })
                 })
                 .collect(),
@@ -1853,9 +1866,7 @@ fn describe(entry: &CatalogEntry, config: &DeviceConfig) -> DeviceDescriptor {
     // The type-catalog descriptor is built with the EMPTY config — the device's *default* face (2×2
     // for the config-driven computer). A per-instance, config-aware descriptor is a later story.
     let face = expand(entry, config);
-    // Exposed input/output lane totals — `n_in` labels the per-lane readouts (e.g. one Peak/RMS pair
-    // per send lane); `m_out` is the grid's column (return) count.
-    let n_in = face.inputs.iter().map(|i| usize::from(i.channels)).sum();
+    // The grid's column (return) count — the summed exposed output lanes.
     let m_out = face.outputs.iter().map(|o| usize::from(o.channels)).sum();
 
     // Params, exposed (position) order — the id is the position, matching how the host addresses a
@@ -1957,10 +1968,23 @@ fn describe(entry: &CatalogEntry, config: &DeviceConfig) -> DeviceDescriptor {
 
     // Readouts, exposed (position) order — the id is the position, matching how the host addresses a
     // reading (`BuiltScene::readout(device, id)`), not the node-local `ReadoutId`.
+    // Per-metering-node readout counts, in node order (readouts are already grouped by node) — a
+    // `PerNode` bank pairs with the node at its position and sizes itself from this count.
+    let mut node_readout_counts: Vec<usize> = Vec::new();
+    let mut last_node: Option<usize> = None;
+    for r in &face.readouts {
+        if last_node != Some(r.node) {
+            node_readout_counts.push(0);
+            last_node = Some(r.node);
+        }
+        if let Some(c) = node_readout_counts.last_mut() {
+            *c += 1;
+        }
+    }
     let readouts = face
         .readouts
         .iter()
-        .zip(entry.readouts.label(n_in))
+        .zip(entry.readouts.label(&node_readout_counts))
         .enumerate()
         .map(|(i, (_, (label, unit)))| ReadoutDescriptor {
             id: i as u32,
@@ -2012,7 +2036,6 @@ mod tests {
             // `describe` uses: columns = exposed return lanes, rows = the matrix's own crosspoints over
             // the columns (so a crossbar whose inputs exceed the input ports still aligns). `Named`
             // axes ignore the counts and self-size, so this still checks the 8i6's hand-named 14×14.
-            let n_in: usize = face.inputs.iter().map(|p| usize::from(p.channels)).sum();
             let m_out: usize = face.outputs.iter().map(|p| usize::from(p.channels)).sum();
             let grid_crosspoints = face
                 .params
@@ -2044,8 +2067,20 @@ mod tests {
                 "{} outputs",
                 entry.type_id
             );
+            // Per-metering-node readout counts, in node order (mirrors `describe`).
+            let mut node_readout_counts: Vec<usize> = Vec::new();
+            let mut last_node: Option<usize> = None;
+            for r in &face.readouts {
+                if last_node != Some(r.node) {
+                    node_readout_counts.push(0);
+                    last_node = Some(r.node);
+                }
+                if let Some(c) = node_readout_counts.last_mut() {
+                    *c += 1;
+                }
+            }
             assert_eq!(
-                entry.readouts.label(n_in).len(),
+                entry.readouts.label(&node_readout_counts).len(),
                 face.readouts.len(),
                 "{} readouts",
                 entry.type_id

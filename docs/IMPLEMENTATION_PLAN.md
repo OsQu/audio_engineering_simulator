@@ -1329,13 +1329,13 @@ _Watch out:_
   `ByteRing` (byte-agnostic — interleaved L/R streams with frame = `channels × 4`, tears still impossible),
   `Transport` (channel-agnostic), and the **per-track** level fader (one fader = a whole stereo track). The
   `MultitrackRecorder` node itself, however, **bakes one-lane-per-track today** (`input` is one send lane per
-  track; one playback lane + one ring per track; a single-4-byte-frame per-sample loop; `set_input(track,
-  lane)`) — and the crossbar `Matrix` would likewise route a stereo pair as two lanes —
+  track; one output *channel* lane + one ring + one fader per track; a single-4-byte-frame per-sample loop;
+  `set_input(track, lane)`) — and the `T→M` `Matrix` would likewise carry a stereo channel as two lanes —
   chosen for a simpler, fully-tested mono node, since the epic is mono-only and there is **no stereo source
   to exercise a stereo track end-to-end**. Going stereo is therefore a **contained node-local refactor**
   (per-track lane _list_ + `channels` count → interleaved-PCM rings → an inner per-channel `process` loop +
-  `set_input(track, &[lane])`), ~40 lines confined to `multitrack.rs` and its callers — **no change to
-  `Transport`, `ByteRing`, `wav`, the schedule, or any other node.** Build it when a stereo source/use
+  `set_input(track, &[lane])`; the fader stays one-per-track), confined to `multitrack.rs` and its callers —
+  **no change to `Transport`, `ByteRing`, `wav`, the schedule, or any other node.** Build it when a stereo use
   actually exists; not speculative infra now. _(Supersedes the earlier "a track owns a list of lanes (1
   today); no API that assumes one-lane-per-track" wording — the node does assume it; the foundation doesn't.)_
 - **Scope guards:** signal-path + a simple level mixer (faders) only. **OUT:** timeline editing, clip
@@ -1401,22 +1401,24 @@ _Design notes (settled at planning):_
   (no recompile), the `Matrix` runtime-routing precedent (5.7.9). Adding/removing a track is a structural
   config change → recompile-on-change (the INST/48V/usb-channels pattern). _Rejected: a fixed max track
   count_ — encodes an arbitrary ceiling; config-driven is the established idiom.
-- **Crossbar router + record/playback tracks (the headline routing decision, settled mid-5.11.3).** Routing
-  and record/playback are **separate concerns**, wired as a linear chain:
-  `DigitalMeter(N sends)` (kept — input meters) → **`MultitrackRecorder(N → N+T)`** → **`Matrix(N+T → M)`**
-  (the crossbar) → USB out (delayed). The **`MultitrackRecorder`** is a tape-machine: it **records** armed
-  send lanes to files and **plays back** track files, owning the [`Transport`]; its output bus is the **N
-  sends passed through** (so the mixer can monitor a live input) **+ T track playbacks** (silent unless
-  rolling). It does **no** routing/levels/monitoring/summing — those are the **`Matrix`** crossbar's
-  `(sends + track playbacks) → returns` crosspoint gains (the "simple mixer"). _Rejected: fusing routing into
-  one-in-one-out tracks_ (each track a mono strip with a single input→single output) — it can't **fan out**
-  (a track to master *and* an aux send at once), forces a duplicate "track" per routing path, and conflates a
-  recorder with a routing wire. The crossbar expresses **many-to-few** (30 tracks → a 2-lane master, each a
-  crosspoint), **fan-out / aux sends** (extra crosspoints; an outboard loop is `send→aux-return` out and
-  `send→master` back in), and monitoring (`send→return`) uniformly — matching real mixer+multitrack gear —
-  and reuses the `Matrix` we already have (its pure-loopback default is retired for the crossbar default:
-  `send 0 → return 0` and each `playback → return 0` at unity, keeping the default scene's monitoring loop
-  audible). Track count is independent of the interface's channel count.
+- **Channel-strip mixer: track channels (fader + post-fader meter) → bus crossbar (the headline mixer
+  decision, settled across 5.11.3).** The computer is a **5-node channel-strip console**, not a raw matrix:
+  `DigitalMeter(N)` (send input meters, pre-fader) → **`MultitrackRecorder(N → T)`** (T **track channels**) →
+  `DigitalMeter(T)` (**per-track after-fader meters**) → **`Matrix(T → M)`** (the **bus crossbar**) →
+  `DigitalMeter(M)` (**return/bus meters**) → USB out (delayed). Each **track is a channel**: its signal is
+  `(playback + monitored send) × per-track fader`, so an armed track hears its input *through its fader* like
+  a real desk; the recorder outputs **one post-fader channel per track**, owns the [`Transport`], and records
+  armed sends. Routing/summing lives in the `Matrix` crossbar (`tracks → returns`, default every track →
+  return 0 = master; fan-out/aux = extra crosspoints). **Faders are per-track only** — you trim a live input
+  at the **preamp**, not the DAW — and are driven over the wasm control seam (with transport/arm/monitor), not
+  as exposed params, so no dynamic per-track param-labeling is needed. _Evolution:_ this superseded two
+  earlier shapes in the same story — first one-in-one-out tracks (couldn't fan out), then a `(N+T)→M` crossbar
+  with sends passed through (a raw matrix mixer with **no per-track fader**, so no after-fader metering). The
+  channel-strip model is what per-track after-fader meters require: a distinguished fader per channel, tapped
+  before the bus sum. **Consequence:** monitoring a live input now always goes *through a track* (arm/monitor
+  a track whose source is that send) — exactly how a DAW works. Still expresses many-to-few (30 tracks → a
+  2-lane master), fan-out/aux (a track's crossbar row hitting master *and* an aux return), and the mic/synth
+  monitoring loop (the default 1 track monitors send 0 → master).
 - **WAV codec is a small hand-rolled wasm-safe writer/reader in the engine** (a fixed canonical 44-byte
   header + PCM). Format is **32-bit IEEE float** (`WAVE_FORMAT_IEEE_FLOAT`, tag 3) — matches the DAW's own
   `f32` `SampleBuffer` storage, so encode→decode is **bit-exact** (no quantization step). Mono now, a
@@ -1434,10 +1436,15 @@ _Design notes (settled at planning):_
   format — variant-handling we'd never exercise. **Tipping point:** if we ever import arbitrary user WAVs
   (odd bit depths, ADPCM, extensible headers), switch to `hound` (or `symphonia` for broad decode) rather
   than grow a hand parser.
-- **The "simple mixer" is the `Matrix` crossbar — no new mixing concept.** Routing and level are one and the
-  same: the crossbar's per-crosspoint gains `(N sends + T track playbacks) → M returns`, surfaced in the
-  focus view (the 5.7.9 `RoutingGrid` precedent). A track's "fader" is its crosspoint gain to master; an aux
-  send is another crosspoint. Setting levels + routing only; no EQ/dynamics/pan.
+- **The "simple mixer" = per-track faders + a bus crossbar + three meter banks.** Level and routing are
+  **distinct** (unlike a raw matrix mixer): a per-track **fader** (channel level, on the recorder) is metered
+  **after** it (per-track post-fader `DigitalMeter(T)`), then the **`Matrix(T→M)`** crossbar routes/sums
+  channels to buses (routing + aux-send levels), metered at the **buses** (`DigitalMeter(M)`). Plus the
+  pre-fader **send input meters** for record levels. So three meter banks — **Send** (inputs), **Track**
+  (after-fader), **Return** (bus) — rendered in the focus view (the 5.7.9 `RoutingGrid` + channel strips).
+  Setting levels + routing only; no EQ/dynamics/pan. _Infra:_ `ReadoutSpec::PerNode` labels one bank per
+  meter node (lane count derived from the node's own readout count, so the per-*track* bank sizes to `T`
+  without a port total).
 - **Storage transport: `postMessage` byte chunks to start, SAB later if needed.** The byte rings cross the
   worklet↔main boundary; begin with per-quantum `postMessage` of byte chunks (the current param/event
   transport shape), promote to a `SharedArrayBuffer` ring (the deferred Epic-3 SAB work) only if disk-rate
@@ -1471,39 +1478,46 @@ _Design notes (settled at planning):_
   advances **128/block @ 48 kHz** while rolling and holds while stopped (hand calc: analog 1024 ÷ M = 8);
   seek repositions exactly; record-enable toggles writes **without** stopping playback (the overdub gate);
   deterministic across runs.
-- **Task 5.11.3 — Engine: the `MultitrackRecorder` node (record/playback + transport).** ✅ **Done.** A
-  tape-machine node: `T` mono tracks, `N` send lanes in → `N + T` lanes out (the N sends **passed through**
-  for the mixer to monitor, then one **playback** lane per track). Per track = **playback**(stream its file
-  from the inbound ring to its output lane while rolling) + **record**(stream its assigned send to the
-  outbound ring while rolling + record-enabled + armed). **No routing/levels/monitoring/summing** — those are
-  the downstream `Matrix` crossbar's job (settled mid-task; see the crossbar note above). Owns the
-  [`Transport`], advancing it by the **runtime** lane length. _Delivered oracles (6):_ ports = N in / N+T out,
-  **no params**; sends pass through to lanes 0..N; a track's playback appears on lane `N+t` only while rolling
-  (silent stopped); record captures the armed send only when rolling + record-enabled; **overdub oracle** —
-  track 0's playback lane carries its file **unchanged** while track 1 records its send in the same block;
-  transport advances by the runtime lane length. Alloc-free (rings pre-allocated; stack `[u8;4]`), panic-free.
+- **Task 5.11.3 — Engine: the `MultitrackRecorder` node (track channels).** ✅ **Done.** A channel-strip
+  node: `T` mono tracks, `N` send lanes in → **`T` post-fader track channels** out. Per track the channel is
+  `(playback + monitored send) × per-track fader` written to its output lane; it **records** its assigned send
+  (pre-fader) while rolling + record-enabled + armed. The **fader** is a recorder-owned framework `Smoother`
+  driven over the control seam ([`set_track_level`], with `set_input`/`set_armed`/`set_monitoring`/transport),
+  **not** an exposed param — so it de-zippers without dynamic param-labeling. Owns the [`Transport`], advancing
+  it by the **runtime** lane length. **No routing/summing** (the downstream `Matrix` crossbar's job). _Delivered
+  oracles (8):_ ports = N in / T out, **no params**; a default track monitors its send at unity; the monitor
+  gate; the fader scales the channel once its 5 ms glide settles (`0.8·0.5 = 0.4`); playback streams through the
+  channel only while rolling; record captures the pre-fader send only when rolling + record-enabled; **overdub
+  oracle** — track 0's channel carries its file **unchanged** while track 1 records, same block; transport
+  advances by the runtime lane length. Alloc-free (rings + smoothers pre-allocated; stack `[u8;4]`), panic-free
+  (a direct `no_alloc.rs` check drives the rolling+recording+fader path). _(Superseded two intermediate shapes
+  in-story — see the channel-strip headline note.)_
 - **Task 5.11.4 — Devices: rebuild `computer` as the DAW.** ✅ **Done.** Rewrote the catalog entry to the
-  crossbar chain `DigitalMeter(N)` → `MultitrackRecorder(N → N+T)` → `Matrix::new_single_ports(N+T → M)` → USB
-  out (delayed), with `T` from a hidden `track_count` config (default **1**) and USB N/M from 5.10's
-  `usb_sends`/`usb_returns` (default 2×2). The `Matrix` default is the **crossbar loopback**: `send 0 → return
-  0` and each `playback → return 0` at unity (keeps the mic/synth monitoring loop audible), everything else 0
-  — retiring the old diagonal send-k→return-k default. Generated grid labels `"In i → Return j"` (rows = the
-  N+T mixer inputs, cols = M returns) + the per-lane send meters. _Infra fix:_ `describe` now sizes the grid's
-  **rows from the matrix's own crosspoint count** (`crosspoints / m_out`), not the input-port face — because a
-  crossbar's inputs (N+T) exceed the device's input ports (N); `GridAxis::Named` self-sizes so the 8i6's
-  hand-named 14×14 is untouched (the alignment guard was updated to mirror this). _Delivered oracles:_ default
-  computer = meter + recorder(1 track) + a 3×2 crossbar, USB in/out = 2/2, 6 crosspoints, still audible in the
-  playable-loop test; `track_count`=4 → an (N+4)×M crossbar; `configured` 8×6 → a 9×6 crossbar (54
-  crosspoints); `ChannelCountMismatch` + duplex backstops intact; **the deferred 5.11.3 no-alloc proof landed
-  here** — a direct `no_alloc.rs` check of the recorder's rolling+recording ring paths. Full Rust gate green
-  (engine 360 + devices 60). **Note for 5.11.6:** the crossbar retires the diagonal default and reshapes the
-  matrix crosspoint ids ((N+T)×M), so a saved scene's stored matrix `ParamSetting`s are stale → **bump
-  `SCHEMA_VERSION`** (discard + rebuild) when the web lands.
-- **Task 5.11.5 — wasm: export the DAW seams.** On `SceneEngine`: drain the outbound byte ring / fill the
-  inbound byte ring (zero-copy views, by device id), transport commands (play/stop/record/seek), a playhead
-  getter, and the per-instance descriptor already carrying the track face. _Done:_ the byte rings and
-  transport round-trip across the wasm boundary for an N-track computer; the EMPTY-config type catalog
-  unchanged; `cargo wasm` + full Rust gate green.
+  **5-node channel-strip chain** `DigitalMeter(N)` → `MultitrackRecorder(N → T)` → `DigitalMeter(T)` →
+  `Matrix::new_single_ports(T → M)` → `DigitalMeter(M)` → USB out (delayed), with `T` from a hidden
+  `track_count` config (default **1**) and USB N/M from 5.10 (default 2×2). The crossbar default routes **every
+  track → return 0 (master)** at unity — retiring the old diagonal send-k→return-k default. Generated grid
+  labels `"Track i → Return j"` (rows = T track channels — derived from the matrix's crosspoint count, not the
+  USB-In face — cols = M returns), plus **three meter banks** Send/Track/Return. _Infra:_ `describe` sizes grid
+  rows from the matrix's own crosspoint count (`crosspoints / m_out`; `GridAxis::Named` self-sizes so the 8i6's
+  14×14 is untouched), and `ReadoutSpec::PerNode` labels one bank per meter node (lane count from the node's
+  readout count, so the per-track bank sizes to `T`); both alignment guards updated. _Delivered oracles:_
+  default = 5 nodes / 4 edges, 2 crosspoints, **10 readouts** (2 send + 1 track + 2 return, ×2), still audible
+  in the playable-loop test; `track_count`=4 → a 4×6 crossbar (24 crosspoints) + a 4-lane track meter; 8×6/4-tk
+  descriptor labels `"Track 4 → Return 6"` + Send/Track/Return readouts; `ChannelCountMismatch` + duplex
+  backstops intact; **the deferred 5.11.3 no-alloc proof landed here** (direct `no_alloc.rs` check of the
+  recorder's rolling+recording+fader path). Full Rust gate green (engine 362 + devices 60). **Note for
+  5.11.6:** the crossbar (now `T→M`) reshapes the matrix crosspoint ids and retires the diagonal default, so a
+  saved scene's stored matrix `ParamSetting`s are stale → **bump `SCHEMA_VERSION`** (discard + rebuild) when the
+  web lands.
+- **Task 5.11.5 — wasm: export the DAW seams.** On `SceneEngine`: drain each track's outbound byte ring / fill
+  its inbound byte ring (zero-copy views, by device id + track), transport commands
+  (play/stop/record-enable/seek) + a playhead getter, and the **per-track control seam**
+  (`set_track_level`/`set_armed`/`set_monitoring`/`set_input`). Needs a way to reach the `MultitrackRecorder`
+  inside the compiled schedule (a `Node`-trait downcast/hook, like the param/event handles) — its transport,
+  rings, and faders aren't exposed params. _Done:_ the byte rings + transport + track controls round-trip
+  across the wasm boundary for an N-track computer; the EMPTY-config type catalog unchanged; `cargo wasm` +
+  full Rust gate green.
 - **Task 5.11.6 — Web: OPFS storage + track model + transport UI + level mixer + waveform.** OPFS-backed
   take files (worker + sync access handles) draining/filling the byte rings around the playhead; a host-side
   **track model** (create/remove tracks → `track_count` config + recompile; arm; input/output assign; level);
