@@ -8,13 +8,15 @@
   interface Props {
     /** Exposed readout id (its position in the device's exposed readout list). */
     id: number;
+    /** Render the underlying meter as a thin vertical bar (e.g. beside a channel fader). */
+    vertical?: boolean;
   }
-  let { id }: Props = $props();
+  let { id, vertical = false }: Props = $props();
 
   const handle = getDeviceHandle();
   const readout = $derived(handle.readout(id));
 </script>
 
 {#if readout}
-  <Meter label={readout.label} unit={readout.unit} value={handle.reading(id)} />
+  <Meter label={readout.label} unit={readout.unit} value={handle.reading(id)} {vertical} />
 {/if}

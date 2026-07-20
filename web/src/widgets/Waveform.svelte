@@ -36,7 +36,8 @@
 <style>
   .wave {
     width: 100%;
-    height: 2.4rem;
+    /* Default thumbnail height; the arrangement overrides `--wave-h: 100%` so a lane's clip fills it. */
+    height: var(--wave-h, 2.4rem);
     display: block;
     background: var(--ae-surface-2, #151515);
     border-radius: 0.25rem;

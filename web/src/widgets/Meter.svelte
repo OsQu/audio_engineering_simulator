@@ -13,8 +13,10 @@
     unit: string;
     /** The live reading. A very low value (the engine's floor) reads as empty / "—". */
     value: number;
+    /** Render as a thin **vertical** bar (label/readout dropped) — a channel meter beside a fader. */
+    vertical?: boolean;
   }
-  let { label, unit, value }: Props = $props();
+  let { label, unit, value, vertical = false }: Props = $props();
 
   // Per-unit bar range (min..max), so each meter's scale matches its quantity. VU centres on 0 VU;
   // dBu spans a wide analog range; dBFS runs up to the 0 dBFS ceiling.
@@ -37,6 +39,12 @@
   <!-- A VU reading is the archetypal analog needle, not a bar — share the master monitor's face,
        compact so it fits a thin (1U) device front. -->
   <VuFace fraction={pct / 100} {label} {readout} compact />
+{:else if vertical}
+  <!-- A thin vertical channel meter: lit from the bottom up to the level, no label/readout so it sits
+       flush beside a fader and the strip stays narrow. Tooltip carries the label + value. -->
+  <div class="vmeter" title={`${label}: ${readout}`} aria-label={`${label} ${readout}`}>
+    <div class="unlit" style={`bottom: ${pct}%`}></div>
+  </div>
 {:else}
   <div class="meter-widget" title={`${label} (${unit})`}>
     <span class="cap">{label}</span>
@@ -88,6 +96,28 @@
     bottom: 0;
     background: var(--ae-led-neutral-off);
     transition: left 0.08s linear;
+  }
+
+  /* Vertical channel meter: a recessed well filled bottom→top green/amber/red, dark above the level. */
+  .vmeter {
+    position: relative;
+    width: 0.5rem;
+    height: var(--vmeter-h, 7.5rem);
+    border-radius: var(--ae-radius-control);
+    overflow: hidden;
+    background: linear-gradient(
+      to top,
+      var(--ae-led-green) 0%,
+      var(--ae-led-green) 65%,
+      var(--ae-led-amber) 85%,
+      var(--ae-led-red) 97%
+    );
+    box-shadow: var(--ae-bevel-press);
+  }
+  .vmeter .unlit {
+    left: 0;
+    bottom: 0;
+    transition: bottom 0.08s linear;
   }
   .readout {
     min-width: 4.5rem;

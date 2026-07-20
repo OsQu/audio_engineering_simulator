@@ -1,16 +1,21 @@
 <script lang="ts">
-  // The `computer`'s focus surface — the DAW mixer (Story 5.11.6). A transport (play/record/stop + a
-  // digital-domain playhead), one channel strip per track (input send, arm, monitor, fader, meter), an
-  // add/remove-track control, and the track → return routing crossbar (`RoutingGrid` over the `Matrix`
-  // crosspoint params). Transport + track state come from the session over the `daw` seam
-  // ({@link DawUi}); the crossbar routes through the `DeviceHandle` like the 8i6's routing.
+  // The `computer`'s focus surface — the DAW mixer (Story 5.11.6), laid out like a real DAW: a
+  // **transport** bar, an **arrangement** where every track's waveform is a bare horizontal lane on
+  // one shared timeline with a single playhead sweeping across all of them, and a **mixer (MCP)** below
+  // where each track is a channel strip (input send, arm, monitor, a real vertical fader with the track
+  // label + value beneath it, and a post-fader meter). Routing and the send/return buses follow. All
+  // transport + track state comes from the session over the `daw` seam ({@link DawUi}); the crossbar
+  // routes through the `DeviceHandle` like the 8i6's routing.
   //
   // Transport model (maps onto the engine's rolling + independent record-enable): **Play** rolls with
   // record off (playback only), **Record** rolls with record on (armed tracks capture *and* recorded
   // tracks play — overdub), **Stop** halts. So the button states derive from `rolling`/`recording` alone.
   import { untrack } from "svelte";
+  import type { ParamDescriptor } from "../catalog";
   import { makeHandle, setDeviceHandle } from "../device-handle";
   import type { DeviceUiProps } from "../device-ui";
+  import type { TrackUi } from "../scene-store";
+  import Fader from "./Fader.svelte";
   import Reading from "./Reading.svelte";
   import RoutingGrid from "./RoutingGrid.svelte";
   import Waveform from "./Waveform.svelte";
@@ -39,6 +44,45 @@
   // The in-sim digital-domain rate the playhead counts in (128 samples/block @ 48 kHz). Only used to
   // render the playhead as time — the transport itself is clocked entirely inside the simulation.
   const DIGITAL_RATE_HZ = 48000;
+
+  // One shared timeline for the whole arrangement: long enough to hold the longest take and the current
+  // playhead, with a 4 s minimum so an empty session still shows a ruler. Every lane's clip width and the
+  // single playhead map [0, timelineSamples] → [0%, 100%] of the lanes column — so one play-ahead drives
+  // them all (no per-lane cursor).
+  const MIN_TIMELINE_SAMPLES = DIGITAL_RATE_HZ * 4;
+  const timelineSamples = $derived.by(() => {
+    let max = MIN_TIMELINE_SAMPLES;
+    for (let t = 0; t < tracks.length; t++) {
+      const wf = daw?.waveform(t);
+      if (wf && wf.samples > max) max = wf.samples;
+    }
+    return Math.max(max, transport?.playhead ?? 0);
+  });
+  const playheadPct = $derived(((transport?.playhead ?? 0) / timelineSamples) * 100);
+  // Whole-second ruler ticks strictly inside the timeline (the exact end tick is dropped so labels
+  // never overflow the right edge).
+  const rulerSecs = $derived(
+    Array.from({ length: Math.ceil(timelineSamples / DIGITAL_RATE_HZ) }, (_, i) => i).filter(
+      (s) => s * DIGITAL_RATE_HZ < timelineSamples,
+    ),
+  );
+  const secPct = (sec: number): number => ((sec * DIGITAL_RATE_HZ) / timelineSamples) * 100;
+
+  // A synthetic descriptor so a track's level rides the shared `Fader` widget (its label carries the
+  // track name, so the name + value render beneath the fader — the "labels down in the mixer" bit). The
+  // level is driven over the DAW seam (`setTrackLevel`), not as an exposed param, so id is unused.
+  function levelParam(t: number, track: TrackUi): ParamDescriptor {
+    return {
+      id: 0,
+      label: track.name ?? `Track ${t + 1}`,
+      unit: "×",
+      kind: "fader",
+      min: 0,
+      max: 4,
+      default: 1,
+    };
+  }
+
   function formatPlayhead(samples: number): string {
     const total = samples / DIGITAL_RATE_HZ;
     const m = Math.floor(total / 60);
@@ -103,9 +147,10 @@
       <span class="state">{recording ? "recording" : rolling ? "playing" : "stopped"}</span>
     </section>
 
+    <!-- Arrangement: bare waveform lanes stacked on one shared timeline, one playhead across them all. -->
     <section>
       <div class="section-head">
-        <span class="section-title">Tracks</span>
+        <span class="section-title">Arrangement</span>
         <div class="track-count">
           <button
             type="button"
@@ -121,11 +166,35 @@
           >
         </div>
       </div>
-      <div class="tracks">
-        {#each tracks as track, t (t)}
-          <div class="strip" class:armed={track.armed}>
-            <span class="strip-name">{track.name ?? `Track ${t + 1}`}</span>
+      <div class="arrange">
+        <div class="ruler">
+          {#each rulerSecs as sec (sec)}
+            <span class="tick" style={`left:${secPct(sec)}%`}>{sec}s</span>
+          {/each}
+        </div>
+        <div class="lanes">
+          {#each tracks as track, t (t)}
+            {@const wf = daw.waveform(t)}
+            <div class="lane" class:armed={track.armed}>
+              <span class="lane-index">{t + 1}</span>
+              {#if wf && wf.samples > 0}
+                <div class="clip" style={`width:${(wf.samples / timelineSamples) * 100}%`}>
+                  <Waveform peaks={wf.peaks} />
+                </div>
+              {/if}
+            </div>
+          {/each}
+          <div class="playhead-line" class:live={rolling} style={`left:${playheadPct}%`}></div>
+        </div>
+      </div>
+    </section>
 
+    <!-- Mixer (MCP): one channel strip per track — send, arm/monitor, vertical fader (label + value), meter. -->
+    <section>
+      <span class="section-title">Mixer</span>
+      <div class="mcp">
+        {#each tracks as track, t (t)}
+          <div class="mstrip" class:armed={track.armed}>
             <label class="field">
               <span>In</span>
               <select
@@ -157,34 +226,17 @@
               >
             </div>
 
-            <label class="field fader">
-              <input
-                type="range"
-                min="0"
-                max="4"
-                step="0.01"
+            <div class="fader-meter">
+              <Fader
+                param={levelParam(t, track)}
                 value={track.level}
-                oninput={(e) => daw?.setTrackLevel(t, Number(e.currentTarget.value))}
-                aria-label={`Track ${t + 1} level`}
+                onChange={(v) => daw?.setTrackLevel(t, v)}
+                size={110}
               />
-              <span class="gain">{track.level.toFixed(2)}×</span>
-            </label>
-
-            {#if trackPeaks[t] !== undefined}
-              <Reading id={trackPeaks[t]} />
-            {/if}
-
-            {#if daw.waveform(t)}
-              {@const wf = daw.waveform(t)}
-              {#if wf}
-                <Waveform
-                  peaks={wf.peaks}
-                  position={transport && wf.samples > 0
-                    ? (transport.playhead ?? 0) / wf.samples
-                    : undefined}
-                />
+              {#if trackPeaks[t] !== undefined}
+                <Reading id={trackPeaks[t]} vertical />
               {/if}
-            {/if}
+            </div>
           </div>
         {/each}
       </div>
@@ -311,40 +363,127 @@
     cursor: default;
   }
 
-  .tracks {
-    display: flex;
-    flex-direction: row;
-    flex-wrap: wrap;
-    gap: 0.6rem;
-  }
-  .strip {
+  /* Arrangement — the shared-timeline waveform stack. */
+  .arrange {
     display: flex;
     flex-direction: column;
-    gap: 0.4rem;
-    padding: 0.6rem;
-    min-width: 8rem;
     border: 1px solid var(--ae-border, #444);
     border-radius: 0.4rem;
     background: var(--ae-surface, #1c1c1c);
+    overflow: hidden;
   }
-  .strip.armed {
+  .ruler {
+    position: relative;
+    height: 1.1rem;
+    border-bottom: 1px solid var(--ae-border, #444);
+    background: var(--ae-surface-2, #151515);
+  }
+  .tick {
+    position: absolute;
+    top: 0;
+    font-family: var(--ae-font-mono, monospace);
+    font-size: 0.6rem;
+    color: var(--ae-text-secondary, #888);
+    padding-left: 0.15rem;
+    border-left: 1px solid var(--ae-border, #444);
+    height: 100%;
+    line-height: 1.1rem;
+  }
+  .lanes {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+  }
+  .lane {
+    position: relative;
+    height: 2.6rem;
+    border-bottom: 1px solid var(--ae-border, #333);
+  }
+  .lane:last-child {
+    border-bottom: none;
+  }
+  .lane.armed {
+    background: rgba(217, 74, 74, 0.08);
+  }
+  .lane-index {
+    position: absolute;
+    top: 0.1rem;
+    left: 0.2rem;
+    z-index: 1;
+    font-family: var(--ae-font-mono, monospace);
+    font-size: 0.6rem;
+    color: var(--ae-text-secondary, #777);
+    opacity: 0.7;
+    pointer-events: none;
+  }
+  .clip {
+    height: 100%;
+    /* The lane's `Waveform` fills the clip's full height (overriding its thumbnail default). */
+    --wave-h: 100%;
+  }
+  .clip :global(.wave) {
+    border-radius: 0;
+    background: transparent;
+  }
+  .playhead-line {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    width: 2px;
+    background: var(--ae-text-strong, #fff);
+    opacity: 0.55;
+    pointer-events: none;
+  }
+  .playhead-line.live {
+    background: var(--ae-accent, #4a90d9);
+    opacity: 0.9;
+  }
+
+  /* Mixer (MCP) — channel strips side by side, scrolling if they overflow. */
+  .mcp {
+    display: flex;
+    flex-direction: row;
+    gap: 0.75rem;
+    overflow-x: auto;
+    padding-bottom: 0.3rem;
+  }
+  .mstrip {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.4rem;
+    padding: 0.55rem 0.4rem;
+    width: 5.25rem;
+    box-sizing: border-box;
+    border: 1px solid var(--ae-border, #444);
+    border-radius: 0.4rem;
+    background: var(--ae-surface, #1c1c1c);
+    flex: 0 0 auto;
+  }
+  .mstrip.armed {
     border-color: #d94a4a;
   }
-  .strip-name {
-    font-family: var(--ae-font-ui);
-    font-weight: 600;
-    font-size: var(--ae-label-size);
-    color: var(--ae-text-strong, #fff);
+  .fader-meter {
+    display: flex;
+    flex-direction: row;
+    align-items: flex-start;
+    gap: 0.35rem;
+    padding: 0.2rem 0;
+    /* Match the vertical channel meter to the fader's throw height (size=110 ⇒ ~110px). */
+    --vmeter-h: 6.9rem;
   }
   .field {
     display: flex;
     flex-direction: column;
     gap: 0.15rem;
+    width: 100%;
     font-family: var(--ae-font-ui);
     font-size: var(--ae-label-size);
     color: var(--ae-text-secondary, #aaa);
+    align-items: center;
   }
   .field select {
+    width: 100%;
     background: var(--ae-surface-2, #2a2a2a);
     color: var(--ae-text-primary, #ddd);
     border: 1px solid var(--ae-border, #555);
@@ -374,20 +513,7 @@
     color: #fff;
     border-color: var(--ae-accent, #4a90d9);
   }
-  .fader {
-    flex-direction: row;
-    align-items: center;
-    gap: 0.4rem;
-  }
-  .fader input {
-    flex: 1;
-    min-width: 4rem;
-  }
-  .gain {
-    font-family: var(--ae-font-mono, monospace);
-    min-width: 3rem;
-    text-align: right;
-  }
+
   .buses {
     flex-direction: row;
     gap: 2rem;
