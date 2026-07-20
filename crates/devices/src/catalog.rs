@@ -155,6 +155,10 @@ pub struct ParamDescriptor {
     pub unit: String,
     /// Suggested control widget.
     pub kind: ParamKind,
+    /// How travel maps onto the value (linear vs dB-linear) — see [`ParamTaper`]. Omitted from the
+    /// JS descriptor when `Linear` (the common case reads as `taper?: "log"`).
+    #[serde(skip_serializing_if = "is_linear_taper")]
+    pub taper: ParamTaper,
     /// Lower bound (from the node's `ParamDecl`).
     pub min: f32,
     /// Upper bound (from the node's `ParamDecl`).
@@ -221,6 +225,32 @@ pub enum ParamKind {
     Knob,
     Fader,
     Switch,
+}
+
+/// How a continuous control's **rotation/travel maps onto its value** — a UI/control-law hint, not
+/// engine truth (the value sent to the engine is unchanged; `min`/`max` still come from the node's
+/// `ParamDecl`). A voltage-gain multiplier spans a huge linear range (`0..1000` ≈ 0×→+60 dB), so a
+/// **linear** knob crams the whole usable range into the first sliver of travel — quarter-turn is
+/// already +48 dB. [`Log`](Self::Log) instead maps travel **dB-linearly** (equal rotation = equal dB
+/// step), the way a real gain pot is marked, so the readout is shown in dB and the low end is usable.
+/// The web widget owns the exact curve (silence at the very bottom for controls whose `min` is 0).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub enum ParamTaper {
+    /// Value is linear in travel: `value = min + t·(max − min)`. The default for every control.
+    #[default]
+    Linear,
+    /// Value is logarithmic (dB-linear) in travel — for voltage-gain knobs displayed in dB.
+    Log,
+}
+
+/// Serde skip predicate: a `Linear` taper is the default, omitted from the descriptor JSON.
+#[expect(
+    clippy::trivially_copy_pass_by_ref,
+    reason = "serde skip_serializing_if signature"
+)]
+fn is_linear_taper(taper: &ParamTaper) -> bool {
+    matches!(taper, ParamTaper::Linear)
 }
 
 /// Whether a port is an input or an output.
@@ -377,6 +407,8 @@ struct ParamUi {
     label: &'static str,
     unit: &'static str,
     kind: ParamKind,
+    /// Rotation→value law (see [`ParamTaper`]). `Linear` for everything but voltage-gain knobs.
+    taper: ParamTaper,
 }
 
 /// A hand-authored structural config option (the entry's counterpart to a [`ConfigDescriptor`]).
@@ -545,8 +577,10 @@ fn scarlett_preamp(cfg: &DeviceConfig, inst_key: &str) -> Box<dyn Node> {
         PREAMP_LINE_Z_OHMS
     };
     Box::new(
+        // Default to the minimum gain (≈ +8 dB) — a real preamp powers on with the gain pot fully
+        // counter-clockwise, and the knob's floor is +8 dB (never an attenuator).
         MicPreamp::new(
-            1.0,
+            MicPreamp::MIN_GAIN,
             Volts::new(10.0),
             InputZ::balanced(Ohms::new(z_ohms)),
             Ohms::new(150.0),
@@ -605,31 +639,37 @@ const CATALOG: &[CatalogEntry] = &[
                 label: "Level",
                 unit: "V",
                 kind: ParamKind::Fader,
+                taper: ParamTaper::Linear,
             },
             ParamUi {
                 label: "Attack",
                 unit: "ms",
                 kind: ParamKind::Knob,
+                taper: ParamTaper::Linear,
             },
             ParamUi {
                 label: "Decay",
                 unit: "ms",
                 kind: ParamKind::Knob,
+                taper: ParamTaper::Linear,
             },
             ParamUi {
                 label: "Sustain",
                 unit: "",
                 kind: ParamKind::Knob,
+                taper: ParamTaper::Linear,
             },
             ParamUi {
                 label: "Release",
                 unit: "ms",
                 kind: ParamKind::Knob,
+                taper: ParamTaper::Linear,
             },
             ParamUi {
                 label: "Power",
                 unit: "",
                 kind: ParamKind::Switch,
+                taper: ParamTaper::Linear,
             },
         ],
         param_groups: &[],
@@ -710,11 +750,13 @@ const CATALOG: &[CatalogEntry] = &[
                 label: "Tone Level",
                 unit: "V",
                 kind: ParamKind::Knob,
+                taper: ParamTaper::Linear,
             },
             ParamUi {
                 label: "Tone Freq",
                 unit: "Hz",
                 kind: ParamKind::Knob,
+                taper: ParamTaper::Linear,
             },
         ],
         param_groups: &[],
@@ -746,13 +788,15 @@ const CATALOG: &[CatalogEntry] = &[
         params: &[
             ParamUi {
                 label: "Gain",
-                unit: "×",
+                unit: "dB",
                 kind: ParamKind::Knob,
+                taper: ParamTaper::Log,
             },
             ParamUi {
                 label: "Power",
                 unit: "",
                 kind: ParamKind::Switch,
+                taper: ParamTaper::Linear,
             },
         ],
         param_groups: &[],
@@ -824,6 +868,7 @@ const CATALOG: &[CatalogEntry] = &[
             label: "Power",
             unit: "",
             kind: ParamKind::Switch,
+            taper: ParamTaper::Linear,
         }],
         param_groups: &[],
         param_grid: None,
@@ -860,6 +905,7 @@ const CATALOG: &[CatalogEntry] = &[
             label: "Power",
             unit: "",
             kind: ParamKind::Switch,
+            taper: ParamTaper::Linear,
         }],
         param_groups: &[],
         param_grid: None,
@@ -950,23 +996,27 @@ const CATALOG: &[CatalogEntry] = &[
         params: &[
             ParamUi {
                 label: "Input Gain",
-                unit: "×",
+                unit: "dB",
                 kind: ParamKind::Knob,
+                taper: ParamTaper::Log,
             },
             ParamUi {
                 label: "Input Power",
                 unit: "",
                 kind: ParamKind::Switch,
+                taper: ParamTaper::Linear,
             },
             ParamUi {
                 label: "Output Gain",
-                unit: "×",
+                unit: "dB",
                 kind: ParamKind::Knob,
+                taper: ParamTaper::Log,
             },
             ParamUi {
                 label: "Output Power",
                 unit: "",
                 kind: ParamKind::Switch,
+                taper: ParamTaper::Linear,
             },
         ],
         param_groups: &[],
@@ -1400,43 +1450,51 @@ const CATALOG: &[CatalogEntry] = &[
         params: &[
             ParamUi {
                 label: "Gain 1",
-                unit: "×",
+                unit: "dB",
                 kind: ParamKind::Knob,
+                taper: ParamTaper::Log,
             },
             ParamUi {
                 label: "Pad 1",
                 unit: "",
                 kind: ParamKind::Switch,
+                taper: ParamTaper::Linear,
             },
             ParamUi {
                 label: "Air 1",
                 unit: "",
                 kind: ParamKind::Switch,
+                taper: ParamTaper::Linear,
             },
             ParamUi {
                 label: "Gain 2",
-                unit: "×",
+                unit: "dB",
                 kind: ParamKind::Knob,
+                taper: ParamTaper::Log,
             },
             ParamUi {
                 label: "Pad 2",
                 unit: "",
                 kind: ParamKind::Switch,
+                taper: ParamTaper::Linear,
             },
             ParamUi {
                 label: "Air 2",
                 unit: "",
                 kind: ParamKind::Switch,
+                taper: ParamTaper::Linear,
             },
             ParamUi {
                 label: "Phones 1",
-                unit: "×",
+                unit: "dB",
                 kind: ParamKind::Knob,
+                taper: ParamTaper::Log,
             },
             ParamUi {
                 label: "Phones 2",
-                unit: "×",
+                unit: "dB",
                 kind: ParamKind::Knob,
+                taper: ParamTaper::Log,
             },
         ],
         // The routing matrix's crosspoints (node 21, the last param-contributing node): 14 inputs ×
@@ -1461,8 +1519,9 @@ const CATALOG: &[CatalogEntry] = &[
             ParamGroup {
                 ui: ParamUi {
                     label: "Monitor",
-                    unit: "×",
+                    unit: "dB",
                     kind: ParamKind::Knob,
+                    taper: ParamTaper::Log,
                 },
                 targets: &[(14, GainStage::GAIN), (15, GainStage::GAIN)],
             },
@@ -1471,6 +1530,7 @@ const CATALOG: &[CatalogEntry] = &[
                     label: "Power",
                     unit: "",
                     kind: ParamKind::Switch,
+                    taper: ParamTaper::Linear,
                 },
                 targets: &[
                     (0, MicPreamp::POWERED),
@@ -1877,10 +1937,10 @@ fn describe(entry: &CatalogEntry, config: &DeviceConfig) -> DeviceDescriptor {
     // then groups): the hand-authored ungrouped labels, then the **generated matrix crosspoints** (the
     // matrix is the last param-contributing node, so its params trail the ungrouped face), then the
     // group labels. Each entry is `(label, unit, kind)`.
-    let mut param_ui: Vec<(String, String, ParamKind)> = entry
+    let mut param_ui: Vec<(String, String, ParamKind, ParamTaper)> = entry
         .params
         .iter()
-        .map(|ui| (ui.label.to_owned(), ui.unit.to_owned(), ui.kind))
+        .map(|ui| (ui.label.to_owned(), ui.unit.to_owned(), ui.kind, ui.taper))
         .collect();
     if let Some(grid) = &entry.param_grid {
         // The grid's columns are the matrix outputs (the return lanes, `m_out`); its rows are the
@@ -1894,28 +1954,32 @@ fn describe(entry: &CatalogEntry, config: &DeviceConfig) -> DeviceDescriptor {
             .saturating_sub(entry.params.len())
             .saturating_sub(entry.param_groups.len());
         let grid_rows = grid_crosspoints.checked_div(m_out).unwrap_or(0);
+        // Crosspoints are routing/mixer sends (0 = mute, small makeup range) — always linear.
         param_ui.extend(
             grid.labels(grid_rows, m_out)
                 .into_iter()
-                .map(|label| (label, grid.unit.to_owned(), grid.kind)),
+                .map(|label| (label, grid.unit.to_owned(), grid.kind, ParamTaper::Linear)),
         );
     }
-    param_ui.extend(
-        entry
-            .param_groups
-            .iter()
-            .map(|g| (g.ui.label.to_owned(), g.ui.unit.to_owned(), g.ui.kind)),
-    );
+    param_ui.extend(entry.param_groups.iter().map(|g| {
+        (
+            g.ui.label.to_owned(),
+            g.ui.unit.to_owned(),
+            g.ui.kind,
+            g.ui.taper,
+        )
+    }));
     let params = face
         .params
         .iter()
         .zip(param_ui)
         .enumerate()
-        .map(|(i, (p, (label, unit, kind)))| ParamDescriptor {
+        .map(|(i, (p, (label, unit, kind, taper)))| ParamDescriptor {
             id: i as u32,
             label,
             unit,
             kind,
+            taper,
             min: p.min,
             max: p.max,
             default: p.default,

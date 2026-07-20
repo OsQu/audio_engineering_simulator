@@ -53,9 +53,14 @@ export interface ParamDescriptor {
   /** Exposed param id — its position in the device's exposed param list, what a scene's `ParamSetting` addresses. */
   id: number;
   label: string;
-  /** Unit string for the readout ("V", "ms", "" for unitless). */
+  /** Unit string for the readout ("V", "ms", "" for unitless). For a `"log"` taper the readout is
+   *  shown in dB regardless (the value is a linear voltage-gain multiplier). */
   unit: string;
   kind: ParamKind;
+  /** How the widget's travel maps onto the value. Absent ⇒ `"linear"` (value linear in travel).
+   *  `"log"` maps travel dB-linearly — for voltage-gain knobs, so the low end is usable and the
+   *  readout reads in dB. See {@link toNorm}/{@link fromNorm} in `widgets/taper.ts`. */
+  taper?: ParamTaper;
   min: number;
   max: number;
   default: number;
@@ -97,6 +102,9 @@ export interface ReadoutDescriptor {
 
 /** Suggested control widget. */
 export type ParamKind = "knob" | "fader" | "switch";
+
+/** How a continuous control's travel maps onto its value (see {@link ParamDescriptor.taper}). */
+export type ParamTaper = "linear" | "log";
 
 /** Whether a port is an input or an output. */
 export type PortDirection = "input" | "output";
