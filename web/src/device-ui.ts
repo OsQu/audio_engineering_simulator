@@ -17,6 +17,8 @@ import type {
   PortDescriptor,
   ReadoutDescriptor,
 } from "./catalog";
+import type { TransportState } from "./engine";
+import type { TrackUi } from "./scene-store";
 import Computer from "./widgets/Computer.svelte";
 import ComputerMixer from "./widgets/ComputerMixer.svelte";
 import Console from "./widgets/Console.svelte";
@@ -27,6 +29,28 @@ import Panel from "./widgets/Panel.svelte";
 import Scarlett8i6 from "./widgets/Scarlett8i6.svelte";
 import Speaker from "./widgets/Speaker.svelte";
 import SynthVoice from "./widgets/SynthVoice.svelte";
+
+/** The DAW control seam a `computer`'s mixer surface drives (Story 5.11.6): live transport state + the
+ *  per-track model, plus the transport/track commands. Wired to the session by `App`/`Workbench` for the
+ *  focused DAW device only; other surfaces leave it unset. `transport`/`tracks`/`sends` are reactive
+ *  reads (getters), so the surface re-renders as the playhead advances and the model changes. */
+export interface DawUi {
+  /** Live transport state (playhead + rolling/recording), or undefined before the first tick. */
+  readonly transport: TransportState | undefined;
+  /** The per-track model (arm/monitor/input/level/name), index = track number. */
+  readonly tracks: TrackUi[];
+  /** The USB send-lane count — the range of a track's input selector. */
+  readonly sends: number;
+  play(): void;
+  stop(): void;
+  setRecordEnabled(on: boolean): void;
+  seek(pos: number): void;
+  setTrackInput(track: number, lane: number): void;
+  setTrackArmed(track: number, armed: boolean): void;
+  setTrackMonitoring(track: number, on: boolean): void;
+  setTrackLevel(track: number, level: number): void;
+  setTrackCount(count: number): void;
+}
 
 /** The props every faceplate/focus-surface component accepts — the same shape `App` feeds `Panel`
  *  today (the generic `Panel` additionally accepts an optional `children` embellishment, so it remains
@@ -60,6 +84,9 @@ export interface DeviceUiProps {
   notesDriven?: boolean;
   /** Play (`on=true`) / release a note on this device — the keybed calls this per key press. */
   onNote?: (on: boolean, note: number) => void;
+  // --- DAW seam (the computer's mixer focus surface only) ---------------------------------------------
+  /** The transport/track control surface, for a DAW device's mixer. Unset for every other surface. */
+  daw?: DawUi;
 }
 
 /** In-world faceplates by type; a device without one falls back to the generic `Panel`. */

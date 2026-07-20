@@ -7,7 +7,7 @@
 
   import type { DeviceDescriptor, PortKind } from "./catalog";
   import { descriptorFor, isPlayable } from "./catalog";
-  import { deviceUi, focusUi, hasFocusSurface } from "./device-ui";
+  import { type DawUi, deviceUi, focusUi, hasFocusSurface } from "./device-ui";
   import { isFocusable } from "./focus";
   import { skinFor } from "./skin";
   import { wireMidi } from "./engine";
@@ -329,6 +329,30 @@
 
   // The param/config lanes (paramValue/onParamInput, configValue/onConfigInput) and hotSwap live on the
   // session now — App just calls session.* from the faceplate props and the scene-editing wrappers.
+
+  // The DAW control seam for a device's mixer surface — session-backed, with reactive getters so the
+  // surface re-renders as the transport advances / the track model changes. Passed to the focused
+  // surface; harmless on a non-DAW device (its commands no-op in the engine).
+  const dawFor = (device: string): DawUi => ({
+    get transport() {
+      return session.transportOf(device);
+    },
+    get tracks() {
+      return session.tracksOf(device);
+    },
+    get sends() {
+      return session.sendsOf(device);
+    },
+    play: () => session.play(device),
+    stop: () => session.stop(device),
+    setRecordEnabled: (on) => session.setRecordEnabled(device, on),
+    seek: (pos) => session.seek(device, pos),
+    setTrackInput: (t, l) => session.setTrackInput(device, t, l),
+    setTrackArmed: (t, a) => session.setTrackArmed(device, t, a),
+    setTrackMonitoring: (t, on) => session.setTrackMonitoring(device, t, on),
+    setTrackLevel: (t, v) => session.setTrackLevel(device, t, v),
+    setTrackCount: (n) => session.setTrackCount(device, n),
+  });
 
   // Add gear (rebuilds the engine) / a rack (UI furniture, no rebuild); remove either. Thin wrappers
   // over scene-ops — addDevice/removeDevice hot-swap, the rack ops don't (per the plan's table).
@@ -929,6 +953,7 @@
                 heldNotes={session.heldNotes}
                 notesDriven={sceneOps.eventsInputDriven(scene, f.desc, f.device.id)}
                 onNote={(on, note) => session.playNote(f.device.id, on, note)}
+                daw={dawFor(f.device.id)}
               />
             {/snippet}
             <div class="focus-body">

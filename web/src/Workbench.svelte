@@ -5,7 +5,7 @@
   // requested typeId against that catalog — hot-swapping to the bench scene (the device-under-test plus a
   // fixed supporting cast: synth source + DA + speaker, unwired) or falling back to the catalog index.
   // Audio resumes on the first interaction; the user patches source→DUT→monitor by hand (Story 6.3).
-  import { focusUi, hasFocusSurface } from "./device-ui";
+  import { type DawUi, focusUi, hasFocusSurface } from "./device-ui";
   import { wireMidi } from "./engine";
   import { isFocusable } from "./focus";
   import { wireKeyboardInput } from "./keyboard-input.svelte";
@@ -90,6 +90,29 @@
   // seam, bound back from BenchStage so the window pointer handlers + jack measurement can use it.
   const patch = new PatchController(session);
   let benchApi = $state<WorldApi | undefined>();
+
+  // The DAW control seam for a benched computer's mixer surface (see App's `dawFor`) — session-backed,
+  // reactive getters. Lets the device bench drive the DAW like the scene view.
+  const dawFor = (device: string): DawUi => ({
+    get transport() {
+      return session.transportOf(device);
+    },
+    get tracks() {
+      return session.tracksOf(device);
+    },
+    get sends() {
+      return session.sendsOf(device);
+    },
+    play: () => session.play(device),
+    stop: () => session.stop(device),
+    setRecordEnabled: (on) => session.setRecordEnabled(device, on),
+    seek: (pos) => session.seek(device, pos),
+    setTrackInput: (t, l) => session.setTrackInput(device, t, l),
+    setTrackArmed: (t, a) => session.setTrackArmed(device, t, a),
+    setTrackMonitoring: (t, on) => session.setTrackMonitoring(device, t, on),
+    setTrackLevel: (t, v) => session.setTrackLevel(device, t, v),
+    setTrackCount: (n) => session.setTrackCount(device, n),
+  });
 
   // Re-measure jack anchors when the layout that determines them changes (engine ready, the api mounting,
   // the scene's devices/connections, the catalog). Pan/zoom needn't trigger it — surface-local coords are
@@ -401,6 +424,7 @@
               heldNotes={session.heldNotes}
               notesDriven={eventsInputDriven(session.scene, f.desc, f.device.id)}
               onNote={(on, note) => session.playNote(f.device.id, on, note)}
+              daw={dawFor(f.device.id)}
             />
           {/snippet}
           <div class="focus-body">

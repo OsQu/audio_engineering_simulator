@@ -95,24 +95,22 @@ describe("Scarlett 8i6 surfaces place its full exposed face", () => {
 describe("Computer surfaces place its full exposed face", () => {
   const faceplate = surfaceSource("Computer.svelte");
   const focus = surfaceSource("ComputerMixer.svelte");
-  // The computer's 48-param face is entirely the 8×6 send→return loopback crosspoints, data-rendered by
-  // RoutingGrid on the focus surface (the DAW mixer); the faceplate places no params (just meters + jacks).
-  const CROSSPOINTS = range(0, 47);
+  // The computer's param face is entirely the track → return crossbar crosspoints (T×M, config-sized),
+  // **data-rendered** by RoutingGrid on the DAW mixer focus surface — so neither surface places a literal
+  // param control (the faceplate is meters + jacks; the mixer is transport + track strips + the grid).
+  // The exact crosspoint count is config-driven, so it isn't asserted here — the Rust side
+  // (`catalog_aligns_with_exposed_face`) owns the face; this guards only against stray literal ids.
 
-  it("covers every param via the declared crosspoint grid on the focus surface", () => {
-    const covered = uniqSorted([
-      ...literalParamIds(faceplate), // none — the faceplate is meters + jacks only
-      ...literalParamIds(focus), // none — the grid is data-rendered
-      ...CROSSPOINTS, // 0–47, declared (RoutingGrid)
-    ]);
-    expect(covered).toEqual(range(0, 47));
+  it("places no literal param controls — every param is a crossbar crosspoint via RoutingGrid", () => {
+    expect(literalParamIds(faceplate)).toEqual([]);
+    expect(literalParamIds(focus)).toEqual([]);
   });
 
-  it("places the USB input (the 8-lane send) on the faceplate", () => {
+  it("places the USB input (the send bus) on the faceplate", () => {
     expect(portIds(faceplate, "input")).toEqual([0]);
   });
 
-  it("places the USB output (the 6-lane return) on the faceplate", () => {
+  it("places the USB output (the return bus) on the faceplate", () => {
     expect(portIds(faceplate, "output")).toEqual([0]);
   });
 });

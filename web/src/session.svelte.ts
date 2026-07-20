@@ -240,7 +240,7 @@ export class SceneSession {
   }
 
   /** The USB **send** lane count a computer exposes (its default-input clamp), from its descriptor. */
-  #sendsOf(device: string): number {
+  sendsOf(device: string): number {
     const port = this.descriptorOf(device)?.ports.find(
       (p) => p.direction === "input" && p.connector === "usb",
     );
@@ -270,25 +270,25 @@ export class SceneSession {
 
   /** Set a track's assigned send lane (record/monitor source) — persist + push live. */
   setTrackInput(device: string, track: number, lane: number): void {
-    setSceneTrack(this.scene, device, track, this.#sendsOf(device), { input: lane });
+    setSceneTrack(this.scene, device, track, this.sendsOf(device), { input: lane });
     this.send?.({ type: "trackInput", device, track, lane });
   }
 
   /** Arm/disarm a track for recording — persist + push live. */
   setTrackArmed(device: string, track: number, armed: boolean): void {
-    setSceneTrack(this.scene, device, track, this.#sendsOf(device), { armed });
+    setSceneTrack(this.scene, device, track, this.sendsOf(device), { armed });
     this.send?.({ type: "trackArm", device, track, armed });
   }
 
   /** Toggle a track's input monitoring — persist + push live. */
   setTrackMonitoring(device: string, track: number, on: boolean): void {
-    setSceneTrack(this.scene, device, track, this.#sendsOf(device), { monitoring: on });
+    setSceneTrack(this.scene, device, track, this.sendsOf(device), { monitoring: on });
     this.send?.({ type: "trackMonitor", device, track, on });
   }
 
   /** Set a track's fader level (linear gain) — persist + push live. De-zippered by the recorder. */
   setTrackLevel(device: string, track: number, level: number): void {
-    setSceneTrack(this.scene, device, track, this.#sendsOf(device), { level });
+    setSceneTrack(this.scene, device, track, this.sendsOf(device), { level });
     this.send?.({ type: "trackLevel", device, track, level });
   }
 
@@ -297,7 +297,7 @@ export class SceneSession {
   setTrackCount(device: string, count: number): void {
     const n = Math.max(1, Math.round(count));
     setSceneConfig(this.scene, device, "track_count", n);
-    resizeTracks(this.scene, device, n, this.#sendsOf(device));
+    resizeTracks(this.scene, device, n, this.sendsOf(device));
     this.hotSwap(); // applyTrackState runs inside hotSwap
   }
 
