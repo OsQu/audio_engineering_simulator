@@ -846,9 +846,9 @@ connectivity pass over a side-graph, plus an emergent runtime consequence — ne
 
 ---
 
-## Epic 8 — The Acoustic Domain & Micing — 🚧 **In progress** (8.1 planned; 8.2 coarse)
+## Epic 8 — The Acoustic Domain & Micing — 🚧 **In progress** (8.1 planned; 8.2, 8.3 coarse)
 
-**Progress:** Story 8.1 🚧 **In progress** (planned to Task level); Story 8.2 sketched. This Epic activates
+**Progress:** Story 8.1 🚧 **In progress** (planned to Task level); Stories 8.2 and 8.3 sketched. This Epic activates
 the **"air link" seam** both microphones' docs have long anticipated ("a real acoustic path… with a
 pressure↔volts transduction seam at each end; until then the sine is the seam"). It adds a fourth signal
 carrier — **acoustic sound pressure** — so that an instrument is a *source you mic*, not a line-out: the
@@ -978,4 +978,25 @@ watch the front-end gain-staging emerge — a whisper buried near the noise floo
 preamp until the PAD is engaged, and a dynamic mic needing markedly more gain than a condenser on the same
 source. Deferred (record, don't build): distance/inverse-square attenuation, propagation delay, polar response,
 and proximity/placement-based pickup.
+
+### Story 8.3 — Speakers as acoustic sources & acoustic feedback
+
+*Coarse sketch (elaborate on pickup):* close the loop — let a speaker **radiate sound pressure you can mic**,
+the output-side mirror of the mic. A voltage→acoustic **converter** node (a speaker / guitar cab / room
+monitor) transduces `pressure = drive_volts × sensitivity (Pa/V)`, **distinct** from the voltage-capture
+monitor `Speaker` terminus (which stays in volts, untouched — §5.5's output tap is unchanged). The enabler is
+that the acoustic domain, like digital, can **carry a one-block delay to break a graph cycle**: extend
+`compile`'s delayed-edge auto-break (Story 5.9 — today gated to `Domain::DigitalAudio` at `schedule.rs`'s
+cycle-break filter) to also treat **acoustic** edges as delay-eligible, so a
+`mic → preamp → amp → speaker → air → mic` loop auto-breaks by delaying the **air edge** (the physically-correct
+leg; the `delayed_steps` copy path is already carrier-agnostic, so this is essentially a one-condition change
+plus tests). **Acoustic feedback (howlround / Larsen) then emerges** from the physics + the delayed loop — the
+"ring out the monitors" / gain-before-feedback lesson, not special-cased. A catalog device + web faceplate reuse
+the 8.2 acoustic-cable patching. *Validate:* a `mic → preamp → amp → speaker → mic` patch compiles (auto-broken,
+one block of latency on the air edge); a below-unity loop reproduces the source trailing by one block; pushing
+gain past unity builds toward feedback; and an all-analog+acoustic cycle with **no** delay-eligible edge still
+rejects as `Cycle`. *Deferred (record, don't build):* a **distance→delay-line** and inverse-square attenuation —
+the one-block delay is a cycle-break mechanism (block-size-dependent), **not** a calibrated propagation time, so
+"move the mic closer/farther" pairs with 8.2's deferred distance work; and speaker frequency-response / cabinet
+coloration (flat for now).
   ROI is high here (multi-device digital sync is the heart of the lesson), nil before.
