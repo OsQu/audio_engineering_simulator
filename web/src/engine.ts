@@ -12,12 +12,23 @@ import type { CableType, DeviceDescriptor } from "./catalog";
 import { clampOctave, DEFAULT_VELOCITY, noteForKey, octaveShiftFor } from "./notes";
 import type { Patch } from "./scene";
 
-/** The messages the worklet maps onto SceneEngine, all addressed by device id. */
+/** The messages the worklet maps onto SceneEngine, all addressed by device id. The DAW variants
+ *  (transport / track / feedPlayback) drive a `computer`'s recorder; see {@link TransportState} /
+ *  {@link RecordedMessage} for the readback lanes. */
 export type ControlMessage =
   | { type: "param"; device: string; paramId: number; value: number }
   | { type: "noteOn"; device: string; note: number; velocity: number }
   | { type: "noteOff"; device: string; note: number }
-  | { type: "loadPatch"; patch: Patch };
+  | { type: "loadPatch"; patch: Patch }
+  // --- DAW transport + tracks (a `computer` device) ---
+  | { type: "transport"; device: string; action: "play" | "stop" | "recordOn" | "recordOff" }
+  | { type: "seek"; device: string; pos: number }
+  | { type: "trackInput"; device: string; track: number; lane: number }
+  | { type: "trackArm"; device: string; track: number; armed: boolean }
+  | { type: "trackMonitor"; device: string; track: number; on: boolean }
+  | { type: "trackLevel"; device: string; track: number; level: number }
+  /** Feed a chunk of raw PCM into a track's playback ring, ahead of the playhead (main tops it up). */
+  | { type: "feedPlayback"; device: string; track: number; bytes: Uint8Array };
 
 /** The worklet's ready handshake: engine geometry + group delay + the fetched device & cable catalogs,
  *  plus the initial scene's static per-connection loading loss. */
@@ -68,6 +79,30 @@ export type DeviceDescriptorMessage = {
   deviceDescriptors: Record<string, DeviceDescriptor>;
 };
 
+/** One DAW device's live transport state, posted ~47×/s so the UI can show the playhead + button states. */
+export type TransportState = {
+  device: string;
+  /** Playhead in digital samples (in-sim clock, 128/block while rolling). */
+  playhead: number;
+  rolling: boolean;
+  recording: boolean;
+};
+
+/** Live transport states for every DAW device in the scene, on the readouts cadence. */
+export type TransportsMessage = {
+  type: "transports";
+  states: TransportState[];
+};
+
+/** A chunk of freshly-recorded raw PCM drained from a track's record ring — the host appends it to the
+ *  track's take file (via the OPFS worker). Posted only while a track is capturing. */
+export type RecordedMessage = {
+  type: "recorded";
+  device: string;
+  track: number;
+  bytes: Uint8Array;
+};
+
 /** Handle returned by `startEngine` for host-side controls that sit *outside* the simulation. */
 export interface EngineControl {
   /** Set the monitor (listening) volume: a Web Audio gain after the engine, before the speakers.
@@ -96,6 +131,10 @@ export interface EngineHandlers {
   onLosses?: (losses: (number | null)[]) => void;
   /** Fired when the engine reports updated device descriptors. */
   onDeviceDescriptors?: (deviceDescriptors: Record<string, DeviceDescriptor>) => void;
+  /** Live DAW transport states (~47×/s) — playhead + rolling/recording per DAW device. Optional. */
+  onTransports?: (states: TransportState[]) => void;
+  /** A drained chunk of recorded PCM for a track — the host appends it to the take file. Optional. */
+  onRecorded?: (device: string, track: number, bytes: Uint8Array) => void;
 }
 
 /** Compose the end-to-end latency line from the engine group delay + the browser's measured latency. */
@@ -174,6 +213,11 @@ export async function startEngine(
       handlers.onReadouts?.((d as ReadoutsMessage).readings);
     } else if (d?.type === "losses") {
       handlers.onLosses?.((d as LossesMessage).losses);
+    } else if (d?.type === "transports") {
+      handlers.onTransports?.((d as TransportsMessage).states);
+    } else if (d?.type === "recorded") {
+      const m = d as RecordedMessage;
+      handlers.onRecorded?.(m.device, m.track, m.bytes);
     } else if (d?.type === "error") {
       handlers.onStatus(`worklet error: ${d.message}`);
       console.error("worklet error:", d.message, "\n", d.stack);

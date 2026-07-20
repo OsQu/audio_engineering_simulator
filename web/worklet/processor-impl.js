@@ -20,6 +20,11 @@ const LEVEL_REPORT_EVERY = 8;
 // scalars (each meter node's VU/dBu/dBFS), read from the engine's node→host readout lane.
 const READOUT_REPORT_EVERY = 8;
 
+// Drain each DAW track's recorded-PCM ring to the host ~every 4 quanta (≈11 ms — well within the ring's
+// ~64-block slack, so it never overflows). Bytes flow worklet → main → OPFS worker; the audio thread
+// never touches disk. Transport state (playhead/rolling/recording) rides the readout cadence.
+const RECORD_DRAIN_EVERY = 4;
+
 // The per-instance device descriptors, keyed by scene device id: each device described against *its
 // own* config, so a config-driven face (the computer's usb_sends/usb_returns) reports its actual shape
 // (channels/params/readouts), not the type catalog's default. Recomputed whenever the scene builds or
@@ -81,6 +86,9 @@ class SceneProcessor extends AudioWorkletProcessor {
       this.quanta = 0; // quanta rendered, for the report throttle
       this.levelPeak = 0; // max |sample| since the last level report, for the VU meter
       this.lossesDirty = false; // re-send connection losses after a hot-swap installs the new scene
+      // Device ids of the current scene, for the DAW drain/report loop. A device is a DAW iff its
+      // live `track_count > 0`, so non-DAW devices fall out naturally (no computer-typeId coupling).
+      this.deviceIds = patch.devices.map((dev) => dev.id);
 
       // Live control. The main thread posts generic, device-addressed messages; we forward
       // them onto the engine, which only enqueues (latest-wins target / timestamped event), applied by
@@ -100,9 +108,37 @@ class SceneProcessor extends AudioWorkletProcessor {
           case "noteOff":
             this.engine.note_off(d.device, d.note);
             break;
+          // --- DAW transport + tracks (a `computer` device), off the hot path (enqueue/immediate) ---
+          case "transport":
+            if (d.action === "play") this.engine.transport_play(d.device);
+            else if (d.action === "stop") this.engine.transport_stop(d.device);
+            else if (d.action === "recordOn") this.engine.transport_record_enable(d.device, true);
+            else if (d.action === "recordOff") this.engine.transport_record_enable(d.device, false);
+            break;
+          case "seek":
+            this.engine.transport_seek(d.device, d.pos);
+            break;
+          case "trackInput":
+            this.engine.set_track_input(d.device, d.track, d.lane);
+            break;
+          case "trackArm":
+            this.engine.set_track_armed(d.device, d.track, d.armed);
+            break;
+          case "trackMonitor":
+            this.engine.set_track_monitoring(d.device, d.track, d.on);
+            break;
+          case "trackLevel":
+            this.engine.set_track_level(d.device, d.track, d.level);
+            break;
+          case "feedPlayback":
+            // Push a chunk of playback PCM into the track's ring; the engine consumes it in
+            // render_quantum. Main tops up by playhead occupancy, so a full-ring reject is not expected.
+            this.engine.feed_playback(d.device, d.track, d.bytes);
+            break;
           case "loadPatch":
             try {
               this.engine.load_patch(d.patch); // throws on a bad patch; the live scene keeps running
+              this.deviceIds = d.patch.devices.map((dev) => dev.id); // for the DAW drain/report loop
               // The new scene's connection losses go live at the next render_quantum swap; flag a
               // post-swap re-send so the page's static readouts (cable inspector / levels panel) refresh.
               this.lossesDirty = true;
@@ -184,6 +220,38 @@ class SceneProcessor extends AudioWorkletProcessor {
     // routes each to its panel's meter screen. Survives hot-swaps: the snapshot reads the live scene.
     if (this.quanta % READOUT_REPORT_EVERY === 0) {
       this.port.postMessage({ type: "readouts", readings: this.engine.readouts() });
+    }
+
+    // DAW record drain: hand each capturing track's freshly-recorded PCM to the host to append to its
+    // take file. The record rings only hold bytes while a track is capturing, so idle tracks (and
+    // non-DAW devices, track_count 0) drain nothing. Bytes are transferred, not copied.
+    if (this.quanta % RECORD_DRAIN_EVERY === 0) {
+      for (const device of this.deviceIds) {
+        const tracks = this.engine.track_count(device);
+        for (let t = 0; t < tracks; t++) {
+          const bytes = this.engine.drain_record(device, t);
+          if (bytes.length > 0) {
+            this.port.postMessage({ type: "recorded", device, track: t, bytes }, [bytes.buffer]);
+          }
+        }
+      }
+    }
+
+    // DAW transport report: playhead + rolling/recording per DAW device, on the readout cadence, so the
+    // UI can animate the playhead and light the transport buttons.
+    if (this.quanta % READOUT_REPORT_EVERY === 0) {
+      const states = [];
+      for (const device of this.deviceIds) {
+        if (this.engine.track_count(device) > 0) {
+          states.push({
+            device,
+            playhead: this.engine.playhead(device),
+            rolling: this.engine.is_rolling(device),
+            recording: this.engine.is_recording(device),
+          });
+        }
+      }
+      if (states.length > 0) this.port.postMessage({ type: "transports", states });
     }
 
     // A hot-swap just installed a new scene (render_quantum above did the swap): re-send its static
