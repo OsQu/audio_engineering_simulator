@@ -13,6 +13,7 @@
   import type { DeviceUiProps } from "../device-ui";
   import Reading from "./Reading.svelte";
   import RoutingGrid from "./RoutingGrid.svelte";
+  import Waveform from "./Waveform.svelte";
 
   let props: DeviceUiProps = $props();
   setDeviceHandle(makeHandle(untrack(() => props)));
@@ -171,6 +172,11 @@
 
             {#if trackPeaks[t] !== undefined}
               <Reading id={trackPeaks[t]} />
+            {/if}
+
+            {#if daw.waveform(t)}
+              {@const peaks = daw.waveform(t)}
+              {#if peaks}<Waveform {peaks} />{/if}
             {/if}
           </div>
         {/each}

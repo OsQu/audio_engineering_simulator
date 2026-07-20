@@ -103,6 +103,7 @@
     get sends() {
       return session.sendsOf(device);
     },
+    waveform: (t) => session.waveformOf(device, t),
     play: () => session.play(device),
     stop: () => session.stop(device),
     setRecordEnabled: (on) => session.setRecordEnabled(device, on),

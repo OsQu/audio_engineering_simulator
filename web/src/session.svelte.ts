@@ -37,6 +37,7 @@ import {
   type TrackUi,
 } from "./scene-store";
 import { StorageClient } from "./storage-client";
+import { peaksFromPcm } from "./waveform";
 
 // Monitor (listening) volume — a host-side output gain *outside* the simulation, persisted on its own
 // (a per-listener setting, not scene/simulation data). Defaults low so it doesn't blast.
@@ -62,6 +63,9 @@ export interface MidiLogEntry {
 
 /** How many recent note events the MIDI monitor keeps (newest-first, older ones drop off). */
 const MIDI_LOG_MAX = 32;
+
+/** Buckets in a take's waveform thumbnail — enough resolution for a channel-strip-width display. */
+const WAVEFORM_BUCKETS = 120;
 
 export class SceneSession {
   // --- Engine lifecycle + status ------------------------------------------------------------------
@@ -97,6 +101,10 @@ export class SceneSession {
   // Live transport state keyed by DAW device id (playhead + rolling/recording), updated ~47×/s from the
   // worklet's `transports` message. The mixer surface reads it to animate the playhead + light buttons.
   transports = $state<Record<string, TransportState>>({});
+  // Per-track waveform thumbnails (`${device}:${track}` → peak magnitudes), for the mixer's take display.
+  // Refreshed after a take finishes recording and when a scene loads. Display-only — a filesystem read
+  // the host draws, not audio.
+  waveforms = $state<Record<string, number[]>>({});
   // The OPFS storage worker client + the record/playback orchestrator. Created on engine `ready`
   // (the orchestrator needs the worklet `send`); null before then.
   #storage: StorageClient | null = null;
@@ -239,6 +247,30 @@ export class SceneSession {
     return this.scene.ui.tracks?.[device] ?? [];
   }
 
+  /** A track's waveform thumbnail (peak magnitudes), or undefined if it has no take. Display-only. */
+  waveformOf(device: string, track: number): number[] | undefined {
+    return this.waveforms[`${device}:${track}`];
+  }
+
+  /** Reload a track's take from storage and recompute its waveform thumbnail (or drop it if the take is
+   *  gone). Off the hot path — called after a take finishes recording and when a scene loads. */
+  async #refreshWaveform(device: string, track: number): Promise<void> {
+    if (!this.#storage) return;
+    const pcm = await this.#storage.load(device, track);
+    const key = `${device}:${track}`;
+    if (pcm.byteLength === 0) delete this.waveforms[key];
+    else this.waveforms[key] = peaksFromPcm(pcm, WAVEFORM_BUCKETS);
+  }
+
+  /** Refresh every persisted track's waveform (on scene load / engine ready), so existing takes show. */
+  #refreshAllWaveforms(): void {
+    const all = this.scene.ui.tracks;
+    if (!all) return;
+    for (const [device, tracks] of Object.entries(all)) {
+      for (let i = 0; i < tracks.length; i++) void this.#refreshWaveform(device, i);
+    }
+  }
+
   /** The USB **send** lane count a computer exposes (its default-input clamp), from its descriptor. */
   sendsOf(device: string): number {
     const port = this.descriptorOf(device)?.ports.find(
@@ -343,6 +375,7 @@ export class SceneSession {
     this.paramValues = params.seedParamValues(this.scene, this.catalog);
     this.send?.({ type: "loadPatch", patch: this.plainPatch() }); // hot-swap the engine to the saved scene
     this.applyTrackState();
+    this.#refreshAllWaveforms();
     this.status = "scene loaded";
     return true;
   }
@@ -406,7 +439,10 @@ export class SceneSession {
             this.#daw?.recorded(device, track, bytes);
           },
           onRecordStopped: (device, track, header) => {
-            void this.#daw?.recordStopped(device, track, header);
+            // Finalize the take's header, then recompute its waveform thumbnail from the stored file.
+            void this.#daw
+              ?.recordStopped(device, track, header)
+              .then(() => this.#refreshWaveform(device, track));
           },
           onReady: (r: ReadyMessage, sendFn) => {
             this.catalog = r.catalog;
@@ -421,6 +457,7 @@ export class SceneSession {
             this.paramValues = params.seedParamValues(this.scene, r.catalog);
             params.pushParams(sendFn, this.scene, r.catalog, this.paramValues);
             this.applyTrackState(); // match the fresh recorder to the scene's track model
+            this.#refreshAllWaveforms(); // show any takes already on disk
             onReady(r, sendFn);
           },
         },

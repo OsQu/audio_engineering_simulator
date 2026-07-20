@@ -41,6 +41,8 @@ export interface DawUi {
   readonly tracks: TrackUi[];
   /** The USB send-lane count — the range of a track's input selector. */
   readonly sends: number;
+  /** A track's waveform thumbnail (peak magnitudes), or undefined if it has no take. Display-only. */
+  waveform(track: number): number[] | undefined;
   play(): void;
   stop(): void;
   setRecordEnabled(on: boolean): void;
