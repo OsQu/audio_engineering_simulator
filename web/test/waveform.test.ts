@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { downsamplePeaks, pcmToFloat32, peaksFromPcm } from "../src/waveform";
+import { downsamplePeaks, pcmToFloat32, peaksFromPcm, takeWaveform } from "../src/waveform";
 
 function pcm(...values: number[]): Uint8Array {
   return new Uint8Array(new Float32Array(values).buffer.slice(0));
@@ -50,5 +50,11 @@ describe("waveform", () => {
   it("peaksFromPcm reduces a take's raw PCM to a thumbnail", () => {
     const peaks = peaksFromPcm(pcm(0.1, -0.2, 0.9, 0.05), 2);
     expect(peaks).toEqual([Math.fround(0.2), Math.fround(0.9)]);
+  });
+
+  it("takeWaveform carries the sample length for the playhead cursor", () => {
+    const wf = takeWaveform(pcm(0.1, -0.2, 0.9, 0.05), 2);
+    expect(wf.peaks).toEqual([Math.fround(0.2), Math.fround(0.9)]);
+    expect(wf.samples).toBe(4); // 16 bytes ÷ 4
   });
 });

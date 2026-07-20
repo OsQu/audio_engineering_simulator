@@ -175,8 +175,15 @@
             {/if}
 
             {#if daw.waveform(t)}
-              {@const peaks = daw.waveform(t)}
-              {#if peaks}<Waveform {peaks} />{/if}
+              {@const wf = daw.waveform(t)}
+              {#if wf}
+                <Waveform
+                  peaks={wf.peaks}
+                  position={transport && wf.samples > 0
+                    ? (transport.playhead ?? 0) / wf.samples
+                    : undefined}
+                />
+              {/if}
             {/if}
           </div>
         {/each}

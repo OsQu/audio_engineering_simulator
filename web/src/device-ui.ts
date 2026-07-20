@@ -19,6 +19,7 @@ import type {
 } from "./catalog";
 import type { TransportState } from "./engine";
 import type { TrackUi } from "./scene-store";
+import type { TakeWaveform } from "./waveform";
 import Computer from "./widgets/Computer.svelte";
 import ComputerMixer from "./widgets/ComputerMixer.svelte";
 import Console from "./widgets/Console.svelte";
@@ -41,8 +42,8 @@ export interface DawUi {
   readonly tracks: TrackUi[];
   /** The USB send-lane count — the range of a track's input selector. */
   readonly sends: number;
-  /** A track's waveform thumbnail (peak magnitudes), or undefined if it has no take. Display-only. */
-  waveform(track: number): number[] | undefined;
+  /** A track's waveform (thumbnail + sample length), or undefined if it has no take. Display-only. */
+  waveform(track: number): TakeWaveform | undefined;
   play(): void;
   stop(): void;
   setRecordEnabled(on: boolean): void;

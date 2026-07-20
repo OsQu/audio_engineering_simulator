@@ -37,3 +37,16 @@ export function downsamplePeaks(samples: Float32Array, buckets: number): number[
 export function peaksFromPcm(pcm: Uint8Array, buckets: number): number[] {
   return downsamplePeaks(pcmToFloat32(pcm), buckets);
 }
+
+/** A take's drawable waveform: its peak thumbnail plus its length in **samples** (frames), so the mixer
+ *  can place the transport playhead cursor at `playhead / samples` across the thumbnail. */
+export interface TakeWaveform {
+  peaks: number[];
+  /** The take's length in mono samples (`pcm bytes ÷ 4`). */
+  samples: number;
+}
+
+/** Reduce a take's raw PCM to a {@link TakeWaveform} (thumbnail + sample length) for `buckets` buckets. */
+export function takeWaveform(pcm: Uint8Array, buckets: number): TakeWaveform {
+  return { peaks: peaksFromPcm(pcm, buckets), samples: pcm.byteLength >> 2 };
+}

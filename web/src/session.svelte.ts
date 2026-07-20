@@ -37,7 +37,7 @@ import {
   type TrackUi,
 } from "./scene-store";
 import { StorageClient } from "./storage-client";
-import { peaksFromPcm } from "./waveform";
+import { type TakeWaveform, takeWaveform } from "./waveform";
 
 // Monitor (listening) volume — a host-side output gain *outside* the simulation, persisted on its own
 // (a per-listener setting, not scene/simulation data). Defaults low so it doesn't blast.
@@ -101,10 +101,10 @@ export class SceneSession {
   // Live transport state keyed by DAW device id (playhead + rolling/recording), updated ~47×/s from the
   // worklet's `transports` message. The mixer surface reads it to animate the playhead + light buttons.
   transports = $state<Record<string, TransportState>>({});
-  // Per-track waveform thumbnails (`${device}:${track}` → peak magnitudes), for the mixer's take display.
-  // Refreshed after a take finishes recording and when a scene loads. Display-only — a filesystem read
-  // the host draws, not audio.
-  waveforms = $state<Record<string, number[]>>({});
+  // Per-track waveform thumbnails (`${device}:${track}` → peaks + sample length), for the mixer's take
+  // display + its playhead cursor. Refreshed after a take finishes recording and when a scene loads.
+  // Display-only — a filesystem read the host draws, not audio.
+  waveforms = $state<Record<string, TakeWaveform>>({});
   // The OPFS storage worker client + the record/playback orchestrator. Created on engine `ready`
   // (the orchestrator needs the worklet `send`); null before then.
   #storage: StorageClient | null = null;
@@ -247,8 +247,8 @@ export class SceneSession {
     return this.scene.ui.tracks?.[device] ?? [];
   }
 
-  /** A track's waveform thumbnail (peak magnitudes), or undefined if it has no take. Display-only. */
-  waveformOf(device: string, track: number): number[] | undefined {
+  /** A track's waveform (thumbnail + sample length), or undefined if it has no take. Display-only. */
+  waveformOf(device: string, track: number): TakeWaveform | undefined {
     return this.waveforms[`${device}:${track}`];
   }
 
@@ -259,7 +259,7 @@ export class SceneSession {
     const pcm = await this.#storage.load(device, track);
     const key = `${device}:${track}`;
     if (pcm.byteLength === 0) delete this.waveforms[key];
-    else this.waveforms[key] = peaksFromPcm(pcm, WAVEFORM_BUCKETS);
+    else this.waveforms[key] = takeWaveform(pcm, WAVEFORM_BUCKETS);
   }
 
   /** Refresh every persisted track's waveform (on scene load / engine ready), so existing takes show. */
@@ -341,9 +341,12 @@ export class SceneSession {
     void this.#daw?.startPlayback(device, tracks, playhead);
   }
 
-  /** Stop the transport (playhead holds) and drop playback streams. */
+  /** Stop the transport, rewind the playhead to the start, and drop playback streams. (The engine's
+   *  `stop` only halts — holding the playhead; the UI convention is stop = return to zero, so we also
+   *  seek. Rewind-while-rolling stays available as its own control.) */
   stop(device: string): void {
     this.send?.({ type: "transport", device, action: "stop" });
+    this.send?.({ type: "seek", device, pos: 0 });
     this.#daw?.stopPlayback();
   }
 
