@@ -286,6 +286,12 @@ pub fn add<N: Node + 'static>(&mut self, node: N) -> NodeId {
   with a shorter lifetime; it **owns all its data**. Our nodes hold owned fields (`Vec`,
   arrays, `f32`), so they qualify, and a boxed node can live as long as the schedule with no
   dangling. (A struct holding a `&'a T` would *not* be `'static`.)
+- **Returning `&mut (dyn Node + 'static)`** (e.g. `Schedule::node_mut`, the DAW-seam escape hatch,
+  Story 5.11): the **object** lifetime must be written `'static`, *not* the elided `+ '_`. The stored
+  value is `Box<dyn Node + 'static>`, and **`&mut T` is invariant in `T`** — so `&mut (dyn Node +
+  'static)` can't shrink to a shorter `&mut (dyn Node + 'a)` (a *shared* `&` is covariant and would
+  allow it; `&mut` won't). Spell the object lifetime `'static`; the *reference* lifetime still elides to
+  the `&mut self` borrow: `fn node_mut(&mut self, …) -> Option<&mut (dyn Node + 'static)>`.
 - **Cost:** one pointer indirection + a non-inlinable call **per `process` call** — i.e. per
   *block*, not per sample → negligible, bought for the freedom of arbitrary graphs.
 - **Object safety:** only traits whose methods are dispatchable on a `dyn` value can be trait

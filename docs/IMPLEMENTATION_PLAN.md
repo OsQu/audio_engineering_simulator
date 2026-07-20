@@ -585,7 +585,7 @@ _Tasks to be elaborated when we reach this Epic._
 - **Story 5.11** — **Computer as a minimal DAW**: the computer grows arbitrary mono tracks that arm to
   USB sends, record to WAV files on disk (OPFS), and play back to USB returns through an in-sim routing
   matrix + simple level mixer, with a transport (play/stop/record) clocked by the **in-simulation digital
-  domain**. Host is dumb byte storage; the sim owns all audio. 🚧 **In progress** (see the Story block below).
+  domain**. Host is dumb byte storage; the sim owns all audio. ✅ **Done** (see the Story block below).
 
 ### Story 5.7 — Per-device faceplate UIs — ✅ **Complete**
 
@@ -1272,7 +1272,7 @@ every channel count derives from the interface's **published** port face (no par
 anywhere); the full Rust gate (`cargo fmt --check && cargo lint && cargo test && cargo wasm && cargo
 docs`) plus web `check`/`typecheck`/`test` pass; verified in-browser.
 
-### Story 5.11 — Computer as a minimal DAW — 🚧 **Implemented; overdub live-check pending**
+### Story 5.11 — Computer as a minimal DAW — ✅ **Done** (Validate green, incl. overdub, in-browser)
 
 _Progress:_ **All tasks 5.11.1–5.11.6 implemented and green** end to end. The Rust side (5.11.1–5.11.5):
 the file-byte seam + WAV codec, the digital-domain transport, the `MultitrackRecorder` channel-strip
@@ -1281,7 +1281,7 @@ OPFS storage worker (sync access handles), the worklet record/playback loop, the
 track model (`SCHEMA_VERSION` 18), and the DAW **mixer** focus surface (transport + track strips +
 routing + waveform with a scrolling playhead). Full gate green — **Rust** (engine 364 · devices 61 ·
 wasm-bindings 13 · wasm · docs) and **web** (Biome · typecheck · Vitest 268). **In-browser: record → play
-verified (audible); the overdub pressure test is the one remaining live check.** The mixer topology
+→ overdub all verified (audible)** — the Validate gate is met. The mixer topology
 evolved twice mid-story (one-in-one-out → `(N+T)→M` crossbar → **channel-strip** `tracks → Matrix(T→M)`),
 now final (see the headline note).
 
