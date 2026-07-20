@@ -9,8 +9,8 @@ we're modeling and why*. Use it to skip re-explaining things already covered.
 > open/short extremes, global-vs-local, feedback/algebraic loops, buffering & pushback, and
 > ground loops), cables, filters (one-pole & 2nd-order), poles, filter implementation,
 > distortion, rail clipping, sampling/decimation/aliasing, windowed-sinc FIR, quantization &
-> dither, group delay/latency, round-trip latency (feedback via a one-block delay), and phantom
-> power / the balanced front-end — through Epic 5.
+> dither, group delay/latency, round-trip latency (feedback via a one-block delay), phantom
+> power / the balanced front-end, and thermal/preamp noise (EIN) — through Epic 5.
 
 ## Contents
 1. [The voltage-native model](#1-the-voltage-native-model)
@@ -30,6 +30,7 @@ we're modeling and why*. Use it to skip re-explaining things already covered.
 15. [Dither](#15-dither)
 16. [Group delay & latency](#16-group-delay--latency)
 17. [Phantom power & the balanced front-end](#17-phantom-power--the-balanced-front-end)
+18. [Thermal noise, EIN & why gain hisses](#18-thermal-noise-ein--why-gain-hisses)
 
 ---
 
@@ -802,3 +803,54 @@ clipping. This mirrors the trade the engine already makes on the audio axis (div
 compile, per-sample multiply at runtime), applied to the DC axis. A port *declaring* "48 V
 Thévenin behind 6.8 kΩ when engaged" is not a label on the signal — it's a circuit-topology
 declaration, the same class of fact as `InputZ`/`OutputZ`.
+
+## 18. Thermal noise, EIN & why gain hisses
+
+**Everything with resistance hisses.** Charge carriers in any resistor jiggle with heat, so a
+resistor `R` at temperature `T` produces a tiny random voltage across its own terminals even with no
+signal — **Johnson–Nyquist (thermal) noise**. It is white (flat across audio) and its open-circuit
+RMS over a bandwidth `B` is
+
+```
+   e = √(4 · k_B · T · R · B)          k_B = 1.38e-23 J/K   (Boltzmann)
+```
+
+Numbers worth memorizing: a **150 Ω** source (the classic mic output Z) at room temperature (293 K)
+over a 20 kHz band gives `e = √(4·1.38e-23·293·150·20000) ≈ 0.22 µV` ≈ **−131 dBu**. That is a
+*floor set by physics*: no amplifier, however perfect, can present less noise than the thermal noise
+of the resistance at its input. Two levers move it — colder or lower-R is quieter — and one
+consequence matters in the studio: **a higher source impedance (or a long cable's series R) hisses
+more.** (In our model today this thermal part is not yet emergent — see `IMPROVEMENTS.md`; §18 is the
+physics it will grow into.)
+
+**EIN — the preamp's whole floor, referred to its input.** A real preamp adds its own noise (its
+input transistors) on top of the source's thermal noise. Rather than quote that at the output (where
+it depends on the gain), datasheets refer *all* of it back to the input as **EIN** (Equivalent Input
+Noise): the imaginary input voltage that, amplified by the gain, would produce the observed output
+hiss. A Scarlett is ≈ **−128 dBu EIN** — about 3 dB above the 150 Ω thermal floor, so its **noise
+figure** (how far a device sits above the ideal floor) is ~3 dB.
+
+**Why cranking the gain surfaces hiss.** The noise is at the *input*, so the gain multiplies it right
+along with the signal: `output hiss = gain · EIN`. The signal-to-noise ratio is therefore roughly
+*fixed* by the EIN — turning the knob does **not** improve it — but the **absolute** hiss at the
+output climbs with the gain. A quiet source forces you to use more gain to reach a working level, so
+you *hear* more hiss. This is why the low-output **dynamic mic** (≈ 2 mV) is audibly hissier than a
+hot **condenser** (≈ 10 mV): it needs ~14 dB more gain, so ~14 dB more hiss at a matched monitoring
+level. Same preamp, same EIN — the difference is entirely the gain the source demands.
+
+**How the engine models it.** As a `NoiseDensity` (V/√Hz, the rate-independent datasheet form; §the
+noise-density note), injected on the differential signal **before the gain** from the seeded RNG (so
+it is deterministic and reproducible). Two placement facts are the physics, not style:
+
+- **Before the gain** ⇒ it scales with the gain (the whole phenomenon). The downstream AD's
+  anti-alias filter then band-limits the wideband analog-rate noise to the audio band `B`, so the
+  in-band level is `D·√B` and the oversampling SNR benefit falls out for free.
+- **Differential, not common-mode.** Unlike cable pickup/hum (§3, coupled equally onto both legs and
+  so *rejected* by a balanced receiver), self-noise is generated inside the amp and rides the
+  difference — a balanced line does **not** cancel it. That is why a perfectly balanced, EMI-free run
+  still hisses when you crank the gain.
+
+And two knobs behave the way the hardware does: the **PAD** attenuates the signal but sits *before*
+the noise injection, so it can't quiet the amp's own noise — engaging it *worsens* SNR (a pad buys
+headroom, not silence). The **power gate** is last, so an off preamp is genuinely silent, hiss and
+all.

@@ -22,6 +22,20 @@
 - ~**Make the keybed a composable widget, not an `isPlayable` heuristic.** Today App appends the on-screen keybed to a focus view whenever `isPlayable(desc)` — i.e. the device has *any* events-domain input (`App.svelte` ~1051 + the `keyboardTarget` derivation). That conflates "has a MIDI input" with "is a playable instrument": the 8i6's **MIDI-In is a thru** (MIDI In → `EventThru` → MIDI Out), so focusing it (since 5.7.6) wrongly shows a keybed whose notes route to MIDI-Out and make no sound. The right fix is to make `<Keybed>` a shared widget a focus surface **composes when it wants one** (the 5.7.3 registry ethos — no App-level flag), so the surface owns whether it has a keybed. Entails: (1) move note plumbing onto the `DeviceHandle` (`playNote`/`heldNotes`/`eventsInputOpen`); (2) make `<Keybed>` self-contained — attach/detach QWERTY capture on mount/unmount, register its device as the active note-sink so global Web-MIDI routes to *it* (not to `keyboardTarget`), retiring the `isPlayable` heuristic from note routing too; (3) give a surface a way to know it's rendering in focus (a `focus` prop on `DeviceUiProps`, analogous to `flipped`) since the synth's focus surface *is* its in-world faceplate and must not show a keybed in the rack. Consequence to accept: focusing the 8i6 will no longer auto-inject external MIDI into its thru (drive the thru from a patched controller instead). Moderate UI-architecture refactor; surfaced during Story 5.7 — tackle after it.~ DONE
 
 # TODO
+- **Preamp self-noise: promote lumped EIN → emergent thermal + amp excess (Option B).** The
+  `MicPreamp` now injects an **input-referred noise floor** (EIN) pre-gain from its seeded stream
+  (`crates/engine/src/node/mic_preamp.rs`, `with_noise`), wired on the 8i6 as a single lumped
+  `PREAMP_EIN_V_PER_ROOT_HZ ≈ 2.2 nV/√Hz` (≈ −128 dBu). This ships the "crank the gain → hiss"
+  phenomenon (Option A). The fidelity follow-up: split the floor into two physical parts —
+  (1) **Johnson–Nyquist thermal noise** `e = √(4·k_B·T·R)` that *emerges* from the source resistance
+  the input actually sees (Zout of the source + cable R, in parallel with the phantom feed / Zin),
+  delivered to the node at compile like `resolve_phantom` already delivers the phantom operating point;
+  and (2) the amp's **excess noise** (noise figure) added **in quadrature**. Injection points differ:
+  source thermal noise goes **before** the PAD (the pad attenuates it with the signal), the amp's own
+  noise **after** (as today). This earns the "higher-Z source / long cable is hissier" and
+  "theoretical −131 dBu floor" lessons and fits the emerge-from-physics ethos, whereas the lumped EIN
+  is a fixed number. Also consider extending the same mechanism to the standalone `GainStage`
+  (`node/gain.rs`) via a shared helper. Deferred depth: 1/f flicker noise and A-weighting curves.
 - **Bump `SCHEMA_VERSION` for duplex when it bites (Story 5.9 open decision (i)).** Duplex USB links did
   **not** bump `SCHEMA_VERSION`, so a pre-duplex saved scene with a one-way USB link loads verbatim →
   silent monitoring (the return leg is missing). Left as-is because a one-way USB is a *legal* patch; bump

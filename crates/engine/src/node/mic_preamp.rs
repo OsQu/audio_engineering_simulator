@@ -5,8 +5,10 @@
 use super::Node;
 use crate::dsp::Biquad;
 use crate::electrical::{InputZ, Ohms, OutputZ, PhantomSupply};
+use crate::noise::NoiseDensity;
 use crate::param::{ParamDecl, ParamId, Params};
 use crate::port::{InputPort, OutputPort};
+use crate::rng::Rng;
 use crate::signal::{AnalogRate, Lane, SampleRate, Volts};
 
 /// A preamp stage with a **balanced front-end**:
@@ -56,12 +58,44 @@ use crate::signal::{AnalogRate, Lane, SampleRate, Volts};
 /// solve itself lives in `compile`; the declared `InputZ` already lumps the feed network's AC
 /// loading, as `InputZ` lumps everything.
 ///
+/// # Self-noise (input-referred EIN)
+/// A real preamp is not silent: its own electronics add a noise floor, quoted on a datasheet as
+/// **EIN** (equivalent input noise) — the input-referred white-noise density that, amplified by the
+/// gain, produces the observed output hiss. It is set with [`with_noise`](Self::with_noise) as a
+/// [`NoiseDensity`] (V/√Hz), off by default so an unconfigured preamp stays ideal.
+///
+/// The noise is injected on the differential signal **after the PAD but before the gain**, drawn from
+/// the seeded per-node stream ([`Node::seed`]) so a run is reproducible. Two consequences fall out of
+/// that placement, both physical rather than special-cased:
+/// - **It scales with the gain.** Output hiss `= gain · σ` (σ = the density's per-sample RMS), so
+///   cranking the gain for a quiet source raises the audible floor — the "low-output mic hisses"
+///   lesson. The downstream AD's anti-alias filter then band-limits it to the audio band for free
+///   (the [`NoiseDensity`] design point), so the oversampling SNR benefit needs no remodelling.
+/// - **The PAD does not attenuate it.** PAD sits *before* the injection, so engaging it drops the
+///   signal (and any source noise) but not the amp's own noise — the SNR gets *worse*, which is why a
+///   pad buys headroom, not quiet. It is differential, not common-mode like cable
+///   [`pickup`](crate::electrical::Cable::with_pickup), so a balanced line does **not** reject it.
+///
+/// Today the density is a single **lumped EIN** figure (the amp's whole floor as one number). The
+/// deferred fidelity step is to let the thermal (Johnson–Nyquist) part *emerge* from the
+/// compile-solved source resistance seen at the input, with the amp's excess added in quadrature —
+/// see `docs/IMPROVEMENTS.md`.
+///
 /// One (balanced, two-lane) input; one output.
 pub struct MicPreamp {
     gain: f32,
     rail: f32,
     /// The engaged-PAD linear factor, `10^(PAD_DB/20)` — precomputed at construction.
     pad_factor: f32,
+    /// The input-referred noise floor (EIN) as a spectral density; [`NoiseDensity::ZERO`] (ideal)
+    /// unless set via [`with_noise`](Self::with_noise). Rate-independent, so it survives a recompile.
+    ein: NoiseDensity,
+    /// The per-sample noise RMS `σ = D·√(fs/2)`, baked from [`ein`](Self::ein) at
+    /// [`prepare`](Node::prepare); `0.0` until prepared (noise inert), like [`air`](Self::air).
+    noise_sigma: f32,
+    /// The seeded noise stream, installed at [`seed`](Node::seed). `None` ⇒ no noise drawn (an
+    /// unseeded or ideal preamp).
+    noise: Option<Rng>,
     /// Whether the +48 V phantom feed is switched on — part of the declared DC topology
     /// (see [`with_phantom`](Self::with_phantom)), read by `compile`, never by `process`.
     phantom_engaged: bool,
@@ -141,6 +175,9 @@ impl MicPreamp {
             gain,
             rail,
             pad_factor: 10.0_f32.powf(Self::PAD_DB / 20.0),
+            ein: NoiseDensity::ZERO,
+            noise_sigma: 0.0,
+            noise: None,
             phantom_engaged: false,
             air: None,
             param_decls: [
@@ -186,6 +223,16 @@ impl MicPreamp {
         self.phantom_engaged = engaged;
         self
     }
+
+    /// The same preamp with an input-referred noise floor of `ein` (its EIN density) — the amp's
+    /// self-noise. Off by default from [`new`](Self::new) ([`NoiseDensity::ZERO`], an ideal preamp).
+    /// The floor only sounds once the node is [`prepare`](Node::prepare)d (σ baked) and
+    /// [`seed`](Node::seed)ed (a stream to draw from). See the self-noise doc on the crate type.
+    #[must_use]
+    pub fn with_noise(mut self, ein: NoiseDensity) -> Self {
+        self.ein = ein;
+        self
+    }
 }
 
 impl Node for MicPreamp {
@@ -213,6 +260,12 @@ impl Node for MicPreamp {
         })
     }
 
+    fn seed(&mut self, rng: Rng) {
+        // Install the noise stream so the self-noise is reproducible for a given compile seed. Ideal
+        // preamps (EIN zero) still receive one; they just never draw from it (σ = 0).
+        self.noise = Some(rng);
+    }
+
     fn prepare(&mut self, rate: AnalogRate) {
         // Design the AIR shelf at the *analog* rate (the shelf lives in the analog domain), off the
         // hot path. `Biquad` designs against a `SampleRate`, so express the analog rate as one.
@@ -222,6 +275,9 @@ impl Node for MicPreamp {
             Self::AIR_Q,
             Self::AIR_GAIN_DB,
         ));
+        // Bake the input-referred noise floor's per-sample RMS at this rate (rate-independent in
+        // band; the AD later trims it to the audio bandwidth). Zero density ⇒ zero σ ⇒ inert.
+        self.noise_sigma = self.ein.per_sample_sigma(rate);
     }
 
     fn process(&mut self, params: &Params, inputs: &[Lane], outputs: &mut [Lane]) {
@@ -230,11 +286,23 @@ impl Node for MicPreamp {
         // tests). Chain: difference (V+ − V−, FIRST — see the front-end doc: rejection must precede
         // the clamp) → PAD (pre-gain) → gain → rail clip → AIR crossfade → power gate (last, like
         // `GainStage`, so an off preamp passes nothing).
-        let (fallback, rail, pad_factor) = (self.gain, self.rail, self.pad_factor);
+        let (fallback, rail, pad_factor, sigma) =
+            (self.gain, self.rail, self.pad_factor, self.noise_sigma);
         // One balanced input port = two conductor lanes: [0] = V+, [1] = V−.
         let vp = inputs[0].voltage().as_slice();
         let vn = inputs[1].voltage().as_slice();
         let out = outputs[0].voltage_mut().as_mut_slice();
+        // The self-noise stream — a disjoint field from `air`, so both can be borrowed across the
+        // match. `ein(rng)` draws one input-referred Gaussian sample scaled to σ (nothing when the
+        // floor is zero, so an ideal preamp never touches its stream).
+        let noise = &mut self.noise;
+        let ein = |rng: &mut Option<Rng>| {
+            if sigma != 0.0 {
+                rng.as_mut().map_or(0.0, |r| r.next_gaussian() * sigma)
+            } else {
+                0.0
+            }
+        };
         match &mut self.air {
             Some(shelf) => {
                 for (i, (o, (&p, &n))) in out.iter_mut().zip(vp.iter().zip(vn)).enumerate() {
@@ -247,21 +315,25 @@ impl Node for MicPreamp {
                     let v = p - n;
                     // PAD interpolates the linear attenuation: 1.0 (off) → pad_factor (engaged).
                     let padded = v * (1.0 + pad * (pad_factor - 1.0));
-                    let amped = (padded * gain).clamp(-rail, rail);
+                    // Amp self-noise: input-referred, added *after* the PAD (so the PAD can't quiet
+                    // it) and *before* the gain (so it's amplified with the signal). Differential —
+                    // no common-mode cancellation.
+                    let amped = ((padded + ein(&mut *noise)) * gain).clamp(-rail, rail);
                     // AIR: always step the shelf (state stays warm), crossfade dry → shelved.
                     let shelved = shelf.step(f64::from(amped)) as f32;
                     *o = (amped + air * (shelved - amped)) * powered;
                 }
             }
             None => {
-                // Unprepared (no rate yet): no shelf. `compile` always prepares before `process`, so a
-                // compiled schedule never hits this arm.
+                // Unprepared (no rate yet): no shelf, and σ is still 0 (baked at prepare), so the
+                // noise is inert here too. `compile` always prepares before `process`, so a compiled
+                // schedule never hits this arm.
                 for (i, (o, (&p, &n))) in out.iter_mut().zip(vp.iter().zip(vn)).enumerate() {
                     let gain = params.value_at_or(Self::GAIN, i, fallback);
                     let pad = params.value_at_or(Self::PAD, i, 0.0);
                     let powered = params.value_at_or(Self::POWERED, i, 1.0);
                     let padded = (p - n) * (1.0 + pad * (pad_factor - 1.0));
-                    *o = (padded * gain).clamp(-rail, rail) * powered;
+                    *o = ((padded + ein(&mut *noise)) * gain).clamp(-rail, rail) * powered;
                 }
             }
         }
@@ -307,6 +379,23 @@ mod tests {
             Smoother::new(pad, 0.0, 1.0, 1.0),
             Smoother::new(air, 0.0, 1.0, 1.0),
         ]
+    }
+
+    /// A preamp with self-noise `d` and a huge rail (so the tiny noise never clips), balanced 10 kΩ in.
+    fn noisy(gain: f32, d: NoiseDensity) -> MicPreamp {
+        MicPreamp::new(
+            gain,
+            Volts::new(1000.0),
+            InputZ::balanced(Ohms::new(10_000.0)),
+            Ohms::new(150.0),
+        )
+        .with_noise(d)
+    }
+
+    /// Root-mean-square of a sample slice, accumulated in `f64`.
+    fn rms(xs: &[f32]) -> f32 {
+        let sum_sq: f64 = xs.iter().map(|&x| f64::from(x) * f64::from(x)).sum();
+        (sum_sq / xs.len() as f64).sqrt() as f32
     }
 
     #[test]
@@ -530,5 +619,135 @@ mod tests {
             .expect("GAIN decl");
         assert_relative_eq!(gain.min, MicPreamp::MIN_GAIN, epsilon = 1e-6);
         assert_relative_eq!(gain.max, MicPreamp::MAX_GAIN, epsilon = 1e-6);
+    }
+
+    #[test]
+    fn self_noise_rms_matches_gain_times_sigma() {
+        // Silent input ⇒ the output is pure amplified input-referred noise: RMS_out = gain·σ, with
+        // σ = D·√(fs/2) (the EIN density's per-sample RMS). Hand calc — D = 20 nV/√Hz (exaggerated so
+        // the statistical measurement is tight), gain 10, fs = 384 kHz:
+        //   σ = 2e-8·√192000 = 8.7636 µV,  RMS_out = 10·σ = 87.636 µV.
+        // A 2^15-sample window makes the RMS estimator's std error ≈ 1/√(2N) ≈ 0.4%, well inside 3%.
+        let d = NoiseDensity::new(2e-8);
+        let sigma = d.per_sample_sigma(rate());
+        let g = 10.0;
+        let mut p = noisy(g, d);
+        p.prepare(rate());
+        p.seed(Rng::from_seed(2024));
+        let n = 1 << 15;
+        let ins = [
+            VoltageBuffer::zeros(n, rate()),
+            VoltageBuffer::zeros(n, rate()),
+        ];
+        let mut out = [VoltageBuffer::zeros(n, rate())];
+        process_voltage(&mut p, &ins, &mut out);
+        assert_relative_eq!(rms(out[0].as_slice()), g * sigma, max_relative = 0.03);
+    }
+
+    #[test]
+    fn self_noise_scales_with_the_gain() {
+        // Same seed ⇒ identical Gaussian draws, so the only difference is the gain multiply: doubling
+        // the gain doubles the output noise sample-for-sample. This is the "crank the gain → more
+        // hiss" mechanism, made exact (not statistical) by reusing the stream.
+        let d = NoiseDensity::new(2e-8);
+        let run = |g: f32| {
+            let mut p = noisy(g, d);
+            p.prepare(rate());
+            p.seed(Rng::from_seed(7));
+            let n = 256;
+            let ins = [
+                VoltageBuffer::zeros(n, rate()),
+                VoltageBuffer::zeros(n, rate()),
+            ];
+            let mut out = [VoltageBuffer::zeros(n, rate())];
+            process_voltage(&mut p, &ins, &mut out);
+            out[0].as_slice().to_vec()
+        };
+        let (lo, hi) = (run(10.0), run(20.0));
+        for (x, y) in lo.iter().zip(&hi) {
+            assert_relative_eq!(*y, 2.0 * x, max_relative = 1e-5);
+        }
+    }
+
+    #[test]
+    fn self_noise_is_deterministic_per_seed() {
+        // Same seed reproduces the floor bit-for-bit; a different seed gives a different realization.
+        let d = NoiseDensity::new(1e-8);
+        let run = |seed: u64| {
+            let mut p = noisy(4.0, d);
+            p.prepare(rate());
+            p.seed(Rng::from_seed(seed));
+            let n = 128;
+            let ins = [
+                VoltageBuffer::zeros(n, rate()),
+                VoltageBuffer::zeros(n, rate()),
+            ];
+            let mut out = [VoltageBuffer::zeros(n, rate())];
+            process_voltage(&mut p, &ins, &mut out);
+            out[0].as_slice().to_vec()
+        };
+        assert_eq!(run(1), run(1), "same seed ⇒ identical noise");
+        assert_ne!(run(1), run(2), "different seed ⇒ different noise");
+    }
+
+    #[test]
+    fn pad_does_not_quiet_the_amp_noise() {
+        // The self-noise is injected *after* the PAD, so engaging the pad attenuates the signal but
+        // leaves the amp's own noise untouched — the SNR gets worse (a pad buys headroom, not quiet).
+        // Silent input, same seed: pad on vs off yield identical noise, proving the placement.
+        let d = NoiseDensity::new(2e-8);
+        let run = |pad: f32| {
+            let mut p = noisy(1.0, d);
+            p.prepare(rate());
+            p.seed(Rng::from_seed(11));
+            let n = 512;
+            let ins = [
+                Lane::Voltage(VoltageBuffer::zeros(n, rate())),
+                Lane::Voltage(VoltageBuffer::zeros(n, rate())),
+            ];
+            let sm = params(1.0, 1.0, pad, 0.0);
+            let mut out = [Lane::Voltage(VoltageBuffer::zeros(n, rate()))];
+            p.process(&Params::new(&sm), &ins, &mut out);
+            out[0].voltage().as_slice().to_vec()
+        };
+        assert_eq!(
+            run(0.0),
+            run(1.0),
+            "PAD must not attenuate the amp's own noise"
+        );
+    }
+
+    #[test]
+    fn powered_off_silences_the_noise() {
+        // The power gate is last, so an off preamp is truly silent — the noise floor gates with it.
+        let mut p = noisy(50.0, NoiseDensity::new(2e-8));
+        p.prepare(rate());
+        p.seed(Rng::from_seed(5));
+        let n = 256;
+        let ins = [
+            Lane::Voltage(VoltageBuffer::zeros(n, rate())),
+            Lane::Voltage(VoltageBuffer::zeros(n, rate())),
+        ];
+        let sm = params(50.0, 0.0, 0.0, 0.0); // powered off
+        let mut out = [Lane::Voltage(VoltageBuffer::zeros(n, rate()))];
+        p.process(&Params::new(&sm), &ins, &mut out);
+        assert!(out[0].voltage().as_slice().iter().all(|&v| v == 0.0));
+    }
+
+    #[test]
+    fn ideal_preamp_stays_silent_on_silence() {
+        // Without `with_noise`, the floor is zero: even seeded, prepared, and at huge gain, a silent
+        // input yields a bit-exact silent output — the default preamp is unchanged (noise opt-in).
+        let mut p = preamp(1000.0, 1000.0);
+        p.prepare(rate());
+        p.seed(Rng::from_seed(9));
+        let n = 128;
+        let ins = [
+            VoltageBuffer::zeros(n, rate()),
+            VoltageBuffer::zeros(n, rate()),
+        ];
+        let mut out = [VoltageBuffer::zeros(n, rate())];
+        process_voltage(&mut p, &ins, &mut out);
+        assert!(out[0].as_slice().iter().all(|&v| v == 0.0));
     }
 }

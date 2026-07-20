@@ -38,7 +38,8 @@ use crate::scene::ConfigSetting;
 use engine::{
     AdConverter, BitDepth, CondenserMic, DaConverter, DigitalDemux, DigitalMeter, DigitalMux,
     Domain, DynamicMic, EqBand, EventThru, GainStage, Graph, InputZ, Matrix, MicPreamp, Node,
-    NodeId, Ohms, ParamId, ReadoutId, SampleRate, Speaker, SynthVoice, ThreeBandEq, Volts, VuMeter,
+    NodeId, NoiseDensity, Ohms, ParamId, ReadoutId, SampleRate, Speaker, SynthVoice, ThreeBandEq,
+    Volts, VuMeter,
 };
 use serde::Serialize;
 
@@ -556,6 +557,14 @@ impl ReadoutSpec {
 const PREAMP_LINE_Z_OHMS: f32 = 10_000.0;
 const PREAMP_INST_Z_OHMS: f32 = 1_500_000.0;
 
+/// The 8i6 preamp's input-referred self-noise (EIN) as a white-noise density. An informed
+/// approximation of the Scarlett's published ≈ −128 dBu EIN (150 Ω source, max gain): over a 20 kHz
+/// band that is `0.775·10^(−128/20) = 0.309 µV` RMS, i.e. `0.309e-6 / √20000 ≈ 2.2 nV/√Hz`. The
+/// preamp amplifies this along with the signal, so cranking the gain (as a quiet source forces) lifts
+/// the audible hiss — the whole point. A single lumped figure today; see `docs/IMPROVEMENTS.md` for
+/// the emergent-thermal follow-up.
+const PREAMP_EIN_V_PER_ROOT_HZ: f32 = 2.2e-9;
+
 /// The 8i6's 48V phantom key — **one switch feeding both preamps** (the real 3rd-gen 8i6 has a
 /// single global 48V button; contrast the per-channel INST keys). 48V is **structural** like INST:
 /// engaging it changes the DC bias topology, so a toggle recompiles rather than smoothing a param
@@ -585,7 +594,8 @@ fn scarlett_preamp(cfg: &DeviceConfig, inst_key: &str) -> Box<dyn Node> {
             InputZ::balanced(Ohms::new(z_ohms)),
             Ohms::new(150.0),
         )
-        .with_phantom(cfg.get_or(PHANTOM_KEY, 0.0) >= 0.5),
+        .with_phantom(cfg.get_or(PHANTOM_KEY, 0.0) >= 0.5)
+        .with_noise(NoiseDensity::new(PREAMP_EIN_V_PER_ROOT_HZ)),
     )
 }
 
