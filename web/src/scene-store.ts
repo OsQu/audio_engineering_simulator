@@ -20,8 +20,12 @@ import type { Room, Vec3, Wall } from "./spatial";
  *  8i6-scale footprints and given proper faceplates, so their placements changed — discard stale v15.
  *  v17: the computer became config-driven (Story 5.10) — the default scene now authors its 8×6 USB
  *  config to match the attached 8i6; a stale v16 computer has no config and builds as a 2×2 that can't
- *  receive the 8-lane send. */
-export const SCHEMA_VERSION = 17;
+ *  receive the 8-lane send.
+ *  v18: the computer became a multitrack DAW (Story 5.11). Its routing `Matrix` was reshaped from the
+ *  Story 5.10 diagonal loopback to a `tracks → returns` **crossbar**, so a stale v17 computer's matrix
+ *  crosspoint param ids no longer map; and the scene now carries a per-track DAW model (`ui.tracks`).
+ *  Discard stale v17 saves. */
+export const SCHEMA_VERSION = 18;
 
 /** A space (room) in the studio — a UI grouping over the one engine graph (the engine never knows
  *  about rooms). A space is a **rectangular room**: gear stands against one of four walls, each an
@@ -97,6 +101,34 @@ export interface BenchWatch {
   id: string;
 }
 
+/** One DAW track's UI + control state, persisted per `computer` device (Story 5.11.6). Engine track
+ *  state (arm/monitor/input/fader) is **runtime-only** — reset on every recompile — so the durable truth
+ *  lives here and the session re-applies it after each build. The index in a device's `tracks` array is
+ *  the track number; the fields mirror `MultitrackRecorder::new`'s construction defaults. */
+export interface TrackUi {
+  /** Assigned record/monitor source — the USB **send** lane this track records and (monitoring) hears. */
+  input: number;
+  /** Record-armed: only armed tracks capture, and only while the transport is recording. */
+  armed: boolean;
+  /** Input monitoring: pass the assigned send through the channel (and its fader). */
+  monitoring: boolean;
+  /** Fader level (linear gain, `0..MAX_GAIN`=4), de-zippered by the recorder's own smoother. */
+  level: number;
+  /** Optional display name (the UI falls back to "Track N"). */
+  name?: string;
+}
+
+/** A fresh track's default state — mirrors `MultitrackRecorder::new` (monitor its own send at unity,
+ *  disarmed). `sends` clamps the default input to a valid lane (track `t` → send `min(t, sends−1)`). */
+export function defaultTrack(index: number, sends: number): TrackUi {
+  return {
+    input: Math.min(index, Math.max(0, sends - 1)),
+    armed: false,
+    monitoring: true,
+    level: 1,
+  };
+}
+
 /** UI-only scene data — never sent to the engine. The spatial world: spaces, racks, where each device
  *  sits, and any moved portal chips. Placement keys are device instance ids (matching a patch
  *  `DeviceInstance.id`); `portals` keys are `${connectionKey}|${end}`. */
@@ -115,6 +147,10 @@ export interface SceneUi {
   /** Bench debug watch-list: the pinned params/configs/readouts the debug panel monitors live. Optional
    *  (only the bench writes it); round-trips through the bench URL so pins survive a `wasm:watch` reload. */
   benchWatch?: BenchWatch[];
+  /** Per-`computer` DAW track state (deviceId → per-track, index = track number), re-applied to the
+   *  engine after every build. Absent for a scene with no DAW tracks; the session then defaults from the
+   *  recorder. Track *count* lives in the patch (the `track_count` config); this is the per-track state. */
+  tracks?: Record<string, TrackUi[]>;
 }
 
 /** A whole scene: a version stamp, UI-only spatial data, and the runnable patch. The unit we save/load. */
@@ -216,6 +252,9 @@ export function defaultScene(): Scene {
         spk: free("front", 3600, frontZ),
       },
       portals: {},
+      // One default DAW track: monitors send 0 → master at unity, disarmed — the monitoring loop the
+      // default scene sounds through. (The computer's `track_count` config defaults to 1.)
+      tracks: { computer: [defaultTrack(0, 8)] },
     },
     patch,
   };

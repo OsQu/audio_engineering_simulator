@@ -16,7 +16,9 @@ import {
   moveDeviceToSpace,
   removeDevice,
   removeRack,
+  resizeTracks,
   setCableType,
+  setSceneTrack,
   toggleFlip,
   toggleRackFlip,
   unmount,
@@ -634,5 +636,65 @@ describe("enumerateComputerUsb", () => {
 
     expect(changed).toBe(false); // both keep the default 2×2 — no config written
     expect(deviceOf(scene, "pc1").config).toBeUndefined();
+  });
+});
+
+describe("DAW track model", () => {
+  it("resizeTracks grows with defaults and shrinks from the tail", () => {
+    const scene = makeScene({ devices: [{ id: "pc", typeId: "computer" }] });
+
+    // Grow from nothing to 3 tracks, 8 sends: each defaults to monitor its own send at unity, disarmed.
+    const grown = resizeTracks(scene, "pc", 3, 8);
+    expect(grown).toEqual([
+      { input: 0, armed: false, monitoring: true, level: 1 },
+      { input: 1, armed: false, monitoring: true, level: 1 },
+      { input: 2, armed: false, monitoring: true, level: 1 },
+    ]);
+    expect(scene.ui.tracks?.pc).toBe(grown);
+
+    // A custom edit on track 1 survives a grow (append-only) …
+    grown[1].armed = true;
+    resizeTracks(scene, "pc", 4, 8);
+    expect(scene.ui.tracks?.pc[1].armed).toBe(true);
+    expect(scene.ui.tracks?.pc).toHaveLength(4);
+
+    // … and shrinking drops the tail.
+    resizeTracks(scene, "pc", 2, 8);
+    expect(scene.ui.tracks?.pc).toHaveLength(2);
+    expect(scene.ui.tracks?.pc[1].armed).toBe(true);
+  });
+
+  it("resizeTracks clamps the default input to the send count", () => {
+    const scene = makeScene({ devices: [{ id: "pc", typeId: "computer" }] });
+    // 3 tracks but only 2 sends → track 2 defaults to the last valid lane (1), not lane 2.
+    expect(resizeTracks(scene, "pc", 3, 2).map((t) => t.input)).toEqual([0, 1, 1]);
+  });
+
+  it("setSceneTrack merges a field, creating intervening tracks", () => {
+    const scene = makeScene({ devices: [{ id: "pc", typeId: "computer" }] });
+    // Set track 2's level before the list exists → tracks 0,1 are defaulted, 2 gets the level.
+    setSceneTrack(scene, "pc", 2, 8, { level: 0.5 });
+    const tracks = scene.ui.tracks?.pc;
+    expect(tracks).toHaveLength(3);
+    expect(tracks?.[0]).toEqual({ input: 0, armed: false, monitoring: true, level: 1 });
+    expect(tracks?.[2]).toEqual({ input: 2, armed: false, monitoring: true, level: 0.5 });
+
+    // A later edit merges (doesn't clobber other fields).
+    setSceneTrack(scene, "pc", 2, 8, { armed: true });
+    expect(scene.ui.tracks?.pc[2]).toEqual({ input: 2, armed: true, monitoring: true, level: 0.5 });
+  });
+
+  it("keeps two computers' track models independent", () => {
+    const scene = makeScene({
+      devices: [
+        { id: "pcA", typeId: "computer" },
+        { id: "pcB", typeId: "computer" },
+      ],
+    });
+    setSceneTrack(scene, "pcA", 0, 8, { armed: true });
+    setSceneTrack(scene, "pcB", 0, 8, { level: 0.25 });
+    expect(scene.ui.tracks?.pcA[0].armed).toBe(true);
+    expect(scene.ui.tracks?.pcB[0].armed).toBe(false);
+    expect(scene.ui.tracks?.pcB[0].level).toBe(0.25);
   });
 });

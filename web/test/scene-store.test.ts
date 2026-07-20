@@ -30,6 +30,13 @@ describe("scene store", () => {
     expect(scene.ui.placements.spk.wall).toBe("front");
   });
 
+  it("the default scene gives the computer one DAW track (monitors send 0 → master at unity)", () => {
+    const scene = defaultScene();
+    expect(scene.ui.tracks?.computer).toEqual([
+      { input: 0, armed: false, monitoring: true, level: 1 },
+    ]);
+  });
+
   it("round-trips a scene through serialize/parse, placements included", () => {
     const scene = defaultScene();
     const back = parseScene(serializeScene(scene));

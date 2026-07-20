@@ -16,7 +16,14 @@ import { type ConnectVerdict, cableSpec } from "./connections";
 import { wallSpawn } from "./placement";
 import { deviceById, FRAME_MARGIN, type LayoutCtx, type PlacedItem, rackById } from "./projection";
 import type { Connection, DeviceInstance } from "./scene";
-import { type BenchWatch, flip, newSpace, type Scene } from "./scene-store";
+import {
+  type BenchWatch,
+  defaultTrack,
+  flip,
+  newSpace,
+  type Scene,
+  type TrackUi,
+} from "./scene-store";
 import { footprint, RACK_DEPTH_MM, RACK_UNIT_MM, RACK_WIDTH_MM, type Size3 } from "./spatial";
 
 // A stable key for a connection (its two endpoints), for the {#each} in the cable overlay.
@@ -198,6 +205,44 @@ export function enumerateComputerUsb(
   ];
   dev.params = []; // reset crosspoints to the construction loopback default
   return true;
+}
+
+// --- DAW track model (a `computer`'s per-track UI/control state; see `SceneUi.tracks`) --------------
+//
+// The engine's per-track state (arm/monitor/input/fader) is runtime-only — reset on every recompile — so
+// the durable truth lives in `scene.ui.tracks` and the session re-applies it after each build. These are
+// pure `scene` mutations; the caller drives the engine (send control messages / hot-swap) separately.
+
+/** Resize `device`'s track list to `count`, growing with `defaultTrack` (using `sends` for the default
+ *  input lane) and shrinking from the tail. Returns the list (mutated in place). Call after a
+ *  `track_count` change so the UI model tracks the patch's track count. */
+export function resizeTracks(
+  scene: Scene,
+  device: string,
+  count: number,
+  sends: number,
+): TrackUi[] {
+  if (!scene.ui.tracks) scene.ui.tracks = {};
+  const next = (scene.ui.tracks[device] ?? []).slice(0, count);
+  for (let i = next.length; i < count; i++) next.push(defaultTrack(i, sends));
+  scene.ui.tracks[device] = next;
+  return next;
+}
+
+/** Merge `patch` into `device`'s track `track` (creating the list + any intervening tracks with
+ *  `defaultTrack(_, sends)`), for persisting a live arm/monitor/input/level/name change. */
+export function setSceneTrack(
+  scene: Scene,
+  device: string,
+  track: number,
+  sends: number,
+  patch: Partial<TrackUi>,
+): void {
+  if (!scene.ui.tracks) scene.ui.tracks = {};
+  const cur = scene.ui.tracks[device] ?? [];
+  scene.ui.tracks[device] = cur;
+  while (cur.length <= track) cur.push(defaultTrack(cur.length, sends));
+  cur[track] = { ...cur[track], ...patch };
 }
 
 // Set (or clear, `""` ⇒ ideal wire) the cable type on a connection — the cable's R·C is baked into the
