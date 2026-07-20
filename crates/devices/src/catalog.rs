@@ -37,8 +37,8 @@ use std::borrow::Cow;
 use crate::scene::ConfigSetting;
 use engine::{
     AdConverter, BitDepth, CondenserMic, DaConverter, DigitalDemux, DigitalMeter, DigitalMux,
-    Domain, EqBand, EventThru, GainStage, Graph, InputZ, Matrix, MicPreamp, Node, NodeId, Ohms,
-    ParamId, ReadoutId, SampleRate, Speaker, SynthVoice, ThreeBandEq, Volts, VuMeter,
+    Domain, DynamicMic, EqBand, EventThru, GainStage, Graph, InputZ, Matrix, MicPreamp, Node,
+    NodeId, Ohms, ParamId, ReadoutId, SampleRate, Speaker, SynthVoice, ThreeBandEq, Volts, VuMeter,
 };
 use serde::Serialize;
 
@@ -750,6 +750,52 @@ const CATALOG: &[CatalogEntry] = &[
         // 10 mV capsule tone (typical mic level) from a 150 Ω balanced source (the classic mic
         // output impedance).
         nodes: &[|_cfg| Box::new(CondenserMic::new(Volts::new(0.01), Ohms::new(150.0)))],
+        internal: &[],
+        params: &[
+            ParamUi {
+                label: "Tone Level",
+                unit: "V",
+                kind: ParamKind::Knob,
+                taper: ParamTaper::Linear,
+            },
+            ParamUi {
+                label: "Tone Freq",
+                unit: "Hz",
+                kind: ParamKind::Knob,
+                taper: ParamTaper::Linear,
+            },
+        ],
+        param_groups: &[],
+        param_grid: None,
+        inputs: &[],
+        outputs: &[PortUi {
+            label: "Out",
+            kind: PortKind::Mic,
+            connector: Connector::Xlr,
+        }],
+        delayed_outputs: &[],
+        duplex_links: &[],
+        readouts: ReadoutSpec::Static(&[]),
+        configs: &[],
+    },
+    // A dynamic microphone — the catalog face of `engine::DynamicMic`. A **passive** balanced XLR
+    // mic-level source: a moving coil that generates its own EMF, so it draws no phantom (no DC load
+    // declared) and is always alive regardless of the 8i6's 48V toggle. It is deliberately **less
+    // sensitive** than the condenser (~2 mV vs 10 mV capsule tone), leaning harder on preamp gain.
+    // Same declared boundary stand-in — a deterministic capsule sine — as the condenser.
+    CatalogEntry {
+        type_id: "dynamic_mic",
+        name: "Dynamic Mic",
+        // A handheld/cardioid dynamic laid in its stand: a stubby body ~35 mm across the barrel and
+        // ~160 mm long including the ball grille; footprint is the body cylinder, so depth = width.
+        form_factor: FormFactor::Desktop {
+            width_mm: 35.0,
+            height_mm: 160.0,
+            depth_mm: 35.0,
+        },
+        // 2 mV capsule tone (a quieter, less-sensitive dynamic) from a 200 Ω balanced source (typical
+        // moving-coil output impedance).
+        nodes: &[|_cfg| Box::new(DynamicMic::new(Volts::new(0.002), Ohms::new(200.0)))],
         internal: &[],
         params: &[
             ParamUi {
@@ -2374,6 +2420,62 @@ mod tests {
         assert!(mic.readouts.is_empty());
     }
 
+    /// The dynamic mic expands like the condenser — one node, no inputs/edges, its output as device
+    /// output 0, and the two capsule-tone params (node-local LEVEL/FREQ) as device params 0/1.
+    #[test]
+    fn dynamic_mic_expands_and_maps() {
+        let mut g = Graph::new();
+        let mic = instantiate("dynamic_mic", &DeviceConfig::EMPTY, &mut g)
+            .expect("dynamic_mic is in the catalog");
+
+        assert_eq!(mic.nodes.len(), 1, "one internal node");
+        assert_eq!(g.connection_count(), 0, "no internal edges");
+        assert!(mic.inputs.is_empty(), "a mic has no inputs");
+        assert_eq!(mic.outputs, vec![(mic.nodes[0], 0)]);
+        assert_eq!(
+            mic.params,
+            vec![
+                vec![(mic.nodes[0], DynamicMic::LEVEL)],
+                vec![(mic.nodes[0], DynamicMic::FREQ)],
+            ]
+        );
+        assert!(mic.readouts.is_empty(), "the mic measures nothing");
+    }
+
+    /// The dynamic mic's descriptor face: a balanced (2-conductor) analog XLR output styled as a mic
+    /// jack, no inputs, no configs — and the capsule-tone params carrying the engine's construction
+    /// truth (2 mV level default — quieter than the condenser's 10 mV — and 1 kHz frequency default).
+    #[test]
+    fn dynamic_mic_descriptor_face() {
+        let mic = descriptors()
+            .into_iter()
+            .find(|d| d.type_id == "dynamic_mic")
+            .expect("dynamic_mic is in the catalog");
+
+        assert_eq!(mic.ports.len(), 1, "one port: the XLR out");
+        let out = &mic.ports[0];
+        assert_eq!(out.direction, PortDirection::Output);
+        assert_eq!(out.domain, PortDomain::Analog);
+        assert_eq!(out.channels, 2, "balanced = two conductors");
+        assert_eq!(out.kind, PortKind::Mic);
+        assert_eq!(out.connector, Connector::Xlr);
+
+        // The capsule tone: level (constructed 2 mV, less sensitive) and frequency (1 kHz default).
+        assert_eq!(mic.params.len(), 2);
+        assert_eq!(mic.params[0].label, "Tone Level");
+        assert_eq!(mic.params[0].unit, "V");
+        assert_eq!(mic.params[0].default, 0.002);
+        assert_eq!(mic.params[1].label, "Tone Freq");
+        assert_eq!(mic.params[1].unit, "Hz");
+        assert_eq!(mic.params[1].default, 1_000.0);
+
+        assert!(
+            mic.configs.is_empty(),
+            "no structural options on the mic (passive — no phantom toggle)"
+        );
+        assert!(mic.readouts.is_empty());
+    }
+
     /// The 8i6 exposes the shared 48V toggle: **one** `phantom` key (both preamps read it — the real
     /// unit's single global button), structural like the per-channel INST keys, default off.
     #[test]
@@ -2543,6 +2645,7 @@ mod tests {
             "scarlett_8i6",
             "computer",
             "condenser_mic",
+            "dynamic_mic",
         ] {
             assert!(json.contains(type_id), "catalog missing {type_id}");
         }

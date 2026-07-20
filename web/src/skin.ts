@@ -47,6 +47,8 @@ const SKINS: Record<string, DeviceSkin> = {
   computer: { finish: "slate", cap: "dark" },
   // The condenser mic — a black studio-condenser body with chrome trim (renders via the generic Panel).
   condenser_mic: { finish: "black", cap: "chrome" },
+  // The dynamic mic — a darker, utilitarian handheld body with dark trim (renders via the generic Panel).
+  dynamic_mic: { finish: "slate", cap: "dark" },
 };
 
 /** The skin for a device type (falls back to a neutral slate skin). */
