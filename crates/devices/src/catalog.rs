@@ -610,12 +610,18 @@ fn scarlett_da() -> Box<dyn Node> {
     ))
 }
 fn scarlett_gain() -> Box<dyn Node> {
-    Box::new(GainStage::new(
-        1.0,
-        Volts::new(10.0),
-        InputZ::new(Ohms::new(10_000.0)),
-        Ohms::new(150.0),
-    ))
+    // The 8i6's monitor and headphone amps are **volume** controls: they attenuate from unity (0 dB,
+    // fully open — the default) down to silence, never boost. Cap the GAIN at unity so the knob is a
+    // proper level control, not a +60 dB preamp.
+    Box::new(
+        GainStage::new(
+            1.0,
+            Volts::new(10.0),
+            InputZ::new(Ohms::new(10_000.0)),
+            Ohms::new(150.0),
+        )
+        .with_gain_range(0.0, 1.0),
+    )
 }
 
 /// The device catalog: every type the UI can place, builders + descriptor together. Each entry's

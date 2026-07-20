@@ -369,7 +369,8 @@ Grow coverage and add the game layer.
 - **How deep does the clock model go?** Settled (see §5.6): clocks are modeled as **real rates**
   (emergent drift/slip at async boundaries), resolved via a compile-time clock-distribution
   side-graph; the **physical layer** (line coding, PLL recovery) is out of scope, and jitter spectra
-  are an optional depth we do not expect to need. Built in Epic 5, where multiple clock domains exist.
+  are an optional depth we do not expect to need. Built in **Epic 7** (Story 7.3), where multiple clock
+  domains exist — Epic 5 built its digital transport rate-agnostic so this defers cleanly.
 - **Device behavior fidelity from manuals** — manuals describe controls, not always exact
   transfer behavior; some transforms will be informed approximations. Flag these.
 - **DSP depth vs breadth** — how much real DSP to build vs. how many devices to cover. Lean on

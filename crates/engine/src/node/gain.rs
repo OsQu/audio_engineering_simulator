@@ -102,6 +102,31 @@ impl GainStage {
         self.noise_density = density;
         self
     }
+
+    /// Constrain the [`GAIN`](Self::GAIN) control to `[min, max]` (voltage-gain multipliers) instead
+    /// of the default `0..MAX_GAIN` (≈ +60 dB). Use for a **volume/level** control — a
+    /// monitor or headphone knob that attenuates from unity down to silence rather than boosting like
+    /// a preamp. The construction `gain` (the decl default) must lie within the new range.
+    ///
+    /// # Panics
+    /// Panics unless `0.0 <= min < max` (both finite) and the construction gain lies within
+    /// `[min, max]` — a setup bug, caught here at construction, never on the hot path.
+    #[must_use]
+    pub fn with_gain_range(mut self, min: f32, max: f32) -> Self {
+        assert!(
+            min.is_finite() && max.is_finite() && (0.0..max).contains(&min),
+            "GainStage gain range must satisfy 0 <= min < max, got [{min}, {max}]"
+        );
+        assert!(
+            (min..=max).contains(&self.gain),
+            "GainStage construction gain {} must lie within [{min}, {max}]",
+            self.gain
+        );
+        // GAIN is decl 0 (POWERED is decl 1), matching `new`.
+        self.param_decls[0].min = min;
+        self.param_decls[0].max = max;
+        self
+    }
 }
 
 impl Node for GainStage {
@@ -218,5 +243,32 @@ mod tests {
     #[should_panic(expected = "rail must be finite and > 0")]
     fn rejects_nonpositive_rail() {
         let _ = stage(1.0, 0.0);
+    }
+
+    #[test]
+    fn with_gain_range_overrides_the_gain_decl() {
+        // A volume/level control: unity default, capped at unity, attenuating to silence.
+        let s = stage(1.0, 10.0).with_gain_range(0.0, 1.0);
+        let gain = s
+            .params()
+            .iter()
+            .find(|d| d.id == GainStage::GAIN)
+            .expect("GAIN decl");
+        assert_eq!(gain.min, 0.0);
+        assert_eq!(gain.max, 1.0);
+        assert_eq!(gain.default, 1.0, "the construction gain stays the default");
+    }
+
+    #[test]
+    #[should_panic(expected = "gain range must satisfy 0 <= min < max")]
+    fn rejects_an_inverted_gain_range() {
+        let _ = stage(1.0, 10.0).with_gain_range(1.0, 0.5);
+    }
+
+    #[test]
+    #[should_panic(expected = "must lie within")]
+    fn rejects_a_default_outside_the_gain_range() {
+        // Construction gain 4.0 with a unity ceiling is a setup bug.
+        let _ = stage(4.0, 10.0).with_gain_range(0.0, 1.0);
     }
 }
