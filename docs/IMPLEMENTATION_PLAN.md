@@ -843,4 +843,139 @@ connectivity pass over a side-graph, plus an emergent runtime consequence — ne
   _Prerequisites:_ the carrier/clock seam and `ClockDomainId` stamp (Story 1.6); multiple digital
   devices and the fractional resampler (this Story). Story 5.11's DAW transport already rides
   `advance(frames)` so "the DAW follows the interface clock" is the current mechanism, not a future one.
+
+---
+
+## Epic 8 — The Acoustic Domain & Micing — 🚧 **In progress** (8.1 planned; 8.2 coarse)
+
+**Progress:** Story 8.1 🚧 **In progress** (planned to Task level); Story 8.2 sketched. This Epic activates
+the **"air link" seam** both microphones' docs have long anticipated ("a real acoustic path… with a
+pressure↔volts transduction seam at each end; until then the sine is the seam"). It adds a fourth signal
+carrier — **acoustic sound pressure** — so that an instrument is a *source you mic*, not a line-out: the
+richest lesson of the medium (mic choice, phantom, gain staging from mic level, PAD, the dynamic-vs-condenser
+gap) becomes real. Sound *generation* stays deliberately trivial here (a sine at a chosen loudness);
+recognizable **SoundFont/multisample instruments are a separate future Epic**, not this one.
+
+**Goal:** make the acoustic side a first-class, physically-honest carrier — sound pressure in **Pascals**,
+oversampled against the same analog continuum as volts, measured in **dB SPL** exactly as volts are measured
+in dBu — and turn the two microphones into genuine **acoustic→analog transducers** fed by a patchable sound
+source. Loudness at the source (whisper vs. shout, an acoustic guitar vs. a cranked amp) drives the whole
+front-end gain-staging story, and it all emerges from `v = pressure × sensitivity` + the existing phantom /
+balanced / noise-floor physics. Anchored to `PROJECT_PLAN.md` §4 (the "instrument / source" concept, made
+real) and §5.5 (see the scope note below).
+
+**Exit criteria:** you can place a sound source in the studio, mic it with a condenser or a dynamic, and the
+recorded level, the required preamp gain, and the clipping/PAD behavior all match hand calculations and
+real-world intuition across the SPL range — with the acoustic carrier compile-validated like every other
+domain and the hot path still zero-alloc / panic-free.
+
+**Watch-outs:** keep the realism budget on volts-and-converters — **air is ideal** (no propagation, no room,
+no polar response, no distance); pressure rides at the **`AnalogRate`**, so do **not** invent an acoustic
+"sample rate" or any global acoustic↔analog rate relationship (§7). SPL is a *measurement* — a buffer holding
+dB SPL is a category error, exactly as a buffer holding dBu would be.
+
+### Decisions that bind this Epic (settled in design discussion)
+
+- **Acoustic is a real carrier, not a fudge.** Sound pressure is `Pascals` (a unit newtype like `Volts`),
+  stored linearly in a `PressureBuffer` oversampled at the one `AnalogRate` (pressure is continuous-time
+  analog — **not** a digital rate). **SPL** (ref 20 µPa) is a measurement helper, never storage — the anchor
+  is **1 Pa = 94 dB SPL** (≈93.98). This mirrors the volts/dBu split exactly.
+- **The microphone is the acoustic→analog converter** — the input-side bookend to the speaker. Converters
+  remain the *only* cross-domain bridge (§5.6): an acoustic edge may only join acoustic ports; acoustic↔analog
+  is rejected at `compile` as `DomainMismatch` (free — the check already compares `domain()`). Unlike the
+  AD/DA, the transduction is a **pointwise multiply by sensitivity (V/Pa)** — same rate, no anti-alias FIR,
+  no resample.
+- **Air is ideal.** The acoustic edge is a **unity copy** (`EdgeKind::AcousticRoute`) with **no impedance
+  divider** — air is not a Thévenin/load network. Distance/inverse-square attenuation, propagation delay, and
+  polar/off-axis response are **deferred** (distance is where "move the mic closer/further" becomes real).
+- **Scope relationship to `PROJECT_PLAN.md` §5.5.** That section keeps acoustics out of scope on the
+  **output** side (the speaker stays in volts; no V→SPL, no air→ear). This Epic adds an **input-side** acoustic
+  carrier — a source's sound pressure into a mic capsule — with air idealized to a direct handoff. It does
+  **not** reopen output-side acoustics, and it is *not* instrument realism (§2): the source is a sine, the bar
+  is "recognizable + real dynamics," and the machine-gun effect is acceptable. _(A one-line note in
+  PROJECT_PLAN §4/§5.5 recording this input-side carrier is a reasonable follow-up.)_
+- **Sensitivity calibration is backward-consistent.** Mic sensitivities are chosen so the pre-Epic-8 mic
+  defaults reproduce at 94 dB SPL: condenser **~10 mV/Pa** (10 mV @ 1 Pa == the old 0.01 V default), dynamic
+  **~2 mV/Pa** (== 0.002 V). The dynamic's **~14 dB deficit** (⇒ ~14 dB more preamp gain) becomes *emergent*
+  from transducer efficiency, no longer an asserted LEVEL.
+- **Air is patched as an "acoustic cable"** in the web layer — a distinct/dashed acoustic↔acoustic link
+  reusing the existing patch machinery (the engine only ever sees an acoustic edge). Proximity/placement-based
+  pickup is deferred.
+- **SoundFont / multisample instruments are a separate future Epic** — no rustysynth, no sample assets, no
+  polyphony machinery here.
+
+### Story 8.1 — The acoustic carrier, vox source & mic transduction (headless engine) — 🚧 **In progress**
+
+*Goal:* stand up the acoustic carrier end to end in the headless engine and prove the transduction physics by
+hand calc — a `SoundSource` emitting sound pressure at a chosen SPL, carried over an ideal acoustic edge into
+a microphone that transduces it to a balanced mic-level voltage, with the existing phantom / passive /
+noise-floor behavior riding on top. No devices/UI yet (that is Story 8.2); this is the engine-before-product
+slice, validated with tests as the oracle for the physical domain (§9).
+
+*Watch out:*
+- **Hot-path contract holds** (`CLAUDE.md` §6): `SoundSource` and the mic transduction are zero-alloc,
+  panic-free, denormal-safe; the `no_alloc` counting-allocator test must stay green.
+- **Determinism:** `SoundSource`'s oscillator is an `f64` phase accumulator with no ambient entropy (like
+  `SynthVoice`/the mics); same seed ⇒ identical output.
+- **One rate:** `PressureBuffer` is at `AnalogRate` — do not add a pressure rate or an acoustic↔analog rate
+  relationship (§7). The acoustic lane is the same continuous proxy as the voltage lane.
+- **Don't drop coverage when removing the self-tone:** the two mics' existing capsule-tone tests must be
+  *rewritten* to drive the mic from a pressure input and assert transduction, not deleted.
+
+*Design notes (settled at planning):*
+- **The mics lose their self-tone.** The deterministic capsule sine and its `FREQ` / `LEVEL`-as-volts params
+  are **removed** and replaced by a single `SENSITIVITY` (V/Pa) param; the mic now transduces whatever pressure
+  arrives on its acoustic input, and an **unpatched mic is silent** (only its self-noise applies).
+  *Rejected:* keeping the tone behind a "built-in test oscillator" toggle — the seam comments always framed the
+  tone as a stand-in "until the air link," and a mic emitting a tone into a silent room is dishonest.
+- **The source node is generic** (`SoundSource`): a sine at `FREQ` (Hz) emitted at a loudness knob in **dB SPL**
+  (log — the engineer's unit; stored/emitted as Pa). Kept generic so a future drum/amp/guitar reuses it; the
+  catalog (Story 8.2) labels one instance "vox".
+- **The acoustic edge is a unity copy** (`EdgeKind::AcousticRoute`, mirroring `DigitalRoute`) — no divider, no
+  cable R·C: air is ideal.
+- **The carrier extends the open seams additively** — `Domain::Acoustic`, `Lane::Acoustic(PressureBuffer)` +
+  `pressure()`/`pressure_mut()`, `AcousticFace` + `InputPort::Acoustic`/`OutputPort::Acoustic`
+  (`lane_count() == 1`). No existing node's ports change except the two mics gaining one acoustic input.
+
+*Tasks:*
+- **Task 8.1.1 — `Pascals` unit + SPL↔Pa conversions.** A `repr(transparent)` newtype mirroring `Volts`, and
+  `spl_to_pascals` / `pascals_to_spl` (ref 20 µPa) alongside the other level helpers. *Validate (hand calc):*
+  1 Pa = 93.98 dB SPL; 94 dB SPL ⇒ ≈1 Pa; 0 dB SPL ⇒ 20 µPa; 30 dB SPL ⇒ 632 µPa; 120 dB SPL ⇒ 20 Pa.
+- **Task 8.1.2 — `PressureBuffer` + the acoustic carrier seam.** `PressureBuffer` (linear Pa @ `AnalogRate`,
+  mirroring `VoltageBuffer`); `Domain::Acoustic`; `Lane::Acoustic` + typed accessors; `AcousticFace` and the
+  `InputPort`/`OutputPort` acoustic arms (`domain()`, `lane_count() == 1`, `acoustic()`, `From` impls). No node
+  yet. *Validate:* the workspace compiles; unit tests for `domain()`/`lane_count()` and the lane accessors.
+- **Task 8.1.3 — compile: the `AcousticRoute` edge + lane pool.** Add `EdgeKind::AcousticRoute` (unity
+  pressure copy, mirroring `DigitalRoute`) and the acoustic arm in the lane-pool allocation. *Validate:* using
+  scaffold test nodes (like `digital_seam`/`event_seam`), an acoustic edge copies pressure src→dst unchanged,
+  and an acoustic↔analog edge is rejected as `DomainMismatch`.
+- **Task 8.1.4 — the `SoundSource` node (vox engine node).** A sine at `FREQ`, emitted at a `LEVEL` knob in
+  dB SPL → Pa → `Lane::Acoustic`; one acoustic output, no inputs; deterministic phase accumulator; zero-alloc,
+  panic-free. *Validate (hand calc):* the emitted peak pressure is ≈1 Pa at 94 dB SPL and 20 Pa at 120 dB SPL
+  (read back via `pascals_to_spl` on the block peak); silent at construction until prepared.
+- **Task 8.1.5 — the mics become transducers.** `CondenserMic` and `DynamicMic` each gain one acoustic input;
+  `process` computes the differential `s = pressure × sensitivity`, keeping the phantom pedestal / passive-0
+  common-mode / power-gate logic on top; the self-tone + `FREQ`/`LEVEL`-volts params are replaced by
+  `SENSITIVITY` (V/Pa). Existing capsule-tone tests rewritten to drive from a pressure input. *Validate (hand
+  calc):* condenser 10 mV/Pa ⇒ 10 mV differential at 94 dB SPL (== old default), dynamic 2 mV/Pa ⇒ 2 mV
+  (~14 dB less); whisper 30 dB SPL ⇒ ~6.3 µV; cranked amp 120 dB SPL ⇒ 200 mV; a dead/unpowered condenser is
+  still silent regardless of input pressure.
+
+*Validate (Story 8.1):* a headless `SoundSource → acoustic edge → mic → balanced receiver` chain recovers
+`differential = pressure × sensitivity` to hand-calc tolerance across the oracle SPLs, the condenser-vs-dynamic
+sensitivity gap is confirmed numerically, and the full gate is green
+(`cargo fmt --check && cargo lint && cargo test && cargo wasm && cargo docs`, `no_alloc` included).
+
+### Story 8.2 — Micing in the studio (devices + web + scenarios)
+
+*Coarse sketch (elaborate on pickup):* surface the acoustic carrier through the product layer. A **vox** catalog
+device (the `SoundSource` builder + a UI descriptor: SPL + frequency); the two mics' catalog descriptors gain
+their acoustic **input** port; an **acoustic connector** shape (+ `connectors_compatible` + `SignalClass`) and
+`build_patch` acoustic-edge expansion; a web **acoustic cable** (a distinct/dashed acoustic↔acoustic link,
+domain-legality mirroring the engine) with a vox **faceplate** (dB-SPL loudness + frequency) and the acoustic
+input **jack** on the mic faceplates. *Validate (product):* patch a vox → mic → preamp → AD in the UI and
+watch the front-end gain-staging emerge — a whisper buried near the noise floor, a cranked amp slamming the
+preamp until the PAD is engaged, and a dynamic mic needing markedly more gain than a condenser on the same
+source. Deferred (record, don't build): distance/inverse-square attenuation, propagation delay, polar response,
+and proximity/placement-based pickup.
   ROI is high here (multi-device digital sync is the heart of the lesson), nil before.
