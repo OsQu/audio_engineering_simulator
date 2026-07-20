@@ -1272,15 +1272,18 @@ every channel count derives from the interface's **published** port face (no par
 anywhere); the full Rust gate (`cargo fmt --check && cargo lint && cargo test && cargo wasm && cargo
 docs`) plus web `check`/`typecheck`/`test` pass; verified in-browser.
 
-### Story 5.11 — Computer as a minimal DAW — 🚧 **In progress**
+### Story 5.11 — Computer as a minimal DAW — 🚧 **Implemented; overdub live-check pending**
 
-_Progress:_ Tasks **5.11.1–5.11.5 ✅ done** (the whole Rust side): the file-byte
-seam + WAV codec, the digital-domain transport, the `MultitrackRecorder` channel-strip node, the
-`computer` rebuilt as the 5-node channel-strip DAW, and the **wasm DAW seam** (all green: engine 364 ·
-devices 61 · wasm-bindings 11). **5.11.6 (web) pending** — the last task. The mixer topology evolved
-twice mid-story (one-in-one-out → `(N+T)→M` crossbar → **channel-strip** `tracks → Matrix(T→M)`); the
-channel-strip model is final (see the headline note). The Rust side is complete; what remains is the
-**web DAW/OPFS UI (5.11.6)**.
+_Progress:_ **All tasks 5.11.1–5.11.6 implemented and green** end to end. The Rust side (5.11.1–5.11.5):
+the file-byte seam + WAV codec, the digital-domain transport, the `MultitrackRecorder` channel-strip
+node, the `computer` as a 5-node channel-strip DAW, and the wasm DAW seam. The web side (5.11.6): the
+OPFS storage worker (sync access handles), the worklet record/playback loop, the session orchestration +
+track model (`SCHEMA_VERSION` 18), and the DAW **mixer** focus surface (transport + track strips +
+routing + waveform with a scrolling playhead). Full gate green — **Rust** (engine 364 · devices 61 ·
+wasm-bindings 13 · wasm · docs) and **web** (Biome · typecheck · Vitest 268). **In-browser: record → play
+verified (audible); the overdub pressure test is the one remaining live check.** The mixer topology
+evolved twice mid-story (one-in-one-out → `(N+T)→M` crossbar → **channel-strip** `tracks → Matrix(T→M)`),
+now final (see the headline note).
 
 _Goal:_ Bring the `computer` forward from a fixed monitoring loopback into a **minimal, honest DAW** — the
 digital hub a real audio interface plugs into. It grows an **arbitrary number of mono tracks**; each track
@@ -1555,17 +1558,34 @@ _Design notes (settled at planning):_
   _Done:_ the byte rings + transport + track controls round-trip across the wasm boundary for an N-track
   computer; the seam is total on non-DAW devices (silent no-ops); the EMPTY-config type catalog unchanged;
   full Rust gate green (engine 364 · devices 61 · wasm-bindings 11 · `cargo wasm`/`docs`).
-- **Task 5.11.6 — Web: OPFS storage + track model + transport UI + level mixer + waveform.** OPFS-backed
-  take files (worker + sync access handles) draining/filling the byte rings around the playhead; a host-side
-  **track model** (create/remove tracks → `track_count` config + recompile; arm; input/output assign; level);
-  **transport controls** (record/play/stop); the **simple level mixer** (faders = recorder params) + routing in
-  the focus view (the 5.7.9 `RoutingGrid` precedent); a **waveform** view decoding stored WAVs host-side for
-  display only. Vitest for the host track/transport/storage logic (incl. concurrent OPFS read of playing
-  files + write of a recording file via per-file sync access handles). _Done:_ in-browser — arm a track to
-  the mic/synth send, hit record, stop, play it back through the monitoring loop and hear it; **then
-  overdub — with that take playing, arm a second track and record it, and hear both together on the next
-  playback** (the DAW pressure test); a track sums into master; unplug/replug still sound; `pnpm run format`
-  + web `check`/`typecheck`/`test` green.
+- **Task 5.11.6 — Web: OPFS storage + track model + transport UI + level mixer + waveform.** ✅ **Done**
+  (in-browser record→play verified; overdub is the remaining live check). OPFS-backed take files (worker +
+  sync access handles) draining/filling the byte rings around the playhead; a host-side **track model**
+  (create/remove tracks → `track_count` config + recompile; arm; input/output assign; level); **transport
+  controls** (record/play/stop); the **level mixer** (faders over the DAW control seam — **not** params;
+  see below) + routing in the focus view (the 5.7.9 `RoutingGrid` precedent); a **waveform** view of stored
+  takes with a scrolling playhead cursor, host-side, display only.
+  _As built (the JS-side architecture — three contexts + wasm):_
+  - **AudioWorklet** = the only wasm instance: drains recorded PCM, brackets each take with
+    `recordStarted`/`recorded`/`recordStopped` (building the WAV headers via the sim's `wav_header` — it
+    owns the codec + the take lifecycle), and posts throttled transport state. **Storage Worker** = OPFS
+    per-file **sync access handles** (`take-<encoded deviceId>-<track>.wav`), pure byte I/O, no wasm.
+    **Main/session** = orchestrator: relays record bytes worklet→worker, and feeds each playing ring by
+    **playhead occupancy** (`fed − (playhead−playStart)×4 < highwater`, the pure `planPlaybackFeed`).
+  - **Faders are driven over the DAW control seam (`set_track_level`), not params** — correcting this
+    task's original "faders = recorder params" sketch; the recorder-owned smoother (decided at 5.11.3/5.11.5)
+    is the as-built design, so the mixer's fader calls the seam, not a `ParamHandle`.
+  - **Per-track state persists in `SceneUi.tracks`** (engine track state is runtime-only, reset on every
+    recompile) and is re-applied after each build via `applyTrackState`. `SCHEMA_VERSION` **17 → 18** (the
+    crossbar reshaped the matrix crosspoint ids + the new track model) — stale saves discard.
+  - **Multi-computer stays honest** (per the design note): takes are keyed by `(deviceId, track)`, so a
+    second computer needs no new code path.
+  Vitest covers the host logic — `take-store` (streaming record + the overdub read-while-write), `storage-client`
+  (client↔protocol↔store over a fake worker), `daw` (`planPlaybackFeed`), and `waveform` (reduction + cursor
+  length). _Done:_ in-browser — arm a track to the mic/synth send, hit record, stop, play it back through the
+  monitoring loop and **hear it** (✅ verified); a track sums into master; `pnpm run format` + web
+  `check`/`typecheck`/`test` green (✅). **Remaining live check:** overdub — with a take playing, arm a
+  second track, record it, and hear both together on the next playback (the DAW pressure test).
 
 _Validate:_ the `computer` presents an **arbitrary number of mono tracks**; a track **armed** to a USB send
 **records to a WAV file on disk (OPFS)** while the transport rolls, and **plays that file back** to a USB
