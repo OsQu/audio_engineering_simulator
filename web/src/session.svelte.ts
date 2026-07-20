@@ -232,7 +232,10 @@ export class SceneSession {
     send({ type: "loadPatch", patch: this.plainPatch() });
     this.paramValues = params.seedParamValues(this.scene, this.catalog);
     params.pushParams(send, this.scene, this.catalog, this.paramValues);
-    this.applyTrackState(); // the fresh recorder boots at defaults — re-apply the persisted track model
+    // NB: the track model is re-applied in `onLosses` (post-swap), NOT here — `loadPatch` installs the new
+    // scene at the *next* render quantum, so control messages sent now would hit the outgoing recorder and
+    // be lost when the fresh one (construction defaults) swaps in. Params survive via the patch IR; track
+    // state (arm/monitor/input/level) isn't in the patch, so it must wait for the swap.
   }
 
   // --- DAW: transport, tracks, record/playback ----------------------------------------------------
@@ -377,8 +380,7 @@ export class SceneSession {
     this.scene = loaded;
     this.paramValues = params.seedParamValues(this.scene, this.catalog);
     this.send?.({ type: "loadPatch", patch: this.plainPatch() }); // hot-swap the engine to the saved scene
-    this.applyTrackState();
-    this.#refreshAllWaveforms();
+    this.#refreshAllWaveforms(); // track model re-applied post-swap in `onLosses` (see hotSwap)
     this.status = "scene loaded";
     return true;
   }
@@ -421,6 +423,10 @@ export class SceneSession {
           },
           onLosses: (l) => {
             this.losses = l;
+            // `losses` is re-sent once from inside the quantum that installs a hot-swapped scene, so this
+            // is the "swap landed" signal. Re-apply the track model *here* (not in hotSwap) — the fresh
+            // recorder is now live, so arm/monitor/input/level land on it instead of the outgoing one.
+            this.applyTrackState();
           },
           onDeviceDescriptors: (deviceDescriptors) => {
             this.deviceDescriptors = deviceDescriptors;
