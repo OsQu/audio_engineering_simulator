@@ -89,6 +89,11 @@ class SceneProcessor extends AudioWorkletProcessor {
       // Device ids of the current scene, for the DAW drain/report loop. A device is a DAW iff its
       // live `track_count > 0`, so non-DAW devices fall out naturally (no computer-typeId coupling).
       this.deviceIds = patch.devices.map((dev) => dev.id);
+      // Per-track record lifecycle: `${device}:${track}` → PCM bytes captured this take. Presence means
+      // "currently capturing" — the worklet owns the take lifecycle + WAV headers (it has the codec).
+      this.capturing = new Map();
+      // Digital rate stamped into a take's WAV header — the interface's rate (= the AudioContext rate).
+      this.wavRate = Math.round(sampleRate);
 
       // Live control. The main thread posts generic, device-addressed messages; we forward
       // them onto the engine, which only enqueues (latest-wins target / timestamped event), applied by
@@ -222,16 +227,39 @@ class SceneProcessor extends AudioWorkletProcessor {
       this.port.postMessage({ type: "readouts", readings: this.engine.readouts() });
     }
 
-    // DAW record drain: hand each capturing track's freshly-recorded PCM to the host to append to its
-    // take file. The record rings only hold bytes while a track is capturing, so idle tracks (and
-    // non-DAW devices, track_count 0) drain nothing. Bytes are transferred, not copied.
+    // DAW record drain + take lifecycle: hand each capturing track's freshly-recorded PCM to the host to
+    // append to its take file, bracketed by recordStarted/recordStopped so the host opens the file with a
+    // placeholder WAV header and finalizes it with the true length — the sim owns the format (the worklet
+    // builds the headers via `wav_header`); the host is dumb byte storage. The record rings only hold
+    // bytes while a track is capturing, so idle tracks (and non-DAW devices) drain nothing. Bytes and
+    // headers are transferred, not copied. A track "is capturing" iff it appears in `this.capturing`.
     if (this.quanta % RECORD_DRAIN_EVERY === 0) {
       for (const device of this.deviceIds) {
         const tracks = this.engine.track_count(device);
+        if (tracks === 0) continue; // not a DAW
+        const recording = this.engine.is_recording(device);
         for (let t = 0; t < tracks; t++) {
+          const key = `${device}:${t}`;
           const bytes = this.engine.drain_record(device, t);
           if (bytes.length > 0) {
+            if (!this.capturing.has(key)) {
+              // First bytes since idle → open the take file with a placeholder (length-0) header.
+              this.capturing.set(key, 0);
+              const header = wasm_bindgen.wav_header(this.wavRate, 1, 0);
+              this.port.postMessage({ type: "recordStarted", device, track: t, header }, [
+                header.buffer,
+              ]);
+            }
+            this.capturing.set(key, this.capturing.get(key) + bytes.length);
             this.port.postMessage({ type: "recorded", device, track: t, bytes }, [bytes.buffer]);
+          } else if (this.capturing.has(key) && !recording) {
+            // Ring drained and the device is no longer recording → finalize with the true-length header.
+            const dataBytes = this.capturing.get(key);
+            this.capturing.delete(key);
+            const header = wasm_bindgen.wav_header(this.wavRate, 1, dataBytes);
+            this.port.postMessage({ type: "recordStopped", device, track: t, header }, [
+              header.buffer,
+            ]);
           }
         }
       }

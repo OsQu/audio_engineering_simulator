@@ -103,6 +103,25 @@ export type RecordedMessage = {
   bytes: Uint8Array;
 };
 
+/** A track began capturing (first drained bytes since idle) — the host opens its take file, writing this
+ *  placeholder WAV `header` (dataBytes = 0) built by the sim's codec. The worklet owns the take lifecycle
+ *  and the WAV format; the host is dumb storage. */
+export type RecordStartedMessage = {
+  type: "recordStarted";
+  device: string;
+  track: number;
+  header: Uint8Array;
+};
+
+/** A track stopped capturing (transport stopped/record-off and its ring drained) — the host overwrites
+ *  the take file's header with this finalized one (the sim's `wav_header` for the true data length). */
+export type RecordStoppedMessage = {
+  type: "recordStopped";
+  device: string;
+  track: number;
+  header: Uint8Array;
+};
+
 /** Handle returned by `startEngine` for host-side controls that sit *outside* the simulation. */
 export interface EngineControl {
   /** Set the monitor (listening) volume: a Web Audio gain after the engine, before the speakers.
@@ -133,8 +152,12 @@ export interface EngineHandlers {
   onDeviceDescriptors?: (deviceDescriptors: Record<string, DeviceDescriptor>) => void;
   /** Live DAW transport states (~47×/s) — playhead + rolling/recording per DAW device. Optional. */
   onTransports?: (states: TransportState[]) => void;
+  /** A track began capturing: open its take file with the placeholder `header`. Optional. */
+  onRecordStarted?: (device: string, track: number, header: Uint8Array) => void;
   /** A drained chunk of recorded PCM for a track — the host appends it to the take file. Optional. */
   onRecorded?: (device: string, track: number, bytes: Uint8Array) => void;
+  /** A track stopped capturing: finalize its take file's `header`. Optional. */
+  onRecordStopped?: (device: string, track: number, header: Uint8Array) => void;
 }
 
 /** Compose the end-to-end latency line from the engine group delay + the browser's measured latency. */
@@ -215,9 +238,15 @@ export async function startEngine(
       handlers.onLosses?.((d as LossesMessage).losses);
     } else if (d?.type === "transports") {
       handlers.onTransports?.((d as TransportsMessage).states);
+    } else if (d?.type === "recordStarted") {
+      const m = d as RecordStartedMessage;
+      handlers.onRecordStarted?.(m.device, m.track, m.header);
     } else if (d?.type === "recorded") {
       const m = d as RecordedMessage;
       handlers.onRecorded?.(m.device, m.track, m.bytes);
+    } else if (d?.type === "recordStopped") {
+      const m = d as RecordStoppedMessage;
+      handlers.onRecordStopped?.(m.device, m.track, m.header);
     } else if (d?.type === "error") {
       handlers.onStatus(`worklet error: ${d.message}`);
       console.error("worklet error:", d.message, "\n", d.stack);

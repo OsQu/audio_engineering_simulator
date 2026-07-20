@@ -13,6 +13,7 @@ import {
   descriptorFor,
   type ParamDescriptor,
 } from "./catalog";
+import { DawController } from "./daw";
 import {
   type ControlMessage,
   type EngineControl,
@@ -20,12 +21,22 @@ import {
   healthSummary,
   type ReadyMessage,
   startEngine,
+  type TransportState,
 } from "./engine";
 import { DEFAULT_VELOCITY } from "./notes";
 import * as params from "./params";
 import { deviceById } from "./projection";
 import type { Patch } from "./scene";
-import { loadScene, type Scene, saveScene, setSceneConfig, setSceneParam } from "./scene-store";
+import { resizeTracks, setSceneTrack } from "./scene-ops";
+import {
+  loadScene,
+  type Scene,
+  saveScene,
+  setSceneConfig,
+  setSceneParam,
+  type TrackUi,
+} from "./scene-store";
+import { StorageClient } from "./storage-client";
 
 // Monitor (listening) volume — a host-side output gain *outside* the simulation, persisted on its own
 // (a per-listener setting, not scene/simulation data). Defaults low so it doesn't blast.
@@ -81,6 +92,15 @@ export class SceneSession {
   // `ready` message. A single engine scalar — held here so a view (the bench debug header) can show it
   // without recomputing. The scene view's status line already renders the fuller `latencySummary`.
   latencyMs = $state(0);
+
+  // --- DAW transport state (streamed from the worklet, per computer device) ------------------------
+  // Live transport state keyed by DAW device id (playhead + rolling/recording), updated ~47×/s from the
+  // worklet's `transports` message. The mixer surface reads it to animate the playhead + light buttons.
+  transports = $state<Record<string, TransportState>>({});
+  // The OPFS storage worker client + the record/playback orchestrator. Created on engine `ready`
+  // (the orchestrator needs the worklet `send`); null before then.
+  #storage: StorageClient | null = null;
+  #daw: DawController | null = null;
 
   // --- The authoritative scene + its control-param lane -------------------------------------------
   // The page's authoritative scene: the view root constructs the session with it. Held as `$state` so
@@ -204,6 +224,106 @@ export class SceneSession {
     send({ type: "loadPatch", patch: this.plainPatch() });
     this.paramValues = params.seedParamValues(this.scene, this.catalog);
     params.pushParams(send, this.scene, this.catalog, this.paramValues);
+    this.applyTrackState(); // the fresh recorder boots at defaults — re-apply the persisted track model
+  }
+
+  // --- DAW: transport, tracks, record/playback ----------------------------------------------------
+
+  /** A DAW device's live transport state (playhead + rolling/recording), or undefined if none yet. */
+  transportOf(device: string): TransportState | undefined {
+    return this.transports[device];
+  }
+
+  /** The persisted per-track model for a device (empty if none). */
+  tracksOf(device: string): TrackUi[] {
+    return this.scene.ui.tracks?.[device] ?? [];
+  }
+
+  /** The USB **send** lane count a computer exposes (its default-input clamp), from its descriptor. */
+  #sendsOf(device: string): number {
+    const port = this.descriptorOf(device)?.ports.find(
+      (p) => p.direction === "input" && p.connector === "usb",
+    );
+    return port?.channels ?? 2;
+  }
+
+  /** Push one track's saved state to the engine — the per-track control seam. Shared by the live track
+   *  setters and {@link applyTrackState} (re-apply after a recompile resets the recorder). */
+  #sendTrack(device: string, track: number, t: TrackUi): void {
+    const send = this.send;
+    if (!send) return;
+    send({ type: "trackInput", device, track, lane: t.input });
+    send({ type: "trackArm", device, track, armed: t.armed });
+    send({ type: "trackMonitor", device, track, on: t.monitoring });
+    send({ type: "trackLevel", device, track, level: t.level });
+  }
+
+  /** Re-apply every device's persisted track model to the engine — called after a build/hot-swap, since
+   *  the fresh recorder boots at its construction defaults (engine track state is runtime-only). */
+  applyTrackState(): void {
+    const all = this.scene.ui.tracks;
+    if (!all) return;
+    for (const [device, tracks] of Object.entries(all)) {
+      for (let i = 0; i < tracks.length; i++) this.#sendTrack(device, i, tracks[i]);
+    }
+  }
+
+  /** Set a track's assigned send lane (record/monitor source) — persist + push live. */
+  setTrackInput(device: string, track: number, lane: number): void {
+    setSceneTrack(this.scene, device, track, this.#sendsOf(device), { input: lane });
+    this.send?.({ type: "trackInput", device, track, lane });
+  }
+
+  /** Arm/disarm a track for recording — persist + push live. */
+  setTrackArmed(device: string, track: number, armed: boolean): void {
+    setSceneTrack(this.scene, device, track, this.#sendsOf(device), { armed });
+    this.send?.({ type: "trackArm", device, track, armed });
+  }
+
+  /** Toggle a track's input monitoring — persist + push live. */
+  setTrackMonitoring(device: string, track: number, on: boolean): void {
+    setSceneTrack(this.scene, device, track, this.#sendsOf(device), { monitoring: on });
+    this.send?.({ type: "trackMonitor", device, track, on });
+  }
+
+  /** Set a track's fader level (linear gain) — persist + push live. De-zippered by the recorder. */
+  setTrackLevel(device: string, track: number, level: number): void {
+    setSceneTrack(this.scene, device, track, this.#sendsOf(device), { level });
+    this.send?.({ type: "trackLevel", device, track, level });
+  }
+
+  /** Change a computer's track count: rewrite its `track_count` config, resize the persisted track
+   *  model, then hot-swap (a structural rebuild) and re-apply the track state. */
+  setTrackCount(device: string, count: number): void {
+    const n = Math.max(1, Math.round(count));
+    setSceneConfig(this.scene, device, "track_count", n);
+    resizeTracks(this.scene, device, n, this.#sendsOf(device));
+    this.hotSwap(); // applyTrackState runs inside hotSwap
+  }
+
+  /** Start the transport rolling and begin playing back every track that has a take. */
+  play(device: string): void {
+    this.send?.({ type: "transport", device, action: "play" });
+    const playhead = this.transports[device]?.playhead ?? 0;
+    const tracks = this.tracksOf(device).map((_, i) => i);
+    void this.#daw?.startPlayback(device, tracks, playhead);
+  }
+
+  /** Stop the transport (playhead holds) and drop playback streams. */
+  stop(device: string): void {
+    this.send?.({ type: "transport", device, action: "stop" });
+    this.#daw?.stopPlayback();
+  }
+
+  /** Enable/disable recording (independent of rolling — the overdub gate). */
+  setRecordEnabled(device: string, on: boolean): void {
+    this.send?.({ type: "transport", device, action: on ? "recordOn" : "recordOff" });
+  }
+
+  /** Jump the playhead to `pos` (digital samples). Drops playback streams — the next play reloads. */
+  seek(device: string, pos: number): void {
+    this.send?.({ type: "seek", device, pos });
+    this.#daw?.stopPlayback();
   }
 
   save(): void {
@@ -222,6 +342,7 @@ export class SceneSession {
     this.scene = loaded;
     this.paramValues = params.seedParamValues(this.scene, this.catalog);
     this.send?.({ type: "loadPatch", patch: this.plainPatch() }); // hot-swap the engine to the saved scene
+    this.applyTrackState();
     this.status = "scene loaded";
     return true;
   }
@@ -241,6 +362,11 @@ export class SceneSession {
   ): Promise<void> {
     if (this.started) return;
     this.started = true;
+    // The OPFS storage worker owns the take files (sync access handles need a Worker). Create it once
+    // here; the record/playback orchestrator that drives it is built on `ready` (it needs `send`).
+    this.#storage = new StorageClient(
+      new Worker(new URL("./storage-worker.ts", import.meta.url), { type: "module" }),
+    );
     try {
       const control: EngineControl = await startEngine(
         this.plainPatch(),
@@ -263,6 +389,25 @@ export class SceneSession {
           onDeviceDescriptors: (deviceDescriptors) => {
             this.deviceDescriptors = deviceDescriptors;
           },
+          // DAW transport ticks: mirror per-device state for the UI and top up each playing ring.
+          onTransports: (states) => {
+            const map: Record<string, TransportState> = {};
+            for (const s of states) {
+              map[s.device] = s;
+              this.#daw?.pump(s.device, s.playhead);
+            }
+            this.transports = map;
+          },
+          // Record relay: the worklet brackets each take (started/stopped headers); forward to storage.
+          onRecordStarted: (device, track, header) => {
+            this.#daw?.recordStarted(device, track, header);
+          },
+          onRecorded: (device, track, bytes) => {
+            this.#daw?.recorded(device, track, bytes);
+          },
+          onRecordStopped: (device, track, header) => {
+            void this.#daw?.recordStopped(device, track, header);
+          },
           onReady: (r: ReadyMessage, sendFn) => {
             this.catalog = r.catalog;
             this.cables = r.cables;
@@ -271,8 +416,11 @@ export class SceneSession {
             this.latencyMs = r.signalPathLatencyMs;
             this.send = sendFn;
             this.ready = true;
+            // The orchestrator needs `send` + the storage client (created in `start`).
+            if (this.#storage) this.#daw = new DawController(sendFn, this.#storage);
             this.paramValues = params.seedParamValues(this.scene, r.catalog);
             params.pushParams(sendFn, this.scene, r.catalog, this.paramValues);
+            this.applyTrackState(); // match the fresh recorder to the scene's track model
             onReady(r, sendFn);
           },
         },

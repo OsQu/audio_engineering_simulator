@@ -115,8 +115,10 @@ export class TakeStore {
     const name = takeFileName(deviceId, track);
     const written = this.#recorded.get(name);
     if (written === undefined) return; // not in a take — a stray drain after stop; drop it
-    await this.#backend.writeAt(name, HEADER_LEN + written, pcm);
+    // Reserve the offset and bump the counter **synchronously**, before the `await` — so two appends
+    // racing to the same track each get a distinct offset (the read-modify-write can't interleave).
     this.#recorded.set(name, written + pcm.byteLength);
+    await this.#backend.writeAt(name, HEADER_LEN + written, pcm);
   }
 
   /**
