@@ -265,6 +265,7 @@ pub enum PortDirection {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub enum PortDomain {
+    Acoustic,
     Analog,
     Digital,
     Events,
@@ -335,6 +336,7 @@ pub fn connectors_compatible(a: Connector, b: Connector) -> bool {
 impl From<Domain> for PortDomain {
     fn from(d: Domain) -> Self {
         match d {
+            Domain::Acoustic => Self::Acoustic,
             Domain::Analog => Self::Analog,
             Domain::DigitalAudio => Self::Digital,
             Domain::Events => Self::Events,

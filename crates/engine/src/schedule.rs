@@ -60,12 +60,12 @@ use crate::graph::{Edge, Graph, NodeId};
 use crate::node::{Lifted, Node};
 use crate::noise::NoiseDensity;
 use crate::param::{ParamHandle, ParamId, ParamQueue, Params, Smoother, smooth_samples};
-use crate::port::{DigitalFace, EventFace};
+use crate::port::{AcousticFace, DigitalFace, EventFace};
 use crate::readout::{ReadoutHandle, ReadoutId};
 use crate::rng::Rng;
 use crate::signal::{
-    AnalogRate, ClockDomainId, Domain, EventBuffer, Lane, SampleBuffer, TimedEvent, VoltageBuffer,
-    Volts,
+    AnalogRate, ClockDomainId, Domain, EventBuffer, Lane, PressureBuffer, SampleBuffer, TimedEvent,
+    VoltageBuffer, Volts,
 };
 use core::fmt;
 
@@ -258,6 +258,9 @@ impl EdgeTransform {
 /// edges are a same-clock-domain sample copy. (A digital edge across *different* clock domains is
 /// a resample — not yet modeled; `compile` rejects it.)
 enum EdgeKind {
+    /// Acoustic: copy sound pressure src → dst. Air is ideal — a unity copy, no divider, no cable
+    /// rolloff (the acoustic peer of [`DigitalRoute`](Self::DigitalRoute), at the analog rate).
+    AcousticRoute,
     /// Analog: scale by the divider gain, optional cable rolloff, optional coupled interference.
     Analog(EdgeTransform),
     /// Digital audio: copy samples src → dst within one clock domain.
@@ -534,6 +537,12 @@ impl Schedule {
                 Step::Edge { src, dst, kind } => {
                     // Different pools ⇒ disjoint borrows, no aliasing.
                     match kind {
+                        EdgeKind::AcousticRoute => {
+                            // Ideal air: a unity pressure copy. Same analog rate ⇒ equal length.
+                            let source = output_pool[*src].pressure().as_slice();
+                            let dest = input_pool[*dst].pressure_mut().as_mut_slice();
+                            dest.copy_from_slice(source);
+                        }
                         EdgeKind::Analog(transform) => {
                             let source = output_pool[*src].voltage().as_slice();
                             let dest = input_pool[*dst].voltage_mut().as_mut_slice();
@@ -669,6 +678,7 @@ pub fn compile(
             obases.push(output_pool.len());
             for _ in 0..face.lane_count() {
                 output_pool.push(alloc_lane(
+                    face.acoustic(),
                     face.digital(),
                     face.events(),
                     block_len,
@@ -686,6 +696,7 @@ pub fn compile(
             ibases.push(input_pool.len());
             for _ in 0..face.lane_count() {
                 input_pool.push(alloc_lane(
+                    face.acoustic(),
                     face.digital(),
                     face.events(),
                     block_len,
@@ -798,6 +809,14 @@ pub fn compile(
         let group = &by_port[i..j];
         let out_face = nodes[from_node].outputs()[from_port];
         match out_face.domain() {
+            Domain::Acoustic => {
+                // No electrical solve and no clock on an acoustic wire: ideal air is a unity
+                // pressure copy. An acoustic port owns exactly one lane (mono), so one route per
+                // edge — a fan-out (one source into several mics) is just several unity copies.
+                for &ei in group {
+                    edge_kinds[ei] = Some(vec![EdgeKind::AcousticRoute]);
+                }
+            }
             Domain::Analog => {
                 // Fan-out: solve the parallel loading across the whole group so the divider gains
                 // are right, then one transform per conductor (same gain, independent one-pole).
@@ -1196,12 +1215,17 @@ fn check_input_port(nodes: &[Box<dyn Node>], node: usize, port: usize) -> Result
 /// Every digital lane belongs to one converter clock domain; the [`ClockDomainId`] is a placeholder
 /// until multiple clock domains are modeled.
 fn alloc_lane(
+    acoustic: Option<AcousticFace>,
     digital: Option<DigitalFace>,
     event: Option<EventFace>,
     block_len: usize,
     rate: AnalogRate,
     node: usize,
 ) -> Result<Lane, CompileError> {
+    if acoustic.is_some() {
+        // Acoustic pressure: a dense block at the analog rate, mono (one lane), like voltage.
+        return Ok(Lane::Pressure(PressureBuffer::zeros(block_len, rate)));
+    }
     if let Some(face) = event {
         // Sparse carrier: a bounded list, sized by capacity rather than block length.
         return Ok(Lane::Events(EventBuffer::with_capacity(face.capacity())));

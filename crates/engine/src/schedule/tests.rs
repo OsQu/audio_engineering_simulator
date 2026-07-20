@@ -2949,3 +2949,163 @@ mod delayed_edges {
         }
     }
 }
+
+/// White-box tests for the **acoustic carrier**: an ideal-air pressure edge (`AcousticRoute`) is a
+/// unity copy at the analog rate, and an acoustic↔analog edge has no bridge on a wire (a microphone
+/// is the transducer, and it lives *inside* a node), so `compile` rejects it as a `DomainMismatch`.
+/// Scaffolding mirrors `digital_seam`/`event_seam`; tests inspect the private pools (white-box).
+mod acoustic_seam {
+    use super::super::*;
+    use crate::electrical::{InputZ, Ohms};
+    use crate::node::TestSource;
+    use crate::port::{AcousticFace, InputPort, OutputPort};
+    use crate::signal::{Pascals, Volts};
+
+    fn analog_rate() -> AnalogRate {
+        AnalogRate::new(384_000.0)
+    }
+
+    /// A sound source: no inputs, one acoustic output filled with a constant pressure.
+    struct AcousticSource {
+        pressure: f32,
+        outputs: [OutputPort; 1],
+    }
+    impl AcousticSource {
+        fn new(pressure: Pascals) -> Self {
+            Self {
+                pressure: pressure.get(),
+                outputs: [AcousticFace::new().into()],
+            }
+        }
+    }
+    impl Node for AcousticSource {
+        fn inputs(&self) -> &[InputPort] {
+            &[]
+        }
+        fn outputs(&self) -> &[OutputPort] {
+            &self.outputs
+        }
+        fn process(&mut self, _params: &Params, _inputs: &[Lane], outputs: &mut [Lane]) {
+            outputs[0].pressure_mut().fill(Pascals::new(self.pressure));
+        }
+    }
+
+    /// An acoustic sink: one acoustic input, no outputs. A no-op — tests read its input lane.
+    struct AcousticSink {
+        inputs: [InputPort; 1],
+    }
+    impl AcousticSink {
+        fn new() -> Self {
+            Self {
+                inputs: [AcousticFace::new().into()],
+            }
+        }
+    }
+    impl Node for AcousticSink {
+        fn inputs(&self) -> &[InputPort] {
+            &self.inputs
+        }
+        fn outputs(&self) -> &[OutputPort] {
+            &[]
+        }
+        fn process(&mut self, _params: &Params, _inputs: &[Lane], _outputs: &mut [Lane]) {}
+    }
+
+    /// An analog sink: one analog input, no outputs — used to force an acoustic↔analog mismatch.
+    struct AnalogSink {
+        inputs: [InputPort; 1],
+    }
+    impl AnalogSink {
+        fn new() -> Self {
+            Self {
+                inputs: [InputZ::new(Ohms::new(10_000.0)).into()],
+            }
+        }
+    }
+    impl Node for AnalogSink {
+        fn inputs(&self) -> &[InputPort] {
+            &self.inputs
+        }
+        fn outputs(&self) -> &[OutputPort] {
+            &[]
+        }
+        fn process(&mut self, _params: &Params, _inputs: &[Lane], _outputs: &mut [Lane]) {}
+    }
+
+    #[test]
+    fn acoustic_lanes_are_mono_at_the_analog_rate() {
+        // Unlike a digital lane (decimated to block_len / M), a pressure lane is a dense block at
+        // the analog rate — one lane per port (mono), the full block length.
+        let mut g = Graph::new();
+        let src = g.add(AcousticSource::new(Pascals::new(1.0)));
+        let sink = g.add(AcousticSink::new());
+        g.connect_ideal(src, 0, sink, 0);
+        g.set_output(src, 0); // acoustic tap; this test only inspects the pool, never calls process
+        let sched = compile(g, 16, analog_rate(), 0).expect("valid acoustic chain");
+
+        let pressure_lanes: Vec<&Lane> = sched
+            .output_pool
+            .iter()
+            .chain(sched.input_pool.iter())
+            .filter(|l| matches!(l, Lane::Pressure(_)))
+            .collect();
+        assert_eq!(
+            pressure_lanes.len(),
+            2,
+            "one source-output + one sink-input pressure lane"
+        );
+        for lane in pressure_lanes {
+            assert_eq!(lane.domain(), Domain::Acoustic);
+            assert_eq!(
+                lane.len(),
+                16,
+                "an acoustic lane is the full block (no decimation)"
+            );
+        }
+    }
+
+    #[test]
+    fn acoustic_route_copies_pressure_unchanged() {
+        // A separate analog node is the (voltage) output tap so `process` can run; the acoustic
+        // source → sink component runs alongside, and its AcousticRoute copies the pressure 1:1
+        // (ideal air — no divider, no rolloff).
+        let mut g = Graph::new();
+        let atap = g.add(TestSource::new(Volts::new(1.0), Ohms::new(150.0)));
+        g.set_output(atap, 0);
+        let src = g.add(AcousticSource::new(Pascals::new(0.7)));
+        let sink = g.add(AcousticSink::new());
+        g.connect_ideal(src, 0, sink, 0);
+
+        let mut sched = compile(g, 16, analog_rate(), 0).expect("valid mixed chain");
+        let mut out = VoltageBuffer::zeros(16, analog_rate());
+        sched.process(&mut out);
+
+        // The sink's input pressure lane received the source's 0.7 Pa, unattenuated.
+        let sink_in = sched
+            .input_pool
+            .iter()
+            .find(|l| matches!(l, Lane::Pressure(_)))
+            .expect("an acoustic input lane");
+        assert!(sink_in.pressure().as_slice().iter().all(|&p| p == 0.7));
+    }
+
+    #[test]
+    fn rejects_acoustic_into_analog() {
+        // A pressure output into a voltage input: no physics bridges the domains on a wire (the
+        // microphone transducer lives inside a node), so compile rejects the edge.
+        let mut g = Graph::new();
+        let src = g.add(AcousticSource::new(Pascals::new(1.0)));
+        let sink = g.add(AnalogSink::new());
+        g.connect_ideal(src, 0, sink, 0);
+        g.set_output(src, 0);
+        assert_eq!(
+            compile(g, 16, analog_rate(), 0).err(),
+            Some(CompileError::DomainMismatch {
+                from_node: 0,
+                from_port: 0,
+                to_node: 1,
+                to_port: 0,
+            })
+        );
+    }
+}

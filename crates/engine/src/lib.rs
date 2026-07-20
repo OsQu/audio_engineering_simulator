@@ -46,13 +46,13 @@ pub use node::{
 };
 pub use noise::NoiseDensity;
 pub use param::{ParamDecl, ParamHandle, ParamId, ParamQueue, Params};
-pub use port::{AudioFormat, DigitalFace, EventFace, InputPort, OutputPort};
+pub use port::{AcousticFace, AudioFormat, DigitalFace, EventFace, InputPort, OutputPort};
 pub use readout::{ReadoutDecl, ReadoutHandle, ReadoutId};
 pub use rng::Rng;
 pub use schedule::{CompileError, EventInputId, EventQueue, Schedule, ScheduleSlot, compile};
 pub use signal::{
     AnalogRate, BitDepth, ClockDomainId, Domain, EventBuffer, EventMessage, Lane, Pascals,
-    SampleBuffer, SampleRate, TimedEvent, VoltageBuffer, Volts,
+    PressureBuffer, SampleBuffer, SampleRate, TimedEvent, VoltageBuffer, Volts,
 };
 pub use transport::Transport;
 pub use wav::{WAV_HEADER_LEN, WavError, WavSpec, decode_wav, encode_wav, wav_header};
