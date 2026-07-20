@@ -1264,13 +1264,15 @@ mod tests {
     /// **dead with 48V off and alive with it on** — the same patch, rebuilt with the structural
     /// `phantom` config toggled, and nothing else changed. Routed Pre 1 → Line 1 through the matrix
     /// so the capsule tone reaches the analog tap. Hand calc for the powered amplitude — 10 mV
-    /// differential capsule tone through the chain's baked dividers, gain 1 everywhere:
+    /// differential capsule tone through the chain's baked dividers, at the preamp's **default gain**
+    /// (its +8 dB floor, `MicPreamp::MIN_GAIN` = ×2.511886; monitor amp still unity):
     ///   mic (150 Ω) → preamp (10 kΩ diff):   10 000/(150 + 10 000)  = 0.985222
+    ///   preamp voltage gain (default +8 dB):                        = 2.511886
     ///   preamp (150 Ω) → input meter (1 MΩ): 10⁶/1 000 150          = 0.999850
     ///   meter (150 Ω) → AD (1 MΩ):           10⁶/1 000 150          = 0.999850
     ///   AD → matrix (Pre 1 → Line 1 = ×1) → DA: digital, ≈ unity at 1 kHz
     ///   DA (150 Ω) → monitor amp (10 kΩ):    10 000/10 150          = 0.985222
-    /// ⇒ 0.01 × 0.985222² × 0.999850² = 9.7037 mV peak at Line Out 1 — and **zero DC**: the
+    /// ⇒ 0.01 × 0.985222² × 0.999850² × 2.511886 = 24.3726 mV peak at Line Out 1 — and **zero DC**: the
     /// 37.86 V pedestal is common-mode, cancelled at the preamp's difference *before* its clamp.
     /// Off, both mic legs sit at 0 V, so only the AD's dither (~30 µV LSB) reaches the tap.
     #[test]
@@ -1312,8 +1314,8 @@ mod tests {
         // 48V on: the capsule tone arrives at the hand-calc amplitude, with no DC.
         let (peak, dc) = run(1.0);
         assert!(
-            (peak - 9.7037e-3).abs() < 2e-4,
-            "hand calc 9.7037 mV at Line Out 1, got {peak} V"
+            (peak - 24.3726e-3).abs() < 5e-4,
+            "hand calc 24.3726 mV at Line Out 1 (+8 dB default preamp gain), got {peak} V"
         );
         assert!(dc.abs() < 1e-4, "pedestal must not leak: DC = {dc} V");
     }
@@ -1321,9 +1323,10 @@ mod tests {
     /// The 8i6's 48V is **one switch over both preamps** (the real unit's single global button):
     /// two mics into the two combo inputs and the *one* `phantom` key wakes both. Observed at the
     /// post-preamp input meters' block-peak readouts (ids 1 and 3). Hand calc: 10 mV ×
-    /// 0.985222 (mic→preamp divider, 10 000/10 150) × 0.999850 (preamp→meter divider) = 9.8507 mV
-    /// peak ⇒ 20·log10(0.0098507/0.774597 V) = −37.91 dBu on both meters. Off, both mics are dead
-    /// and both meters sit at the −60 dB reading floor.
+    /// 0.985222 (mic→preamp divider, 10 000/10 150) × 2.511886 (preamp default gain, +8 dB floor) ×
+    /// 0.999850 (preamp→meter divider) = 24.743 mV peak ⇒ 20·log10(0.024743/0.774597 V) = −29.91 dBu
+    /// on both meters (the +8 dB default lifts the old unity-gain −37.91 dBu by exactly 8 dB). Off,
+    /// both mics are dead and both meters sit at the −60 dB reading floor.
     #[test]
     fn one_phantom_key_engages_both_preamps() {
         let peaks = |phantom: f32| {
@@ -1347,8 +1350,8 @@ mod tests {
         };
 
         let (in1, in2) = peaks(1.0);
-        assert!((in1 - (-37.91)).abs() < 0.1, "In 1 Peak {in1} dBu");
-        assert!((in2 - (-37.91)).abs() < 0.1, "In 2 Peak {in2} dBu");
+        assert!((in1 - (-29.91)).abs() < 0.1, "In 1 Peak {in1} dBu");
+        assert!((in2 - (-29.91)).abs() < 0.1, "In 2 Peak {in2} dBu");
 
         let (in1, in2) = peaks(0.0);
         assert!(in1 <= -60.0 + 1e-3, "dead mic 1 at the floor, got {in1}");

@@ -76,7 +76,10 @@ pub struct MicPreamp {
 }
 
 impl MicPreamp {
-    /// The smoothed voltage-gain control. Uncontrolled, it holds the construction `gain`.
+    /// The smoothed voltage-gain control. Uncontrolled, it holds the construction `gain`. Its range
+    /// floors at [`MIN_GAIN`](Self::MIN_GAIN) (≈ +8 dB), not silence: a real mic preamp bottoms out at
+    /// a positive minimum gain, and a buffered active stage never mutes via the gain pot (that's the
+    /// [`POWERED`](Self::POWERED) gate). Callers should construct with `gain >= MIN_GAIN`.
     pub const GAIN: ParamId = ParamId(0);
     /// Power switch (`0` = off, `1` = on) — the output gate. Decl-identical (range/default/smooth) to
     /// [`GainStage::POWERED`](super::GainStage::POWERED) so a device power group can bind both.
@@ -89,6 +92,14 @@ impl MicPreamp {
 
     /// Largest controllable gain (≈ +60 dB) and the de-zipper glide time — matching `GainStage`.
     const MAX_GAIN: f32 = 1000.0;
+    /// Smallest controllable gain in dB: a real mic preamp's gain pot bottoms out at a positive
+    /// minimum, not −∞ (≈ +8 dB for a Scarlett). The GAIN range floors here so the knob's fully-CCW
+    /// position is +8 dB, and the control is dB-linear (a positive-floored geometric taper) up to
+    /// +60 dB — never an attenuator.
+    pub const MIN_GAIN_DB: f32 = 8.0;
+    /// [`MIN_GAIN_DB`](Self::MIN_GAIN_DB) as a linear voltage-gain multiplier: `10^(8/20) ≈ 2.5119`.
+    /// A literal so it's usable in `const` context; a unit test pins it to the dB it claims.
+    pub const MIN_GAIN: f32 = 2.511_886_4;
     const GAIN_SMOOTH_MS: f32 = 5.0;
     /// De-click glide for the switch params (power/pad/air) — short enough to feel instant.
     const SWITCH_SMOOTH_MS: f32 = 5.0;
@@ -106,7 +117,8 @@ impl MicPreamp {
     const AIR_GAIN_DB: f64 = 4.0;
 
     /// A preamp with voltage gain `gain`, clipping at `±rail`, presenting `z_in` (the INST/line choice)
-    /// and driving from `z_out`. PAD and AIR default off.
+    /// and driving from `z_out`. PAD and AIR default off. `gain` is the control default; a device
+    /// should pass `>= `[`MIN_GAIN`](Self::MIN_GAIN) so the knob's default sits within its range.
     ///
     /// # Panics
     /// Panics unless `rail` is finite and `> 0` — a degenerate clamp is a setup bug — and unless
@@ -135,7 +147,7 @@ impl MicPreamp {
                 ParamDecl {
                     id: Self::GAIN,
                     default: gain,
-                    min: 0.0,
+                    min: Self::MIN_GAIN,
                     max: Self::MAX_GAIN,
                     smooth_ms: Self::GAIN_SMOOTH_MS,
                 },
@@ -498,5 +510,25 @@ mod tests {
     #[should_panic(expected = "rail must be finite and > 0")]
     fn rejects_nonpositive_rail() {
         let _ = preamp(1.0, 0.0);
+    }
+
+    #[test]
+    fn min_gain_is_plus_eight_db_and_floors_the_range() {
+        // The GAIN pot bottoms at a positive minimum, not silence — a real preamp is never an
+        // attenuator. The linear MIN_GAIN literal is exactly +8 dB: 20·log₁₀(2.5119) = 8.
+        assert_relative_eq!(
+            20.0 * MicPreamp::MIN_GAIN.log10(),
+            MicPreamp::MIN_GAIN_DB,
+            epsilon = 1e-4
+        );
+        // …and the declared GAIN range floors there (not 0), so the control can't go below +8 dB.
+        let p = preamp(MicPreamp::MIN_GAIN, 10.0);
+        let gain = p
+            .params()
+            .iter()
+            .find(|d| d.id == MicPreamp::GAIN)
+            .expect("GAIN decl");
+        assert_relative_eq!(gain.min, MicPreamp::MIN_GAIN, epsilon = 1e-6);
+        assert_relative_eq!(gain.max, MicPreamp::MAX_GAIN, epsilon = 1e-6);
     }
 }

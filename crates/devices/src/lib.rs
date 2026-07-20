@@ -20,7 +20,7 @@ pub use build::{BuildError, BuiltScene, build_patch};
 pub use cables::{CableType, cable_types};
 pub use catalog::{
     BuiltDevice, ConfigDescriptor, ConfigKind, Connector, DeviceConfig, DeviceDescriptor,
-    ParamDescriptor, ParamKind, PortDescriptor, PortDirection, PortDomain, PortKind,
+    ParamDescriptor, ParamKind, ParamTaper, PortDescriptor, PortDirection, PortDomain, PortKind,
     connectors_compatible, describe_device, descriptors, instantiate,
 };
 pub use scene::{

@@ -4,6 +4,7 @@
   import type { ParamDescriptor } from "../catalog";
   import { keyStep, verticalDrag } from "./drag";
   import { formatParam } from "./format";
+  import { toNorm } from "./taper";
 
   interface Props {
     param: ParamDescriptor;
@@ -25,11 +26,11 @@
           `--fader-gap: ${(size * 0.04).toFixed(2)}px`,
   );
 
-  // 0%..100% of the track height, bottom = min.
-  const pct = $derived(((value - param.min) / (param.max - param.min || 1)) * 100);
+  // 0%..100% of the track height, bottom = min — via the taper, so behaviour matches the drag law.
+  const pct = $derived(toNorm(param, value) * 100);
 
   function onKey(e: KeyboardEvent): void {
-    const next = keyStep(e, value, param.min, param.max);
+    const next = keyStep(e, param, value);
     if (next !== null) {
       e.preventDefault();
       onChange(next);
@@ -47,8 +48,7 @@
     aria-valuemin={param.min}
     aria-valuemax={param.max}
     aria-valuenow={value}
-    onpointerdown={(e) =>
-      verticalDrag(e, { value, min: param.min, max: param.max, onChange, travelPx: 120 })}
+    onpointerdown={(e) => verticalDrag(e, { param, value, onChange, travelPx: 120 })}
     ondblclick={() => onChange(param.default)}
     onkeydown={onKey}
   >
