@@ -15,7 +15,7 @@
   import { SceneSession } from "./session.svelte";
   import { PatchController } from "./patch-controller.svelte";
   import { cablePathData } from "./connections";
-  import type { Connection, PortRef } from "./scene";
+  import type { Connection, DeviceInstance, PortRef } from "./scene";
   import { defaultScene, loadScene } from "./scene-store";
   import {
     deviceById,
@@ -35,6 +35,7 @@
   import { footprint, type Room, type Wall } from "./spatial";
   import Cable from "./widgets/Cable.svelte";
   import CableInspector from "./widgets/CableInspector.svelte";
+  import FloatingWindow from "./widgets/FloatingWindow.svelte";
   import Vu from "./widgets/Vu.svelte";
   import WorldView from "./widgets/WorldView.svelte";
   import type { WorldApi } from "./world-api";
@@ -239,11 +240,11 @@
     return (dev && descriptorFor(session.catalog, dev.typeId)?.name) || dragCable.source.device;
   });
 
-  // Esc closes the focus overlay first, else cancels an in-progress patch (drag or pending).
+  // Esc closes the topmost focus window first, else cancels an in-progress patch (drag or pending).
   function onGlobalKey(e: KeyboardEvent): void {
     if (e.key !== "Escape") return;
-    if (focusedDevice !== null) {
-      focusedDevice = null;
+    if (openWindows.length > 0) {
+      closeWindow(openWindows[openWindows.length - 1].id);
       return;
     }
     if (dragCable) patch.cancel();
@@ -261,45 +262,77 @@
     scene.patch.connections.find((c) => connKey(c) === selectedCableKey) ?? null,
   );
 
-  // --- Device focus mode (sit down at a device: a large, device-specific interaction surface) --------
-  // Transient UI state (like the cable-inspector selection) — never persisted to scene `ui`. The
-  // presentation is an overlay that dims the world (a peer of the cable-inspector / patch-banner
-  // overlays), not a WorldView spatial change.
-  let focusedDevice = $state<string | null>(null);
-  // The on-screen width a magnified physical faceplate is zoomed to in the focus overlay (its mm footprint
-  // scaled up to this px width — a comfortable size inside the ~900px modal).
+  // --- Device focus windows (sit down at a device: a large, device-specific interaction surface) -----
+  // A simple window manager. Each focusable device opens a *non-modal* floating window (`FloatingWindow`)
+  // — moveable, resizable, and stackable, so several devices can be operated at once while the scene
+  // underneath stays live (no dimming backdrop). Transient UI state (like the cable-inspector selection)
+  // — never persisted to scene `ui`. Which surface component a window draws is `focusUi(typeId)`.
+  //
+  // The array *is* the z-order: index 0 is the bottom window, the last is the top (active) one. Each entry
+  // carries its own geometry, two-way bound into the window so a bring-to-front reorder of the keyed
+  // `{#each}` doesn't lose position. `openWindow` brings an already-open device to the front rather than
+  // duplicating it.
+  interface FocusWindow {
+    id: string;
+    x: number;
+    y: number;
+    w: number;
+    h: number;
+  }
+  let openWindows = $state<FocusWindow[]>([]);
+  // The on-screen width a magnified physical faceplate is zoomed to in a focus window (its mm footprint
+  // scaled up to this px width — a comfortable size; the window body scrolls if it doesn't fit).
   const FOCUS_FACE_WIDTH_PX = 720;
-  // The focused device resolved to its instance + descriptor — or null when nothing is focused (or the
-  // focused device has gone / isn't focusable, so a stale id renders nothing). Which surface component
-  // to draw is `focusUi(typeId)`.
-  const focused = $derived.by(() => {
-    if (focusedDevice === null) return null;
-    const device = deviceById(scene, focusedDevice);
+
+  function openWindow(id: string): void {
+    const i = openWindows.findIndex((w) => w.id === id);
+    if (i >= 0) {
+      activateWindow(id);
+      return;
+    }
+    // Cascade each new window down-right so it doesn't land exactly on the last one.
+    const n = openWindows.length;
+    openWindows.push({ id, x: 48 + n * 28, y: 48 + n * 28, w: 700, h: 520 });
+  }
+  function activateWindow(id: string): void {
+    const i = openWindows.findIndex((w) => w.id === id);
+    if (i < 0 || i === openWindows.length - 1) return;
+    const [win] = openWindows.splice(i, 1);
+    openWindows.push(win);
+  }
+  function closeWindow(id: string): void {
+    openWindows = openWindows.filter((w) => w.id !== id);
+  }
+  // Resolve an open window's id to its device instance + descriptor, or null if it's gone / no longer
+  // focusable (a stale entry renders nothing until the prune effect below drops it).
+  function resolveWindow(id: string): { device: DeviceInstance; desc: DeviceDescriptor } | null {
+    const device = deviceById(scene, id);
     const desc = device ? session.descriptorOf(device.id) : undefined;
     if (!device || !desc || !isFocusable(desc)) return null;
     return { device, desc };
-  });
-  const closeFocus = (): void => {
-    focusedDevice = null;
-  };
-  // The focus dialog element, for a basic focus-trap: move keyboard focus into the surface when it
-  // opens (depends only on the focused *id* + the element, so turning a knob doesn't steal focus back).
-  let focusSurfaceEl = $state<HTMLElement | undefined>();
+  }
+  // Drop windows whose device has been removed / become non-focusable (e.g. after loading a scene). Guarded
+  // by a length check so the reassignment doesn't re-trigger this effect in a loop.
   $effect(() => {
-    if (focusedDevice !== null) focusSurfaceEl?.focus();
+    const live = openWindows.filter((w) => resolveWindow(w.id) !== null);
+    if (live.length !== openWindows.length) openWindows = live;
   });
 
-  // --- Playing the focused instrument (note input follows focus) ------------------------------------
-  // The device a keyboard/MIDI/on-screen note plays: the focused device iff it's an instrument (a
-  // keybed surface) whose events input is *open* (not cable-driven), else null. A plain string|null so
+  // --- Playing the focused instrument (note input follows the active window) ------------------------
+  // The device a keyboard/MIDI/on-screen note plays: the *topmost* open window that is an instrument (a
+  // keybed surface) whose events input is *open* (not cable-driven). Scanning from the top means you can
+  // tweak a console window on top while still playing the synth window beneath it. A plain string|null so
   // the wireKeyboard effect only re-runs when the *target* changes — turning a knob (which mutates the
   // scene) doesn't re-attach the listener.
   const keyboardTarget = $derived.by((): string | null => {
-    if (focusedDevice === null) return null;
-    const dev = deviceById(scene, focusedDevice);
-    const desc = dev ? descriptorFor(session.catalog, dev.typeId) : undefined;
-    if (!dev || !desc || !isPlayable(desc)) return null;
-    return sceneOps.eventsInputDriven(scene, desc, dev.id) ? null : dev.id;
+    for (let i = openWindows.length - 1; i >= 0; i--) {
+      const dev = deviceById(scene, openWindows[i].id);
+      const desc = dev ? descriptorFor(session.catalog, dev.typeId) : undefined;
+      if (dev && desc && isPlayable(desc) && !sceneOps.eventsInputDriven(scene, desc, dev.id)) {
+        return dev.id;
+      }
+    }
+    return null;
   });
   // QWERTY capture + the target-explicit `playNote` wrapper — the shared keyboard-input glue (also used by
   // the bench). The focused instrument is played from the computer keyboard and Web MIDI (wired below),
@@ -362,7 +395,7 @@
     session.hotSwap();
   }
   function removeDevice(id: string): void {
-    if (focusedDevice === id) focusedDevice = null;
+    closeWindow(id);
     sceneOps.removeDevice(scene, id);
     session.hotSwap();
   }
@@ -781,7 +814,7 @@
                     type="button"
                     class="chip"
                     aria-label="open {focusDesc.name}"
-                    onclick={() => (focusedDevice = itemId)}
+                    onclick={() => openWindow(itemId)}
                   >
                     open
                   </button>
@@ -905,87 +938,79 @@
         />
       {/if}
 
-      {#if focused}
-        {@const f = focused}
-        <!-- The device's focus surface (its dedicated one — e.g. a console — or its faceplate). -->
-        {@const Surface = focusUi(f.device.typeId)}
-        <!-- Device focus overlay: sit down at the device. Dims the world and shows its surface large — a
-             peer of the cable-inspector / patch-banner overlays, not a WorldView spatial change. Click the
-             backdrop or press Esc to leave. The surface reuses the same descriptor-driven Panel props as
-             the in-world panel (Story 4.8.4 adds the instrument keybed, 4.8.6 the console). -->
-        <div
-          class="focus-backdrop"
-          role="button"
-          tabindex="-1"
-          aria-label="close focus"
-          onclick={(e) => {
-            if (e.target === e.currentTarget) closeFocus();
-          }}
-          onkeydown={(e) => {
-            if (e.key === "Enter") closeFocus();
-          }}
-        >
-          <div
-            class="focus-surface"
-            bind:this={focusSurfaceEl}
-            role="dialog"
-            aria-modal="true"
-            aria-label={`${f.desc.name} — focus`}
-            tabindex="-1"
-          >
-            <header class="focus-head">
-              <span class="focus-name">{f.desc.name}</span>
-              <button type="button" class="focus-close" onclick={closeFocus}>Close</button>
-            </header>
-            {#snippet focusFace()}
-              <Surface
-                device={f.device.id}
-                typeId={f.device.typeId}
-                name={f.desc.name}
-                params={f.desc.params}
-                ports={f.desc.ports}
-                readouts={f.desc.readouts}
-                configs={f.desc.configs}
-                valueFor={(id) => session.paramValue(f.device.id, f.desc, id)}
-                readingFor={(id) => session.readingFor(f.device.id, id)}
-                onParam={(p, v) => session.onParamInput(f.device.id, p, v)}
-                configFor={(k) => session.configValue(f.device.id, f.desc, k)}
-                onConfig={(k, v) => session.onConfigInput(f.device.id, k, v)}
-                heldNotes={session.heldNotes}
-                notesDriven={sceneOps.eventsInputDriven(scene, f.desc, f.device.id)}
-                onNote={(on, note) => session.playNote(f.device.id, on, note)}
-                daw={dawFor(f.device.id)}
-              />
-            {/snippet}
-            <div class="focus-body">
-              {#if hasFocusSurface(f.device.typeId)}
-                <!-- Dedicated software surface (console / routing matrix): its own UI scale. -->
+      <!-- The device's focus surface (its dedicated one — e.g. a console — or a zoomed physical faceplate),
+           rendered into a focus window. The surface reuses the same descriptor-driven Panel props as the
+           in-world panel (Story 4.8.4 adds the instrument keybed, 4.8.6 the console). -->
+      {#snippet deviceSurface(device: DeviceInstance, desc: DeviceDescriptor)}
+        {@const Surface = focusUi(device.typeId)}
+        {#snippet focusFace()}
+          <Surface
+            device={device.id}
+            typeId={device.typeId}
+            name={desc.name}
+            params={desc.params}
+            ports={desc.ports}
+            readouts={desc.readouts}
+            configs={desc.configs}
+            valueFor={(id) => session.paramValue(device.id, desc, id)}
+            readingFor={(id) => session.readingFor(device.id, id)}
+            onParam={(p, v) => session.onParamInput(device.id, p, v)}
+            configFor={(k) => session.configValue(device.id, desc, k)}
+            onConfig={(k, v) => session.onConfigInput(device.id, k, v)}
+            heldNotes={session.heldNotes}
+            notesDriven={sceneOps.eventsInputDriven(scene, desc, device.id)}
+            onNote={(on, note) => session.playNote(device.id, on, note)}
+            daw={dawFor(device.id)}
+          />
+        {/snippet}
+        <div class="focus-body">
+          {#if hasFocusSurface(device.typeId)}
+            <!-- Dedicated software surface (console / routing matrix): its own UI scale. -->
+            {@render focusFace()}
+          {:else}
+            <!-- Physical faceplate: a zoomed physical view — laid out at its real mm footprint, scaled
+                 up to a comfortable width so the mm-sized controls read large (a sizer carries the
+                 scaled extent, as on the bench). -->
+            {@const fp = footprint(desc.formFactor)}
+            {@const zoom = FOCUS_FACE_WIDTH_PX / fp.width}
+            <div
+              class="focus-zoom-sizer"
+              style:width="{fp.width * zoom}px"
+              style:height="{fp.height * zoom}px"
+            >
+              <div
+                class="focus-zoom"
+                style:width="{fp.width}px"
+                style:height="{fp.height}px"
+                style:transform="scale({zoom})"
+              >
                 {@render focusFace()}
-              {:else}
-                <!-- Physical faceplate: a zoomed physical view — laid out at its real mm footprint, scaled
-                     up to a comfortable width so the mm-sized controls read large (a sizer carries the
-                     scaled extent, as on the bench). -->
-                {@const fp = footprint(f.desc.formFactor)}
-                {@const zoom = FOCUS_FACE_WIDTH_PX / fp.width}
-                <div
-                  class="focus-zoom-sizer"
-                  style:width="{fp.width * zoom}px"
-                  style:height="{fp.height * zoom}px"
-                >
-                  <div
-                    class="focus-zoom"
-                    style:width="{fp.width}px"
-                    style:height="{fp.height}px"
-                    style:transform="scale({zoom})"
-                  >
-                    {@render focusFace()}
-                  </div>
-                </div>
-              {/if}
+              </div>
             </div>
-          </div>
+          {/if}
         </div>
-      {/if}
+      {/snippet}
+
+      <!-- Focus windows: sit down at one or more devices. Non-modal, moveable/resizable, and stacked (the
+           array order is the z-order) so the scene underneath stays live while windows are open. Each
+           resolves its device live and renders nothing if it's gone (the prune effect then drops it). -->
+      {#each openWindows as win, i (win.id)}
+        {@const r = resolveWindow(win.id)}
+        {#if r}
+          <FloatingWindow
+            title={r.desc.name}
+            bind:x={win.x}
+            bind:y={win.y}
+            bind:w={win.w}
+            bind:h={win.h}
+            z={30 + i}
+            onActivate={() => activateWindow(win.id)}
+            onClose={() => closeWindow(win.id)}
+          >
+            {@render deviceSurface(r.device, r.desc)}
+          </FloatingWindow>
+        {/if}
+      {/each}
 
       <!-- Global levels & losses: gain-staging across the chain in one place — every meter device's
            live readings, and each analog connection's static loading loss (the §5.3 divider). The
@@ -1373,67 +1398,23 @@
   }
   /* Cable inspector strip (shown when a cable is selected). */
   /* Floats over the stage (bottom-centre) rather than taking layout space, so the world stays full. */
-  /* Device focus overlay — dims the world and centres the focused device's surface. Above the toolbar
-     menus (z 20) so nothing peeks through; covers the stage only (the toolbar stays reachable). */
-  .focus-backdrop {
-    position: absolute;
-    inset: 0;
-    z-index: 30;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    padding: 2rem;
-    background: rgb(0 0 0 / 0.55);
-    cursor: default;
-  }
-  .focus-surface {
-    display: flex;
-    flex-direction: column;
-    gap: 0.8rem;
-    max-width: min(90%, 900px);
-    max-height: 90%;
-    overflow: auto;
-    padding: 1rem 1.2rem 1.4rem;
-    background: var(--ae-bg-panel);
-    border: 1px solid var(--ae-line-panel);
-    border-radius: var(--ae-radius-panel);
-    box-shadow: var(--ae-shadow-card);
-  }
-  .focus-head {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 1rem;
-  }
-  .focus-name {
-    font-size: 1rem;
-    font-weight: 600;
-    color: var(--ae-text-strong);
-  }
-  .focus-close {
-    font: inherit;
-    font-size: 0.72rem;
-    padding: 0.2rem 0.7rem;
-    color: var(--ae-text-strong);
-    background: var(--ae-bg-chip);
-    border: 1px solid var(--ae-line-chip);
-    border-radius: var(--ae-radius-control);
-    cursor: pointer;
-  }
-  /* Blow the panel up to fill the surface: the in-world panel is sized small for the world, but the focus
-     view has room, so let it grow. */
+  /* Device focus windows live in FloatingWindow (moveable/resizable, non-modal, stacked at z 30+). The
+     rules below style only the *content* rendered into a window's body: the surface layout and the zoomed
+     physical faceplate. */
   .focus-body {
     display: flex;
     flex-direction: column;
     align-items: center;
     gap: 1.2rem;
   }
+  /* Blow the panel up to fill the window: the in-world panel is sized small for the world, but the focus
+     window has room, so let it grow. */
   .focus-body :global(.panel) {
     width: 100%;
     min-height: 220px;
   }
   /* A magnified physical faceplate: the inner box is laid out at the device's real mm footprint and scaled
-     up (transform-origin top-left); the sizer carries the scaled extent so the modal lays out around it.
+     up (transform-origin top-left); the sizer carries the scaled extent so the window lays out around it.
      The panel fills the mm footprint box (overriding the dedicated-surface min-height above). */
   .focus-zoom-sizer {
     position: relative;
