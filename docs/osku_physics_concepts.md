@@ -30,6 +30,7 @@ we're modeling and why*. Use it to skip re-explaining things already covered.
 15. [Dither](#15-dither)
 16. [Group delay & latency](#16-group-delay--latency)
 17. [Phantom power & the balanced front-end](#17-phantom-power--the-balanced-front-end)
+18. [Sound pressure, dB SPL & the microphone transducer](#18-sound-pressure-db-spl--the-microphone-transducer)
 
 ---
 
@@ -802,3 +803,81 @@ clipping. This mirrors the trade the engine already makes on the audio axis (div
 compile, per-sample multiply at runtime), applied to the DC axis. A port *declaring* "48 V
 Thévenin behind 6.8 kΩ when engaged" is not a label on the signal — it's a circuit-topology
 declaration, the same class of fact as `InputZ`/`OutputZ`.
+
+## 18. Sound pressure, dB SPL & the microphone transducer
+
+The analog signal has always been a real **voltage** `v(t)` in volts (§1). Sound in the air is the
+same idea one step earlier: a real **sound pressure** `p(t)` in **pascals** (Pa) — the tiny
+fluctuation of air pressure about atmospheric that a mic diaphragm feels. So the engine models it as
+a fourth carrier, exactly parallel to volts: a `PressureBuffer` of linear pascals, oversampled at the
+*same* analog rate (pressure is continuous-time analog — **not** a digital sample stream). Same
+discipline as the volts/samples split: pressure is a real physical value, never a flag.
+
+### dB SPL — the acoustic decibel
+
+Loudness is quoted in **dB SPL** (sound-pressure level), the acoustic twin of dBu (§2). It's a
+measurement of a pressure against a reference, never a storage format:
+
+```
+   L_SPL = 20 · log10(p / p_ref),   p_ref = 20 µPa (2×10⁻⁵ Pa)
+```
+
+`p_ref = 20 µPa` is the nominal **threshold of human hearing** — 0 dB SPL is "the quietest audible
+sound," by definition. The one number worth memorising is the calibration anchor:
+
+```
+   1 Pa = 20·log10(1 / 20e-6) = 20·log10(50 000) = 93.98 dB SPL  ≈ 94 dB SPL
+```
+
+So **1 Pa ≈ 94 dB SPL** — the standard mic-calibration level (a "94 dB SPL @ 1 kHz" calibrator puts
+exactly 1 Pa on the capsule). A few landmarks, each a factor of 10 in pressure = 20 dB:
+
+| Source | dB SPL | pressure |
+| --- | --- | --- |
+| Threshold of hearing | 0 | 20 µPa |
+| Whisper | ~30 | 632 µPa |
+| Conversation | ~60 | 20 mPa |
+| Calibration / loud voice | 94 | 1 Pa |
+| Cranked guitar amp | ~120 | 20 Pa |
+
+Note the pressures are *tiny* — even a blaring amp is 20 Pa on top of ~101 000 Pa of atmosphere. Audio
+is the small AC swing, exactly as the electrical audio was the AC swing on the wire.
+
+### The microphone is a transducer (the acoustic→electrical converter)
+
+A microphone converts sound pressure into voltage. In the model it's the **only** bridge from the
+acoustic domain to the analog-electrical domain — the input-side bookend to the speaker, and the
+acoustic peer of an AD converter (which bridges analog→digital). The conversion is a single constant,
+the mic's **sensitivity**, in **volts per pascal**:
+
+```
+   v = p · sensitivity            (the differential audio the mic puts on its balanced pair)
+```
+
+Sensitivity is a fixed property of the capsule, not a knob. Real figures (open-circuit, per Pa):
+
+- **Studio condenser:** ~10 mV/Pa — an efficient charged capsule with an active head-amp.
+- **Dynamic (moving coil):** ~2 mV/Pa — a passive coil generating its own EMF; far less efficient.
+
+That 5× gap is **~14 dB** (`20·log10(5) = 13.98`), and it's *why* a dynamic mic needs markedly more
+preamp gain than a condenser on the same source — an emergent consequence of transducer efficiency,
+not an asserted level. Worked examples through a 10 mV/Pa condenser:
+
+```
+   whisper   30 dB SPL → 632 µPa → 632e-6 · 0.01 = 6.3 µV   (down near the preamp noise floor)
+   calib     94 dB SPL → 1 Pa    → 1 · 0.01      = 10 mV    (textbook mic level)
+   amp      120 dB SPL → 20 Pa   → 20 · 0.01     = 200 mV   (hot — needs the pad)
+```
+
+This is the front-end gain-staging lesson made concrete: the same preamp must cope with a 6 µV whisper
+and a 200 mV blast — a >90 dB range — which is why mic pres have 60+ dB of gain *and* a pad.
+
+### Ideal air (the deliberate simplification)
+
+Between a source and a mic we model **ideal air**: the pressure arrives at the capsule unchanged — no
+distance/inverse-square attenuation, no propagation delay, no directivity. This is the symmetric twin
+of the output side, where the speaker "stays in the voltage domain" and we don't model V→SPL or the
+room (PROJECT_PLAN §5.5). The realism budget is spent on volts-and-converters; the air link is a clean
+handoff of a real physical quantity, so all the important lessons (mic choice, phantom, gain staging,
+the pad) are intact while acoustics proper stays out of scope. Distance and propagation delay are a
+later, opt-in depth.

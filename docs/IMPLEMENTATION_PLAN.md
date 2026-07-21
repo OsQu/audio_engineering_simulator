@@ -846,9 +846,10 @@ connectivity pass over a side-graph, plus an emergent runtime consequence — ne
 
 ---
 
-## Epic 8 — The Acoustic Domain & Micing — 🚧 **In progress** (8.1 planned; 8.2, 8.3 coarse)
+## Epic 8 — The Acoustic Domain & Micing — 🚧 **In progress** (8.1 done; 8.2, 8.3 coarse)
 
-**Progress:** Story 8.1 🚧 **In progress** (planned to Task level); Stories 8.2 and 8.3 sketched. This Epic activates
+**Progress:** Story 8.1 ✅ **Done** (the headless acoustic carrier, vox source & mic transduction —
+**394 engine tests + 63 devices tests green**); Stories 8.2 and 8.3 sketched. This Epic activates
 the **"air link" seam** both microphones' docs have long anticipated ("a real acoustic path… with a
 pressure↔volts transduction seam at each end; until then the sine is the seam"). It adds a fourth signal
 carrier — **acoustic sound pressure** — so that an instrument is a *source you mic*, not a line-out: the
@@ -904,7 +905,7 @@ dB SPL is a category error, exactly as a buffer holding dBu would be.
 - **SoundFont / multisample instruments are a separate future Epic** — no rustysynth, no sample assets, no
   polyphony machinery here.
 
-### Story 8.1 — The acoustic carrier, vox source & mic transduction (headless engine) — 🚧 **In progress**
+### Story 8.1 — The acoustic carrier, vox source & mic transduction (headless engine) — ✅ **Done**
 
 *Goal:* stand up the acoustic carrier end to end in the headless engine and prove the transduction physics by
 hand calc — a `SoundSource` emitting sound pressure at a chosen SPL, carried over an ideal acoustic edge into
@@ -961,10 +962,50 @@ slice, validated with tests as the oracle for the physical domain (§9).
   (~14 dB less); whisper 30 dB SPL ⇒ ~6.3 µV; cranked amp 120 dB SPL ⇒ 200 mV; a dead/unpowered condenser is
   still silent regardless of input pressure.
 
-*Validate (Story 8.1):* a headless `SoundSource → acoustic edge → mic → balanced receiver` chain recovers
-`differential = pressure × sensitivity` to hand-calc tolerance across the oracle SPLs, the condenser-vs-dynamic
-sensitivity gap is confirmed numerically, and the full gate is green
+*Validate (Story 8.1):* ✅ **met** — a headless `SoundSource → acoustic edge → mic → balanced receiver` chain
+recovers `differential = pressure × sensitivity` to hand-calc tolerance across the oracle SPLs, the
+condenser-vs-dynamic sensitivity gap is confirmed numerically, and the full gate is green
 (`cargo fmt --check && cargo lint && cargo test && cargo wasm && cargo docs`, `no_alloc` included).
+
+*Delivered:* the acoustic carrier is a first-class fourth domain, end to end, headless.
+- **Task 8.1.1** — `Pascals` newtype (`signal/pascals.rs`, mirroring `Volts`) + `spl_to_pascals` /
+  `pascals_to_spl` (`level.rs`, ref 20 µPa). Anchor **1 Pa = 93.98 dB SPL** and the 30/94/120 dB oracles
+  asserted. SPL is a measurement helper, never storage.
+- **Task 8.1.2 + 8.1.3** — landed **together** (one indivisible compile unit: adding `Domain::Acoustic` /
+  `Lane::Pressure` forces every exhaustive match — edge-kind assignment, the copy loop, the pool allocator —
+  to gain its acoustic arm, so the workspace can't compile without the edge in place). `PressureBuffer`
+  (`signal/pressure.rs`, linear Pa @ `AnalogRate`, mono), `Domain::Acoustic`, `Lane::Pressure` +
+  `pressure()`/`pressure_mut()`, `AcousticFace` + `InputPort`/`OutputPort::Acoustic` (`lane_count() == 1`).
+  `EdgeKind::AcousticRoute` = a **unity pressure copy** (ideal air — no divider, no cable R·C, the acoustic
+  peer of `DigitalRoute`); `alloc_lane` grows an acoustic arm; the existing domain-match check rejects
+  acoustic↔analog **for free**. `acoustic_seam` white-box tests prove the mono lane, the unity copy, and the
+  `DomainMismatch`.
+- **Task 8.1.4** — `SoundSource` node (`node/sound_source.rs`), the first node that *emits* pressure: a sine
+  at `FREQ` radiating at a `LEVEL` = **peak pressure in Pascals** (linear, like `GainStage`'s gain — the
+  dB-SPL knob is the UI's concern). Deterministic free-running phase; zero-alloc/panic-free. Oracles: 94 dB
+  SPL ⇒ ≈1 Pa peak, 120 dB ⇒ 20 Pa.
+- **Task 8.1.5** — both mics became **acoustic→analog transducers**: one acoustic input, `differential =
+  pressure × sensitivity`, the self-tone oscillator + `LEVEL`/`FREQ` params **removed** and replaced by a
+  fixed `SENSITIVITY` (V/Pa) — mics now have **no control params**; an unpatched mic is silent. Condenser
+  keeps its phantom pedestal / power-gate on top; dynamic stays passive (0 CM, always alive). Sensitivities
+  (condenser 10 mV/Pa, dynamic 2 mV/Pa) reproduce the old defaults at 94 dB SPL, and the **~14 dB gap is now
+  emergent** from transducer efficiency. The engine phantom-integration tests were adapted (pedestal tests use
+  an unconnected capsule; the audio-recovery test is fed by a `SoundSource`).
+
+*Deviations / notes (not bugs):*
+- **A minimal `vox` catalog device was pulled forward from Story 8.2.** Two rich `devices`-crate integration
+  tests (phantom through the 8i6) depended on the mic's now-removed self-tone; `build_patch` handles acoustic
+  connections for free, so feeding a `vox` at exactly 1 Pa into the capsule keeps their 10 mV hand-calcs
+  verbatim. **Only the device's *existence*** (with engine-native Pa/Hz params) moved earlier — its
+  skeuomorphic **faceplate, the acoustic-cable rendering, and the dB-SPL loudness knob stay in 8.2.** Likewise
+  `Connector::Acoustic` / `PortKind::Acoustic` are **declarations only** (styling is 8.2).
+- **Precision boundary:** a whisper's ~6 µV differential is below `f32`'s resolution when it rides the
+  condenser's ~37.86 V phantom pedestal (ULP ≈ 4 µV), so the small-signal SPL-range oracle is asserted on the
+  **pedestal-free dynamic mic** (exact), and the condenser's transduction magnitude is asserted at the 94 dB
+  anchor with a loose tolerance. This is the same f32-cancellation reality the pre-8.1 pedestal tests already
+  noted, not a new limitation.
+- **Web untouched:** the Rust gate is green, but with acoustic ports + the `vox` device now in the catalog the
+  browser harness won't render them correctly until Story 8.2 (the `pnpm` checks aren't part of the cargo gate).
 
 ### Story 8.2 — Micing in the studio (devices + web + scenarios)
 
