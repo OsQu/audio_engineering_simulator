@@ -1247,8 +1247,16 @@ mod tests {
         }];
         let mut connections = Vec::new();
         for (i, id) in mics.iter().enumerate() {
+            // A vox radiating into each mic's capsule (over the ideal-air acoustic edge). Its
+            // construction default is exactly 1 Pa peak; against the condenser's 0.01 V/Pa sensitivity
+            // that is a 10 mV differential — the same capsule-tone amplitude the mic used to
+            // self-generate, so the hand calcs below are unchanged. (Frequency is a runtime param, set
+            // per-test where period alignment matters — scene `ParamSetting`s aren't applied at build.)
+            let vox = format!("{id}_vox");
+            devices.push(device(&vox, "vox"));
             devices.push(device(id, "condenser_mic"));
-            connections.push(conn(id, 0, "if", i as u32));
+            connections.push(conn(&vox, 0, id, 0)); // vox → mic capsule (acoustic)
+            connections.push(conn(id, 0, "if", i as u32)); // mic → 8i6 combo input
         }
         Patch {
             devices,
@@ -1285,8 +1293,11 @@ mod tests {
                 .expect("mic → 8i6 builds with 48V either way (XLR seats in the combo jack)");
             // Route Pre 1 → Line Out 1: crosspoint (in 0, out 8) = exposed id 8 + 0·14 + 8 = 16.
             let xpoint = *scene.param("if", 16).first().expect("matrix crosspoint");
-            let mut params = ParamQueue::with_capacity(1);
+            // Drive the vox to 1 kHz so each 384-sample block is exactly one period (see below).
+            let vox_freq = *scene.param("mic_vox", 1).first().expect("vox pitch param");
+            let mut params = ParamQueue::with_capacity(2);
             params.set(xpoint, 1.0);
+            params.set(vox_freq, 1_000.0);
             let mut events = EventQueue::with_capacity(1);
             let mut out = VoltageBuffer::zeros(BLOCK_LEN, rate());
             let (mut peak, mut mean) = (0.0_f32, 0.0_f64);
