@@ -2985,7 +2985,9 @@ mod delayed_edges {
 mod acoustic_feedback {
     use super::super::*;
     use crate::electrical::{InputZ, Ohms};
-    use crate::node::{BalancedReceiver, DynamicMic, GainStage, PoweredMonitor, TestSource};
+    use crate::node::{
+        BalancedReceiver, DynamicMic, GainStage, PassiveSum, PoweredMonitor, TestSource,
+    };
     use crate::port::{AcousticFace, AudioFormat, DigitalFace, InputPort, OutputPort};
     use crate::signal::{BitDepth, Pascals, SampleRate, Volts};
 
@@ -3234,6 +3236,129 @@ mod acoustic_feedback {
         assert!(
             pinned,
             "a super-unity loop must reach the rail and self-limit"
+        );
+    }
+
+    // --- Story 8.3 exit gate: the feedback scenario through real transducers, by hand calc. ---
+
+    /// Run a **real** acoustic feedback loop for `blocks` blocks and return the monitor's radiated
+    /// pressure (Pa) after each block. The loop is `mic → receiver → sum(+drive) → gain → monitor →
+    /// air → mic`, with a constant analog `drive` seeding it (a faint steady stimulus the loop
+    /// amplifies — real feedback rings up from room ambience / the noise floor; a deterministic drive
+    /// stands in). Every impedance is bridging (edge dividers ≈ 1) and the monitor is 1 Pa/V at unity
+    /// volume, so the per-block recurrence is exactly `pₙ = clamp(gain·(drive + sensitivity·pₙ₋₁),
+    /// ±rail)`, i.e. loop gain `L = gain · sensitivity`. The air edge is the auto-delayed leg.
+    fn run_feedback_loop(
+        sensitivity: f32,
+        gain: f32,
+        drive: f32,
+        rail: f32,
+        blocks: usize,
+    ) -> Vec<f32> {
+        let mut g = Graph::new();
+        let drv = g.add(TestSource::new(Volts::new(drive), Ohms::new(150.0)));
+        let mic = g.add(DynamicMic::new(sensitivity, Ohms::new(200.0)));
+        let rcv = g.add(BalancedReceiver::new(Ohms::new(1e9), Ohms::new(1.0)));
+        let sum = g.add(PassiveSum::new(
+            vec![InputZ::new(Ohms::new(1e9)), InputZ::new(Ohms::new(1e9))],
+            Ohms::new(1.0),
+        ));
+        let amp = g.add(GainStage::new(
+            gain,
+            Volts::new(rail),
+            InputZ::new(Ohms::new(1e9)),
+            Ohms::new(1.0),
+        ));
+        let mon = g.add(PoweredMonitor::new(1.0, InputZ::new(Ohms::new(1e9))));
+        g.connect_ideal(mic, 0, rcv, 0); // balanced analog → single-ended
+        g.connect_ideal(rcv, 0, sum, 0); // the loop return into the summing node
+        g.connect_ideal(drv, 0, sum, 1); // the constant drive (seed) into the summing node
+        g.connect_ideal(sum, 0, amp, 0);
+        g.connect_ideal(amp, 0, mon, 0);
+        g.connect_ideal(mon, 0, mic, 0); // ACOUSTIC air hop — auto-delayed, closes the loop
+        g.set_output(amp, 0);
+        let mut sched = compile(g, 8, rate(), 0).expect("feedback loop auto-breaks and compiles");
+        let mut out = VoltageBuffer::zeros(8, rate());
+        (0..blocks)
+            .map(|_| {
+                sched.process(&mut out);
+                pool_pressure(&sched)
+            })
+            .collect()
+    }
+
+    /// **Below unity, the loop settles.** A sensitive (condenser-like, 10 mV/Pa) mic at gain 50 ⇒ loop
+    /// gain `L = 50·0.01 = 0.5`; drive 0.01 V ⇒ per-block injection `A = 50·0.01 = 0.5`. So
+    /// `pₙ = 0.5 + 0.5·pₙ₋₁` climbs 0.5, 0.75, 0.875, … and converges to `A/(1−L) = 1.0 Pa`, bounded —
+    /// the "under the feedback threshold, the monitor just adds a little" case.
+    #[test]
+    fn a_below_unity_loop_through_real_transducers_settles() {
+        let ps = run_feedback_loop(0.01, 50.0, 0.01, 10.0, 20);
+        assert!((ps[0] - 0.5).abs() < 1e-4, "block 1: got {}", ps[0]);
+        assert!((ps[1] - 0.75).abs() < 1e-4, "block 2: got {}", ps[1]);
+        assert!((ps[2] - 0.875).abs() < 1e-4, "block 3: got {}", ps[2]);
+        assert!(
+            (ps[19] - 1.0).abs() < 1e-3,
+            "settles to 1 Pa, got {}",
+            ps[19]
+        );
+        assert!(
+            ps.iter().all(|&p| p <= 1.0 + 1e-6),
+            "a below-unity loop stays bounded below its fixed point"
+        );
+    }
+
+    /// **Above unity, howlround emerges and self-limits at the rail.** The same mic at gain 200 ⇒
+    /// `L = 2.0`: the pressure climbs 2, 6, … until the amp pins its ±10 V rail, which (at 1 Pa/V)
+    /// caps the monitor at **10 Pa** — the Larsen howl, ceilinged by the physics, not special-cased.
+    #[test]
+    fn a_super_unity_loop_through_real_transducers_rings_up_to_the_rail() {
+        let ps = run_feedback_loop(0.01, 200.0, 0.01, 10.0, 8);
+        assert!((ps[0] - 2.0).abs() < 1e-3, "block 1: got {}", ps[0]);
+        assert!((ps[1] - 6.0).abs() < 1e-3, "block 2: got {}", ps[1]);
+        assert!(ps[1] > ps[0], "the loop is building toward feedback");
+        assert!(
+            (ps[7] - 10.0).abs() < 1e-3,
+            "pinned at the 10 Pa rail ceiling, got {}",
+            ps[7]
+        );
+        assert!(
+            ps.iter().all(|&p| p <= 10.0 + 1e-3),
+            "the howl never exceeds the rail ceiling"
+        );
+    }
+
+    /// **A dynamic resists feedback that makes a condenser howl.** At the *same* gain (200), the
+    /// ~14 dB-less-sensitive dynamic (2 mV/Pa) stays stable where the sensitive condenser-like mic
+    /// (10 mV/Pa) rings away:
+    ///   condenser: `L = 200·0.01 = 2.0` (> 1) ⇒ howls up to the 10 Pa rail
+    ///   dynamic:   `L = 200·0.002 = 0.4` (< 1) ⇒ settles at `A/(1−L) = 2.0/0.6 = 3.333 Pa`, clear of it
+    /// This is the emergent "why loud stages favour dynamics" lesson — the same Story-8.1 sensitivity
+    /// gap, now as feedback headroom.
+    #[test]
+    fn a_dynamic_resists_feedback_that_makes_a_condenser_howl() {
+        let cond = run_feedback_loop(0.01, 200.0, 0.01, 10.0, 12);
+        let dynamic = run_feedback_loop(0.002, 200.0, 0.01, 10.0, 40);
+        assert!(
+            (cond[11] - 10.0).abs() < 1e-3,
+            "the condenser howls to the rail, got {}",
+            cond[11]
+        );
+        assert!(
+            (dynamic[39] - 3.3333).abs() < 1e-2,
+            "the dynamic settles below the rail, got {}",
+            dynamic[39]
+        );
+        assert!(
+            dynamic.iter().all(|&p| p < 10.0),
+            "the dynamic never reaches the feedback ceiling"
+        );
+        // The gap is the sensitivity ratio: the dynamic needs 20·log10(0.01/0.002) = 13.98 dB more
+        // gain to reach the same loop unity.
+        let gap_db = 20.0 * (0.01_f32 / 0.002).log10();
+        assert!(
+            (gap_db - 13.979).abs() < 1e-2,
+            "the feedback-resistance headroom is ~14 dB, got {gap_db}"
         );
     }
 }
