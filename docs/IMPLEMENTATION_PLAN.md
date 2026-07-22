@@ -846,11 +846,11 @@ connectivity pass over a side-graph, plus an emergent runtime consequence — ne
 
 ---
 
-## Epic 8 — The Acoustic Domain & Micing — 🚧 **In progress** (8.1 done; 8.2 planned; 8.3 coarse)
+## Epic 8 — The Acoustic Domain & Micing — 🚧 **In progress** (8.1, 8.2 done; 8.3 coarse)
 
-**Progress:** Story 8.1 ✅ **Done** (the headless acoustic carrier, vox source & mic transduction —
-**394 engine tests + 63 devices tests green**); Story 8.2 🚧 **In progress** (planned to Task level — the
-web/product layer + micing scenarios); Story 8.3 sketched. This Epic activates
+**Progress:** Story 8.1 ✅ **Done** (the headless acoustic carrier, vox source & mic transduction); Story 8.2
+✅ **Done** (the web/product mirror of the carrier + the micing-scenario exit gate — **394 engine + 65 devices
++ 283 web tests green**); Story 8.3 sketched. This Epic activates
 the **"air link" seam** both microphones' docs have long anticipated ("a real acoustic path… with a
 pressure↔volts transduction seam at each end; until then the sine is the seam"). It adds a fourth signal
 carrier — **acoustic sound pressure** — so that an instrument is a *source you mic*, not a line-out: the
@@ -1008,7 +1008,7 @@ condenser-vs-dynamic sensitivity gap is confirmed numerically, and the full gate
 - **Web untouched:** the Rust gate is green, but with acoustic ports + the `vox` device now in the catalog the
   browser harness won't render them correctly until Story 8.2 (the `pnpm` checks aren't part of the cargo gate).
 
-### Story 8.2 — Micing in the studio (web + scenarios) — 🚧 **In progress**
+### Story 8.2 — Micing in the studio (web + scenarios) — ✅ **Done**
 
 *Goal:* surface the acoustic carrier through the product layer so you can **place a source, mic it, and hear the
 front-end come alive** — drag a vox and a mic into the studio, wire the capsule with an acoustic cable, and watch
@@ -1073,12 +1073,50 @@ client-side mirror of the new carrier — plus the numeric validation and a smal
   ~14 dB below a condenser on the same source at the same gain. Plus a manual in-browser pass building the chain.
   *Validate:* the exit criteria below, green.
 
-*Validate (Story 8.2):* in the browser you can drag a vox and a condenser (or dynamic) into the studio, wire the
+*Validate (Story 8.2):* ✅ **met** — in the browser you can drag a vox and a condenser (or dynamic) into the studio, wire the
 capsule with an acoustic cable, and drive the loudness knob (in dB SPL) to watch the front-end gain-staging emerge
 — whisper near the noise floor, cranked amp needing the PAD, dynamic needing more gain than a condenser; the
 supporting numbers are pinned by the Rust scene test; the full cargo gate **and** `pnpm run check`/`typecheck`/`format`
 are green. Deferred (record, don't build): distance/inverse-square attenuation, propagation delay, polar/off-axis
 response, proximity/placement-based pickup, and bespoke skeuomorphic vox/mic faceplates.
+
+*Delivered:* the acoustic carrier is now surfaced through the product layer — you can place a vox, mic it, and hear
+the front-end gain-staging come alive. Since Story 8.1 pulled the engine/devices surface forward, this was
+essentially a `web/` story plus the numeric exit gate.
+- **Task 8.2.1** — web carrier types + legality mirror (`web/src/catalog.ts`): `"acoustic"` added to `PortDomain`,
+  `PortKind`, and `Connector`. `connectorsCompatible` (equality) mates acoustic only with itself; the
+  `connections.ts`/`patching.ts` legality is carrier-agnostic, so it accepts a vox→capsule patch and rejects
+  acoustic↔analog for free. Mirrored Rust-side by an acoustic arm in the `connectors_compatible_matrix` test, and
+  covered web-side by two `connections.test.ts` cases (legal acoustic edge, illegal acoustic→analog) plus a
+  `cableAllowed("acoustic") === false` assertion (air carries no R·C cable).
+- **Task 8.2.2** — acoustic jack & cable styling: a `--ae-signal-acoustic` palette token (a light sky-cyan, kept
+  clear of mic-blue and digital-teal) in `tokens.css`; `Jack.svelte` rings the acoustic connector with it; a
+  **dashed** acoustic cable in `Cable.svelte` (all three strokes dashed together so the shadow doesn't fill the
+  gaps — it reads as intangible ideal air); a `CableInspector.svelte` acoustic branch showing "acoustic link —
+  ideal air (no cable)", mirroring the digital ideal-link line.
+- **Task 8.2.3** — dB-SPL loudness knob: `format.ts` display is now keyed on **unit**, not taper — `"dB"` ⇒ gain
+  `20·log₁₀` dB (as before), the new `"dB SPL"` ⇒ `20·log₁₀(p / 20µPa)` (−∞ at 0), everything else ⇒ number + unit
+  (so a log-taper Hz knob reads Hz). The vox Loudness param's unit became `"dB SPL"` in the catalog (linear Pa
+  stays the stored value; the log taper's dB-below-max travel is reused as-is). A `format.test.ts` Vitest covers
+  the switch/dB/dB-SPL/unit branches. (Same commit also shrank the vox from a 1.7 m person-sized tower to a
+  compact ~200 mm desktop box, on the scale of a mic — the old size dwarfed the gear and was awkward to patch.)
+- **Task 8.2.4** — the micing scenario, the exit gate: `micing_scenario_gain_staging` in `build.rs`, a
+  `vox → mic → 8i6 preamp` scene test reading the post-preamp **In 1 Peak** meter (dBu) and asserting the
+  gain-staging by hand calc. A whisper (30 dB SPL) is buried at the −60 floor — below the AD LSB and the
+  condenser's f32 phantom-pedestal cancellation floor (you need a sensitive mic + lots of gain). At 94 dB SPL /
+  default gain, the condenser reads −29.89 dBu and the dynamic −43.91 dBu — the **~14 dB gap emergent** from
+  transducer efficiency (5× sensitivity) plus the deeper dynamic loading divider. A cranked amp (120 dB SPL) at
+  ×100 gain pins the 10 V rail (+22.22 dBu, ~5.9 dB clipped) without the PAD and lands clean at +18.11 dBu with
+  it. Nothing special-cased — it all falls out of `v = pressure × sensitivity` + the existing dividers/rail.
+
+*Deviations / notes (not bugs):*
+- **No new web faceplates or e2e test infra**, as planned — the generic descriptor-driven `Panel` + shared widgets
+  already render the vox and mics, so the story was jack/cable styling + the dB-SPL fix, not new Svelte components.
+  The gain-staging numbers are pinned by the durable Rust scene test (tests are the oracle for the analog domain);
+  the browser is a manual by-eye confirmation.
+- **The whisper case asserts the buried −60 floor, not a precise recovered magnitude** — at high gain the
+  condenser's amplified phantom-pedestal residual dominates a signal that small (the documented Story-8.1 f32
+  boundary); the physical gain-staging lesson is carried by the 94 dB and 120 dB cases.
 
 ### Story 8.3 — Speakers as acoustic sources & acoustic feedback
 
