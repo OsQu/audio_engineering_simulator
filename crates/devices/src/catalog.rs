@@ -749,19 +749,23 @@ const CATALOG: &[CatalogEntry] = &[
     CatalogEntry {
         type_id: "vox",
         name: "Vox",
-        // A person-sized stand-in source on the floor: a nominal 300 mm footprint, ~1.7 m tall.
+        // A compact desktop stand-in source (was a person-sized 1.7 m tower, which dwarfed the gear and
+        // was awkward to patch): a small ~200 mm box, on the scale of a mic or a small monitor.
         form_factor: FormFactor::Desktop {
-            width_mm: 300.0,
-            height_mm: 1_700.0,
-            depth_mm: 300.0,
+            width_mm: 200.0,
+            height_mm: 200.0,
+            depth_mm: 200.0,
         },
         // ~1 Pa peak (≈94 dB SPL) default at 220 Hz — a plausible sung fundamental.
         nodes: &[|_cfg| Box::new(SoundSource::new(Pascals::new(1.0)))],
         internal: &[],
         params: &[
             ParamUi {
+                // The engine param is a linear peak pressure in pascals; the web shows it as dB SPL (the
+                // engineer's loudness unit) via the `"dB SPL"` unit — display only, the stored value stays
+                // linear Pa. The log taper's dB-below-max travel is reused as-is (Story 8.2).
                 label: "Loudness",
-                unit: "Pa",
+                unit: "dB SPL",
                 kind: ParamKind::Knob,
                 taper: ParamTaper::Log,
             },

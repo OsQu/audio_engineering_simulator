@@ -53,8 +53,10 @@ export interface ParamDescriptor {
   /** Exposed param id — its position in the device's exposed param list, what a scene's `ParamSetting` addresses. */
   id: number;
   label: string;
-  /** Unit string for the readout ("V", "ms", "" for unitless). For a `"log"` taper the readout is
-   *  shown in dB regardless (the value is a linear voltage-gain multiplier). */
+  /** Unit string for the readout — it governs **display** (see {@link formatParam}), independently of
+   *  the {@link taper} (which governs travel). `"dB"` shows the linear voltage-gain value as `20·log₁₀`
+   *  dB; `"dB SPL"` shows a linear Pascals value as dB SPL (the vox loudness knob); `"V"`/`"ms"`/`"Hz"`
+   *  etc. show the raw number + unit; `""` is unitless. */
   unit: string;
   kind: ParamKind;
   /** How the widget's travel maps onto the value. Absent ⇒ `"linear"` (value linear in travel).
