@@ -135,10 +135,11 @@ pub enum CompileError {
     /// it is deferred — rejected legibly rather than solved wrong. One engaged supply among
     /// passive / non-supplying / disengaged consumers resolves fine.
     PhantomFanIn { node: usize, port: usize },
-    /// The graph has a cycle the schedule **cannot** break: no **digital** edge on the loop can carry
-    /// the block of round-trip latency that would cut it (an all-analog feedback loop). The local-solve
-    /// engine has no feedback paths to resolve. A cycle containing a digital edge is instead broken
-    /// automatically at compile (that edge is delayed), so it never reaches here.
+    /// The graph has a cycle the schedule **cannot** break: no **digital or acoustic** edge on the loop
+    /// can carry the block of round-trip latency that would cut it (an all-analog feedback loop). The
+    /// local-solve engine has no feedback paths to resolve. A cycle containing a digital or acoustic
+    /// edge is instead broken automatically at compile (that edge is delayed — the acoustic air hop
+    /// preferred, as it physically carries the latency), so it never reaches here.
     Cycle,
 }
 
@@ -208,7 +209,8 @@ impl fmt::Display for CompileError {
             ),
             Self::Cycle => write!(
                 f,
-                "the graph has an unbreakable cycle (analog feedback with no digital link to carry latency)"
+                "the graph has an unbreakable cycle (analog feedback with no digital or acoustic link \
+                 to carry latency)"
             ),
         }
     }
@@ -744,15 +746,18 @@ pub fn compile(
         }
     }
 
-    // --- 5c. Auto-break residual digital cycles. A build-declared latent output (a DAW's playback,
-    //         wired `delayed` by `build_patch`) is already excluded from the deps below, so this only
-    //         breaks a cycle the author didn't pre-break — e.g. a **duplex digital link**, whose two
-    //         edges form a 2-cycle. A delayed edge is an ideal digital copy carrying one block of
-    //         round-trip latency, which is physical only on a *digital* link (a buffered transport) —
-    //         so a cycle may only be cut at a digital edge. We delay the lowest-index digital edge
-    //         sitting on a cycle (deterministic given the graph) and repeat until acyclic. A cycle
-    //         with no non-delayed digital edge is analog feedback with nowhere to carry the latency:
-    //         it falls through to the `Cycle` rejection in step 6. ---
+    // --- 5c. Auto-break residual digital/acoustic cycles. A build-declared latent output (a DAW's
+    //         playback, wired `delayed` by `build_patch`) is already excluded from the deps below, so
+    //         this only breaks a cycle the author didn't pre-break — a **duplex digital link** (whose
+    //         two edges form a 2-cycle), or an **acoustic feedback loop** (mic → … → monitor → air →
+    //         mic). A delayed edge is an ideal copy carrying one block of round-trip latency, which is
+    //         physical only where the medium itself carries delay: a **digital** link (a buffered
+    //         transport) or the **air** of an acoustic hop (sound takes time to travel). So a cycle may
+    //         be cut only at a digital or acoustic edge — and we **prefer the acoustic** one when the
+    //         loop has both, because the air hop is where a howlround loop's latency physically lives
+    //         (Story 8.3). We delay the lowest-index preferred edge on a cycle (deterministic given the
+    //         graph) and repeat until acyclic. A cycle with no delay-eligible edge is analog feedback
+    //         with nowhere to carry the latency: it falls through to the `Cycle` rejection in step 6. ---
     loop {
         let deps: Vec<(usize, usize)> = edges
             .iter()
@@ -763,22 +768,25 @@ pub fn compile(
             break; // acyclic (given the delayed edges cut so far) — nothing left to break
         }
         // A non-delayed edge `from → to` closes a cycle iff `from` is reachable from `to`. Cut the
-        // lowest-index such edge that is digital; if none exists the remaining loop is all-analog.
-        let breakable = edges.iter().position(|e| {
-            !e.delayed
-                && nodes[e.from_node.0].outputs()[e.from_port].domain() == Domain::DigitalAudio
-                && topo::reaches(node_count, &deps, e.to_node.0, e.from_node.0)
-        });
-        match breakable {
+        // lowest-index such edge carrying latency — an acoustic (air) edge first, else digital; if
+        // neither exists the remaining loop is all-analog and cannot be broken.
+        let breakable_in = |dom: Domain| {
+            edges.iter().position(|e| {
+                !e.delayed
+                    && nodes[e.from_node.0].outputs()[e.from_port].domain() == dom
+                    && topo::reaches(node_count, &deps, e.to_node.0, e.from_node.0)
+            })
+        };
+        match breakable_in(Domain::Acoustic).or_else(|| breakable_in(Domain::DigitalAudio)) {
             Some(ei) => edges[ei].delayed = true,
-            None => break, // no digital edge to carry latency — step 6 rejects it as `Cycle`
+            None => break, // no digital/acoustic edge to carry latency — step 6 rejects it as `Cycle`
         }
     }
 
     // --- 6. Topological order. **Delayed** edges are excluded from the deps: they carry one block of
     //        latency (served from the persistent pool, below), so they may close a loop without making
     //        the *schedule* cyclic. After step 5c the only cycle that can survive is all-analog (no
-    //        digital edge to break), which is a genuine wiring error rejected here. ---
+    //        digital or acoustic edge to break), which is a genuine wiring error rejected here. ---
     let deps: Vec<(usize, usize)> = edges
         .iter()
         .filter(|e| !e.delayed)

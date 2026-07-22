@@ -2976,6 +2976,268 @@ mod delayed_edges {
     }
 }
 
+/// **Acoustic feedback** (Story 8.3) — the air hop is delay-eligible, so `compile` auto-breaks an
+/// acoustic feedback loop by delaying the **acoustic** edge (preferring it over any digital edge on
+/// the same cycle, since the air physically carries the latency). Howlround then emerges from the
+/// delayed loop: a below-unity loop settles, a super-unity one grows and self-limits at the rail.
+/// A pure-analog loop still has nowhere to carry latency and is rejected (`delayed_edges` above +
+/// `rejects_a_cycle`). Tests inspect the private `delayed_steps`/pools (white-box).
+mod acoustic_feedback {
+    use super::super::*;
+    use crate::electrical::{InputZ, Ohms};
+    use crate::node::{BalancedReceiver, DynamicMic, GainStage, PoweredMonitor, TestSource};
+    use crate::port::{AcousticFace, AudioFormat, DigitalFace, InputPort, OutputPort};
+    use crate::signal::{BitDepth, Pascals, SampleRate, Volts};
+
+    fn rate() -> AnalogRate {
+        AnalogRate::new(384_000.0)
+    }
+
+    /// A one-block acoustic feedback recurrence in a single node: `out = clamp(k·in + c, ±rail)`
+    /// (pressure in, pressure out). Closed with an ideal acoustic **self-loop** it becomes a delayed
+    /// feedback loop `pₙ = clamp(k·pₙ₋₁ + c, ±rail)` — `k` is the loop gain, `c` a constant drive, and
+    /// the rail the self-limit a real howl clips against. A stand-in for a whole mic→amp→monitor loop,
+    /// so the *mechanism* (a delayed pressure edge carrying feedback) is testable in one node.
+    struct AcousticFeedbackCell {
+        k: f32,
+        c: f32,
+        rail: f32,
+        inputs: [InputPort; 1],
+        outputs: [OutputPort; 1],
+    }
+    impl AcousticFeedbackCell {
+        fn new(k: f32, c: f32, rail: f32) -> Self {
+            Self {
+                k,
+                c,
+                rail,
+                inputs: [AcousticFace::new().into()],
+                outputs: [AcousticFace::new().into()],
+            }
+        }
+    }
+    impl Node for AcousticFeedbackCell {
+        fn inputs(&self) -> &[InputPort] {
+            &self.inputs
+        }
+        fn outputs(&self) -> &[OutputPort] {
+            &self.outputs
+        }
+        fn process(&mut self, _p: &Params, inputs: &[Lane], outputs: &mut [Lane]) {
+            let src = inputs[0].pressure().as_slice();
+            let dst = outputs[0].pressure_mut().as_mut_slice();
+            for (o, &i) in dst.iter_mut().zip(src) {
+                *o = (self.k * i + self.c).clamp(-self.rail, self.rail);
+            }
+        }
+    }
+
+    /// Digital in → acoustic out (a stand-in "DA + monitor"): writes silence, used only to give a
+    /// mixed digital/acoustic cycle its acoustic edge.
+    struct DigitalToAcoustic {
+        inputs: [InputPort; 1],
+        outputs: [OutputPort; 1],
+    }
+    impl DigitalToAcoustic {
+        fn new(format: AudioFormat) -> Self {
+            Self {
+                inputs: [DigitalFace::new(format).into()],
+                outputs: [AcousticFace::new().into()],
+            }
+        }
+    }
+    impl Node for DigitalToAcoustic {
+        fn inputs(&self) -> &[InputPort] {
+            &self.inputs
+        }
+        fn outputs(&self) -> &[OutputPort] {
+            &self.outputs
+        }
+        fn process(&mut self, _p: &Params, _inputs: &[Lane], outputs: &mut [Lane]) {
+            outputs[0].pressure_mut().fill(Pascals::new(0.0));
+        }
+    }
+
+    /// Acoustic in → digital out (a stand-in "mic + AD"): the other half of a mixed cycle.
+    struct AcousticToDigital {
+        inputs: [InputPort; 1],
+        outputs: [OutputPort; 1],
+    }
+    impl AcousticToDigital {
+        fn new(format: AudioFormat) -> Self {
+            Self {
+                inputs: [AcousticFace::new().into()],
+                outputs: [DigitalFace::new(format).into()],
+            }
+        }
+    }
+    impl Node for AcousticToDigital {
+        fn inputs(&self) -> &[InputPort] {
+            &self.inputs
+        }
+        fn outputs(&self) -> &[OutputPort] {
+            &self.outputs
+        }
+        fn process(&mut self, _p: &Params, _inputs: &[Lane], outputs: &mut [Lane]) {
+            for s in outputs[0].sample_mut().as_mut_slice() {
+                *s = 0.0;
+            }
+        }
+    }
+
+    /// The count of delayed edge-copy steps, and how many of them copy an acoustic (pressure) lane.
+    fn delayed_edge_kinds(sched: &Schedule) -> (usize, usize) {
+        let total = sched
+            .delayed_steps
+            .iter()
+            .filter(|s| matches!(s, Step::Edge { .. }))
+            .count();
+        let acoustic = sched
+            .delayed_steps
+            .iter()
+            .filter(|s| {
+                matches!(
+                    s,
+                    Step::Edge {
+                        kind: EdgeKind::AcousticRoute,
+                        ..
+                    }
+                )
+            })
+            .count();
+        (total, acoustic)
+    }
+
+    /// The pressure at sample 0 of the (single) acoustic output lane in the pool.
+    fn pool_pressure(sched: &Schedule) -> f32 {
+        sched
+            .output_pool
+            .iter()
+            .find_map(|l| match l {
+                Lane::Pressure(b) => Some(b.get(0).get()),
+                _ => None,
+            })
+            .expect("an acoustic output lane in the pool")
+    }
+
+    /// A real feedback loop — `mic → receiver → gain → monitor → air → mic` — compiles: `compile`
+    /// auto-breaks it by delaying the **air** edge (the only delay-eligible edge on this all-analog +
+    /// one-acoustic loop). The delayed edge is the acoustic one, and it is the *only* delayed edge.
+    #[test]
+    fn a_real_mic_monitor_loop_auto_breaks_at_the_air_edge() {
+        let mut g = Graph::new();
+        let mic = g.add(DynamicMic::new(0.002, Ohms::new(200.0)));
+        let rcv = g.add(BalancedReceiver::new(Ohms::new(1e9), Ohms::new(150.0)));
+        let gain = g.add(GainStage::new(
+            2.0,
+            Volts::new(10.0),
+            InputZ::new(Ohms::new(10_000.0)),
+            Ohms::new(150.0),
+        ));
+        let mon = g.add(PoweredMonitor::new(1.0, InputZ::new(Ohms::new(10_000.0))));
+        g.connect_ideal(mic, 0, rcv, 0); // balanced analog (mic → receiver)
+        g.connect_ideal(rcv, 0, gain, 0); // analog
+        g.connect_ideal(gain, 0, mon, 0); // analog
+        g.connect_ideal(mon, 0, mic, 0); // ACOUSTIC air hop — closes the loop
+        g.set_output(gain, 0); // a voltage tap so the schedule is well-formed
+        let sched =
+            compile(g, 8, rate(), 0).expect("acoustic feedback loop auto-breaks at the air");
+        assert_eq!(
+            delayed_edge_kinds(&sched),
+            (1, 1),
+            "exactly one delayed edge, and it is the acoustic (air) edge"
+        );
+    }
+
+    /// When a cycle has **both** a digital and an acoustic edge, the acoustic one carries the delay —
+    /// the air hop is where a howlround loop's latency physically lives. A 2-cycle `X →(air)→ Y
+    /// →(digital)→ X`: the delayed edge must be the acoustic one, leaving the digital edge same-block.
+    #[test]
+    fn a_mixed_cycle_prefers_the_acoustic_edge_for_the_delay() {
+        let f = AudioFormat::new(SampleRate::new(48_000.0), BitDepth::new(24), 1);
+        let mut g = Graph::new();
+        let x = g.add(DigitalToAcoustic::new(f)); // digital in, acoustic out
+        let y = g.add(AcousticToDigital::new(f)); // acoustic in, digital out
+        g.connect_ideal(x, 0, y, 0); // acoustic edge  x → y
+        g.connect_ideal(y, 0, x, 0); // digital edge   y → x
+        let tap = g.add(TestSource::new(Volts::new(0.0), Ohms::new(150.0)));
+        g.set_output(tap, 0);
+        let sched = compile(g, 16, rate(), 0).expect("mixed cycle auto-breaks");
+        assert_eq!(
+            delayed_edge_kinds(&sched),
+            (1, 1),
+            "the acoustic edge is delayed, not the digital one"
+        );
+    }
+
+    /// A **below-unity** acoustic feedback loop settles: `pₙ = 0.5·pₙ₋₁ + 1` (a delayed acoustic
+    /// self-loop, drive 1) reads *last* block's pressure back, so it climbs 1 → 1.5 → 1.75 → …,
+    /// converging geometrically to the fixed point `c/(1−k) = 2`. Proof the delayed **pressure** copy
+    /// carries feedback and the delay is exactly one block.
+    #[test]
+    fn a_below_unity_loop_settles_one_block_at_a_time() {
+        let mut g = Graph::new();
+        let cell = g.add(AcousticFeedbackCell::new(0.5, 1.0, 100.0));
+        g.connect_ideal(cell, 0, cell, 0); // ideal acoustic self-loop — compile must auto-delay it
+        let tap = g.add(TestSource::new(Volts::new(0.0), Ohms::new(150.0)));
+        g.set_output(tap, 0);
+        let mut sched = compile(g, 8, rate(), 0).expect("acoustic self-loop compiles");
+        assert_eq!(
+            delayed_edge_kinds(&sched),
+            (1, 1),
+            "the air edge is delayed"
+        );
+
+        let mut out = VoltageBuffer::zeros(8, rate());
+        // pₙ = 0.5·pₙ₋₁ + 1, p starts 0: 1, 1.5, 1.75, 1.875, 1.9375 → 2.
+        for expected in [1.0_f32, 1.5, 1.75, 1.875, 1.9375] {
+            sched.process(&mut out);
+            let p = pool_pressure(&sched);
+            assert!(
+                (p - expected).abs() < 1e-5,
+                "below-unity loop: got {p}, expected {expected}"
+            );
+        }
+    }
+
+    /// A **super-unity** loop builds toward feedback and self-limits at the rail: `pₙ = 2·pₙ₋₁ + 1`
+    /// grows 1, 3, 7, 15, 31, 63, then 2·63+1 = 127 clamps to the 100 rail and stays — the emergent
+    /// "it howls until it pins" ceiling, no feedback special-casing anywhere.
+    #[test]
+    fn a_super_unity_loop_grows_then_self_limits_at_the_rail() {
+        let mut g = Graph::new();
+        let cell = g.add(AcousticFeedbackCell::new(2.0, 1.0, 100.0));
+        g.connect_ideal(cell, 0, cell, 0);
+        let tap = g.add(TestSource::new(Volts::new(0.0), Ohms::new(150.0)));
+        g.set_output(tap, 0);
+        let mut sched = compile(g, 8, rate(), 0).expect("acoustic self-loop compiles");
+
+        let mut out = VoltageBuffer::zeros(8, rate());
+        let mut prev = 0.0_f32;
+        let mut pinned = false;
+        for _ in 0..9 {
+            sched.process(&mut out);
+            let p = pool_pressure(&sched);
+            if pinned {
+                assert!(
+                    (p - 100.0).abs() < 1e-4,
+                    "stays pinned at the rail, got {p}"
+                );
+            } else {
+                assert!(p > prev, "super-unity loop must grow: {p} !> {prev}");
+                if (p - 100.0).abs() < 1e-4 {
+                    pinned = true;
+                }
+            }
+            prev = p;
+        }
+        assert!(
+            pinned,
+            "a super-unity loop must reach the rail and self-limit"
+        );
+    }
+}
+
 /// White-box tests for the **acoustic carrier**: an ideal-air pressure edge (`AcousticRoute`) is a
 /// unity copy at the analog rate, and an acoustic↔analog edge has no bridge on a wire (a microphone
 /// is the transducer, and it lives *inside* a node), so `compile` rejects it as a `DomainMismatch`.
