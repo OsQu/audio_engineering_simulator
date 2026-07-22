@@ -2764,6 +2764,20 @@ mod tests {
         assert!(!connectors_compatible(Connector::Usb, Connector::Spdif));
         assert!(!connectors_compatible(Connector::Usb, Connector::Digital));
         assert!(!connectors_compatible(Connector::Combo, Connector::Usb));
+        // Acoustic (ideal air) mates only with itself — no physical plug, so it joins no other shape.
+        assert!(connectors_compatible(
+            Connector::Acoustic,
+            Connector::Acoustic
+        ));
+        assert!(!connectors_compatible(Connector::Acoustic, Connector::Xlr));
+        assert!(!connectors_compatible(
+            Connector::Acoustic,
+            Connector::Combo
+        ));
+        assert!(!connectors_compatible(
+            Connector::Combo,
+            Connector::Acoustic
+        ));
     }
 
     /// Ports carry an authored physical connector, distinct from their signal-class `kind`: the synth's

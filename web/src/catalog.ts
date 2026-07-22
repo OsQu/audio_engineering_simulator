@@ -110,18 +110,21 @@ export type ParamTaper = "linear" | "log";
 export type PortDirection = "input" | "output";
 
 /** A port's carrier domain. */
-export type PortDomain = "analog" | "digital" | "events";
+export type PortDomain = "analog" | "digital" | "events" | "acoustic";
 
 /** Signal-class of a jack, for styling/labelling (mic/line/instrument/…). Distinct from the physical
- *  {@link Connector} shape that governs whether two jacks can actually be joined. */
-export type PortKind = "mic" | "line" | "instrument" | "speaker" | "digital" | "midi";
+ *  {@link Connector} shape that governs whether two jacks can actually be joined. `acoustic` is a sound
+ *  source's air output / a mic's capsule input (Story 8.2). */
+export type PortKind = "mic" | "line" | "instrument" | "speaker" | "digital" | "midi" | "acoustic";
 
 /** The **physical connector shape** a port (or cable end) presents — the hard constraint on what can
  *  plug into what (mirrors the Rust `Connector`; `quarterInch` unifies TS/TRS). `combo` is the XLR+TRS
  *  combo jack on an interface's front input; `usb`/`spdif` are specific digital connectors, `digital`
- *  the generic one. Two ports may only be joined when their connectors {@link connectorsCompatible
- *  match}; a signal-class/level mismatch is *not* rejected (that stays emergent from the voltage
- *  physics). Authoritatively enforced in `build_patch`; mirrored here for live patching feedback. */
+ *  the generic one. `acoustic` is the ideal-air "connector" between a sound source and a mic capsule —
+ *  not a physical plug; it mates only with itself (Story 8.2). Two ports may only be joined when their
+ *  connectors {@link connectorsCompatible match}; a signal-class/level mismatch is *not* rejected (that
+ *  stays emergent from the voltage physics). Authoritatively enforced in `build_patch`; mirrored here
+ *  for live patching feedback. */
 export type Connector =
   | "quarterInch"
   | "xlr"
@@ -130,7 +133,8 @@ export type Connector =
   | "din5"
   | "digital"
   | "usb"
-  | "spdif";
+  | "spdif"
+  | "acoustic";
 
 /** Whether two connectors can be physically joined. Same-connector always fits; the one asymmetric
  *  case is the **combo** jack, which accepts an XLR or a ¼" plug (either direction). Everything else is

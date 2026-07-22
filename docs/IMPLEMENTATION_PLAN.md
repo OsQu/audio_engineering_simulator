@@ -846,10 +846,11 @@ connectivity pass over a side-graph, plus an emergent runtime consequence — ne
 
 ---
 
-## Epic 8 — The Acoustic Domain & Micing — 🚧 **In progress** (8.1 done; 8.2, 8.3 coarse)
+## Epic 8 — The Acoustic Domain & Micing — 🚧 **In progress** (8.1 done; 8.2 planned; 8.3 coarse)
 
 **Progress:** Story 8.1 ✅ **Done** (the headless acoustic carrier, vox source & mic transduction —
-**394 engine tests + 63 devices tests green**); Stories 8.2 and 8.3 sketched. This Epic activates
+**394 engine tests + 63 devices tests green**); Story 8.2 🚧 **In progress** (planned to Task level — the
+web/product layer + micing scenarios); Story 8.3 sketched. This Epic activates
 the **"air link" seam** both microphones' docs have long anticipated ("a real acoustic path… with a
 pressure↔volts transduction seam at each end; until then the sine is the seam"). It adds a fourth signal
 carrier — **acoustic sound pressure** — so that an instrument is a *source you mic*, not a line-out: the
@@ -1007,18 +1008,77 @@ condenser-vs-dynamic sensitivity gap is confirmed numerically, and the full gate
 - **Web untouched:** the Rust gate is green, but with acoustic ports + the `vox` device now in the catalog the
   browser harness won't render them correctly until Story 8.2 (the `pnpm` checks aren't part of the cargo gate).
 
-### Story 8.2 — Micing in the studio (devices + web + scenarios)
+### Story 8.2 — Micing in the studio (web + scenarios) — 🚧 **In progress**
 
-*Coarse sketch (elaborate on pickup):* surface the acoustic carrier through the product layer. A **vox** catalog
-device (the `SoundSource` builder + a UI descriptor: SPL + frequency); the two mics' catalog descriptors gain
-their acoustic **input** port; an **acoustic connector** shape (+ `connectors_compatible` + `SignalClass`) and
-`build_patch` acoustic-edge expansion; a web **acoustic cable** (a distinct/dashed acoustic↔acoustic link,
-domain-legality mirroring the engine) with a vox **faceplate** (dB-SPL loudness + frequency) and the acoustic
-input **jack** on the mic faceplates. *Validate (product):* patch a vox → mic → preamp → AD in the UI and
-watch the front-end gain-staging emerge — a whisper buried near the noise floor, a cranked amp slamming the
-preamp until the PAD is engaged, and a dynamic mic needing markedly more gain than a condenser on the same
-source. Deferred (record, don't build): distance/inverse-square attenuation, propagation delay, polar response,
-and proximity/placement-based pickup.
+*Goal:* surface the acoustic carrier through the product layer so you can **place a source, mic it, and hear the
+front-end come alive** — drag a vox and a mic into the studio, wire the capsule with an acoustic cable, and watch
+loudness (whisper → shout → cranked amp) drive the gain-staging story (`PROJECT_PLAN.md` §4, §7). Almost all of
+the *engine/devices* surface this story once owned was **pulled forward by Story 8.1** (the `vox` device, the mics'
+acoustic capsule ports + descriptors, `Connector::Acoustic` / `PortKind::Acoustic`, `build_patch`'s acoustic-edge
+expansion, and the free acoustic↔analog `DomainMismatch`), so 8.2 is now essentially a **`web/` story** — the
+client-side mirror of the new carrier — plus the numeric validation and a small connector test.
+
+*Watch out:*
+- **The web mirrors legality, it doesn't own it** (Epic 4 decision): `build_patch` is authoritative. Keep the
+  `catalog.ts` unions and `connectorsCompatible` a faithful mirror of the Rust — a drift shows as the UI allowing a
+  patch the engine then rejects (or vice-versa).
+- **`format.ts` couples display to taper today** (`taper === "log"` ⇒ `20·log10(value)` dB) — correct only because
+  every current log param is a voltage-gain. The vox breaks that: Loudness is dB **SPL** over *pressure*, Pitch is a
+  log-travel **Hz** knob. Decouple **display (by unit) from travel (by taper)** or both vox knobs read wrong.
+- **dB SPL is a display, never storage** — the engine param stays linear `Pascals`; the web converts `Pa ↔ dB SPL`
+  (ref 20 µPa, `1 Pa = 94 dB SPL`) for the knob only. Don't push dB SPL back into the scene/param value.
+- **Air stays ideal** — the acoustic cable is a *rendering* distinction with no pickable properties (no R·C, no
+  length); distance/attenuation/polar remain deferred. Don't add it to the R·C cable catalog.
+- Run `pnpm run format` + `pnpm run check` + `pnpm run typecheck` after web edits (the cargo gate doesn't cover `web/`).
+
+*Design notes (settled at planning):*
+- **Acoustic cable = rendering-only, no options.** A distinct **dashed** acoustic↔acoustic link, reusing the
+  existing patch machinery; the engine only ever sees the unity `AcousticRoute` edge. *Rejected:* a
+  pickable cable-catalog entry (like the R·C presets) — it would imply parameters (length/attenuation) the Epic
+  explicitly defers, over-building for ideal air.
+- **Loudness knob shows dB SPL, ~0–130.** The web maps the vox's linear `Pascals` param to a dB-SPL readout
+  (`20·log10(Pa / 20e-6)`, silence = −∞) and back; the existing **log taper's travel is reused as-is** (it already
+  maps "dB below max, snapping to silence at the bottom", which is the right feel — the engine ceiling is 100 Pa ≈
+  134 dB SPL). *Rejected:* a raw-Pascals knob (not how loudness is discussed; poor feel).
+- **No bespoke faceplates.** The generic descriptor-driven `Panel` already renders the vox (Loudness + Pitch knobs,
+  acoustic output jack) and the mics (acoustic capsule input jack + XLR output) — so the story needs **jack/cable
+  styling + the dB-SPL knob fix**, not new Svelte faceplate components. *(A skeuomorphic bespoke `Vox`/mic faceplate
+  is optional future polish, deferred — this is a deviation from the coarse sketch's "vox faceplate" wording,
+  justified: the fallback Panel + shared widgets already cover it, per the Epic-5 component-over-coordinate rule.)*
+- **Validation = a durable Rust scene test + manual by-eye** (no new web test infra, per the project's deferred-e2e
+  stance): the numbers are asserted Rust-side (tests are the oracle for the analog domain); the browser check is a
+  human confirmation the UI patches and renders.
+
+*Tasks:*
+- **Task 8.2.1 — Web carrier types + legality mirror.** Add `"acoustic"` to `PortDomain`, `PortKind`, and
+  `Connector` in `web/src/catalog.ts`; confirm `connectorsCompatible` (equality already covers it) and the
+  `connections.ts`/`patching.ts` legality (`domain` match + `wouldCreateCycle`, both carrier-agnostic) accept a
+  vox→mic-capsule patch and reject acoustic↔analog. Add the missing acoustic case to the Rust
+  `connectors_compatible_matrix` test. *Validate:* client-side, a vox→capsule patch reads legal and an
+  acoustic↔line patch reads illegal (mirroring `build_patch`); `pnpm run typecheck` green; the Rust connector test
+  passes.
+- **Task 8.2.2 — Acoustic jack & cable styling.** A signal-palette token (`--ae-signal-acoustic`) + `Jack.svelte`
+  styling for `data-kind="acoustic"` / `data-domain="acoustic"`; a **dashed** acoustic cable in `cable-view.ts`; a
+  `CableInspector.svelte` acoustic branch mirroring the digital "ideal (no cable)" line. *Validate (by-eye):* the
+  vox's Air out and the mics' Capsule in render as distinct acoustic jacks, and the acoustic cable draws dashed with
+  an "ideal — no cable" inspector.
+- **Task 8.2.3 — dB-SPL loudness knob.** Decouple `format.ts` display from taper — format **by unit** (`"dB"` ⇒
+  gain dB as today; new `"dB SPL"` ⇒ `20·log10(value/20e-6)`, `−∞` at 0; everything else ⇒ number + unit, so a
+  log-taper Hz knob reads Hz); set the vox Loudness param's unit to `"dB SPL"` in the catalog. *Validate:* the vox
+  Loudness knob reads **94 dB SPL at 1 Pa** and Pitch reads Hz; a `format.ts` Vitest unit test covers the dB/dB-SPL/
+  unit branches (cheap, pure logic — no browser).
+- **Task 8.2.4 — The micing scenario (the exit gate).** A Rust harness/devices scene-level integration test:
+  `vox → mic → 8i6 preamp → AD`, asserting the gain-staging by hand calc — a whisper (30 dB SPL) sits near the
+  preamp noise floor, a cranked amp (120 dB SPL) needs the −10 dB PAD to avoid clipping, and a dynamic mic reads
+  ~14 dB below a condenser on the same source at the same gain. Plus a manual in-browser pass building the chain.
+  *Validate:* the exit criteria below, green.
+
+*Validate (Story 8.2):* in the browser you can drag a vox and a condenser (or dynamic) into the studio, wire the
+capsule with an acoustic cable, and drive the loudness knob (in dB SPL) to watch the front-end gain-staging emerge
+— whisper near the noise floor, cranked amp needing the PAD, dynamic needing more gain than a condenser; the
+supporting numbers are pinned by the Rust scene test; the full cargo gate **and** `pnpm run check`/`typecheck`/`format`
+are green. Deferred (record, don't build): distance/inverse-square attenuation, propagation delay, polar/off-axis
+response, proximity/placement-based pickup, and bespoke skeuomorphic vox/mic faceplates.
 
 ### Story 8.3 — Speakers as acoustic sources & acoustic feedback
 

@@ -98,6 +98,25 @@ describe("evaluateConnection — legality", () => {
     expect(v.ok).toBe(true);
   });
 
+  it("accepts an acoustic edge (vox air out → mic capsule) — the ideal-air link", () => {
+    const v = evaluateConnection(
+      out("vox", 0, "acoustic", "acoustic"),
+      inp("mic", 0, "acoustic", "acoustic"),
+      [],
+    );
+    expect(v.ok).toBe(true);
+  });
+
+  it("rejects an acoustic → analog edge (no converter bridges the carriers)", () => {
+    const v = evaluateConnection(
+      out("vox", 0, "acoustic", "acoustic"),
+      inp("pre", 0, "analog", "xlr"),
+      [],
+    );
+    expect(v.ok).toBe(false);
+    if (!v.ok) expect(v.reason).toMatch(/domain/);
+  });
+
   it('rejects same-domain ports with incompatible connectors (XLR into ¼")', () => {
     const v = evaluateConnection(
       out("mic", 0, "analog", "xlr"),
@@ -273,6 +292,8 @@ describe("cableAllowed", () => {
     expect(cableAllowed("analog")).toBe(true);
     expect(cableAllowed("digital")).toBe(false);
     expect(cableAllowed("events")).toBe(false);
+    // Air is ideal — an acoustic edge carries no R·C cable (Story 8.2).
+    expect(cableAllowed("acoustic")).toBe(false);
   });
 });
 
