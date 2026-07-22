@@ -37,7 +37,7 @@
 {#if drag}
   <path class="cable-drag" class:legal class:illegal class:pending {d} />
 {:else}
-  <path class="cable-shadow" {d} />
+  <path class="cable-shadow" data-signal={kind} {d} />
   <path class="cable-core" data-signal={kind} class:selected {d} />
   <path class="cable-highlight" data-signal={kind} {d} />
 {/if}
@@ -94,6 +94,19 @@
   }
   .cable-highlight[data-signal="midi"] {
     stroke: var(--ae-signal-midi-lit);
+  }
+  .cable-core[data-signal="acoustic"] {
+    stroke: var(--ae-signal-acoustic);
+  }
+  .cable-highlight[data-signal="acoustic"] {
+    stroke: var(--ae-signal-acoustic-lit);
+  }
+  /* Acoustic "cable" = ideal air, not a physical lead — draw it dashed (all three strokes together, so
+     the shadow doesn't fill the gaps) to read as an intangible link with no R·C. */
+  .cable-shadow[data-signal="acoustic"],
+  .cable-core[data-signal="acoustic"],
+  .cable-highlight[data-signal="acoustic"] {
+    stroke-dasharray: 7 8;
   }
   /* Selected lead: fatten the core so the inspector target reads clearly. */
   .cable-core.selected {

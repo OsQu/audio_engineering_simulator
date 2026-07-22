@@ -92,4 +92,7 @@
   .jack[data-kind="midi"] .connector {
     --ring: var(--ae-signal-midi);
   }
+  .jack[data-kind="acoustic"] .connector {
+    --ring: var(--ae-signal-acoustic);
+  }
 </style>
