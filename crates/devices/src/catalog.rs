@@ -38,8 +38,8 @@ use crate::scene::ConfigSetting;
 use engine::{
     AdConverter, BitDepth, CondenserMic, DaConverter, DigitalDemux, DigitalMeter, DigitalMux,
     Domain, DynamicMic, EqBand, EventThru, GainStage, Graph, InputZ, Matrix, MicPreamp, Node,
-    NodeId, Ohms, ParamId, Pascals, ReadoutId, SampleRate, SoundSource, Speaker, SynthVoice,
-    ThreeBandEq, Volts, VuMeter,
+    NodeId, Ohms, ParamId, Pascals, PoweredMonitor, ReadoutId, SampleRate, SoundSource, Speaker,
+    SynthVoice, ThreeBandEq, Volts, VuMeter,
 };
 use serde::Serialize;
 
@@ -1048,6 +1048,53 @@ const CATALOG: &[CatalogEntry] = &[
             label: "Tap",
             kind: PortKind::Speaker,
             connector: Connector::QuarterInch,
+        }],
+        delayed_outputs: &[],
+        duplex_links: &[],
+        readouts: ReadoutSpec::Static(&[]),
+        configs: &[],
+    },
+    // A powered monitor — the catalog face of `engine::PoweredMonitor`, the **output-side mirror** of a
+    // microphone (Story 8.3). It takes a line-level drive voltage and **radiates it as sound pressure**
+    // (`pressure = drive_volts × sensitivity × volume`, ~1 Pa/V ⇒ 1 V ≈ 94 dB SPL at unity), so a device
+    // can now be **mic'd**: patch its Air output into a mic capsule over the ideal-air acoustic edge.
+    // Distinct from the `speaker` terminus above — that one stays in volts (the §5.5 capture tap). Wire
+    // `mic → preamp → monitor → air → mic` and raise the gain to hear howlround emerge: the delayed air
+    // edge breaks the loop (Story 8.3) and the feedback is not special-cased.
+    CatalogEntry {
+        type_id: "powered_monitor",
+        name: "Powered Monitor",
+        // A compact desktop studio monitor — same scale as the `speaker` terminus and the 8i6.
+        form_factor: FormFactor::Desktop {
+            width_mm: 130.0,
+            height_mm: 170.0,
+            depth_mm: 150.0,
+        },
+        // ~1 Pa/V (the calibration anchor: 1 V ⇒ 1 Pa ≈ 94 dB SPL at unity volume), on a bridging line
+        // input so it doesn't load its source (like the speaker terminus — we model no amplifier power).
+        nodes: &[|_cfg| Box::new(PoweredMonitor::new(1.0, InputZ::new(Ohms::new(10_000.0))))],
+        internal: &[],
+        params: &[ParamUi {
+            // Volume is a linear level multiplier (an attenuator from unity); the web shows it in dB via
+            // the `"dB"` unit + log taper, exactly like a gain/volume fader (0 dB = unity, −∞ at 0).
+            label: "Volume",
+            unit: "dB",
+            kind: ParamKind::Knob,
+            taper: ParamTaper::Log,
+        }],
+        param_groups: &[],
+        param_grid: None,
+        // A line-level input, fed by an interface line/monitor out over a ¼" jack (like the speaker).
+        inputs: &[PortUi {
+            label: "In",
+            kind: PortKind::Line,
+            connector: Connector::QuarterInch,
+        }],
+        // One acoustic output: the sound radiating into the air (mates only with a mic capsule).
+        outputs: &[PortUi {
+            label: "Air",
+            kind: PortKind::Acoustic,
+            connector: Connector::Acoustic,
         }],
         delayed_outputs: &[],
         duplex_links: &[],
@@ -2437,6 +2484,44 @@ mod tests {
         assert!(vox.configs.is_empty());
     }
 
+    /// The powered monitor's descriptor face (Story 8.3): a line-level ¼" **input** + an acoustic Air
+    /// **output** (mono, `Connector::Acoustic`, mating only with a mic capsule), and one Volume knob.
+    /// The output-side mirror of the vox's face.
+    #[test]
+    fn powered_monitor_descriptor_face() {
+        let mon = descriptors()
+            .into_iter()
+            .find(|d| d.type_id == "powered_monitor")
+            .expect("powered_monitor is in the catalog");
+
+        assert_eq!(mon.ports.len(), 2, "a line input and an acoustic output");
+        let input = mon
+            .ports
+            .iter()
+            .find(|p| p.direction == PortDirection::Input)
+            .expect("a line input");
+        assert_eq!(input.domain, PortDomain::Analog);
+        assert_eq!(input.kind, PortKind::Line);
+        assert_eq!(input.connector, Connector::QuarterInch);
+        assert_eq!(input.channels, 1, "a single-conductor line input");
+
+        let air = mon
+            .ports
+            .iter()
+            .find(|p| p.direction == PortDirection::Output)
+            .expect("an acoustic Air output");
+        assert_eq!(air.domain, PortDomain::Acoustic);
+        assert_eq!(air.channels, 1, "acoustic is mono");
+        assert_eq!(air.kind, PortKind::Acoustic);
+        assert_eq!(air.connector, Connector::Acoustic);
+
+        // One knob: Volume, defaulting to unity (1.0 linear, shown as 0 dB by the web).
+        assert_eq!(mon.params.len(), 1);
+        assert_eq!(mon.params[0].label, "Volume");
+        assert_eq!(mon.params[0].default, 1.0);
+        assert!(mon.configs.is_empty());
+    }
+
     /// The condenser mic's port remap (single node): one node, no internal edges, its acoustic capsule
     /// exposed as device input 0 and its balanced output as device output 0, and — since Story 8.1 —
     /// **no params** (sensitivity is a fixed transducer property, not a knob).
@@ -2704,6 +2789,7 @@ mod tests {
             "ad_converter",
             "da_converter",
             "speaker",
+            "powered_monitor",
             "channel_strip",
             "vu_meter",
             "digital_meter",

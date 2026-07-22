@@ -1019,6 +1019,53 @@ mod tests {
         );
     }
 
+    /// **The acoustic feedback loop builds (Story 8.3).** The product howlround chain —
+    /// `condenser mic → 8i6 (combo in → preamp → AD → matrix → DA → Line Out 1) → powered monitor →
+    /// air → mic` — is a genuine graph cycle (the 8i6's matrix is one node, so its input path and
+    /// output path close a loop through it). `build_patch` + `compile` **auto-break it** at the air
+    /// edge (Story 8.3's prefer-acoustic policy; *which* edge carries the delay is pinned by the engine
+    /// test `acoustic_feedback`), so the loop builds and runs — feedback is not special-cased, and a
+    /// pre-8.3 build would have rejected an acoustic-only loop as `Cycle`. We build it and run a few
+    /// blocks to exercise the delayed acoustic edge on the real product graph.
+    #[test]
+    fn acoustic_feedback_loop_through_the_8i6_builds_and_runs() {
+        let patch = Patch {
+            devices: vec![
+                device("mic", "condenser_mic"),
+                DeviceInstance {
+                    id: "if".into(),
+                    type_id: "scarlett_8i6".into(),
+                    params: vec![],
+                    config: vec![crate::scene::ConfigSetting {
+                        key: "phantom".into(),
+                        value: 1.0,
+                    }],
+                },
+                device("mon", "powered_monitor"),
+            ],
+            connections: vec![
+                conn("mon", 0, "mic", 0), // monitor Air → mic capsule (the acoustic air hop)
+                conn("mic", 0, "if", 0),  // mic XLR → 8i6 combo in 1
+                conn("if", 2, "mon", 0),  // 8i6 Line Out 1 → monitor In (closes the loop)
+            ],
+            output: PortRef {
+                device: "if".into(),
+                port: 3, // Line Out 2 — a valid analog tap outside the loop
+            },
+        };
+        let mut scene = build_patch(&patch, BLOCK_LEN, rate(), 0)
+            .expect("the acoustic feedback loop auto-breaks at the air edge and builds");
+        // Run a few blocks: the delayed acoustic edge copy runs on the real product graph, panic-free.
+        let mut params = ParamQueue::with_capacity(1);
+        let mut events = EventQueue::with_capacity(1);
+        let mut out = VoltageBuffer::zeros(BLOCK_LEN, rate());
+        for _ in 0..4 {
+            scene
+                .schedule_mut()
+                .process_io(&mut out, &mut params, &mut events);
+        }
+    }
+
     /// The `device → node → daw()` resolution: the `computer` in a built scene resolves to a live
     /// [`DawControl`] surface (only its recorder node's `daw()` answers `Some`), a non-DAW device
     /// resolves to `None`, and an unknown id resolves to `None`. Driving the transport over the facade
