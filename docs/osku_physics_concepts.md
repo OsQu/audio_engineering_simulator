@@ -9,8 +9,9 @@ we're modeling and why*. Use it to skip re-explaining things already covered.
 > open/short extremes, global-vs-local, feedback/algebraic loops, buffering & pushback, and
 > ground loops), cables, filters (one-pole & 2nd-order), poles, filter implementation,
 > distortion, rail clipping, sampling/decimation/aliasing, windowed-sinc FIR, quantization &
-> dither, group delay/latency, round-trip latency (feedback via a one-block delay), and phantom
-> power / the balanced front-end — through Epic 5.
+> dither, group delay/latency, round-trip latency (feedback via a one-block delay), phantom
+> power / the balanced front-end, sound pressure / dB SPL / the mic transducer, and acoustic feedback
+> (howlround & loop gain) — through Epic 8.
 
 ## Contents
 1. [The voltage-native model](#1-the-voltage-native-model)
@@ -31,6 +32,7 @@ we're modeling and why*. Use it to skip re-explaining things already covered.
 16. [Group delay & latency](#16-group-delay--latency)
 17. [Phantom power & the balanced front-end](#17-phantom-power--the-balanced-front-end)
 18. [Sound pressure, dB SPL & the microphone transducer](#18-sound-pressure-db-spl--the-microphone-transducer)
+19. [Acoustic feedback (howlround) & loop gain](#19-acoustic-feedback-howlround--loop-gain)
 
 ---
 
@@ -881,3 +883,52 @@ room (PROJECT_PLAN §5.5). The realism budget is spent on volts-and-converters; 
 handoff of a real physical quantity, so all the important lessons (mic choice, phantom, gain staging,
 the pad) are intact while acoustics proper stays out of scope. Distance and propagation delay are a
 later, opt-in depth.
+
+## 19. Acoustic feedback (howlround) & loop gain
+
+### The speaker as the reverse transducer
+A **powered monitor** (or guitar cab, PA speaker) is the output-side mirror of the microphone: where the
+mic converts pressure → volts (`v = pressure · sensitivity`, V/Pa; §18), the monitor converts volts →
+pressure (`pressure = drive_volts · sensitivity`, **Pa/V**). Same idea, opposite direction, same rate —
+a pointwise multiply, no resample. It is deliberately kept **distinct** from the voltage-capture
+"speaker terminus" (the §5.5 output tap that stays in volts, which the harness samples as "what we
+hear"): the monitor genuinely *leaves* the voltage domain and radiates into the air, so its output is a
+pressure a mic can pick back up.
+
+### The loop, and loop gain
+Put the two transducers back to back and you can **mic what a speaker plays**: `mic → preamp → monitor →
+air → mic`. Trace one trip around and multiply the gains:
+
+```text
+  L = mic_sensitivity (V/Pa) · preamp_gain · monitor_sensitivity (Pa/V) · volume
+```
+
+The units cancel (V/Pa · Pa/V = dimensionless) — **L is the loop gain**, the factor by which a sound
+that leaves the monitor comes back *bigger or smaller* one trip later. With a small steady stimulus
+seeding it, the level each block is `pₙ = drive + L·pₙ₋₁`:
+- **L < 1** — each trip is quieter; the sum converges to a finite `drive/(1−L)`. Stable. (The monitor
+  just adds a little "more me" — the useful case.)
+- **L = 1** — each trip returns at the same size; the level holds/sustains. The knife-edge.
+- **L > 1** — each trip is *louder*; the level grows geometrically → **acoustic feedback** (howlround,
+  the Larsen effect). It doesn't grow forever: it **self-limits when the amp hits its rail** (§11) — the
+  ceiling is the clip, not a special "feedback" case. This is the "ring out the monitors" /
+  **gain-before-feedback** lesson: how much system gain you can run before L crosses 1.
+
+Nothing here is coded as "feedback" — howlround *emerges* from `v = pressure · sensitivity` + the rail,
+exactly like clipping emerges from the rail rather than a "distortion flag."
+
+### Why the loop needs a delay to exist at all
+A block-based, local-solve engine (§3) **cannot** resolve a same-block feedback loop — mic depends on
+monitor depends on preamp depends on mic, an algebraic loop with no fixed-point solver. The escape is
+the same as a digital round-trip (§16): one edge carries **one block of latency**, breaking the
+algebraic loop into a recurrence (`pₙ` reads `pₙ₋₁`). Physically the honest place for that delay is the
+**air hop** — sound genuinely takes time to travel — so that's the edge the engine delays (in preference
+to any digital edge on the same loop). Note this one-block delay is a *cycle-break mechanism*
+(block-size-dependent), **not** a calibrated propagation time; real distance→delay is deferred.
+
+### Feedback resistance (why loud stages favour dynamics)
+Because L scales with **mic sensitivity**, a less sensitive mic has a lower loop gain at the same system
+gain — so it needs *more* gain to reach L = 1, i.e. it **resists feedback**. A dynamic (~2 mV/Pa) sits
+~14 dB below a condenser (~10 mV/Pa; §18), so it tolerates ~14 dB more gain-before-feedback. Same
+sensitivity gap as the recording lesson, now showing up as howlround headroom — which is exactly why
+you see dynamics, not condensers, in front of a loud monitor wedge on stage.

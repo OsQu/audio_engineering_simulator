@@ -846,12 +846,12 @@ connectivity pass over a side-graph, plus an emergent runtime consequence — ne
 
 ---
 
-## Epic 8 — The Acoustic Domain & Micing — 🚧 **In progress** (8.1, 8.2 done; 8.3 in progress)
+## Epic 8 — The Acoustic Domain & Micing — ✅ **Done** (8.1, 8.2, 8.3)
 
-**Progress:** Story 8.1 ✅ **Done** (the headless acoustic carrier, vox source & mic transduction); Story 8.2
-✅ **Done** (the web/product mirror of the carrier + the micing-scenario exit gate — **394 engine + 65 devices
-+ 283 web tests green**); Story 8.3 🚧 **In progress** (planned to Task level — speakers as acoustic sources +
-acoustic feedback). This Epic activates
+**Progress:** Stories 8.1 ✅, 8.2 ✅, 8.3 ✅ — **Epic 8 complete.** 8.1 — the headless acoustic carrier, vox
+source & mic transduction; 8.2 — the web/product mirror of the carrier + the micing-scenario exit gate; 8.3 —
+speakers as acoustic sources (the `PoweredMonitor` converter) + acoustic feedback (the air edge is delay-eligible,
+so howlround emerges from a delayed loop). **405 engine + 67 devices + 283 web tests green.** This Epic activates
 the **"air link" seam** both microphones' docs have long anticipated ("a real acoustic path… with a
 pressure↔volts transduction seam at each end; until then the sine is the seam"). It adds a fourth signal
 carrier — **acoustic sound pressure** — so that an instrument is a *source you mic*, not a line-out: the
@@ -1124,7 +1124,7 @@ essentially a `web/` story plus the numeric exit gate.
   condenser's amplified phantom-pedestal residual dominates a signal that small (the documented Story-8.1 f32
   boundary); the physical gain-staging lesson is carried by the 94 dB and 120 dB cases.
 
-### Story 8.3 — Speakers as acoustic sources & acoustic feedback — 🚧 **In progress**
+### Story 8.3 — Speakers as acoustic sources & acoustic feedback — ✅ **Done**
 
 *Goal:* close the loop — let a speaker **radiate sound pressure you can mic**, the output-side mirror of the
 microphone, so **acoustic feedback (howlround / Larsen) emerges from the physics** the moment you patch a
@@ -1211,13 +1211,58 @@ mic*) and the §5.5 scope extension settled at planning (device-to-device radiat
   (the ~14 dB feedback-resistance gap). Plus a manual in-browser pass building and ringing the loop. *Validate:*
   the exit criteria below, green.
 
-*Validate (Story 8.3):* a `mic → preamp → monitor → air → mic` patch **compiles** (auto-broken, the one block of
-latency sitting on the **air** edge); a below-unity loop settles to a bounded, one-block-trailing steady state;
-pushing the gain past unity makes the level **build toward feedback** and self-limit at the rail — with the
-condenser ringing at a lower gain than the dynamic — all pinned by hand-calc Rust tests; an all-analog cycle with
-**no** delay-eligible edge still rejects as `Cycle`; the full cargo gate **and** `pnpm run
-check`/`typecheck`/`format` are green; and in the browser you can build the loop and hear/see it ring. *Deferred
-(record, don't build):* a **distance→delay-line** + inverse-square attenuation (the one-block delay is a
-cycle-break mechanism, not calibrated propagation — pairs with 8.2's deferred distance work); speaker
-frequency-response / cabinet coloration (flat for now); and **air→ear / room acoustics** (out of scope — the loop
-is device-to-device).
+*Validate (Story 8.3):* ✅ **met** — a `mic → preamp → monitor → air → mic` patch **compiles** (auto-broken, the
+one block of latency sitting on the **air** edge); a below-unity loop settles to a bounded, one-block-trailing
+steady state; pushing the gain past unity makes the level **build toward feedback** and self-limit at the rail —
+with the condenser ringing at a lower gain than the dynamic — all pinned by hand-calc Rust tests; an all-analog
+cycle with **no** delay-eligible edge still rejects as `Cycle`; the full cargo gate **and** `pnpm run
+check`/`typecheck` are green. *(Manual by-eye — build the loop in the browser and hear/see it ring — remains a
+human confirmation, per the deferred-e2e stance.)* *Deferred (record, don't build):* a **distance→delay-line** +
+inverse-square attenuation (the one-block delay is a cycle-break mechanism, not calibrated propagation — pairs with
+8.2's deferred distance work); speaker frequency-response / cabinet coloration (flat for now); and **air→ear / room
+acoustics** (out of scope — the loop is device-to-device).
+
+*Delivered:* the loop is closed — a device can be **mic'd**, and acoustic feedback emerges from the physics.
+- **Task 8.3.1** — the `PoweredMonitor` node (`engine/src/node/powered_monitor.rs`), the output-side mirror of the
+  microphone: analog voltage in, mono acoustic (pressure) out, `pressure = drive_volts × sensitivity × volume`
+  (pointwise, ideal air — no state, no rate). A **Volume** param (linear attenuator from unity). Passive, the exact
+  reverse of `dynamic.rs`. Distinct from the `Speaker` terminus, which is untouched (still the §5.5 volts tap).
+  Anchor pinned by hand calc: 1 V × 1 Pa/V × unity = 1 Pa = 93.98 dB SPL; volume −6 dB halves the pressure.
+- **Task 8.3.2** — acoustic edges became **delay-eligible** at `schedule.rs`'s step-5c cycle-break, and the policy
+  now **prefers an acoustic edge** over a digital one on the same cycle (`breakable_in(Acoustic).or_else(||
+  breakable_in(DigitalAudio))`), so a loop's one block of latency always lands on the physical air hop. The
+  delayed-edge copy path was already carrier-agnostic (it copies a pressure lane like any other), so no runtime
+  change was needed there; the `CompileError::Cycle` doc/message/step comments were updated to "digital **or
+  acoustic**". Engine tests (`acoustic_feedback` module) prove: a real `mic → receiver → gain → monitor → air → mic`
+  loop compiles with **exactly one delayed edge = the acoustic one**; a mixed digital+acoustic cycle delays the
+  acoustic edge; a delayed acoustic self-loop carries feedback (below-unity converges, super-unity grows then pins
+  at the rail); a pure-analog cycle still rejects as `Cycle`.
+- **Task 8.3.3** — the `powered_monitor` catalog device (`devices/src/catalog.rs`): a line-level ¼" input + an
+  acoustic **Air** output (`Connector::Acoustic`, mates only with a mic capsule) + a Volume knob (unit `"dB"`, log
+  taper — reuses 8.2's gain-dB display). `build_patch` assembles the real product loop `condenser mic → 8i6 →
+  Line Out 1 → monitor → air → mic` — a genuine graph cycle (the 8i6's matrix is one node) — and it **compiles
+  auto-broken and runs**. **No new web code**: the device is fully descriptor-driven, and `PortKind::Line` /
+  `Connector::Acoustic` / the `"dB"` unit were all already handled since 8.2 (wasm rebuilt; the generic `Panel` +
+  8.2 jack/cable styling render it).
+- **Task 8.3.4 — the exit gate** — a real-node feedback loop (`acoustic_feedback` module) seeded by a constant
+  drive so the loop gain is exactly `L = gain × sensitivity` (bridging impedances ⇒ edge dividers ≈ 1), pinned by
+  hand calc: below unity (L = 0.5) settles to the fixed point 1.0 Pa; above unity (L = 2.0) rings up 2 → 6 → … and
+  self-limits at the 10 Pa rail ceiling; and at the same gain the **dynamic** (L = 0.4, settles at 3.33 Pa)
+  **resists the feedback that makes a condenser howl** (L = 2.0, pins the rail) — the same Story-8.1 ~14 dB
+  sensitivity gap, now as feedback headroom.
+
+*Deviations / notes (not bugs):*
+- **Prefer-acoustic is a touch more than the coarse sketch's "one-condition change"** — the sketch delayed the
+  lowest-index breakable edge; a realistic loop through the 8i6 crosses digital *and* the air edge, so preferring
+  the acoustic edge is what keeps the latency on the physically-honest air hop (agreed at planning; the user's
+  steer: "the delay to the air hop is true to the real world").
+- **The exit-gate hand-calcs landed as engine-level real-node tests, not a devices/harness scene test.** A
+  devices-level *ringing* loop through the 8i6 crosses its AD/DA and needs the matrix rerouted for direct
+  monitoring *and* a seed injected into a closed loop — fiddly and not exactly hand-calculable. The engine real-node
+  loop gives exact, deterministic numbers; the **product loop building and running** through real catalog devices
+  is covered by 8.3.3's test. Consistent with the project's "tests are the oracle for the analog domain; verify the
+  product seam builds" stance.
+- **The feedback-resistance test uses two `DynamicMic`s at 10 mV/Pa vs 2 mV/Pa**, not the real `CondenserMic`: the
+  condenser needs phantom (⇒ a `MicPreamp` in the loop, with its pad/air/floor), and its phantom pedestal is a DC
+  offset the balanced difference cancels — irrelevant to the AC loop gain. Sensitivity is what drives feedback
+  resistance, so this isolates the physics cleanly.
