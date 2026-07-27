@@ -942,3 +942,158 @@ whole front-end story (mic choice, phantom, gain staging, the pad, feedback) —
   transducer + acoustic edges made delay-eligible (air edge preferred). Settled: **howlround emerges from a
   delayed air loop and self-limits at the rail — feedback is never special-cased**, and the one-block delay
   belongs on the physically-honest air hop.
+
+---
+
+## Epic 9 — Instruments: SoundFont-Based MIDI Voices — 🚧 **In progress (9.1)**
+
+**Progress:** Story 9.1 🚧 in progress (the feasibility spike — the go/no-go gate); Stories 9.2–9.5 coarse,
+fleshed out on arrival. This is the epic Epic 8 explicitly deferred ("SoundFont / multisample instruments —
+a separate future epic (no rustysynth, no sample assets, no polyphony machinery here)"). It gives the
+simulator **recognizable played instruments** — an electric guitar you patch into a dist pedal + amp, an
+acoustic guitar / horn you mic — using a General-MIDI SoundFont played by a ready-made Rust synth
+([`rustysynth`](https://crates.io/crates/rustysynth), MIT), wrapped as a black-box node behind the engine's
+event lane and internal DA.
+
+**Goal:** make instruments a first-class *source you play* — MIDI note-on/off + velocity in, a recognizable
+GM voice out — while staying inside every non-negotiable (`PROJECT_PLAN` §2/§6: **instruments are
+recognizable, not realistic**; the realism budget stays on the volts-and-converters layer). An instrument
+is modeled honestly as a **digital sound module** (a rompler / digital piano): SoundFont sample playback at
+its own digital rate → an **internal DA** → an analog line-out (volts) or an acoustic radiator (Pascals).
+Interaction is correct by carrier, not by special case: an electric-guitar patch comes out a **hi-Z
+instrument out in volts** (its dirt comes from the pedal/amp downstream — analog nodes, where the realism
+budget belongs); an acoustic-guitar / horn patch comes out an **acoustic output** you mic with the Epic-8
+condenser/dynamic mics.
+
+**Exit criteria:** you can place an instrument device, play it (QWERTY / Web MIDI / focus keybed) and hear a
+recognizable polyphonic GM voice; the electric-guitar instrument drives a distortion chain audibly, and the
+acoustic instrument is mic'd through the Epic-8 acoustic carrier; all glitch-free and inside the zero-alloc
+/ panic-free / deterministic hot-path contract, verified in-browser.
+
+**Watch-outs:**
+- **The hot-path contract is the whole risk.** `process` must not allocate or panic
+  (`crates/engine/tests/no_alloc.rs` enforces zero-alloc over 128 blocks). `rustysynth` pre-allocates its
+  voice pool at construction and its `render` path shows no `Vec` growth / I/O / time — but this is a claim
+  to **verify under the counting allocator**, not assume. Story 9.1 exists to prove it *before* anything is
+  built on it.
+- **Do not resample at a fractional ratio.** Pin the synth's internal rate to **48 kHz** so 48 k → 384 k is
+  exactly the existing **8×** `Interpolator` / `DaConverter` path; 44.1 k would force a fractional resampler
+  we don't have and don't want here.
+- **The event lane stays note-only.** No CC / pitch-bend / program-change on the event lane (it would blur
+  the two-input-lane separation — `CLAUDE.md` §5). Instrument/preset **selection is a device config/param**,
+  not a MIDI CC.
+- **Assets are a construct-time concern, never a hot-path one.** SoundFont bytes (~6 MB) load and parse at
+  construction; `process` only reads pre-built tables. The `NodeBuilder`/`DeviceConfig` (scalar-only)
+  cannot carry the blob — a host→node byte seam is required (Story 9.3).
+- **Engine leanness.** `rustysynth` is a notable dependency in the otherwise-lean `engine`; justified
+  because **nodes live in `engine`** and it is std-only, dep-free, MIT, and wasm-buildable — matching
+  engine's portability constraints. Keep it isolated behind the one node module.
+
+**Notes (relation to the deferral & the carrier model):** this realizes `PROJECT_PLAN` §4's
+*Instrument / source* and §6's *Instruments* as a recognizable-not-realistic voice. Nothing about the
+analog/voltage spine changes: the instrument is a **digital device with a converter**, so "digital only
+exists after a converter" holds — the converter simply lives *inside* the black-box chassis, exactly as
+`PROJECT_PLAN` §5.6's "one chassis, many nodes" allows.
+
+### Settled architecture decisions (at epic planning)
+
+- **An instrument is a digital sound module, not a magic analog source.** It plays SoundFont samples at a
+  digital rate and crosses an **internal DA** to analog — modeled as a **two-node chassis**
+  (`SoundFontSource` emitting on the `Sample` lane @ 48 kHz → `DigitalRoute` → the existing `DaConverter` →
+  analog out), reusing the shipped DA/`Interpolator` path wholesale. *Rejected:* a source that emits volts
+  directly (it would hide a converter as a fudge and re-implement DA badly, breaking "converters are the
+  only domain bridge").
+- **Wrap `rustysynth` as the black-box DSP core; do not write an SF2 sampler.** The black-box philosophy
+  (`PROJECT_PLAN` §3) explicitly permits delegating internal DSP; an SF2 engine (generators, modulators,
+  loop points, filters, per-voice envelopes) is large and buys nothing given instruments are non-realistic.
+  Fallback if 9.1's audit fails: [`OxiSynth`](https://github.com/PolyMeilex/OxiSynth) (also pure-Rust SF2),
+  or a small fork of `rustysynth` with a fixed-pool + clamped-index guarantee.
+- **Polyphony and velocity come from the black box, not from us.** This satisfies Epic 1's deferred
+  *polyphony / voice allocation* item **by delegation** — `rustysynth` owns voice allocation / stealing and
+  velocity layers. The engine's `EventMessage::NoteOn { note, velocity }` already carries velocity (today's
+  `SynthVoice` ignores it; the sampler uses it).
+- **48 kHz internal, 8× to the 384 kHz analog rate.** Fixed integer ratio; one engine block (1024 analog
+  samples) = 128 frames @ 48 kHz — precisely the AD/DA block contract already in place. Stereo synth output
+  is summed to mono (engine is mono, epic-wide).
+- **v1 event scope: note-on/off + velocity + per-device preset selection.** No CC / pitch-bend / program
+  change on the event lane; preset choice is a config/param. Extending `EventMessage` for pitch-bend /
+  sustain is a **9.5 (optional/later)** decision, deliberately deferred.
+- **One synth core, two output faces.** The electric-guitar instrument exposes a **voltage instrument-out**
+  (hi-Z); the acoustic instrument exposes an **acoustic-out** (Pa via a sample→transducer, reusing the
+  Epic-8 `PoweredMonitor` pattern) to be mic'd. Same `SoundFontSource` core; the face and the loaded GM
+  preset differ per device.
+- **Asset delivery mirrors the DAW byte seam.** The host (JS/wasm boundary) fetches the `.sf2` and hands
+  the bytes to the node via a `DawControl`-style upload keyed by device id (or an imperative `CatalogEntry`
+  builder — the catalog already flags this as an unbuilt extension point). Parse happens at construction;
+  `SoundFont::new` reads from a `Cursor<&[u8]>` on wasm (no `File`). Default GM set: **TimGM6mb (~6 MB)**;
+  *not* FluidR3 (~140 MB).
+- **Determinism preserved.** SoundFont playback is deterministic (no RNG; `rustysynth` reverb/chorus are
+  deterministic DSP, and none of the render path touches `Instant`/`SystemTime`/threads). Same seed ⇒ same
+  output holds.
+
+### Stories
+
+Coarse until picked up, per "flesh out on arrival." 9.1 is elaborated below.
+
+- **Story 9.1** — SoundFont hot-path feasibility spike (**the go/no-go gate**) — *elaborated below.*
+- **Story 9.2** — The `SoundFontSource` node + internal-DA chassis (headless): events → 48 kHz render →
+  mono → 8× → volts; monophonic-through-polyphonic notes proven by tests; zero-alloc/panic-free green.
+- **Story 9.3** — Asset-delivery seam: host fetches the `.sf2`, bytes cross the wasm boundary to the node
+  (DawControl-style upload or imperative catalog builder); construct-time parse; preset selection.
+- **Story 9.4** — Instrument devices + web: an electric-guitar device (voltage instrument-out → dist pedal
+  + amp chain) and an acoustic device (acoustic-out → mic'd); catalog entries, faceplates, focus keybed,
+  played in-browser. The epic's audible payoff.
+- **Story 9.5** *(optional/later)* — depth: velocity curves, more GM instruments, and — if wanted — an
+  `EventMessage` extension for pitch-bend / sustain-pedal (revisits the note-only decision).
+
+### Story 9.1 — SoundFont hot-path feasibility spike — 🚧 **In progress**
+
+*Goal:* prove — **before** building anything on it — that `rustysynth` can serve as the black-box synth
+core inside the engine's non-negotiable hot path: zero-alloc and panic-free in steady state under the
+counting allocator, wasm-buildable loading from bytes, deterministic, and producing a recognizable GM note.
+This is a **spike**, not production wiring: throwaway harness code that answers go/no-go and records the
+verdict + any required mitigation (fork / `OxiSynth` fallback).
+
+*Watch out:*
+- The whole epic rests on this gate — do not soften it. "Looks alloc-free in the source" is not the bar;
+  **the counting allocator asserting zero over N blocks with active voices** is.
+- Steady state means **voices already active** (a chord held) — a note-on that activates a pooled voice
+  must not grow anything; verify with notes held across the measured blocks, and also across a
+  voice-stealing event (more note-ons than `maximum_polyphony`).
+- wasm has no `File` — load the SoundFont from a `Cursor<&[u8]>`; confirm `cargo wasm` compiles the engine
+  with `rustysynth` in its dep tree.
+- This spike may allocate/parse freely at **construction** (that's allowed); the assertion is only on the
+  `render` path.
+
+*Design notes (settled at planning):*
+- **Spike lives behind a native test + a wasm build check**, not in the shipped node yet — the
+  `SoundFontSource` node is Story 9.2. Keep `rustysynth` isolated so a fallback swap is cheap.
+- **Reuse the `no_alloc.rs` counting-allocator harness pattern** rather than inventing a new one — the same
+  `#[global_allocator]` guard the engine already trusts.
+- A **small GM SoundFont test asset** is vendored for the spike (TimGM6mb or a trimmed GM set); the license
+  of the bundled font is checked and recorded (distinct from `rustysynth`'s own MIT).
+- Panic audit is concrete: `rustysynth`'s `note_on` bounds-checks channel but has at least one unchecked
+  index (`self.sound_font.presets[preset]` after a lookup) — feed adversarial inputs (out-of-range
+  key/velocity, empty/garbage soundfont at construction, exhausted polyphony) and record whether any
+  reaches a panic on the render/note path; if so, define the clamp/guard wrapper.
+
+- **Task 9.1.1** — Vendor `rustysynth` + a small GM SoundFont asset; a throwaway native test loads the
+  font, `note_on` a middle-C GM piano, renders N frames, and asserts non-silent, finite output. *Done:*
+  the library plays a recognizable note in-repo; the bundled font's license is recorded.
+- **Task 9.1.2** — **The zero-alloc gate.** Wrap a steady-state `render` loop (a chord held across ≥128
+  render blocks, plus a voice-stealing burst) in the `no_alloc.rs` counting-allocator harness; assert zero
+  allocations on the render path. *Done:* the assertion is green, or the exact allocation site + a
+  mitigation (fixed-pool fork) is documented as the go/no-go verdict.
+- **Task 9.1.3** — **The panic-free gate.** Drive adversarial inputs (out-of-range key/velocity, exhausted
+  polyphony, degenerate soundfont) through `note_on`/`render`; confirm no panic on the render/note path, or
+  specify the clamping wrapper the node will apply. *Done:* the panic surface is characterized and either
+  clean or wrapped.
+- **Task 9.1.4** — **The wasm gate.** Confirm `cargo wasm` compiles `engine` with `rustysynth` in the dep
+  tree, and that the SoundFont loads from a `Cursor<&[u8]>` (not `File`). *Done:* the wasm portability check
+  is green loading from bytes.
+
+*Validate:* `rustysynth` renders a recognizable GM note in-repo, verified **zero-alloc and panic-free on the
+render path** under the counting allocator (chord held + voice-stealing), and `cargo wasm` compiles the
+engine with it loading a SoundFont from bytes — the go/no-go verdict (and, if no-go, the fork / `OxiSynth`
+fallback decision) recorded. The full green gate holds:
+`cargo fmt --check && cargo lint && cargo test && cargo wasm && cargo docs`.
