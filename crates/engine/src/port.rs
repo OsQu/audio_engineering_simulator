@@ -108,10 +108,29 @@ impl Default for EventFace {
     }
 }
 
-/// A node input port: an analog input impedance, a digital-audio input face, or a control-event
-/// input face.
+/// An acoustic port's face: a sound-pressure pickup or emitter.
+///
+/// Air is modelled ideally, so — unlike the analog face's impedance or the digital face's format —
+/// an acoustic face carries no parameters today. It exists to tag the port's carrier (a mic capsule
+/// input, a sound source's output) and is where a future directivity / polar pattern would live.
+/// A single-lane, mono carrier (no balanced legs, no channels).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct AcousticFace;
+
+impl AcousticFace {
+    /// An acoustic face.
+    #[must_use]
+    pub fn new() -> Self {
+        Self
+    }
+}
+
+/// A node input port: an acoustic input face, an analog input impedance, a digital-audio input
+/// face, or a control-event input face.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum InputPort {
+    /// Acoustic sound-pressure input (a mic capsule).
+    Acoustic(AcousticFace),
     /// Analog voltage input, with its input impedance.
     Analog(InputZ),
     /// Digital-audio input.
@@ -120,16 +139,24 @@ pub enum InputPort {
     Events(EventFace),
 }
 
-/// A node output port: an analog output impedance, a digital-audio output face, or a control-event
-/// output face.
+/// A node output port: an acoustic output face, an analog output impedance, a digital-audio output
+/// face, or a control-event output face.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum OutputPort {
+    /// Acoustic sound-pressure output (a sound source radiating into the air).
+    Acoustic(AcousticFace),
     /// Analog voltage output, with its output impedance.
     Analog(OutputZ),
     /// Digital-audio output.
     Digital(DigitalFace),
     /// MIDI/control-event output.
     Events(EventFace),
+}
+
+impl From<AcousticFace> for InputPort {
+    fn from(f: AcousticFace) -> Self {
+        InputPort::Acoustic(f)
+    }
 }
 
 impl From<InputZ> for InputPort {
@@ -147,6 +174,12 @@ impl From<DigitalFace> for InputPort {
 impl From<EventFace> for InputPort {
     fn from(f: EventFace) -> Self {
         InputPort::Events(f)
+    }
+}
+
+impl From<AcousticFace> for OutputPort {
+    fn from(f: AcousticFace) -> Self {
+        OutputPort::Acoustic(f)
     }
 }
 
@@ -172,6 +205,7 @@ impl InputPort {
     /// The carrier domain of this port.
     pub fn domain(self) -> Domain {
         match self {
+            InputPort::Acoustic(_) => Domain::Acoustic,
             InputPort::Analog(_) => Domain::Analog,
             InputPort::Digital(_) => Domain::DigitalAudio,
             InputPort::Events(_) => Domain::Events,
@@ -179,9 +213,10 @@ impl InputPort {
     }
 
     /// How many lanes (pool buffers) this port owns: conductors for analog (1 unbalanced,
-    /// 2 balanced), channels for digital, and a single stream (1) for events.
+    /// 2 balanced), channels for digital, and a single stream (1) for events and acoustic (mono).
     pub fn lane_count(self) -> usize {
         match self {
+            InputPort::Acoustic(_) => 1,
             InputPort::Analog(z) => z.conductors(),
             InputPort::Digital(f) => f.format().channels() as usize,
             InputPort::Events(_) => 1,
@@ -193,7 +228,15 @@ impl InputPort {
     pub fn analog(self) -> Option<InputZ> {
         match self {
             InputPort::Analog(z) => Some(z),
-            InputPort::Digital(_) | InputPort::Events(_) => None,
+            InputPort::Acoustic(_) | InputPort::Digital(_) | InputPort::Events(_) => None,
+        }
+    }
+
+    /// The acoustic face, if this is an acoustic port. Off the hot path.
+    pub fn acoustic(self) -> Option<AcousticFace> {
+        match self {
+            InputPort::Acoustic(f) => Some(f),
+            InputPort::Analog(_) | InputPort::Digital(_) | InputPort::Events(_) => None,
         }
     }
 
@@ -202,7 +245,7 @@ impl InputPort {
     pub fn digital(self) -> Option<DigitalFace> {
         match self {
             InputPort::Digital(f) => Some(f),
-            InputPort::Analog(_) | InputPort::Events(_) => None,
+            InputPort::Acoustic(_) | InputPort::Analog(_) | InputPort::Events(_) => None,
         }
     }
 
@@ -211,7 +254,7 @@ impl InputPort {
     pub fn events(self) -> Option<EventFace> {
         match self {
             InputPort::Events(f) => Some(f),
-            InputPort::Analog(_) | InputPort::Digital(_) => None,
+            InputPort::Acoustic(_) | InputPort::Analog(_) | InputPort::Digital(_) => None,
         }
     }
 }
@@ -220,6 +263,7 @@ impl OutputPort {
     /// The carrier domain of this port.
     pub fn domain(self) -> Domain {
         match self {
+            OutputPort::Acoustic(_) => Domain::Acoustic,
             OutputPort::Analog(_) => Domain::Analog,
             OutputPort::Digital(_) => Domain::DigitalAudio,
             OutputPort::Events(_) => Domain::Events,
@@ -227,9 +271,10 @@ impl OutputPort {
     }
 
     /// How many lanes (pool buffers) this port owns: conductors for analog, channels for digital,
-    /// and a single stream (1) for events.
+    /// and a single stream (1) for events and acoustic (mono).
     pub fn lane_count(self) -> usize {
         match self {
+            OutputPort::Acoustic(_) => 1,
             OutputPort::Analog(z) => z.conductors(),
             OutputPort::Digital(f) => f.format().channels() as usize,
             OutputPort::Events(_) => 1,
@@ -241,7 +286,15 @@ impl OutputPort {
     pub fn analog(self) -> Option<OutputZ> {
         match self {
             OutputPort::Analog(z) => Some(z),
-            OutputPort::Digital(_) | OutputPort::Events(_) => None,
+            OutputPort::Acoustic(_) | OutputPort::Digital(_) | OutputPort::Events(_) => None,
+        }
+    }
+
+    /// The acoustic face, if this is an acoustic port. Off the hot path.
+    pub fn acoustic(self) -> Option<AcousticFace> {
+        match self {
+            OutputPort::Acoustic(f) => Some(f),
+            OutputPort::Analog(_) | OutputPort::Digital(_) | OutputPort::Events(_) => None,
         }
     }
 
@@ -250,7 +303,7 @@ impl OutputPort {
     pub fn digital(self) -> Option<DigitalFace> {
         match self {
             OutputPort::Digital(f) => Some(f),
-            OutputPort::Analog(_) | OutputPort::Events(_) => None,
+            OutputPort::Acoustic(_) | OutputPort::Analog(_) | OutputPort::Events(_) => None,
         }
     }
 
@@ -259,7 +312,7 @@ impl OutputPort {
     pub fn events(self) -> Option<EventFace> {
         match self {
             OutputPort::Events(f) => Some(f),
-            OutputPort::Analog(_) | OutputPort::Digital(_) => None,
+            OutputPort::Acoustic(_) | OutputPort::Analog(_) | OutputPort::Digital(_) => None,
         }
     }
 }

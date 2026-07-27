@@ -211,7 +211,15 @@ Guard against scope creep into acoustics — this is not an acoustic project:
 - **Speaker**: a sensitivity figure + a simple frequency-response curve applied to the drive voltage —
   it stays in the voltage domain (we tap the speaker's analog output; no V→SPL/acoustic stage). No cone
   physics, no cabinet modeling.
-- **Air → ear**: nothing — the simulation ends at the speaker; we do not model acoustics or propagation.
+- **Air → ear**: nothing — the simulation ends at the listener's side of the air; we do not model
+  air→ear, rooms, or propagation.
+  - _Epic 8 update (input+output acoustic carrier, device-to-device only):_ Epic 8 adds a real acoustic
+    **sound-pressure** carrier (Pascals @ analog rate) so a source can be **mic'd** — an input-side link
+    (a source's pressure into a mic capsule, Stories 8.1–8.2) and a matching output-side one (a **powered
+    monitor** radiating `pressure = drive_volts × sensitivity`, Story 8.3, enabling acoustic feedback). The
+    **voltage-capture `Speaker` terminus above stays unchanged** (still a volts→volts tap). What's modeled is
+    **device→air→device** (speaker→air→mic), with air idealized (unity, no distance/room/propagation); it is
+    **still not air→ear** — there is no listener or room in the model.
 - **Internal AD → host (implicit capture)**: pure plumbing, *outside* the simulation — it samples the
   tapped speaker voltage to host samples (real-time playback or a WAV render), on no modeled clock or
   sample rate. Built harness-side in Epic 2.

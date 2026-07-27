@@ -843,4 +843,102 @@ connectivity pass over a side-graph, plus an emergent runtime consequence — ne
   _Prerequisites:_ the carrier/clock seam and `ClockDomainId` stamp (Story 1.6); multiple digital
   devices and the fractional resampler (this Story). Story 5.11's DAW transport already rides
   `advance(frames)` so "the DAW follows the interface clock" is the current mechanism, not a future one.
-  ROI is high here (multi-device digital sync is the heart of the lesson), nil before.
+
+---
+
+## Epic 8 — The Acoustic Domain & Micing — ✅ **Complete**
+
+**Progress:** Stories 8.1 ✅, 8.2 ✅, 8.3 ✅ — **Epic 8 complete.** It added a **fourth signal carrier —
+acoustic sound pressure (Pascals @ the analog rate)** — so an instrument is *a source you mic*, not a
+line-out: 8.1 stood the carrier up headless (a `SoundSource`/vox + the two mics as acoustic→analog
+transducers), 8.2 surfaced it through the product layer (the web mirror + the micing gain-staging scenario),
+and 8.3 closed the loop (a `PoweredMonitor` voltage→acoustic transducer, with acoustic feedback / howlround
+emerging from a delayed air edge). Sound *generation* stayed deliberately trivial (a sine at a chosen
+loudness); recognizable SoundFont/multisample instruments remain a separate future epic. **405 engine + 67
+devices + 283 web tests green.**
+
+**Goal (delivered):** make the acoustic side a first-class, physically-honest carrier — pressure in
+**Pascals**, oversampled against the same analog continuum as volts, measured in **dB SPL** exactly as volts
+are in dBu — with the two mics as genuine **acoustic→analog transducers**, a patchable sound source, and a
+powered monitor radiating **voltage→acoustic**, so loudness at the source and gain in the chain drive the
+whole front-end story (mic choice, phantom, gain staging, the pad, feedback) — all emergent from
+`v = pressure · sensitivity` + the existing physics.
+
+> **Full framing, design notes, rejected alternatives, per-task delivery records, and deviations for every
+> Story live in [`EPIC_8_NOTES.md`](./EPIC_8_NOTES.md).** This section keeps only the decisions and the
+> delivered surface that constrain later work — enough to make good follow-up decisions without re-deriving
+> Epic 8. Go to the notes when a decision turns on _why_ something was built the way it was, or you need the
+> exact behavior of a shipped piece.
+
+### What Epic 8 delivered (engine + devices + web surface)
+
+- **The acoustic carrier (engine).** `Pascals` (a `repr(transparent)` unit newtype like `Volts`) +
+  `spl_to_pascals`/`pascals_to_spl` (ref 20 µPa, anchor **1 Pa = 93.98 dB SPL**); a `PressureBuffer` (linear
+  Pa @ the one `AnalogRate`, mono) + `Domain::Acoustic` / `Lane::Pressure` / `AcousticFace` on the port
+  enums; `EdgeKind::AcousticRoute` — a **unity pressure copy** (ideal air, no divider/cable), the acoustic
+  peer of `DigitalRoute`. Acoustic↔analog is rejected at compile as `DomainMismatch` (free — the domain check
+  already existed).
+- **Sources & transducers (engine).** A `SoundSource` node (the first node that *emits* pressure — a sine at
+  a LEVEL peak-pressure knob + a FREQ knob, deterministic phase); the `CondenserMic`/`DynamicMic` became
+  **acoustic→analog transducers** (`differential = pressure · sensitivity`, V/Pa), their self-tone removed —
+  an unpatched mic is silent, and the condenser-vs-dynamic ~14 dB gap is now **emergent** from sensitivity
+  (10 vs 2 mV/Pa). The `PoweredMonitor` node (Story 8.3) is the output-side mirror: **`pressure = drive_volts
+  · sensitivity · volume`** (Pa/V), a bridging line input + a mono acoustic output, distinct from the
+  voltage-capture `Speaker` terminus (which is untouched).
+- **Acoustic feedback (engine).** Acoustic edges are **delay-eligible** at `compile`'s cycle-break, and the
+  policy **prefers the acoustic (air) edge** over a digital one on the same cycle — so a `mic → preamp →
+  monitor → air → mic` loop auto-breaks by delaying the physically-honest air hop. Howlround (loop gain L ≥ 1)
+  then **emerges** from the delayed loop and **self-limits at the rail** — never special-cased.
+- **The product layer (devices + web).** `vox` and `powered_monitor` catalog devices + the mics' acoustic
+  capsule ports; `Connector::Acoustic` (mates only with itself), `PortKind::Acoustic`, `build_patch`'s
+  acoustic-edge expansion. Web: `"acoustic"` added to the `PortDomain`/`PortKind`/`Connector` unions, an
+  `--ae-signal-acoustic` token, a **dashed** acoustic cable + an "ideal air (no cable)" inspector, and a
+  dB-SPL-aware `format.ts` (display keyed on **unit**, not taper). All descriptor-driven — the generic
+  `Panel` renders vox/mic/monitor with no bespoke faceplates.
+
+### Decisions that bind later work
+
+- **Acoustic is a real carrier, not a fudge.** Sound pressure is `Pascals` in a `PressureBuffer` at the **one
+  `AnalogRate`** (pressure is continuous-time analog — never a digital rate); **SPL is a measurement helper,
+  never storage** (a buffer holding dB SPL is a category error, exactly as one holding dBu). Mirrors the
+  volts/dBu split.
+- **The transducers are the only acoustic↔analog bridge** (a mic in, a monitor out), a **pointwise multiply
+  by sensitivity** — same rate, no anti-alias FIR, no resample (unlike the AD/DA). An acoustic edge joins only
+  acoustic ports; the cross-domain rejection is free.
+- **Air is ideal.** The acoustic edge is a unity copy — no impedance divider, no distance, no propagation, no
+  polar response. The one-block delay used to break a feedback loop is a **cycle-break mechanism**
+  (block-size-dependent), **not** a calibrated propagation time.
+- **Output-side acoustics are device→air→device only.** Story 8.3 deliberately extended `PROJECT_PLAN` §5.5
+  (recorded there): a `PoweredMonitor` radiates so a device can be **mic'd**, but the voltage-capture
+  `Speaker` terminus stays in volts and there is **still no air→ear** (no listener, no room).
+- **Feedback emerges, never scaffolded.** No feedback detector, no gain limiter — howlround is the geometric
+  consequence of loop gain ≥ 1 through the delayed air edge, self-limited by the rail clip; a dynamic resists
+  feedback a condenser can't, straight from the sensitivity gap.
+- **dB SPL is display, never stored.** The web converts Pa ↔ dB SPL for the vox loudness knob; the engine
+  param stays linear `Pascals`. `format.ts` display is keyed on **unit** (`"dB"` gain / `"dB SPL"` pressure /
+  else number+unit), decoupled from the knob **taper**.
+
+### Deferred — decided, not gaps
+
+- **Distance → inverse-square attenuation + propagation delay** ("move the mic closer/farther") — the air
+  edge is unity and the one-block delay is a cycle-break, not calibrated time. The natural next acoustic depth.
+- **Polar / off-axis response, proximity/placement-based pickup, speaker frequency-response / cabinet
+  coloration** (flat for now), and **bespoke skeuomorphic vox/mic/monitor faceplates** (the generic `Panel`
+  covers them).
+- **Air → ear / room acoustics** — out of scope by design; the model is device-to-device.
+- **SoundFont / multisample instruments** — a separate future epic (no rustysynth, no sample assets, no
+  polyphony machinery here).
+
+### Story-by-story (status + the one thing each settled)
+
+- **8.1 — The acoustic carrier, vox source & mic transduction (headless)** ✅ — `Pascals` / `PressureBuffer` /
+  `Domain::Acoustic` / `AcousticRoute`, a `SoundSource`, and the mics as transducers. Settled: **acoustic is a
+  first-class fourth carrier at the analog rate; SPL is a measurement, and the mics' sensitivity gap is
+  emergent** (the self-tone is gone — an unpatched mic is silent).
+- **8.2 — Micing in the studio (web + scenarios)** ✅ — the client-side mirror of the carrier (acoustic
+  domain/kind/connector, dashed cable, dB-SPL knob) + the micing gain-staging scenario. Settled: **the web
+  mirrors legality (it doesn't own it), and dB SPL is a display keyed on unit, decoupled from taper.**
+- **8.3 — Speakers as acoustic sources & acoustic feedback** ✅ — a `PoweredMonitor` voltage→acoustic
+  transducer + acoustic edges made delay-eligible (air edge preferred). Settled: **howlround emerges from a
+  delayed air loop and self-limits at the rail — feedback is never special-cased**, and the one-block delay
+  belongs on the physically-honest air hop.

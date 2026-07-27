@@ -38,8 +38,8 @@ use crate::scene::ConfigSetting;
 use engine::{
     AdConverter, BitDepth, CondenserMic, DaConverter, DigitalDemux, DigitalMeter, DigitalMux,
     Domain, DynamicMic, EqBand, EventThru, GainStage, Graph, InputZ, Matrix, MicPreamp, Node,
-    NodeId, NoiseDensity, Ohms, ParamId, ReadoutId, SampleRate, Speaker, SynthVoice, ThreeBandEq,
-    Volts, VuMeter,
+    NodeId, NoiseDensity, Ohms, ParamId, Pascals, PoweredMonitor, ReadoutId, SampleRate,
+    SoundSource, Speaker, SynthVoice, ThreeBandEq, Volts, VuMeter,
 };
 use serde::Serialize;
 
@@ -266,6 +266,7 @@ pub enum PortDirection {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub enum PortDomain {
+    Acoustic,
     Analog,
     Digital,
     Events,
@@ -283,6 +284,9 @@ pub enum PortKind {
     Speaker,
     Digital,
     Midi,
+    /// Acoustic sound-pressure port (a mic capsule, a sound source). Styled by the web layer in
+    /// Story 8.2; declared here so a mic's acoustic input appears on its descriptor face.
+    Acoustic,
 }
 
 /// The **physical connector shape** a port (or cable end) presents — the hard, mechanical constraint on
@@ -317,6 +321,10 @@ pub enum Connector {
     Usb,
     /// S/PDIF (RCA coax) — a stereo digital in/out on an interface.
     Spdif,
+    /// The acoustic "connector" — the ideal-air link between a sound source and a mic capsule. Not a
+    /// physical plug; it mates only with itself (the acoustic cable, drawn by the web layer in Story
+    /// 8.2). It exists so acoustic ports declare a connector like every other port.
+    Acoustic,
 }
 
 /// Whether two connectors can be physically joined. Same-connector is always fine; the one asymmetric
@@ -336,6 +344,7 @@ pub fn connectors_compatible(a: Connector, b: Connector) -> bool {
 impl From<Domain> for PortDomain {
     fn from(d: Domain) -> Self {
         match d {
+            Domain::Acoustic => Self::Acoustic,
             Domain::Analog => Self::Analog,
             Domain::DigitalAudio => Self::Digital,
             Domain::Events => Self::Events,
@@ -740,12 +749,62 @@ const CATALOG: &[CatalogEntry] = &[
         readouts: ReadoutSpec::Static(&[]),
         configs: &[],
     },
-    // A condenser microphone — the catalog face of `engine::CondenserMic` (Story 5.8). A balanced
-    // XLR mic-level source that is **dead until phantom-fed**: the node declares its P48 DC load on
-    // its output port and `compile` resolves the operating point against whatever engaged supply
-    // faces it (the 8i6's 48V config) — power arrives from the patch, never a flag. Acoustics are
-    // out of scope until the deferred "air link" story, so the capsule is a declared boundary
-    // stand-in — a deterministic sine — and the params are labelled honestly as that capsule tone.
+    // A generic acoustic sound source ("vox") — the catalog face of `engine::SoundSource`. A sine at a
+    // chosen loudness radiating into the air: patch its acoustic output into a mic's capsule (over the
+    // ideal-air acoustic edge) to mic it. Deliberately simple (PROJECT_PLAN §2): recognizable, not
+    // realistic — a stand-in for whatever makes the sound. The device *exists* here (Story 8.1) so the
+    // acoustic chain can be built and tested; its skeuomorphic faceplate and the dB-SPL loudness knob
+    // are Story 8.2 (the engine param is a linear peak pressure in pascals, like a gain is linear volts).
+    CatalogEntry {
+        type_id: "vox",
+        name: "Vox",
+        // A compact desktop stand-in source (was a person-sized 1.7 m tower, which dwarfed the gear and
+        // was awkward to patch): a small ~200 mm box, on the scale of a mic or a small monitor.
+        form_factor: FormFactor::Desktop {
+            width_mm: 200.0,
+            height_mm: 200.0,
+            depth_mm: 200.0,
+        },
+        // ~1 Pa peak (≈94 dB SPL) default at 220 Hz — a plausible sung fundamental.
+        nodes: &[|_cfg| Box::new(SoundSource::new(Pascals::new(1.0)))],
+        internal: &[],
+        params: &[
+            ParamUi {
+                // The engine param is a linear peak pressure in pascals; the web shows it as dB SPL (the
+                // engineer's loudness unit) via the `"dB SPL"` unit — display only, the stored value stays
+                // linear Pa. The log taper's dB-below-max travel is reused as-is (Story 8.2).
+                label: "Loudness",
+                unit: "dB SPL",
+                kind: ParamKind::Knob,
+                taper: ParamTaper::Log,
+            },
+            ParamUi {
+                label: "Pitch",
+                unit: "Hz",
+                kind: ParamKind::Knob,
+                taper: ParamTaper::Log,
+            },
+        ],
+        param_groups: &[],
+        param_grid: None,
+        inputs: &[],
+        // One acoustic output: the sound radiating into the air.
+        outputs: &[PortUi {
+            label: "Air",
+            kind: PortKind::Acoustic,
+            connector: Connector::Acoustic,
+        }],
+        delayed_outputs: &[],
+        duplex_links: &[],
+        readouts: ReadoutSpec::Static(&[]),
+        configs: &[],
+    },
+    // A condenser microphone — the catalog face of `engine::CondenserMic`. A balanced XLR mic that is
+    // **dead until phantom-fed**: the node declares its P48 DC load on its output port and `compile`
+    // resolves the operating point against whatever engaged supply faces it (the 8i6's 48V config) —
+    // power arrives from the patch, never a flag. As of Story 8.1 it is a true **acoustic→analog
+    // transducer**: its capsule takes sound pressure in (from a patched source over the ideal-air
+    // acoustic edge) and converts it at a fixed sensitivity (~10 mV/Pa) — no tone params, no self-sine.
     CatalogEntry {
         type_id: "condenser_mic",
         name: "Condenser Mic",
@@ -757,27 +816,19 @@ const CATALOG: &[CatalogEntry] = &[
             height_mm: 200.0,
             depth_mm: 50.0,
         },
-        // 10 mV capsule tone (typical mic level) from a 150 Ω balanced source (the classic mic
-        // output impedance).
-        nodes: &[|_cfg| Box::new(CondenserMic::new(Volts::new(0.01), Ohms::new(150.0)))],
+        // ~10 mV/Pa sensitivity (a typical studio condenser) from a 150 Ω balanced source (the
+        // classic mic output impedance).
+        nodes: &[|_cfg| Box::new(CondenserMic::new(0.01, Ohms::new(150.0)))],
         internal: &[],
-        params: &[
-            ParamUi {
-                label: "Tone Level",
-                unit: "V",
-                kind: ParamKind::Knob,
-                taper: ParamTaper::Linear,
-            },
-            ParamUi {
-                label: "Tone Freq",
-                unit: "Hz",
-                kind: ParamKind::Knob,
-                taper: ParamTaper::Linear,
-            },
-        ],
+        params: &[],
         param_groups: &[],
         param_grid: None,
-        inputs: &[],
+        // The capsule: an acoustic input you patch a sound source into over the ideal-air edge.
+        inputs: &[PortUi {
+            label: "Capsule",
+            kind: PortKind::Acoustic,
+            connector: Connector::Acoustic,
+        }],
         outputs: &[PortUi {
             label: "Out",
             kind: PortKind::Mic,
@@ -788,11 +839,12 @@ const CATALOG: &[CatalogEntry] = &[
         readouts: ReadoutSpec::Static(&[]),
         configs: &[],
     },
-    // A dynamic microphone — the catalog face of `engine::DynamicMic`. A **passive** balanced XLR
-    // mic-level source: a moving coil that generates its own EMF, so it draws no phantom (no DC load
-    // declared) and is always alive regardless of the 8i6's 48V toggle. It is deliberately **less
-    // sensitive** than the condenser (~2 mV vs 10 mV capsule tone), leaning harder on preamp gain.
-    // Same declared boundary stand-in — a deterministic capsule sine — as the condenser.
+    // A dynamic microphone — the catalog face of `engine::DynamicMic`. A **passive** balanced XLR mic:
+    // a moving coil that generates its own EMF, so it draws no phantom (no DC load declared) and is
+    // always alive regardless of the 8i6's 48V toggle. As of Story 8.1 it is an **acoustic→analog
+    // transducer** like the condenser, only **less sensitive** (~2 mV/Pa vs ~10 mV/Pa — a factor of 5,
+    // ~14 dB), so it leans harder on preamp gain — now emergent from the transducer efficiency, not an
+    // asserted level.
     CatalogEntry {
         type_id: "dynamic_mic",
         name: "Dynamic Mic",
@@ -803,27 +855,19 @@ const CATALOG: &[CatalogEntry] = &[
             height_mm: 160.0,
             depth_mm: 35.0,
         },
-        // 2 mV capsule tone (a quieter, less-sensitive dynamic) from a 200 Ω balanced source (typical
-        // moving-coil output impedance).
-        nodes: &[|_cfg| Box::new(DynamicMic::new(Volts::new(0.002), Ohms::new(200.0)))],
+        // ~2 mV/Pa sensitivity (a quieter, less-efficient moving coil) from a 200 Ω balanced source
+        // (typical moving-coil output impedance).
+        nodes: &[|_cfg| Box::new(DynamicMic::new(0.002, Ohms::new(200.0)))],
         internal: &[],
-        params: &[
-            ParamUi {
-                label: "Tone Level",
-                unit: "V",
-                kind: ParamKind::Knob,
-                taper: ParamTaper::Linear,
-            },
-            ParamUi {
-                label: "Tone Freq",
-                unit: "Hz",
-                kind: ParamKind::Knob,
-                taper: ParamTaper::Linear,
-            },
-        ],
+        params: &[],
         param_groups: &[],
         param_grid: None,
-        inputs: &[],
+        // The capsule: an acoustic input you patch a sound source into over the ideal-air edge.
+        inputs: &[PortUi {
+            label: "Capsule",
+            kind: PortKind::Acoustic,
+            connector: Connector::Acoustic,
+        }],
         outputs: &[PortUi {
             label: "Out",
             kind: PortKind::Mic,
@@ -1013,6 +1057,53 @@ const CATALOG: &[CatalogEntry] = &[
             label: "Tap",
             kind: PortKind::Speaker,
             connector: Connector::QuarterInch,
+        }],
+        delayed_outputs: &[],
+        duplex_links: &[],
+        readouts: ReadoutSpec::Static(&[]),
+        configs: &[],
+    },
+    // A powered monitor — the catalog face of `engine::PoweredMonitor`, the **output-side mirror** of a
+    // microphone (Story 8.3). It takes a line-level drive voltage and **radiates it as sound pressure**
+    // (`pressure = drive_volts × sensitivity × volume`, ~1 Pa/V ⇒ 1 V ≈ 94 dB SPL at unity), so a device
+    // can now be **mic'd**: patch its Air output into a mic capsule over the ideal-air acoustic edge.
+    // Distinct from the `speaker` terminus above — that one stays in volts (the §5.5 capture tap). Wire
+    // `mic → preamp → monitor → air → mic` and raise the gain to hear howlround emerge: the delayed air
+    // edge breaks the loop (Story 8.3) and the feedback is not special-cased.
+    CatalogEntry {
+        type_id: "powered_monitor",
+        name: "Powered Monitor",
+        // A compact desktop studio monitor — same scale as the `speaker` terminus and the 8i6.
+        form_factor: FormFactor::Desktop {
+            width_mm: 130.0,
+            height_mm: 170.0,
+            depth_mm: 150.0,
+        },
+        // ~1 Pa/V (the calibration anchor: 1 V ⇒ 1 Pa ≈ 94 dB SPL at unity volume), on a bridging line
+        // input so it doesn't load its source (like the speaker terminus — we model no amplifier power).
+        nodes: &[|_cfg| Box::new(PoweredMonitor::new(1.0, InputZ::new(Ohms::new(10_000.0))))],
+        internal: &[],
+        params: &[ParamUi {
+            // Volume is a linear level multiplier (an attenuator from unity); the web shows it in dB via
+            // the `"dB"` unit + log taper, exactly like a gain/volume fader (0 dB = unity, −∞ at 0).
+            label: "Volume",
+            unit: "dB",
+            kind: ParamKind::Knob,
+            taper: ParamTaper::Log,
+        }],
+        param_groups: &[],
+        param_grid: None,
+        // A line-level input, fed by an interface line/monitor out over a ¼" jack (like the speaker).
+        inputs: &[PortUi {
+            label: "In",
+            kind: PortKind::Line,
+            connector: Connector::QuarterInch,
+        }],
+        // One acoustic output: the sound radiating into the air (mates only with a mic capsule).
+        outputs: &[PortUi {
+            label: "Air",
+            kind: PortKind::Acoustic,
+            connector: Connector::Acoustic,
         }],
         delayed_outputs: &[],
         duplex_links: &[],
@@ -2376,9 +2467,73 @@ mod tests {
         assert_eq!(spk.outputs, vec![(spk.nodes[0], 0)]);
     }
 
-    /// The condenser mic's port/param remap (the single-node source case, like the speaker's but
-    /// with no inputs at all): one node, no internal edges, the balanced output exposed as device
-    /// output 0, and the two capsule-tone params (node-local LEVEL/FREQ) as device params 0/1.
+    /// The vox source's descriptor face: no inputs, one **acoustic** output (mono), and two params
+    /// (loudness in Pa, pitch in Hz — the engine-native units; the dB-SPL knob is Story 8.2).
+    #[test]
+    fn vox_descriptor_face() {
+        let vox = descriptors()
+            .into_iter()
+            .find(|d| d.type_id == "vox")
+            .expect("vox is in the catalog");
+
+        assert_eq!(vox.ports.len(), 1, "one port: the acoustic Air out");
+        let out = &vox.ports[0];
+        assert_eq!(out.direction, PortDirection::Output);
+        assert_eq!(out.domain, PortDomain::Acoustic);
+        assert_eq!(out.channels, 1, "acoustic is mono");
+        assert_eq!(out.kind, PortKind::Acoustic);
+        assert_eq!(out.connector, Connector::Acoustic);
+
+        // Engine truth: LEVEL default = 1 Pa, FREQ default = 220 Hz.
+        assert_eq!(vox.params.len(), 2);
+        assert_eq!(vox.params[0].label, "Loudness");
+        assert_eq!(vox.params[0].default, 1.0);
+        assert_eq!(vox.params[1].label, "Pitch");
+        assert_eq!(vox.params[1].default, 220.0);
+        assert!(vox.configs.is_empty());
+    }
+
+    /// The powered monitor's descriptor face (Story 8.3): a line-level ¼" **input** + an acoustic Air
+    /// **output** (mono, `Connector::Acoustic`, mating only with a mic capsule), and one Volume knob.
+    /// The output-side mirror of the vox's face.
+    #[test]
+    fn powered_monitor_descriptor_face() {
+        let mon = descriptors()
+            .into_iter()
+            .find(|d| d.type_id == "powered_monitor")
+            .expect("powered_monitor is in the catalog");
+
+        assert_eq!(mon.ports.len(), 2, "a line input and an acoustic output");
+        let input = mon
+            .ports
+            .iter()
+            .find(|p| p.direction == PortDirection::Input)
+            .expect("a line input");
+        assert_eq!(input.domain, PortDomain::Analog);
+        assert_eq!(input.kind, PortKind::Line);
+        assert_eq!(input.connector, Connector::QuarterInch);
+        assert_eq!(input.channels, 1, "a single-conductor line input");
+
+        let air = mon
+            .ports
+            .iter()
+            .find(|p| p.direction == PortDirection::Output)
+            .expect("an acoustic Air output");
+        assert_eq!(air.domain, PortDomain::Acoustic);
+        assert_eq!(air.channels, 1, "acoustic is mono");
+        assert_eq!(air.kind, PortKind::Acoustic);
+        assert_eq!(air.connector, Connector::Acoustic);
+
+        // One knob: Volume, defaulting to unity (1.0 linear, shown as 0 dB by the web).
+        assert_eq!(mon.params.len(), 1);
+        assert_eq!(mon.params[0].label, "Volume");
+        assert_eq!(mon.params[0].default, 1.0);
+        assert!(mon.configs.is_empty());
+    }
+
+    /// The condenser mic's port remap (single node): one node, no internal edges, its acoustic capsule
+    /// exposed as device input 0 and its balanced output as device output 0, and — since Story 8.1 —
+    /// **no params** (sensitivity is a fixed transducer property, not a knob).
     #[test]
     fn condenser_mic_expands_and_maps() {
         let mut g = Graph::new();
@@ -2387,21 +2542,14 @@ mod tests {
 
         assert_eq!(mic.nodes.len(), 1, "one internal node");
         assert_eq!(g.connection_count(), 0, "no internal edges");
-        assert!(mic.inputs.is_empty(), "a mic has no inputs");
+        assert_eq!(mic.inputs, vec![(mic.nodes[0], 0)], "the acoustic capsule");
         assert_eq!(mic.outputs, vec![(mic.nodes[0], 0)]);
-        assert_eq!(
-            mic.params,
-            vec![
-                vec![(mic.nodes[0], CondenserMic::LEVEL)],
-                vec![(mic.nodes[0], CondenserMic::FREQ)],
-            ]
-        );
+        assert!(mic.params.is_empty(), "no knobs — sensitivity is fixed");
         assert!(mic.readouts.is_empty(), "the mic measures nothing");
     }
 
-    /// The condenser mic's descriptor face: a balanced (2-conductor) analog XLR output styled as a
-    /// mic jack, no inputs, no configs — and the capsule-tone params carrying the engine's construction
-    /// truth (10 mV level default, 1 kHz frequency default).
+    /// The condenser mic's descriptor face: an acoustic capsule **input** (mono) + a balanced
+    /// (2-conductor) analog XLR **output** styled as a mic jack, no params, no configs.
     #[test]
     fn condenser_mic_descriptor_face() {
         let mic = descriptors()
@@ -2409,29 +2557,33 @@ mod tests {
             .find(|d| d.type_id == "condenser_mic")
             .expect("condenser_mic is in the catalog");
 
-        assert_eq!(mic.ports.len(), 1, "one port: the XLR out");
-        let out = &mic.ports[0];
-        assert_eq!(out.direction, PortDirection::Output);
+        assert_eq!(mic.ports.len(), 2, "the acoustic capsule in + the XLR out");
+        let cap = mic
+            .ports
+            .iter()
+            .find(|p| p.direction == PortDirection::Input)
+            .unwrap();
+        assert_eq!(cap.domain, PortDomain::Acoustic);
+        assert_eq!(cap.channels, 1, "acoustic is mono");
+        assert_eq!(cap.kind, PortKind::Acoustic);
+        assert_eq!(cap.connector, Connector::Acoustic);
+        let out = mic
+            .ports
+            .iter()
+            .find(|p| p.direction == PortDirection::Output)
+            .unwrap();
         assert_eq!(out.domain, PortDomain::Analog);
         assert_eq!(out.channels, 2, "balanced = two conductors");
         assert_eq!(out.kind, PortKind::Mic);
         assert_eq!(out.connector, Connector::Xlr);
 
-        // The capsule tone: level (constructed 10 mV) and frequency (1 kHz default), engine truth.
-        assert_eq!(mic.params.len(), 2);
-        assert_eq!(mic.params[0].label, "Tone Level");
-        assert_eq!(mic.params[0].unit, "V");
-        assert_eq!(mic.params[0].default, 0.01);
-        assert_eq!(mic.params[1].label, "Tone Freq");
-        assert_eq!(mic.params[1].unit, "Hz");
-        assert_eq!(mic.params[1].default, 1_000.0);
-
+        assert!(mic.params.is_empty(), "no knobs — sensitivity is fixed");
         assert!(mic.configs.is_empty(), "no structural options on the mic");
         assert!(mic.readouts.is_empty());
     }
 
-    /// The dynamic mic expands like the condenser — one node, no inputs/edges, its output as device
-    /// output 0, and the two capsule-tone params (node-local LEVEL/FREQ) as device params 0/1.
+    /// The dynamic mic expands like the condenser — one node, its capsule as device input 0, its
+    /// output as device output 0, and no params.
     #[test]
     fn dynamic_mic_expands_and_maps() {
         let mut g = Graph::new();
@@ -2440,21 +2592,14 @@ mod tests {
 
         assert_eq!(mic.nodes.len(), 1, "one internal node");
         assert_eq!(g.connection_count(), 0, "no internal edges");
-        assert!(mic.inputs.is_empty(), "a mic has no inputs");
+        assert_eq!(mic.inputs, vec![(mic.nodes[0], 0)], "the acoustic capsule");
         assert_eq!(mic.outputs, vec![(mic.nodes[0], 0)]);
-        assert_eq!(
-            mic.params,
-            vec![
-                vec![(mic.nodes[0], DynamicMic::LEVEL)],
-                vec![(mic.nodes[0], DynamicMic::FREQ)],
-            ]
-        );
+        assert!(mic.params.is_empty(), "no knobs — sensitivity is fixed");
         assert!(mic.readouts.is_empty(), "the mic measures nothing");
     }
 
-    /// The dynamic mic's descriptor face: a balanced (2-conductor) analog XLR output styled as a mic
-    /// jack, no inputs, no configs — and the capsule-tone params carrying the engine's construction
-    /// truth (2 mV level default — quieter than the condenser's 10 mV — and 1 kHz frequency default).
+    /// The dynamic mic's descriptor face: an acoustic capsule input + a balanced XLR output, no
+    /// params, no configs (passive — no phantom toggle).
     #[test]
     fn dynamic_mic_descriptor_face() {
         let mic = descriptors()
@@ -2462,23 +2607,27 @@ mod tests {
             .find(|d| d.type_id == "dynamic_mic")
             .expect("dynamic_mic is in the catalog");
 
-        assert_eq!(mic.ports.len(), 1, "one port: the XLR out");
-        let out = &mic.ports[0];
-        assert_eq!(out.direction, PortDirection::Output);
+        assert_eq!(mic.ports.len(), 2, "the acoustic capsule in + the XLR out");
+        let cap = mic
+            .ports
+            .iter()
+            .find(|p| p.direction == PortDirection::Input)
+            .unwrap();
+        assert_eq!(cap.domain, PortDomain::Acoustic);
+        assert_eq!(cap.channels, 1, "acoustic is mono");
+        assert_eq!(cap.kind, PortKind::Acoustic);
+        assert_eq!(cap.connector, Connector::Acoustic);
+        let out = mic
+            .ports
+            .iter()
+            .find(|p| p.direction == PortDirection::Output)
+            .unwrap();
         assert_eq!(out.domain, PortDomain::Analog);
         assert_eq!(out.channels, 2, "balanced = two conductors");
         assert_eq!(out.kind, PortKind::Mic);
         assert_eq!(out.connector, Connector::Xlr);
 
-        // The capsule tone: level (constructed 2 mV, less sensitive) and frequency (1 kHz default).
-        assert_eq!(mic.params.len(), 2);
-        assert_eq!(mic.params[0].label, "Tone Level");
-        assert_eq!(mic.params[0].unit, "V");
-        assert_eq!(mic.params[0].default, 0.002);
-        assert_eq!(mic.params[1].label, "Tone Freq");
-        assert_eq!(mic.params[1].unit, "Hz");
-        assert_eq!(mic.params[1].default, 1_000.0);
-
+        assert!(mic.params.is_empty(), "no knobs — sensitivity is fixed");
         assert!(
             mic.configs.is_empty(),
             "no structural options on the mic (passive — no phantom toggle)"
@@ -2649,6 +2798,7 @@ mod tests {
             "ad_converter",
             "da_converter",
             "speaker",
+            "powered_monitor",
             "channel_strip",
             "vu_meter",
             "digital_meter",
@@ -2713,6 +2863,20 @@ mod tests {
         assert!(!connectors_compatible(Connector::Usb, Connector::Spdif));
         assert!(!connectors_compatible(Connector::Usb, Connector::Digital));
         assert!(!connectors_compatible(Connector::Combo, Connector::Usb));
+        // Acoustic (ideal air) mates only with itself — no physical plug, so it joins no other shape.
+        assert!(connectors_compatible(
+            Connector::Acoustic,
+            Connector::Acoustic
+        ));
+        assert!(!connectors_compatible(Connector::Acoustic, Connector::Xlr));
+        assert!(!connectors_compatible(
+            Connector::Acoustic,
+            Connector::Combo
+        ));
+        assert!(!connectors_compatible(
+            Connector::Combo,
+            Connector::Acoustic
+        ));
     }
 
     /// Ports carry an authored physical connector, distinct from their signal-class `kind`: the synth's

@@ -58,6 +58,12 @@
   --ae-signal-midi-lit: #b692ea;
   --ae-signal-midi-glow: rgba(155, 108, 214, 0.45);
 
+  /* Acoustic (sound pressure in air) — a light, airy sky-cyan, kept clear of mic-blue and the
+     greener digital-teal so the ideal-air link reads as its own carrier (Story 8.2). */
+  --ae-signal-acoustic: #46b7d4;
+  --ae-signal-acoustic-lit: #86dcf1;
+  --ae-signal-acoustic-glow: rgba(74, 190, 220, 0.42);
+
   /* ====================================================================== */
   /* SURFACES & CHROME (the app/world around the gear)                      */
   /* ====================================================================== */

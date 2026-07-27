@@ -1,15 +1,18 @@
 //! A carrier lane: one buffer in the schedule pool, tagged by its signal domain.
 
-use super::{EventBuffer, SampleBuffer, VoltageBuffer};
+use super::{EventBuffer, PressureBuffer, SampleBuffer, VoltageBuffer};
 
 /// Which carrier a port — and the lane buffering it — speaks.
 ///
-/// An **open set**: analog voltage, digital audio, and MIDI/control events exist now; networked
-/// audio would extend it. A port declares its domain; an edge may only connect two ports of the
-/// **same** domain (`compile` rejects a cross-domain edge). Converters bridge domains *inside* a
-/// node, never on an edge.
+/// An **open set**: acoustic sound pressure, analog voltage, digital audio, and MIDI/control
+/// events exist now; networked audio would extend it. A port declares its domain; an edge may only
+/// connect two ports of the **same** domain (`compile` rejects a cross-domain edge). Converters
+/// bridge domains *inside* a node, never on an edge (a microphone is the acoustic→analog one).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Domain {
+    /// Acoustic sound pressure — oversampled, in pascals, at the one
+    /// [`AnalogRate`](crate::AnalogRate). Bridged to [`Analog`](Self::Analog) only by a microphone.
+    Acoustic,
     /// Analog voltage — oversampled, in volts, at the one [`AnalogRate`](crate::AnalogRate).
     Analog,
     /// Digital audio — linear normalized samples at a converter's
@@ -30,6 +33,8 @@ pub enum Domain {
 /// (`unreachable!`), and the hot path stays panic-free in practice.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Lane {
+    /// Acoustic sound pressure.
+    Pressure(PressureBuffer),
     /// Analog voltage.
     Voltage(VoltageBuffer),
     /// Digital audio.
@@ -42,6 +47,7 @@ impl Lane {
     /// The carrier domain of this lane.
     pub fn domain(&self) -> Domain {
         match self {
+            Lane::Pressure(_) => Domain::Acoustic,
             Lane::Voltage(_) => Domain::Analog,
             Lane::Sample(_) => Domain::DigitalAudio,
             Lane::Events(_) => Domain::Events,
@@ -52,6 +58,7 @@ impl Lane {
     /// the sparse [`Events`](Lane::Events) lane (which is sized by a capacity, not a block length).
     pub fn len(&self) -> usize {
         match self {
+            Lane::Pressure(b) => b.len(),
             Lane::Voltage(b) => b.len(),
             Lane::Sample(b) => b.len(),
             Lane::Events(b) => b.len(),
@@ -62,9 +69,34 @@ impl Lane {
     /// [`Events`](Lane::Events).
     pub fn is_empty(&self) -> bool {
         match self {
+            Lane::Pressure(b) => b.is_empty(),
             Lane::Voltage(b) => b.is_empty(),
             Lane::Sample(b) => b.is_empty(),
             Lane::Events(b) => b.is_empty(),
+        }
+    }
+
+    /// Read the lane as acoustic sound pressure.
+    ///
+    /// # Panics
+    /// Panics if this is not a [`Pressure`](Lane::Pressure) lane. See [`voltage`](Self::voltage)
+    /// for the panic contract (dead in practice — `compile` validates port domains). Hot path — no
+    /// allocation.
+    #[inline]
+    pub fn pressure(&self) -> &PressureBuffer {
+        match self {
+            Lane::Pressure(b) => b,
+            _ => unreachable!("lane is not Pressure — compile validates port domains"),
+        }
+    }
+
+    /// Write the lane as acoustic sound pressure. See [`voltage`](Self::voltage) for the panic
+    /// contract.
+    #[inline]
+    pub fn pressure_mut(&mut self) -> &mut PressureBuffer {
+        match self {
+            Lane::Pressure(b) => b,
+            _ => unreachable!("lane is not Pressure — compile validates port domains"),
         }
     }
 

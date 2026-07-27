@@ -10,7 +10,8 @@ we're modeling and why*. Use it to skip re-explaining things already covered.
 > ground loops), cables, filters (one-pole & 2nd-order), poles, filter implementation,
 > distortion, rail clipping, sampling/decimation/aliasing, windowed-sinc FIR, quantization &
 > dither, group delay/latency, round-trip latency (feedback via a one-block delay), phantom
-> power / the balanced front-end, and thermal/preamp noise (EIN) — through Epic 5.
+> power / the balanced front-end, thermal/preamp noise (EIN), sound pressure / dB SPL / the mic
+> transducer, and acoustic feedback (howlround & loop gain) — through Epic 8.
 
 ## Contents
 1. [The voltage-native model](#1-the-voltage-native-model)
@@ -31,6 +32,8 @@ we're modeling and why*. Use it to skip re-explaining things already covered.
 16. [Group delay & latency](#16-group-delay--latency)
 17. [Phantom power & the balanced front-end](#17-phantom-power--the-balanced-front-end)
 18. [Thermal noise, EIN & why gain hisses](#18-thermal-noise-ein--why-gain-hisses)
+19. [Sound pressure, dB SPL & the microphone transducer](#19-sound-pressure-db-spl--the-microphone-transducer)
+20. [Acoustic feedback (howlround) & loop gain](#20-acoustic-feedback-howlround--loop-gain)
 
 ---
 
@@ -854,3 +857,130 @@ And two knobs behave the way the hardware does: the **PAD** attenuates the signa
 the noise injection, so it can't quiet the amp's own noise — engaging it *worsens* SNR (a pad buys
 headroom, not silence). The **power gate** is last, so an off preamp is genuinely silent, hiss and
 all.
+
+## 19. Sound pressure, dB SPL & the microphone transducer
+
+The analog signal has always been a real **voltage** `v(t)` in volts (§1). Sound in the air is the
+same idea one step earlier: a real **sound pressure** `p(t)` in **pascals** (Pa) — the tiny
+fluctuation of air pressure about atmospheric that a mic diaphragm feels. So the engine models it as
+a fourth carrier, exactly parallel to volts: a `PressureBuffer` of linear pascals, oversampled at the
+*same* analog rate (pressure is continuous-time analog — **not** a digital sample stream). Same
+discipline as the volts/samples split: pressure is a real physical value, never a flag.
+
+### dB SPL — the acoustic decibel
+
+Loudness is quoted in **dB SPL** (sound-pressure level), the acoustic twin of dBu (§2). It's a
+measurement of a pressure against a reference, never a storage format:
+
+```
+   L_SPL = 20 · log10(p / p_ref),   p_ref = 20 µPa (2×10⁻⁵ Pa)
+```
+
+`p_ref = 20 µPa` is the nominal **threshold of human hearing** — 0 dB SPL is "the quietest audible
+sound," by definition. The one number worth memorising is the calibration anchor:
+
+```
+   1 Pa = 20·log10(1 / 20e-6) = 20·log10(50 000) = 93.98 dB SPL  ≈ 94 dB SPL
+```
+
+So **1 Pa ≈ 94 dB SPL** — the standard mic-calibration level (a "94 dB SPL @ 1 kHz" calibrator puts
+exactly 1 Pa on the capsule). A few landmarks, each a factor of 10 in pressure = 20 dB:
+
+| Source | dB SPL | pressure |
+| --- | --- | --- |
+| Threshold of hearing | 0 | 20 µPa |
+| Whisper | ~30 | 632 µPa |
+| Conversation | ~60 | 20 mPa |
+| Calibration / loud voice | 94 | 1 Pa |
+| Cranked guitar amp | ~120 | 20 Pa |
+
+Note the pressures are *tiny* — even a blaring amp is 20 Pa on top of ~101 000 Pa of atmosphere. Audio
+is the small AC swing, exactly as the electrical audio was the AC swing on the wire.
+
+### The microphone is a transducer (the acoustic→electrical converter)
+
+A microphone converts sound pressure into voltage. In the model it's the **only** bridge from the
+acoustic domain to the analog-electrical domain — the input-side bookend to the speaker, and the
+acoustic peer of an AD converter (which bridges analog→digital). The conversion is a single constant,
+the mic's **sensitivity**, in **volts per pascal**:
+
+```
+   v = p · sensitivity            (the differential audio the mic puts on its balanced pair)
+```
+
+Sensitivity is a fixed property of the capsule, not a knob. Real figures (open-circuit, per Pa):
+
+- **Studio condenser:** ~10 mV/Pa — an efficient charged capsule with an active head-amp.
+- **Dynamic (moving coil):** ~2 mV/Pa — a passive coil generating its own EMF; far less efficient.
+
+That 5× gap is **~14 dB** (`20·log10(5) = 13.98`), and it's *why* a dynamic mic needs markedly more
+preamp gain than a condenser on the same source — an emergent consequence of transducer efficiency,
+not an asserted level. Worked examples through a 10 mV/Pa condenser:
+
+```
+   whisper   30 dB SPL → 632 µPa → 632e-6 · 0.01 = 6.3 µV   (down near the preamp noise floor)
+   calib     94 dB SPL → 1 Pa    → 1 · 0.01      = 10 mV    (textbook mic level)
+   amp      120 dB SPL → 20 Pa   → 20 · 0.01     = 200 mV   (hot — needs the pad)
+```
+
+This is the front-end gain-staging lesson made concrete: the same preamp must cope with a 6 µV whisper
+and a 200 mV blast — a >90 dB range — which is why mic pres have 60+ dB of gain *and* a pad.
+
+### Ideal air (the deliberate simplification)
+
+Between a source and a mic we model **ideal air**: the pressure arrives at the capsule unchanged — no
+distance/inverse-square attenuation, no propagation delay, no directivity. This is the symmetric twin
+of the output side, where the speaker "stays in the voltage domain" and we don't model V→SPL or the
+room (PROJECT_PLAN §5.5). The realism budget is spent on volts-and-converters; the air link is a clean
+handoff of a real physical quantity, so all the important lessons (mic choice, phantom, gain staging,
+the pad) are intact while acoustics proper stays out of scope. Distance and propagation delay are a
+later, opt-in depth.
+
+## 20. Acoustic feedback (howlround) & loop gain
+
+### The speaker as the reverse transducer
+A **powered monitor** (or guitar cab, PA speaker) is the output-side mirror of the microphone: where the
+mic converts pressure → volts (`v = pressure · sensitivity`, V/Pa; §19), the monitor converts volts →
+pressure (`pressure = drive_volts · sensitivity`, **Pa/V**). Same idea, opposite direction, same rate —
+a pointwise multiply, no resample. It is deliberately kept **distinct** from the voltage-capture
+"speaker terminus" (the §5.5 output tap that stays in volts, which the harness samples as "what we
+hear"): the monitor genuinely *leaves* the voltage domain and radiates into the air, so its output is a
+pressure a mic can pick back up.
+
+### The loop, and loop gain
+Put the two transducers back to back and you can **mic what a speaker plays**: `mic → preamp → monitor →
+air → mic`. Trace one trip around and multiply the gains:
+
+```text
+  L = mic_sensitivity (V/Pa) · preamp_gain · monitor_sensitivity (Pa/V) · volume
+```
+
+The units cancel (V/Pa · Pa/V = dimensionless) — **L is the loop gain**, the factor by which a sound
+that leaves the monitor comes back *bigger or smaller* one trip later. With a small steady stimulus
+seeding it, the level each block is `pₙ = drive + L·pₙ₋₁`:
+- **L < 1** — each trip is quieter; the sum converges to a finite `drive/(1−L)`. Stable. (The monitor
+  just adds a little "more me" — the useful case.)
+- **L = 1** — each trip returns at the same size; the level holds/sustains. The knife-edge.
+- **L > 1** — each trip is *louder*; the level grows geometrically → **acoustic feedback** (howlround,
+  the Larsen effect). It doesn't grow forever: it **self-limits when the amp hits its rail** (§11) — the
+  ceiling is the clip, not a special "feedback" case. This is the "ring out the monitors" /
+  **gain-before-feedback** lesson: how much system gain you can run before L crosses 1.
+
+Nothing here is coded as "feedback" — howlround *emerges* from `v = pressure · sensitivity` + the rail,
+exactly like clipping emerges from the rail rather than a "distortion flag."
+
+### Why the loop needs a delay to exist at all
+A block-based, local-solve engine (§3) **cannot** resolve a same-block feedback loop — mic depends on
+monitor depends on preamp depends on mic, an algebraic loop with no fixed-point solver. The escape is
+the same as a digital round-trip (§16): one edge carries **one block of latency**, breaking the
+algebraic loop into a recurrence (`pₙ` reads `pₙ₋₁`). Physically the honest place for that delay is the
+**air hop** — sound genuinely takes time to travel — so that's the edge the engine delays (in preference
+to any digital edge on the same loop). Note this one-block delay is a *cycle-break mechanism*
+(block-size-dependent), **not** a calibrated propagation time; real distance→delay is deferred.
+
+### Feedback resistance (why loud stages favour dynamics)
+Because L scales with **mic sensitivity**, a less sensitive mic has a lower loop gain at the same system
+gain — so it needs *more* gain to reach L = 1, i.e. it **resists feedback**. A dynamic (~2 mV/Pa) sits
+~14 dB below a condenser (~10 mV/Pa; §19), so it tolerates ~14 dB more gain-before-feedback. Same
+sensitivity gap as the recording lesson, now showing up as howlround headroom — which is exactly why
+you see dynamics, not condensers, in front of a loud monitor wedge on stage.

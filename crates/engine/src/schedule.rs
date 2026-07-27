@@ -60,12 +60,12 @@ use crate::graph::{Edge, Graph, NodeId};
 use crate::node::{Lifted, Node};
 use crate::noise::NoiseDensity;
 use crate::param::{ParamHandle, ParamId, ParamQueue, Params, Smoother, smooth_samples};
-use crate::port::{DigitalFace, EventFace};
+use crate::port::{AcousticFace, DigitalFace, EventFace};
 use crate::readout::{ReadoutHandle, ReadoutId};
 use crate::rng::Rng;
 use crate::signal::{
-    AnalogRate, ClockDomainId, Domain, EventBuffer, Lane, SampleBuffer, TimedEvent, VoltageBuffer,
-    Volts,
+    AnalogRate, ClockDomainId, Domain, EventBuffer, Lane, PressureBuffer, SampleBuffer, TimedEvent,
+    VoltageBuffer, Volts,
 };
 use core::fmt;
 
@@ -135,10 +135,11 @@ pub enum CompileError {
     /// it is deferred — rejected legibly rather than solved wrong. One engaged supply among
     /// passive / non-supplying / disengaged consumers resolves fine.
     PhantomFanIn { node: usize, port: usize },
-    /// The graph has a cycle the schedule **cannot** break: no **digital** edge on the loop can carry
-    /// the block of round-trip latency that would cut it (an all-analog feedback loop). The local-solve
-    /// engine has no feedback paths to resolve. A cycle containing a digital edge is instead broken
-    /// automatically at compile (that edge is delayed), so it never reaches here.
+    /// The graph has a cycle the schedule **cannot** break: no **digital or acoustic** edge on the loop
+    /// can carry the block of round-trip latency that would cut it (an all-analog feedback loop). The
+    /// local-solve engine has no feedback paths to resolve. A cycle containing a digital or acoustic
+    /// edge is instead broken automatically at compile (that edge is delayed — the acoustic air hop
+    /// preferred, as it physically carries the latency), so it never reaches here.
     Cycle,
 }
 
@@ -208,7 +209,8 @@ impl fmt::Display for CompileError {
             ),
             Self::Cycle => write!(
                 f,
-                "the graph has an unbreakable cycle (analog feedback with no digital link to carry latency)"
+                "the graph has an unbreakable cycle (analog feedback with no digital or acoustic link \
+                 to carry latency)"
             ),
         }
     }
@@ -258,6 +260,9 @@ impl EdgeTransform {
 /// edges are a same-clock-domain sample copy. (A digital edge across *different* clock domains is
 /// a resample — not yet modeled; `compile` rejects it.)
 enum EdgeKind {
+    /// Acoustic: copy sound pressure src → dst. Air is ideal — a unity copy, no divider, no cable
+    /// rolloff (the acoustic peer of [`DigitalRoute`](Self::DigitalRoute), at the analog rate).
+    AcousticRoute,
     /// Analog: scale by the divider gain, optional cable rolloff, optional coupled interference.
     Analog(EdgeTransform),
     /// Digital audio: copy samples src → dst within one clock domain.
@@ -534,6 +539,12 @@ impl Schedule {
                 Step::Edge { src, dst, kind } => {
                     // Different pools ⇒ disjoint borrows, no aliasing.
                     match kind {
+                        EdgeKind::AcousticRoute => {
+                            // Ideal air: a unity pressure copy. Same analog rate ⇒ equal length.
+                            let source = output_pool[*src].pressure().as_slice();
+                            let dest = input_pool[*dst].pressure_mut().as_mut_slice();
+                            dest.copy_from_slice(source);
+                        }
                         EdgeKind::Analog(transform) => {
                             let source = output_pool[*src].voltage().as_slice();
                             let dest = input_pool[*dst].voltage_mut().as_mut_slice();
@@ -669,6 +680,7 @@ pub fn compile(
             obases.push(output_pool.len());
             for _ in 0..face.lane_count() {
                 output_pool.push(alloc_lane(
+                    face.acoustic(),
                     face.digital(),
                     face.events(),
                     block_len,
@@ -686,6 +698,7 @@ pub fn compile(
             ibases.push(input_pool.len());
             for _ in 0..face.lane_count() {
                 input_pool.push(alloc_lane(
+                    face.acoustic(),
                     face.digital(),
                     face.events(),
                     block_len,
@@ -733,15 +746,18 @@ pub fn compile(
         }
     }
 
-    // --- 5c. Auto-break residual digital cycles. A build-declared latent output (a DAW's playback,
-    //         wired `delayed` by `build_patch`) is already excluded from the deps below, so this only
-    //         breaks a cycle the author didn't pre-break — e.g. a **duplex digital link**, whose two
-    //         edges form a 2-cycle. A delayed edge is an ideal digital copy carrying one block of
-    //         round-trip latency, which is physical only on a *digital* link (a buffered transport) —
-    //         so a cycle may only be cut at a digital edge. We delay the lowest-index digital edge
-    //         sitting on a cycle (deterministic given the graph) and repeat until acyclic. A cycle
-    //         with no non-delayed digital edge is analog feedback with nowhere to carry the latency:
-    //         it falls through to the `Cycle` rejection in step 6. ---
+    // --- 5c. Auto-break residual digital/acoustic cycles. A build-declared latent output (a DAW's
+    //         playback, wired `delayed` by `build_patch`) is already excluded from the deps below, so
+    //         this only breaks a cycle the author didn't pre-break — a **duplex digital link** (whose
+    //         two edges form a 2-cycle), or an **acoustic feedback loop** (mic → … → monitor → air →
+    //         mic). A delayed edge is an ideal copy carrying one block of round-trip latency, which is
+    //         physical only where the medium itself carries delay: a **digital** link (a buffered
+    //         transport) or the **air** of an acoustic hop (sound takes time to travel). So a cycle may
+    //         be cut only at a digital or acoustic edge — and we **prefer the acoustic** one when the
+    //         loop has both, because the air hop is where a howlround loop's latency physically lives
+    //         (Story 8.3). We delay the lowest-index preferred edge on a cycle (deterministic given the
+    //         graph) and repeat until acyclic. A cycle with no delay-eligible edge is analog feedback
+    //         with nowhere to carry the latency: it falls through to the `Cycle` rejection in step 6. ---
     loop {
         let deps: Vec<(usize, usize)> = edges
             .iter()
@@ -752,22 +768,25 @@ pub fn compile(
             break; // acyclic (given the delayed edges cut so far) — nothing left to break
         }
         // A non-delayed edge `from → to` closes a cycle iff `from` is reachable from `to`. Cut the
-        // lowest-index such edge that is digital; if none exists the remaining loop is all-analog.
-        let breakable = edges.iter().position(|e| {
-            !e.delayed
-                && nodes[e.from_node.0].outputs()[e.from_port].domain() == Domain::DigitalAudio
-                && topo::reaches(node_count, &deps, e.to_node.0, e.from_node.0)
-        });
-        match breakable {
+        // lowest-index such edge carrying latency — an acoustic (air) edge first, else digital; if
+        // neither exists the remaining loop is all-analog and cannot be broken.
+        let breakable_in = |dom: Domain| {
+            edges.iter().position(|e| {
+                !e.delayed
+                    && nodes[e.from_node.0].outputs()[e.from_port].domain() == dom
+                    && topo::reaches(node_count, &deps, e.to_node.0, e.from_node.0)
+            })
+        };
+        match breakable_in(Domain::Acoustic).or_else(|| breakable_in(Domain::DigitalAudio)) {
             Some(ei) => edges[ei].delayed = true,
-            None => break, // no digital edge to carry latency — step 6 rejects it as `Cycle`
+            None => break, // no digital/acoustic edge to carry latency — step 6 rejects it as `Cycle`
         }
     }
 
     // --- 6. Topological order. **Delayed** edges are excluded from the deps: they carry one block of
     //        latency (served from the persistent pool, below), so they may close a loop without making
     //        the *schedule* cyclic. After step 5c the only cycle that can survive is all-analog (no
-    //        digital edge to break), which is a genuine wiring error rejected here. ---
+    //        digital or acoustic edge to break), which is a genuine wiring error rejected here. ---
     let deps: Vec<(usize, usize)> = edges
         .iter()
         .filter(|e| !e.delayed)
@@ -798,6 +817,14 @@ pub fn compile(
         let group = &by_port[i..j];
         let out_face = nodes[from_node].outputs()[from_port];
         match out_face.domain() {
+            Domain::Acoustic => {
+                // No electrical solve and no clock on an acoustic wire: ideal air is a unity
+                // pressure copy. An acoustic port owns exactly one lane (mono), so one route per
+                // edge — a fan-out (one source into several mics) is just several unity copies.
+                for &ei in group {
+                    edge_kinds[ei] = Some(vec![EdgeKind::AcousticRoute]);
+                }
+            }
             Domain::Analog => {
                 // Fan-out: solve the parallel loading across the whole group so the divider gains
                 // are right, then one transform per conductor (same gain, independent one-pole).
@@ -1196,12 +1223,17 @@ fn check_input_port(nodes: &[Box<dyn Node>], node: usize, port: usize) -> Result
 /// Every digital lane belongs to one converter clock domain; the [`ClockDomainId`] is a placeholder
 /// until multiple clock domains are modeled.
 fn alloc_lane(
+    acoustic: Option<AcousticFace>,
     digital: Option<DigitalFace>,
     event: Option<EventFace>,
     block_len: usize,
     rate: AnalogRate,
     node: usize,
 ) -> Result<Lane, CompileError> {
+    if acoustic.is_some() {
+        // Acoustic pressure: a dense block at the analog rate, mono (one lane), like voltage.
+        return Ok(Lane::Pressure(PressureBuffer::zeros(block_len, rate)));
+    }
     if let Some(face) = event {
         // Sparse carrier: a bounded list, sized by capacity rather than block length.
         return Ok(Lane::Events(EventBuffer::with_capacity(face.capacity())));

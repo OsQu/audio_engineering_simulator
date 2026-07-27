@@ -55,6 +55,9 @@
     </label>
     <!-- Static impedance loading loss (how far the loaded input sits below the source's open-circuit V). -->
     <span class="ci-loss">loading {loss !== null ? `${loss.toFixed(2)} dB` : "—"}</span>
+  {:else if domain === "acoustic"}
+    <!-- Air is ideal (Story 8.2): no R·C, no length, no loading — a unity acoustic edge. -->
+    <span class="ci-ideal">acoustic link — ideal air (no cable)</span>
   {:else}
     <span class="ci-ideal">digital link — ideal (no cable)</span>
   {/if}

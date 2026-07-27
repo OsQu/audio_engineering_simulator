@@ -1,7 +1,7 @@
-//! Level conversions between linear volts and decibel measurement scales.
+//! Level conversions between linear physical values and decibel measurement scales.
 //!
-//! Decibels are *measurements*, not storage — these helpers are the only place a voltage
-//! (or a normalized digital sample) becomes dB (and back).
+//! Decibels are *measurements*, not storage — these helpers are the only place a voltage,
+//! a normalized digital sample, or a sound pressure becomes dB (and back).
 //!
 //! - **dBu** — reference 0 dBu = √0.6 V ≈ 0.7746 V (the RMS voltage that delivers 1 mW
 //!   into 600 Ω). Commonly quoted, rounded, as 0.775 V.
@@ -10,17 +10,24 @@
 //!   [`SampleBuffer`](crate::SampleBuffer) value (±1.0 = full scale) as `20·log10(|sample|)`. The
 //!   volts↔dBFS *calibration* (how a real voltage maps to full scale) is owned by the AD converter
 //!   via its reference voltage; this is the pure sample-domain reading.
+//! - **dB SPL** — sound-pressure level: reference 0 dB SPL = 20 µPa (the nominal threshold of
+//!   hearing). [`spl_to_pascals`] / [`pascals_to_spl`] are to [`Pascals`] what
+//!   dBu is to [`Volts`] — the acoustic-domain measurement scale. The calibration anchor is
+//!   **1 Pa = 94 dB SPL**.
 //!
-//! Inputs are *levels* (a magnitude/RMS voltage, expected ≥ 0). A level of 0 V converts
-//! to −∞ dB, as the math dictates. Computation is done in `f64` so round-trips stay tight.
+//! Inputs are *levels* (a magnitude, expected ≥ 0). A level of 0 converts to −∞ dB, as the math
+//! dictates. Computation is done in `f64` so round-trips stay tight.
 
-use crate::signal::Volts;
+use crate::signal::{Pascals, Volts};
 
 /// 0 dBu reference voltage: √0.6 V ≈ 0.7746 V.
 const V_REF_DBU: f64 = 0.774_596_669_241_483_4;
 
 /// 0 dBV reference voltage: 1 V.
 const V_REF_DBV: f64 = 1.0;
+
+/// 0 dB SPL reference pressure: 20 µPa (the nominal threshold of hearing).
+const P_REF_SPL: f64 = 20e-6;
 
 /// Convert a level in dBu to volts.
 #[must_use]
@@ -65,6 +72,22 @@ pub fn headroom_db(peak: Volts, rail: Volts) -> f32 {
 #[must_use]
 pub fn sample_to_dbfs(sample: f32) -> f32 {
     (20.0 * f64::from(sample.abs()).log10()) as f32
+}
+
+/// Convert a sound-pressure level in dB SPL to pascals: `p = 20µPa · 10^(spl / 20)`.
+///
+/// The acoustic peer of [`dbu_to_volts`]. dB SPL is how loudness is quoted (a whisper ~30 dB, a
+/// cranked amp ~120 dB); this turns that into the linear pressure the acoustic domain carries.
+#[must_use]
+pub fn spl_to_pascals(spl: f32) -> Pascals {
+    Pascals::new((P_REF_SPL * 10.0_f64.powf(f64::from(spl) / 20.0)) as f32)
+}
+
+/// Convert a sound pressure in pascals to dB SPL: `20·log10(p / 20µPa)`. A pressure of 0 Pa maps
+/// to −∞ dB.
+#[must_use]
+pub fn pascals_to_spl(p: Pascals) -> f32 {
+    (20.0 * (f64::from(p.get()) / P_REF_SPL).log10()) as f32
 }
 
 // Shared math, in f64 for precision. `db = 20·log10(V / V_ref)`, inverted as
@@ -151,6 +174,35 @@ mod tests {
         assert_relative_eq!(sample_to_dbfs(0.5), -6.0206, epsilon = 1e-3);
         // +4 dBu (1.737 V peak) into a 13.80 V-peak full-scale converter reads −18 dBFS.
         assert_relative_eq!(sample_to_dbfs(1.7372 / 13.80), -18.0, epsilon = 0.05);
+    }
+
+    #[test]
+    fn one_pascal_is_94_db_spl() {
+        // The calibration anchor: 20·log10(1 / 20e-6) = 20·log10(50 000) = 93.979 dB SPL.
+        assert_relative_eq!(pascals_to_spl(Pascals::new(1.0)), 93.979, epsilon = 1e-2);
+        // …and 94 dB SPL is ≈1 Pa back: 20e-6 · 10^(94/20) = 20e-6 · 50 118.7 = 1.00237 Pa.
+        assert_relative_eq!(spl_to_pascals(94.0).get(), 1.00237, epsilon = 1e-4);
+    }
+
+    #[test]
+    fn zero_db_spl_is_the_reference_pressure() {
+        // 0 dB SPL = 20 µPa exactly (the threshold-of-hearing reference).
+        assert_relative_eq!(spl_to_pascals(0.0).get(), 20e-6, epsilon = 1e-10);
+    }
+
+    #[test]
+    fn spl_covers_the_micing_range() {
+        // A whisper at 30 dB SPL: 20e-6 · 10^(30/20) = 20e-6 · 31.6228 = 632.5 µPa.
+        assert_relative_eq!(spl_to_pascals(30.0).get(), 632.46e-6, epsilon = 1e-7);
+        // A cranked guitar amp at 120 dB SPL: 20e-6 · 10^(120/20) = 20e-6 · 1e6 = 20 Pa.
+        assert_relative_eq!(spl_to_pascals(120.0).get(), 20.0, epsilon = 1e-3);
+    }
+
+    #[test]
+    fn spl_round_trips() {
+        for &spl in &[0.0_f32, 30.0, 60.0, 94.0, 120.0] {
+            assert_relative_eq!(pascals_to_spl(spl_to_pascals(spl)), spl, epsilon = 1e-3);
+        }
     }
 
     #[test]

@@ -628,8 +628,9 @@ mod tests {
     use super::*;
     use crate::scene::{Connection, DeviceInstance};
     use engine::{
-        AdConverter, BitDepth, DaConverter, EventMessage, EventQueue, Graph, InputZ, Ohms,
-        ParamQueue, SampleRate, Speaker, SynthVoice, VoltageBuffer, Volts, compile,
+        AdConverter, BitDepth, DaConverter, EventMessage, EventQueue, Graph, InputZ, MicPreamp,
+        Ohms, ParamQueue, SampleRate, Speaker, SynthVoice, VoltageBuffer, Volts, compile,
+        spl_to_pascals,
     };
 
     const BLOCK_LEN: usize = 384; // 384 / M=8 = 48 host samples; divisible, as compile requires.
@@ -1018,6 +1019,53 @@ mod tests {
         );
     }
 
+    /// **The acoustic feedback loop builds (Story 8.3).** The product howlround chain —
+    /// `condenser mic → 8i6 (combo in → preamp → AD → matrix → DA → Line Out 1) → powered monitor →
+    /// air → mic` — is a genuine graph cycle (the 8i6's matrix is one node, so its input path and
+    /// output path close a loop through it). `build_patch` + `compile` **auto-break it** at the air
+    /// edge (Story 8.3's prefer-acoustic policy; *which* edge carries the delay is pinned by the engine
+    /// test `acoustic_feedback`), so the loop builds and runs — feedback is not special-cased, and a
+    /// pre-8.3 build would have rejected an acoustic-only loop as `Cycle`. We build it and run a few
+    /// blocks to exercise the delayed acoustic edge on the real product graph.
+    #[test]
+    fn acoustic_feedback_loop_through_the_8i6_builds_and_runs() {
+        let patch = Patch {
+            devices: vec![
+                device("mic", "condenser_mic"),
+                DeviceInstance {
+                    id: "if".into(),
+                    type_id: "scarlett_8i6".into(),
+                    params: vec![],
+                    config: vec![crate::scene::ConfigSetting {
+                        key: "phantom".into(),
+                        value: 1.0,
+                    }],
+                },
+                device("mon", "powered_monitor"),
+            ],
+            connections: vec![
+                conn("mon", 0, "mic", 0), // monitor Air → mic capsule (the acoustic air hop)
+                conn("mic", 0, "if", 0),  // mic XLR → 8i6 combo in 1
+                conn("if", 2, "mon", 0),  // 8i6 Line Out 1 → monitor In (closes the loop)
+            ],
+            output: PortRef {
+                device: "if".into(),
+                port: 3, // Line Out 2 — a valid analog tap outside the loop
+            },
+        };
+        let mut scene = build_patch(&patch, BLOCK_LEN, rate(), 0)
+            .expect("the acoustic feedback loop auto-breaks at the air edge and builds");
+        // Run a few blocks: the delayed acoustic edge copy runs on the real product graph, panic-free.
+        let mut params = ParamQueue::with_capacity(1);
+        let mut events = EventQueue::with_capacity(1);
+        let mut out = VoltageBuffer::zeros(BLOCK_LEN, rate());
+        for _ in 0..4 {
+            scene
+                .schedule_mut()
+                .process_io(&mut out, &mut params, &mut events);
+        }
+    }
+
     /// The `device → node → daw()` resolution: the `computer` in a built scene resolves to a live
     /// [`DawControl`] surface (only its recorder node's `daw()` answers `Some`), a non-DAW device
     /// resolves to `None`, and an unknown id resolves to `None`. Driving the transport over the facade
@@ -1247,8 +1295,16 @@ mod tests {
         }];
         let mut connections = Vec::new();
         for (i, id) in mics.iter().enumerate() {
+            // A vox radiating into each mic's capsule (over the ideal-air acoustic edge). Its
+            // construction default is exactly 1 Pa peak; against the condenser's 0.01 V/Pa sensitivity
+            // that is a 10 mV differential — the same capsule-tone amplitude the mic used to
+            // self-generate, so the hand calcs below are unchanged. (Frequency is a runtime param, set
+            // per-test where period alignment matters — scene `ParamSetting`s aren't applied at build.)
+            let vox = format!("{id}_vox");
+            devices.push(device(&vox, "vox"));
             devices.push(device(id, "condenser_mic"));
-            connections.push(conn(id, 0, "if", i as u32));
+            connections.push(conn(&vox, 0, id, 0)); // vox → mic capsule (acoustic)
+            connections.push(conn(id, 0, "if", i as u32)); // mic → 8i6 combo input
         }
         Patch {
             devices,
@@ -1285,8 +1341,11 @@ mod tests {
                 .expect("mic → 8i6 builds with 48V either way (XLR seats in the combo jack)");
             // Route Pre 1 → Line Out 1: crosspoint (in 0, out 8) = exposed id 8 + 0·14 + 8 = 16.
             let xpoint = *scene.param("if", 16).first().expect("matrix crosspoint");
-            let mut params = ParamQueue::with_capacity(1);
+            // Drive the vox to 1 kHz so each 384-sample block is exactly one period (see below).
+            let vox_freq = *scene.param("mic_vox", 1).first().expect("vox pitch param");
+            let mut params = ParamQueue::with_capacity(2);
             params.set(xpoint, 1.0);
+            params.set(vox_freq, 1_000.0);
             let mut events = EventQueue::with_capacity(1);
             let mut out = VoltageBuffer::zeros(BLOCK_LEN, rate());
             let (mut peak, mut mean) = (0.0_f32, 0.0_f64);
@@ -1356,6 +1415,131 @@ mod tests {
         let (in1, in2) = peaks(0.0);
         assert!(in1 <= -60.0 + 1e-3, "dead mic 1 at the floor, got {in1}");
         assert!(in2 <= -60.0 + 1e-3, "dead mic 2 at the floor, got {in2}");
+    }
+
+    /// A `vox → mic → 8i6 input 1` patch (the acoustic edge into a mic capsule, the mic's XLR into the
+    /// combo preamp), phantom on so the condenser lives. Output is Line Out 1 (unused — the assertions
+    /// read the post-preamp In 1 Peak meter). `mic` selects `condenser_mic` / `dynamic_mic`.
+    fn vox_mic_8i6(mic: &str) -> Patch {
+        Patch {
+            devices: vec![
+                device("vox", "vox"),
+                device(mic, mic),
+                DeviceInstance {
+                    id: "if".into(),
+                    type_id: "scarlett_8i6".into(),
+                    params: vec![],
+                    config: vec![crate::scene::ConfigSetting {
+                        key: "phantom".into(),
+                        value: 1.0,
+                    }],
+                },
+            ],
+            connections: vec![
+                conn("vox", 0, mic, 0), // vox Air → mic capsule (acoustic edge, ideal air)
+                conn(mic, 0, "if", 0),  // mic XLR → 8i6 combo input 1
+            ],
+            output: PortRef {
+                device: "if".into(),
+                port: 2, // Line Out 1 (unused; readouts drive the assertions)
+            },
+        }
+    }
+
+    /// **Story 8.2 exit gate — the micing scenario, gain-staging by hand calc.** Drive a vox into a mic
+    /// into the 8i6's preamp and read the post-preamp **In 1 Peak** meter (dBu, exposed readout 1; the
+    /// meter taps the preamp output, so this is `differential × mic→preamp divider × preamp gain ×
+    /// preamp→meter divider`, floored at −60 dBu). The whole front-end gain-staging story falls out of
+    /// `v = pressure × sensitivity` + the existing dividers/rail — nothing special-cased.
+    ///
+    /// Shared terms (0 dBu = √0.6 = 0.774597 V; rail = 10 V; default preamp gain = `MIN_GAIN` ≈ ×2.5119
+    /// = +8 dB; PAD = 10^(−10/20) = ×0.316228; preamp→meter divider = 10⁶/1 000 150 = 0.999850):
+    ///   condenser: 0.01 V/Pa, 150 Ω → mic→preamp divider 10 000/10 150 = 0.985222
+    ///   dynamic:   0.002 V/Pa, 200 Ω → mic→preamp divider 10 000/10 200 = 0.980392
+    #[test]
+    fn micing_scenario_gain_staging() {
+        // Build `vox → mic → 8i6`, set the vox loudness (dB SPL → Pa), pitch (1 kHz so each 384-sample
+        // 384 kHz block = exactly one period ⇒ block peak = amplitude), the preamp gain (linear ×) and
+        // PAD, run to steady state, and read In 1 Peak (dBu).
+        let read_in1_peak = |mic: &str, spl: f32, gain: f32, pad: bool| -> f32 {
+            let mut scene = build_patch(&vox_mic_8i6(mic), BLOCK_LEN, rate(), 0)
+                .expect("vox → mic → 8i6 builds (acoustic edge + XLR into the combo jack)");
+            let loudness = *scene.param("vox", 0).first().expect("vox loudness");
+            let pitch = *scene.param("vox", 1).first().expect("vox pitch");
+            let preamp_gain = *scene.param("if", 0).first().expect("Gain 1");
+            let preamp_pad = *scene.param("if", 1).first().expect("Pad 1");
+            let mut params = ParamQueue::with_capacity(4);
+            params.set(loudness, spl_to_pascals(spl).get());
+            params.set(pitch, 1_000.0);
+            params.set(preamp_gain, gain);
+            params.set(preamp_pad, if pad { 1.0 } else { 0.0 });
+            let mut events = EventQueue::with_capacity(1);
+            let mut out = VoltageBuffer::zeros(BLOCK_LEN, rate());
+            for _ in 0..48 {
+                scene
+                    .schedule_mut()
+                    .process_io(&mut out, &mut params, &mut events);
+            }
+            let h = scene.readout("if", 1).expect("In 1 Peak readout");
+            scene.schedule().readout_value(h).expect("In 1 Peak value")
+        };
+
+        // --- A whisper sits below the noise/resolution floor ---------------------------------------
+        // 30 dB SPL = 632.5 µPa. Condenser at default gain: 632.5e-6 × 0.01 × 0.985222 × 2.511886 ×
+        // 0.999850 = 15.65 µV = −93.89 dBu — below the meter's −60 floor, below the 8i6's 16-bit AD
+        // LSB (1 V/2¹⁵ = 30.5 µV = −88.1 dBu), and below the condenser's own f32 phantom-pedestal
+        // cancellation floor (~4 µV, Story 8.1). A whisper is simply lost: you need a sensitive mic and
+        // a lot of gain. (We assert the buried floor, not a precise recovered magnitude — at high gain
+        // the condenser's amplified pedestal residual dominates a signal this small, the documented
+        // Story-8.1 f32 boundary; the physical gain-staging lesson is carried by the two cases below.)
+        let whisper = read_in1_peak("condenser_mic", 30.0, MicPreamp::MIN_GAIN, false);
+        assert!(
+            (whisper - (-60.0)).abs() < 1e-3,
+            "whisper at default gain reads the −60 floor (buried), got {whisper} dBu"
+        );
+
+        // --- A dynamic reads ~14 dB below a condenser (same source, same gain) ----------------------
+        // 94 dB SPL ≈ 1.0024 Pa, default gain. The ~14 dB gap is emergent from transducer efficiency
+        // (5× sensitivity = 13.98 dB) plus the slightly deeper dynamic loading divider (+0.04 dB).
+        //   condenser: 1.0024 × 0.01  × 0.985222 × 2.511886 × 0.999850 = 24.80 mV = −29.89 dBu
+        //   dynamic:   1.0024 × 0.002 × 0.980392 × 2.511886 × 0.999850 =  4.94 mV = −43.91 dBu
+        let condenser = read_in1_peak("condenser_mic", 94.0, MicPreamp::MIN_GAIN, false);
+        let dynamic = read_in1_peak("dynamic_mic", 94.0, MicPreamp::MIN_GAIN, false);
+        assert!(
+            (condenser - (-29.89)).abs() < 0.1,
+            "condenser at 94 dB SPL / +8 dB: −29.89 dBu, got {condenser}"
+        );
+        assert!(
+            (dynamic - (-43.91)).abs() < 0.1,
+            "dynamic at 94 dB SPL / +8 dB: −43.91 dBu, got {dynamic}"
+        );
+        assert!(
+            (condenser - dynamic - 14.02).abs() < 0.1,
+            "dynamic sits ~14 dB below the condenser, got {} dB",
+            condenser - dynamic
+        );
+
+        // --- A cranked amp needs the PAD to avoid clipping ------------------------------------------
+        // 120 dB SPL = 20 Pa, condenser, preamp at ×100 (+40 dB). Post-divider = 20 × 0.01 × 0.985222
+        // = 0.19704 V.
+        //   No PAD: × 100 = 19.70 V → clamped to the 10 V rail (meter 9.9985 V = +22.22 dBu). The
+        //           unclipped ideal is +28.11 dBu, so ~5.9 dB is being clipped off — audible distortion.
+        //   PAD on: × 0.316228 × 100 = 6.231 V → below the rail (meter 6.230 V = +18.11 dBu), clean.
+        let cranked_no_pad = read_in1_peak("condenser_mic", 120.0, 100.0, false);
+        let cranked_pad = read_in1_peak("condenser_mic", 120.0, 100.0, true);
+        assert!(
+            (cranked_no_pad - 22.22).abs() < 0.1,
+            "cranked amp with no PAD pins the 10 V rail at +22.22 dBu (clipping), got {cranked_no_pad}"
+        );
+        assert!(
+            (cranked_pad - 18.11).abs() < 0.1,
+            "cranked amp with the PAD lands at +18.11 dBu, clear of the rail (no clip), got {cranked_pad}"
+        );
+        // The PAD dropped the peak below the rail: without it the preamp clips, with it it doesn't.
+        assert!(
+            cranked_pad < cranked_no_pad && cranked_pad < 20.0,
+            "the PAD must bring the cranked source under the rail: no-pad {cranked_no_pad}, pad {cranked_pad}"
+        );
     }
 
     /// A cabled connection assembles (the cable's R·C rides the edge). Smoke test that the cable path

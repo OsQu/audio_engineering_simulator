@@ -971,10 +971,15 @@ mod hum_phenomena {
 mod phantom_phenomena {
     use super::super::*;
     use crate::electrical::{Cable, Farads};
-    use crate::node::{BalancedReceiver, CondenserMic, MicPreamp, TestSource};
-    use crate::signal::Volts;
+    use crate::node::{BalancedReceiver, CondenserMic, MicPreamp, SoundSource, TestSource};
+    use crate::signal::{Pascals, Volts};
     use approx::assert_relative_eq;
     use std::f64::consts::TAU;
+
+    /// A typical studio-condenser sensitivity (10 mV/Pa) — the mic's fixed transducer constant. The
+    /// phantom tests below mostly care about the DC operating point, not the audio, so most build the
+    /// mic with an **unconnected** capsule (silent) and read the pedestal directly.
+    const SENS: f32 = 0.01;
 
     fn rate() -> AnalogRate {
         AnalogRate::new(384_000.0)
@@ -991,10 +996,12 @@ mod phantom_phenomena {
         .with_phantom(engaged)
     }
 
-    /// Build `mic → preamp` (optionally cabled), tap `port` of `node`, run one block, return it.
-    fn run(signal: f32, engaged: bool, cable: Option<Cable>, tap_mic: bool) -> VoltageBuffer {
+    /// Build `mic → preamp` (optionally cabled) with the mic's **capsule unconnected** (silent), tap
+    /// the mic or the preamp, run one block, return it. With no sound the mic's audio is 0, so its
+    /// hot leg is the earned pedestal alone — which is what these DC-operating-point tests read.
+    fn run(engaged: bool, cable: Option<Cable>, tap_mic: bool) -> VoltageBuffer {
         let mut g = Graph::new();
-        let mic = g.add(CondenserMic::new(Volts::new(signal), Ohms::new(150.0)));
+        let mic = g.add(CondenserMic::new(SENS, Ohms::new(150.0)));
         let pre = g.add(preamp(100.0, engaged));
         match cable {
             Some(c) => g.connect_cabled(mic, 0, pre, 0, c),
@@ -1010,22 +1017,24 @@ mod phantom_phenomena {
     #[test]
     fn solved_operating_point_rides_the_wire() {
         // The §17 reference solve, no cable: V_dc = 48·12 700/(3 400 + 0 + 12 700) = 37.8634 V.
-        // The capsule tone is purely differential and starts at phase 0, so the mic's open-circuit
-        // hot leg at the first sample is the earned pedestal *alone* (sin 0 = 0): 37.8634 V — power
-        // arrived from the patch, not from any flag. (Later samples add the ±½·tone wiggle on top of
-        // this same pedestal — the difference-first preamp then rejects the pedestal, see
+        // With the capsule unconnected there is no audio, so the mic's open-circuit hot leg is the
+        // earned pedestal *alone* on every sample: 37.8634 V — power arrived from the patch, not from
+        // any flag. (When a source is patched the ±½·audio wiggle rides on top of this same pedestal,
+        // and the difference-first preamp rejects the pedestal — see
         // `preamp_recovers_audio_and_rejects_the_solved_pedestal`.)
-        let out = run(0.02, true, None, true);
-        assert_relative_eq!(out.get(0).get(), 37.8634, epsilon = 1e-3);
+        let out = run(true, None, true);
+        for &v in out.as_slice() {
+            assert_relative_eq!(v, 37.8634, epsilon = 1e-3);
+        }
     }
 
     #[test]
     fn cable_resistance_sags_the_operating_point() {
         // 100 Ω of cable series R joins the DC divider: 48·12 700/(3 400 + 100 + 12 700) =
-        // 609 600/16 200 = 37.6296 V (signal 0 ⇒ the hot leg is exactly the pedestal). Sag is
+        // 609 600/16 200 = 37.6296 V (no audio ⇒ the hot leg is exactly the pedestal). Sag is
         // solved physics, not a special case.
         let cable = Cable::new(Ohms::new(100.0), Farads::ZERO);
-        let out = run(0.0, true, Some(cable), true);
+        let out = run(true, Some(cable), true);
         for &v in out.as_slice() {
             assert_relative_eq!(v, 37.6296, epsilon = 1e-3);
         }
@@ -1038,9 +1047,9 @@ mod phantom_phenomena {
         // 609 600/17 600 = 34.64 V < 35 ⇒ the mic's electronics starve — both legs dead, so the
         // preamp difference is 0 too. (The supply is engaged; only the cable changed.)
         let cable = Cable::new(Ohms::new(1_500.0), Farads::ZERO);
-        let mic_out = run(0.02, true, Some(cable), true);
+        let mic_out = run(true, Some(cable), true);
         assert!(mic_out.as_slice().iter().all(|&v| v == 0.0), "mic dead");
-        let pre_out = run(0.02, true, Some(cable), false);
+        let pre_out = run(true, Some(cable), false);
         assert!(pre_out.as_slice().iter().all(|&v| v == 0.0), "chain silent");
     }
 
@@ -1049,7 +1058,7 @@ mod phantom_phenomena {
         // A bare balanced receiver declares no supply ⇒ the mic's load resolves to an explicit
         // 0 V ⇒ dead. (Before the DC solve the mic self-asserted 48 V here — that flag is gone.)
         let mut g = Graph::new();
-        let mic = g.add(CondenserMic::new(Volts::new(2.0), Ohms::new(150.0)));
+        let mic = g.add(CondenserMic::new(SENS, Ohms::new(150.0)));
         let rcv = g.add(BalancedReceiver::new(Ohms::new(1e9), Ohms::new(150.0)));
         g.connect_ideal(mic, 0, rcv, 0);
         g.set_output(rcv, 0);
@@ -1059,7 +1068,7 @@ mod phantom_phenomena {
         assert!(out.as_slice().iter().all(|&v| v == 0.0), "no supply ⇒ dead");
 
         // A supply that exists but is switched off resolves 0 V just the same.
-        let out = run(2.0, false, None, false);
+        let out = run(false, None, false);
         assert!(out.as_slice().iter().all(|&v| v == 0.0), "48V off ⇒ dead");
     }
 
@@ -1088,23 +1097,40 @@ mod phantom_phenomena {
         assert_eq!(on.as_slice(), off.as_slice(), "audio identical either way");
     }
 
+    /// Build `source → mic → preamp` and tap the preamp; the vox radiates `src_pa` peak pascals at
+    /// its default pitch into the mic's capsule over an ideal acoustic edge.
+    fn run_miced(src_pa: f32, engaged: bool) -> VoltageBuffer {
+        let mut g = Graph::new();
+        let src = g.add(SoundSource::new(Pascals::new(src_pa)));
+        let mic = g.add(CondenserMic::new(SENS, Ohms::new(150.0)));
+        let pre = g.add(preamp(100.0, engaged));
+        g.connect_ideal(src, 0, mic, 0); // acoustic edge (ideal air)
+        g.connect_ideal(mic, 0, pre, 0); // balanced analog edge
+        g.set_output(pre, 0);
+        let mut sched = compile(g, 8, rate(), 0).expect("source → mic → preamp builds");
+        let mut out = VoltageBuffer::zeros(8, rate());
+        sched.process(&mut out);
+        out
+    }
+
     #[test]
     fn preamp_recovers_audio_and_rejects_the_solved_pedestal() {
-        // End-to-end: mic (0.02 V differential on the solved 37.8634 V pedestal) → engaged preamp,
-        // gain 100, rail ±10 V. The edge divider is 10 000/(150 + 10 000) = 0.985222 on every
-        // conductor, so the preamp sees a 37.30 V common-mode pedestal and a 0.0197044 V
-        // differential. Difference-first rejects the pedestal *before* the rail (clamp-first would
-        // pin both legs at ±10 and annihilate the audio). The differential is now the capsule sine
-        // `0.02·sin(2π·1000·k/384000)`, so the recovered audio is that sine scaled by
-        // 100 · 0.985222 = 98.5222 ⇒ amplitude 1.97044 V, with **zero DC** (no trace of the 37 V
-        // pedestal). Toggling 48V off (a rebuild — the switch is structural) ⇒ dead mic ⇒ silence.
-        let out = run(0.02, true, None, false);
+        // End-to-end micing: a vox at 2 Pa peak (default 220 Hz) → condenser (10 mV/Pa) ⇒ a
+        // 2·0.01 = 0.02 V differential on the solved 37.8634 V pedestal → engaged preamp, gain 100,
+        // rail ±10 V. The edge divider is 10 000/(150 + 10 000) = 0.985222 on every conductor, so the
+        // preamp sees a 37.30 V common-mode pedestal and a 0.0197044 V differential. Difference-first
+        // rejects the pedestal *before* the rail (clamp-first would pin both legs at ±10 and
+        // annihilate the audio). The differential is the transduced sine `0.02·sin(2π·220·k/384000)`,
+        // so the recovered audio is that sine scaled by 100 · 0.985222 = 98.5222 ⇒ amplitude
+        // 1.97044 V, with **zero DC** (no trace of the 37 V pedestal). Toggling 48V off (a rebuild —
+        // the switch is structural) ⇒ dead mic ⇒ silence.
+        let out = run_miced(2.0, true);
         for (k, &v) in out.as_slice().iter().enumerate() {
-            let want = 1.970_44 * (TAU * 1_000.0 * k as f64 / 384_000.0).sin();
+            let want = 1.970_44 * (TAU * 220.0 * k as f64 / 384_000.0).sin();
             // f32 note: recovered from two ~37.3 V legs, so ~µV-scale cancellation noise ×100.
             assert_relative_eq!(f64::from(v), want, epsilon = 1e-3);
         }
-        let out = run(0.02, false, None, false);
+        let out = run_miced(2.0, false);
         assert!(out.as_slice().iter().all(|&v| v == 0.0));
     }
 
@@ -1113,7 +1139,7 @@ mod phantom_phenomena {
         // One mic output fanned into *two* engaged supplies is the documented-unresolved bias
         // network: two feeds in parallel. Rejected legibly at compile, never solved wrong.
         let mut g = Graph::new();
-        let mic = g.add(CondenserMic::new(Volts::new(0.02), Ohms::new(150.0)));
+        let mic = g.add(CondenserMic::new(SENS, Ohms::new(150.0)));
         let pre_a = g.add(preamp(100.0, true));
         let pre_b = g.add(preamp(100.0, true));
         g.connect_ideal(mic, 0, pre_a, 0);
@@ -1128,10 +1154,10 @@ mod phantom_phenomena {
     #[test]
     fn one_engaged_supply_among_passive_consumers_resolves() {
         // Fan-out into one engaged supply + a passive receiver is fine: the load resolves from the
-        // single feed (37.8634 V, no cable) and the mic runs. Tap the mic's open-circuit hot leg at
-        // the first sample (phase 0 ⇒ the tone is 0): the earned pedestal alone, 37.8634 V.
+        // single feed (37.8634 V, no cable) and the mic runs. With the capsule unconnected there is
+        // no audio, so the mic's open-circuit hot leg is the earned pedestal alone, 37.8634 V.
         let mut g = Graph::new();
-        let mic = g.add(CondenserMic::new(Volts::new(0.02), Ohms::new(150.0)));
+        let mic = g.add(CondenserMic::new(SENS, Ohms::new(150.0)));
         let pre = g.add(preamp(100.0, true));
         let rcv = g.add(BalancedReceiver::new(Ohms::new(1e9), Ohms::new(150.0)));
         g.connect_ideal(mic, 0, pre, 0);
@@ -1144,12 +1170,12 @@ mod phantom_phenomena {
     }
 
     #[test]
-    fn capsule_tone_is_deterministic() {
-        // Structural determinism (no ambient entropy): two identically-built schedules render
-        // bit-for-bit identical buffers. Same patch (mic → engaged preamp, tapping the mic) built
-        // and run twice ⇒ byte-equal output — the phase accumulator and sine are reproducible.
-        let a = run(0.02, true, None, true);
-        let b = run(0.02, true, None, true);
+    fn miced_chain_is_deterministic() {
+        // Structural determinism (no ambient entropy): two identically-built `source → mic → preamp`
+        // schedules render bit-for-bit identical buffers — the source's phase accumulator, the
+        // transduction, and the solved pedestal are all reproducible.
+        let a = run_miced(2.0, true);
+        let b = run_miced(2.0, true);
         assert_eq!(a.as_slice(), b.as_slice(), "same build ⇒ identical buffers");
     }
 }
@@ -2947,5 +2973,552 @@ mod delayed_edges {
                 "tap should lag the ramp by one block: got {v}, expected {expected}"
             );
         }
+    }
+}
+
+/// **Acoustic feedback** (Story 8.3) — the air hop is delay-eligible, so `compile` auto-breaks an
+/// acoustic feedback loop by delaying the **acoustic** edge (preferring it over any digital edge on
+/// the same cycle, since the air physically carries the latency). Howlround then emerges from the
+/// delayed loop: a below-unity loop settles, a super-unity one grows and self-limits at the rail.
+/// A pure-analog loop still has nowhere to carry latency and is rejected (`delayed_edges` above +
+/// `rejects_a_cycle`). Tests inspect the private `delayed_steps`/pools (white-box).
+mod acoustic_feedback {
+    use super::super::*;
+    use crate::electrical::{InputZ, Ohms};
+    use crate::node::{
+        BalancedReceiver, DynamicMic, GainStage, PassiveSum, PoweredMonitor, TestSource,
+    };
+    use crate::port::{AcousticFace, AudioFormat, DigitalFace, InputPort, OutputPort};
+    use crate::signal::{BitDepth, Pascals, SampleRate, Volts};
+
+    fn rate() -> AnalogRate {
+        AnalogRate::new(384_000.0)
+    }
+
+    /// A one-block acoustic feedback recurrence in a single node: `out = clamp(k·in + c, ±rail)`
+    /// (pressure in, pressure out). Closed with an ideal acoustic **self-loop** it becomes a delayed
+    /// feedback loop `pₙ = clamp(k·pₙ₋₁ + c, ±rail)` — `k` is the loop gain, `c` a constant drive, and
+    /// the rail the self-limit a real howl clips against. A stand-in for a whole mic→amp→monitor loop,
+    /// so the *mechanism* (a delayed pressure edge carrying feedback) is testable in one node.
+    struct AcousticFeedbackCell {
+        k: f32,
+        c: f32,
+        rail: f32,
+        inputs: [InputPort; 1],
+        outputs: [OutputPort; 1],
+    }
+    impl AcousticFeedbackCell {
+        fn new(k: f32, c: f32, rail: f32) -> Self {
+            Self {
+                k,
+                c,
+                rail,
+                inputs: [AcousticFace::new().into()],
+                outputs: [AcousticFace::new().into()],
+            }
+        }
+    }
+    impl Node for AcousticFeedbackCell {
+        fn inputs(&self) -> &[InputPort] {
+            &self.inputs
+        }
+        fn outputs(&self) -> &[OutputPort] {
+            &self.outputs
+        }
+        fn process(&mut self, _p: &Params, inputs: &[Lane], outputs: &mut [Lane]) {
+            let src = inputs[0].pressure().as_slice();
+            let dst = outputs[0].pressure_mut().as_mut_slice();
+            for (o, &i) in dst.iter_mut().zip(src) {
+                *o = (self.k * i + self.c).clamp(-self.rail, self.rail);
+            }
+        }
+    }
+
+    /// Digital in → acoustic out (a stand-in "DA + monitor"): writes silence, used only to give a
+    /// mixed digital/acoustic cycle its acoustic edge.
+    struct DigitalToAcoustic {
+        inputs: [InputPort; 1],
+        outputs: [OutputPort; 1],
+    }
+    impl DigitalToAcoustic {
+        fn new(format: AudioFormat) -> Self {
+            Self {
+                inputs: [DigitalFace::new(format).into()],
+                outputs: [AcousticFace::new().into()],
+            }
+        }
+    }
+    impl Node for DigitalToAcoustic {
+        fn inputs(&self) -> &[InputPort] {
+            &self.inputs
+        }
+        fn outputs(&self) -> &[OutputPort] {
+            &self.outputs
+        }
+        fn process(&mut self, _p: &Params, _inputs: &[Lane], outputs: &mut [Lane]) {
+            outputs[0].pressure_mut().fill(Pascals::new(0.0));
+        }
+    }
+
+    /// Acoustic in → digital out (a stand-in "mic + AD"): the other half of a mixed cycle.
+    struct AcousticToDigital {
+        inputs: [InputPort; 1],
+        outputs: [OutputPort; 1],
+    }
+    impl AcousticToDigital {
+        fn new(format: AudioFormat) -> Self {
+            Self {
+                inputs: [AcousticFace::new().into()],
+                outputs: [DigitalFace::new(format).into()],
+            }
+        }
+    }
+    impl Node for AcousticToDigital {
+        fn inputs(&self) -> &[InputPort] {
+            &self.inputs
+        }
+        fn outputs(&self) -> &[OutputPort] {
+            &self.outputs
+        }
+        fn process(&mut self, _p: &Params, _inputs: &[Lane], outputs: &mut [Lane]) {
+            for s in outputs[0].sample_mut().as_mut_slice() {
+                *s = 0.0;
+            }
+        }
+    }
+
+    /// The count of delayed edge-copy steps, and how many of them copy an acoustic (pressure) lane.
+    fn delayed_edge_kinds(sched: &Schedule) -> (usize, usize) {
+        let total = sched
+            .delayed_steps
+            .iter()
+            .filter(|s| matches!(s, Step::Edge { .. }))
+            .count();
+        let acoustic = sched
+            .delayed_steps
+            .iter()
+            .filter(|s| {
+                matches!(
+                    s,
+                    Step::Edge {
+                        kind: EdgeKind::AcousticRoute,
+                        ..
+                    }
+                )
+            })
+            .count();
+        (total, acoustic)
+    }
+
+    /// The pressure at sample 0 of the (single) acoustic output lane in the pool.
+    fn pool_pressure(sched: &Schedule) -> f32 {
+        sched
+            .output_pool
+            .iter()
+            .find_map(|l| match l {
+                Lane::Pressure(b) => Some(b.get(0).get()),
+                _ => None,
+            })
+            .expect("an acoustic output lane in the pool")
+    }
+
+    /// A real feedback loop — `mic → receiver → gain → monitor → air → mic` — compiles: `compile`
+    /// auto-breaks it by delaying the **air** edge (the only delay-eligible edge on this all-analog +
+    /// one-acoustic loop). The delayed edge is the acoustic one, and it is the *only* delayed edge.
+    #[test]
+    fn a_real_mic_monitor_loop_auto_breaks_at_the_air_edge() {
+        let mut g = Graph::new();
+        let mic = g.add(DynamicMic::new(0.002, Ohms::new(200.0)));
+        let rcv = g.add(BalancedReceiver::new(Ohms::new(1e9), Ohms::new(150.0)));
+        let gain = g.add(GainStage::new(
+            2.0,
+            Volts::new(10.0),
+            InputZ::new(Ohms::new(10_000.0)),
+            Ohms::new(150.0),
+        ));
+        let mon = g.add(PoweredMonitor::new(1.0, InputZ::new(Ohms::new(10_000.0))));
+        g.connect_ideal(mic, 0, rcv, 0); // balanced analog (mic → receiver)
+        g.connect_ideal(rcv, 0, gain, 0); // analog
+        g.connect_ideal(gain, 0, mon, 0); // analog
+        g.connect_ideal(mon, 0, mic, 0); // ACOUSTIC air hop — closes the loop
+        g.set_output(gain, 0); // a voltage tap so the schedule is well-formed
+        let sched =
+            compile(g, 8, rate(), 0).expect("acoustic feedback loop auto-breaks at the air");
+        assert_eq!(
+            delayed_edge_kinds(&sched),
+            (1, 1),
+            "exactly one delayed edge, and it is the acoustic (air) edge"
+        );
+    }
+
+    /// When a cycle has **both** a digital and an acoustic edge, the acoustic one carries the delay —
+    /// the air hop is where a howlround loop's latency physically lives. A 2-cycle `X →(air)→ Y
+    /// →(digital)→ X`: the delayed edge must be the acoustic one, leaving the digital edge same-block.
+    #[test]
+    fn a_mixed_cycle_prefers_the_acoustic_edge_for_the_delay() {
+        let f = AudioFormat::new(SampleRate::new(48_000.0), BitDepth::new(24), 1);
+        let mut g = Graph::new();
+        let x = g.add(DigitalToAcoustic::new(f)); // digital in, acoustic out
+        let y = g.add(AcousticToDigital::new(f)); // acoustic in, digital out
+        g.connect_ideal(x, 0, y, 0); // acoustic edge  x → y
+        g.connect_ideal(y, 0, x, 0); // digital edge   y → x
+        let tap = g.add(TestSource::new(Volts::new(0.0), Ohms::new(150.0)));
+        g.set_output(tap, 0);
+        let sched = compile(g, 16, rate(), 0).expect("mixed cycle auto-breaks");
+        assert_eq!(
+            delayed_edge_kinds(&sched),
+            (1, 1),
+            "the acoustic edge is delayed, not the digital one"
+        );
+    }
+
+    /// A **below-unity** acoustic feedback loop settles: `pₙ = 0.5·pₙ₋₁ + 1` (a delayed acoustic
+    /// self-loop, drive 1) reads *last* block's pressure back, so it climbs 1 → 1.5 → 1.75 → …,
+    /// converging geometrically to the fixed point `c/(1−k) = 2`. Proof the delayed **pressure** copy
+    /// carries feedback and the delay is exactly one block.
+    #[test]
+    fn a_below_unity_loop_settles_one_block_at_a_time() {
+        let mut g = Graph::new();
+        let cell = g.add(AcousticFeedbackCell::new(0.5, 1.0, 100.0));
+        g.connect_ideal(cell, 0, cell, 0); // ideal acoustic self-loop — compile must auto-delay it
+        let tap = g.add(TestSource::new(Volts::new(0.0), Ohms::new(150.0)));
+        g.set_output(tap, 0);
+        let mut sched = compile(g, 8, rate(), 0).expect("acoustic self-loop compiles");
+        assert_eq!(
+            delayed_edge_kinds(&sched),
+            (1, 1),
+            "the air edge is delayed"
+        );
+
+        let mut out = VoltageBuffer::zeros(8, rate());
+        // pₙ = 0.5·pₙ₋₁ + 1, p starts 0: 1, 1.5, 1.75, 1.875, 1.9375 → 2.
+        for expected in [1.0_f32, 1.5, 1.75, 1.875, 1.9375] {
+            sched.process(&mut out);
+            let p = pool_pressure(&sched);
+            assert!(
+                (p - expected).abs() < 1e-5,
+                "below-unity loop: got {p}, expected {expected}"
+            );
+        }
+    }
+
+    /// A **super-unity** loop builds toward feedback and self-limits at the rail: `pₙ = 2·pₙ₋₁ + 1`
+    /// grows 1, 3, 7, 15, 31, 63, then 2·63+1 = 127 clamps to the 100 rail and stays — the emergent
+    /// "it howls until it pins" ceiling, no feedback special-casing anywhere.
+    #[test]
+    fn a_super_unity_loop_grows_then_self_limits_at_the_rail() {
+        let mut g = Graph::new();
+        let cell = g.add(AcousticFeedbackCell::new(2.0, 1.0, 100.0));
+        g.connect_ideal(cell, 0, cell, 0);
+        let tap = g.add(TestSource::new(Volts::new(0.0), Ohms::new(150.0)));
+        g.set_output(tap, 0);
+        let mut sched = compile(g, 8, rate(), 0).expect("acoustic self-loop compiles");
+
+        let mut out = VoltageBuffer::zeros(8, rate());
+        let mut prev = 0.0_f32;
+        let mut pinned = false;
+        for _ in 0..9 {
+            sched.process(&mut out);
+            let p = pool_pressure(&sched);
+            if pinned {
+                assert!(
+                    (p - 100.0).abs() < 1e-4,
+                    "stays pinned at the rail, got {p}"
+                );
+            } else {
+                assert!(p > prev, "super-unity loop must grow: {p} !> {prev}");
+                if (p - 100.0).abs() < 1e-4 {
+                    pinned = true;
+                }
+            }
+            prev = p;
+        }
+        assert!(
+            pinned,
+            "a super-unity loop must reach the rail and self-limit"
+        );
+    }
+
+    // --- Story 8.3 exit gate: the feedback scenario through real transducers, by hand calc. ---
+
+    /// Run a **real** acoustic feedback loop for `blocks` blocks and return the monitor's radiated
+    /// pressure (Pa) after each block. The loop is `mic → receiver → sum(+drive) → gain → monitor →
+    /// air → mic`, with a constant analog `drive` seeding it (a faint steady stimulus the loop
+    /// amplifies — real feedback rings up from room ambience / the noise floor; a deterministic drive
+    /// stands in). Every impedance is bridging (edge dividers ≈ 1) and the monitor is 1 Pa/V at unity
+    /// volume, so the per-block recurrence is exactly `pₙ = clamp(gain·(drive + sensitivity·pₙ₋₁),
+    /// ±rail)`, i.e. loop gain `L = gain · sensitivity`. The air edge is the auto-delayed leg.
+    fn run_feedback_loop(
+        sensitivity: f32,
+        gain: f32,
+        drive: f32,
+        rail: f32,
+        blocks: usize,
+    ) -> Vec<f32> {
+        let mut g = Graph::new();
+        let drv = g.add(TestSource::new(Volts::new(drive), Ohms::new(150.0)));
+        let mic = g.add(DynamicMic::new(sensitivity, Ohms::new(200.0)));
+        let rcv = g.add(BalancedReceiver::new(Ohms::new(1e9), Ohms::new(1.0)));
+        let sum = g.add(PassiveSum::new(
+            vec![InputZ::new(Ohms::new(1e9)), InputZ::new(Ohms::new(1e9))],
+            Ohms::new(1.0),
+        ));
+        let amp = g.add(GainStage::new(
+            gain,
+            Volts::new(rail),
+            InputZ::new(Ohms::new(1e9)),
+            Ohms::new(1.0),
+        ));
+        let mon = g.add(PoweredMonitor::new(1.0, InputZ::new(Ohms::new(1e9))));
+        g.connect_ideal(mic, 0, rcv, 0); // balanced analog → single-ended
+        g.connect_ideal(rcv, 0, sum, 0); // the loop return into the summing node
+        g.connect_ideal(drv, 0, sum, 1); // the constant drive (seed) into the summing node
+        g.connect_ideal(sum, 0, amp, 0);
+        g.connect_ideal(amp, 0, mon, 0);
+        g.connect_ideal(mon, 0, mic, 0); // ACOUSTIC air hop — auto-delayed, closes the loop
+        g.set_output(amp, 0);
+        let mut sched = compile(g, 8, rate(), 0).expect("feedback loop auto-breaks and compiles");
+        let mut out = VoltageBuffer::zeros(8, rate());
+        (0..blocks)
+            .map(|_| {
+                sched.process(&mut out);
+                pool_pressure(&sched)
+            })
+            .collect()
+    }
+
+    /// **Below unity, the loop settles.** A sensitive (condenser-like, 10 mV/Pa) mic at gain 50 ⇒ loop
+    /// gain `L = 50·0.01 = 0.5`; drive 0.01 V ⇒ per-block injection `A = 50·0.01 = 0.5`. So
+    /// `pₙ = 0.5 + 0.5·pₙ₋₁` climbs 0.5, 0.75, 0.875, … and converges to `A/(1−L) = 1.0 Pa`, bounded —
+    /// the "under the feedback threshold, the monitor just adds a little" case.
+    #[test]
+    fn a_below_unity_loop_through_real_transducers_settles() {
+        let ps = run_feedback_loop(0.01, 50.0, 0.01, 10.0, 20);
+        assert!((ps[0] - 0.5).abs() < 1e-4, "block 1: got {}", ps[0]);
+        assert!((ps[1] - 0.75).abs() < 1e-4, "block 2: got {}", ps[1]);
+        assert!((ps[2] - 0.875).abs() < 1e-4, "block 3: got {}", ps[2]);
+        assert!(
+            (ps[19] - 1.0).abs() < 1e-3,
+            "settles to 1 Pa, got {}",
+            ps[19]
+        );
+        assert!(
+            ps.iter().all(|&p| p <= 1.0 + 1e-6),
+            "a below-unity loop stays bounded below its fixed point"
+        );
+    }
+
+    /// **Above unity, howlround emerges and self-limits at the rail.** The same mic at gain 200 ⇒
+    /// `L = 2.0`: the pressure climbs 2, 6, … until the amp pins its ±10 V rail, which (at 1 Pa/V)
+    /// caps the monitor at **10 Pa** — the Larsen howl, ceilinged by the physics, not special-cased.
+    #[test]
+    fn a_super_unity_loop_through_real_transducers_rings_up_to_the_rail() {
+        let ps = run_feedback_loop(0.01, 200.0, 0.01, 10.0, 8);
+        assert!((ps[0] - 2.0).abs() < 1e-3, "block 1: got {}", ps[0]);
+        assert!((ps[1] - 6.0).abs() < 1e-3, "block 2: got {}", ps[1]);
+        assert!(ps[1] > ps[0], "the loop is building toward feedback");
+        assert!(
+            (ps[7] - 10.0).abs() < 1e-3,
+            "pinned at the 10 Pa rail ceiling, got {}",
+            ps[7]
+        );
+        assert!(
+            ps.iter().all(|&p| p <= 10.0 + 1e-3),
+            "the howl never exceeds the rail ceiling"
+        );
+    }
+
+    /// **A dynamic resists feedback that makes a condenser howl.** At the *same* gain (200), the
+    /// ~14 dB-less-sensitive dynamic (2 mV/Pa) stays stable where the sensitive condenser-like mic
+    /// (10 mV/Pa) rings away:
+    ///   condenser: `L = 200·0.01 = 2.0` (> 1) ⇒ howls up to the 10 Pa rail
+    ///   dynamic:   `L = 200·0.002 = 0.4` (< 1) ⇒ settles at `A/(1−L) = 2.0/0.6 = 3.333 Pa`, clear of it
+    /// This is the emergent "why loud stages favour dynamics" lesson — the same Story-8.1 sensitivity
+    /// gap, now as feedback headroom.
+    #[test]
+    fn a_dynamic_resists_feedback_that_makes_a_condenser_howl() {
+        let cond = run_feedback_loop(0.01, 200.0, 0.01, 10.0, 12);
+        let dynamic = run_feedback_loop(0.002, 200.0, 0.01, 10.0, 40);
+        assert!(
+            (cond[11] - 10.0).abs() < 1e-3,
+            "the condenser howls to the rail, got {}",
+            cond[11]
+        );
+        assert!(
+            (dynamic[39] - 3.3333).abs() < 1e-2,
+            "the dynamic settles below the rail, got {}",
+            dynamic[39]
+        );
+        assert!(
+            dynamic.iter().all(|&p| p < 10.0),
+            "the dynamic never reaches the feedback ceiling"
+        );
+        // The gap is the sensitivity ratio: the dynamic needs 20·log10(0.01/0.002) = 13.98 dB more
+        // gain to reach the same loop unity.
+        let gap_db = 20.0 * (0.01_f32 / 0.002).log10();
+        assert!(
+            (gap_db - 13.979).abs() < 1e-2,
+            "the feedback-resistance headroom is ~14 dB, got {gap_db}"
+        );
+    }
+}
+
+/// White-box tests for the **acoustic carrier**: an ideal-air pressure edge (`AcousticRoute`) is a
+/// unity copy at the analog rate, and an acoustic↔analog edge has no bridge on a wire (a microphone
+/// is the transducer, and it lives *inside* a node), so `compile` rejects it as a `DomainMismatch`.
+/// Scaffolding mirrors `digital_seam`/`event_seam`; tests inspect the private pools (white-box).
+mod acoustic_seam {
+    use super::super::*;
+    use crate::electrical::{InputZ, Ohms};
+    use crate::node::TestSource;
+    use crate::port::{AcousticFace, InputPort, OutputPort};
+    use crate::signal::{Pascals, Volts};
+
+    fn analog_rate() -> AnalogRate {
+        AnalogRate::new(384_000.0)
+    }
+
+    /// A sound source: no inputs, one acoustic output filled with a constant pressure.
+    struct AcousticSource {
+        pressure: f32,
+        outputs: [OutputPort; 1],
+    }
+    impl AcousticSource {
+        fn new(pressure: Pascals) -> Self {
+            Self {
+                pressure: pressure.get(),
+                outputs: [AcousticFace::new().into()],
+            }
+        }
+    }
+    impl Node for AcousticSource {
+        fn inputs(&self) -> &[InputPort] {
+            &[]
+        }
+        fn outputs(&self) -> &[OutputPort] {
+            &self.outputs
+        }
+        fn process(&mut self, _params: &Params, _inputs: &[Lane], outputs: &mut [Lane]) {
+            outputs[0].pressure_mut().fill(Pascals::new(self.pressure));
+        }
+    }
+
+    /// An acoustic sink: one acoustic input, no outputs. A no-op — tests read its input lane.
+    struct AcousticSink {
+        inputs: [InputPort; 1],
+    }
+    impl AcousticSink {
+        fn new() -> Self {
+            Self {
+                inputs: [AcousticFace::new().into()],
+            }
+        }
+    }
+    impl Node for AcousticSink {
+        fn inputs(&self) -> &[InputPort] {
+            &self.inputs
+        }
+        fn outputs(&self) -> &[OutputPort] {
+            &[]
+        }
+        fn process(&mut self, _params: &Params, _inputs: &[Lane], _outputs: &mut [Lane]) {}
+    }
+
+    /// An analog sink: one analog input, no outputs — used to force an acoustic↔analog mismatch.
+    struct AnalogSink {
+        inputs: [InputPort; 1],
+    }
+    impl AnalogSink {
+        fn new() -> Self {
+            Self {
+                inputs: [InputZ::new(Ohms::new(10_000.0)).into()],
+            }
+        }
+    }
+    impl Node for AnalogSink {
+        fn inputs(&self) -> &[InputPort] {
+            &self.inputs
+        }
+        fn outputs(&self) -> &[OutputPort] {
+            &[]
+        }
+        fn process(&mut self, _params: &Params, _inputs: &[Lane], _outputs: &mut [Lane]) {}
+    }
+
+    #[test]
+    fn acoustic_lanes_are_mono_at_the_analog_rate() {
+        // Unlike a digital lane (decimated to block_len / M), a pressure lane is a dense block at
+        // the analog rate — one lane per port (mono), the full block length.
+        let mut g = Graph::new();
+        let src = g.add(AcousticSource::new(Pascals::new(1.0)));
+        let sink = g.add(AcousticSink::new());
+        g.connect_ideal(src, 0, sink, 0);
+        g.set_output(src, 0); // acoustic tap; this test only inspects the pool, never calls process
+        let sched = compile(g, 16, analog_rate(), 0).expect("valid acoustic chain");
+
+        let pressure_lanes: Vec<&Lane> = sched
+            .output_pool
+            .iter()
+            .chain(sched.input_pool.iter())
+            .filter(|l| matches!(l, Lane::Pressure(_)))
+            .collect();
+        assert_eq!(
+            pressure_lanes.len(),
+            2,
+            "one source-output + one sink-input pressure lane"
+        );
+        for lane in pressure_lanes {
+            assert_eq!(lane.domain(), Domain::Acoustic);
+            assert_eq!(
+                lane.len(),
+                16,
+                "an acoustic lane is the full block (no decimation)"
+            );
+        }
+    }
+
+    #[test]
+    fn acoustic_route_copies_pressure_unchanged() {
+        // A separate analog node is the (voltage) output tap so `process` can run; the acoustic
+        // source → sink component runs alongside, and its AcousticRoute copies the pressure 1:1
+        // (ideal air — no divider, no rolloff).
+        let mut g = Graph::new();
+        let atap = g.add(TestSource::new(Volts::new(1.0), Ohms::new(150.0)));
+        g.set_output(atap, 0);
+        let src = g.add(AcousticSource::new(Pascals::new(0.7)));
+        let sink = g.add(AcousticSink::new());
+        g.connect_ideal(src, 0, sink, 0);
+
+        let mut sched = compile(g, 16, analog_rate(), 0).expect("valid mixed chain");
+        let mut out = VoltageBuffer::zeros(16, analog_rate());
+        sched.process(&mut out);
+
+        // The sink's input pressure lane received the source's 0.7 Pa, unattenuated.
+        let sink_in = sched
+            .input_pool
+            .iter()
+            .find(|l| matches!(l, Lane::Pressure(_)))
+            .expect("an acoustic input lane");
+        assert!(sink_in.pressure().as_slice().iter().all(|&p| p == 0.7));
+    }
+
+    #[test]
+    fn rejects_acoustic_into_analog() {
+        // A pressure output into a voltage input: no physics bridges the domains on a wire (the
+        // microphone transducer lives inside a node), so compile rejects the edge.
+        let mut g = Graph::new();
+        let src = g.add(AcousticSource::new(Pascals::new(1.0)));
+        let sink = g.add(AnalogSink::new());
+        g.connect_ideal(src, 0, sink, 0);
+        g.set_output(src, 0);
+        assert_eq!(
+            compile(g, 16, analog_rate(), 0).err(),
+            Some(CompileError::DomainMismatch {
+                from_node: 0,
+                from_port: 0,
+                to_node: 1,
+                to_port: 0,
+            })
+        );
     }
 }
