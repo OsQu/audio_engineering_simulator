@@ -945,14 +945,17 @@ whole front-end story (mic choice, phantom, gain staging, the pad, feedback) —
 
 ---
 
-## Epic 9 — Instruments: SoundFont-Based MIDI Voices — 🚧 **In progress (9.1 ✅; 9.2 planning)**
+## Epic 9 — Instruments: SoundFont-Based MIDI Voices — 🚧 **In progress (9.1 ✅; 9.2 ✅)**
 
 **Progress:** Story 9.1 ✅ **done — the feasibility spike returned GO**: `rustysynth` v1.3.6 (MIT) renders a
 recognizable GM note and its render path is **zero-alloc** (even including the first render, with a chord
 held, and through a voice-stealing burst past its 64-voice pool, reverb/chorus on), **panic-free** on the
 note path under adversarial input, and **compiles for `wasm32-unknown-unknown`** loading the font from a
-`Cursor<&[u8]>`. No fork / `OxiSynth` fallback needed. **Next: Story 9.2 — the `SoundFontSource` node +
-internal-DA chassis.** Stories 9.2–9.5 stay coarse, fleshed out on arrival. This is the epic Epic 8
+`Cursor<&[u8]>`. No fork / `OxiSynth` fallback needed. Story 9.2 ✅ **done**: the `SoundFontSource` node +
+headless `→ DaConverter →` volts chassis — events become a recognizable, correctly-pitched, polyphonic,
+velocity-sensitive GM voice, zero-alloc and panic-free on the node's own `process`. **Next: Story 9.3 — the
+asset-delivery byte seam (host fetches the `.sf2` across the wasm boundary) + preset selection.** Stories
+9.3–9.5 stay coarse, fleshed out on arrival. This is the epic Epic 8
 explicitly deferred ("SoundFont / multisample instruments —
 a separate future epic (no rustysynth, no sample assets, no polyphony machinery here)"). It gives the
 simulator **recognizable played instruments** — an electric guitar you patch into a dist pedal + amp, an
@@ -1131,7 +1134,7 @@ rule):
 - **Consequence for 9.2+:** `rustysynth` is **not** carried as an engine dependency yet — it enters as a real
   `[dependencies]` entry when the `SoundFontSource` node lands in Story 9.2, isolated behind that one module.
 
-### Story 9.2 — The `SoundFontSource` node + internal-DA chassis (headless) — 🚧 **In progress**
+### Story 9.2 — The `SoundFontSource` node + internal-DA chassis (headless) — ✅ **Done**
 
 *Goal:* build the black-box instrument core as a real engine node and prove the whole digital→analog chassis
 headless. `SoundFontSource` consumes the **event lane** (note-on/off + velocity), renders a GM voice through
@@ -1203,7 +1206,42 @@ voltage/acoustic output faces + catalog are 9.4).
 
 *Program design:* `docs/epics/epic-9/story-9.2-soundfont-source.md`
 
-*Validate:* the headless `SoundFontSource → DaConverter` chassis turns note-on/off + velocity events into a
-recognizable, correctly-pitched, polyphonic GM voice in **volts**, verified **zero-alloc and panic-free on the
-node's `process`** under the counting allocator (chord held + voice-stealing), deterministic, with `cargo wasm`
-green — the full pre-push gate passing.
+*Validate:* ✅ **met** — the headless `SoundFontSource → DaConverter` chassis turns note-on/off + velocity
+events into a recognizable, correctly-pitched, polyphonic GM voice in **volts**, verified **zero-alloc and
+panic-free on the node's `process`** under the counting allocator (chord held + voice-stealing), deterministic,
+with `cargo wasm` green — the full pre-push gate passing.
+
+*Delivered:* the `SoundFontSource` node (`crates/engine/src/node/sound_font.rs`) wrapping `rustysynth` v1.3.6
+(now a real, isolated `engine` dependency) — event-in (`EventFace`) → digital `Sample`-out @ 48 kHz — plus the
+headless chassis proven end-to-end through the shipped `DaConverter` (8× → 384 kHz volts). All four tasks green
+under the full pre-push gate.
+- **9.2.1** — the node: construct-time fallible parse (`SoundFontError`, no `rustysynth` type in any public
+  signature); font read from a `Cursor` (the wasm path); events drained and the render **sub-sliced at each
+  event's digital frame**, rendered in `[f32; 64]` **stack** chunks (no heap scratch — `prepare` isn't told the
+  block length), folded L+R→mono (`0.5·(L+R)`), **clamped to ±1.0** (the node is the module's internal
+  full-scale digital bus). Node-alone tests in `crates/engine/tests/soundfont.rs`.
+- **9.2.2** — chassis wired in-test (`SoundFontSource → DaConverter`, `connect_ideal` → a `DigitalRoute`):
+  silent-until-triggered, finite audible volts, **in-tune** (A4's 440 Hz bin ≫ a detuned 550 Hz bin), timing
+  honored (with a guard band), note-off releases.
+- **9.2.3** — polyphony proven by a **differential** test (a held chord keeps the non-last notes ringing, which
+  a monophonic voice couldn't); velocity scales sustained RMS.
+- **9.2.4** — the hot-path gates on the node's *own* `process`: `no_alloc.rs` extended with the chassis (chord
+  held + 80-note-on steal burst) asserts **zero** allocations over 128 blocks; adversarial events (out-of-range
+  note/velocity, note-off for an absent note, exhausted polyphony) are panic-free and finite; `cargo wasm`
+  builds `engine` + `rustysynth` for wasm32.
+
+*Deviations & known simplifications (not bugs):*
+- **Reverb/chorus left off** and the **source is param-free** (fixed GM preset at construction, no LEVEL) — the
+  richness pass, preset **selection**, and the byte seam are 9.3/9.4. Loudness currently rides the DA reference.
+- **Provisional 1 V DA reference** in the test chassis (full scale → ±1 V) — the real hi-Z instrument-out vs
+  acoustic-out faces and their calibration are Story 9.4.
+- **Note timing quantizes to `rustysynth`'s internal `block_size`** (64 frames ≈ 1.3 ms) — the honest
+  control-rate of a sample module; sub-slicing honors ordering, not the individual frame.
+- **Pitch/release tests use the drawbar organ (GM 16)**, a sustained preset the single-bin DFT reads cleanly;
+  the default piano's decay would muddy them. The "plays a note" test still uses the piano.
+- **`test_util` is `#[cfg(test)]`-internal**, so `soundfont.rs` (an integration test) carries small local
+  `rms`/`tone_amplitude` copies.
+- **Correction to a 9.1 note:** the `self.sound_font.presets[preset]` index `rustysynth`'s `note_on` performs is
+  actually **safe** — `preset` there is a *resolved* lookup value with a GM fallback, not the raw program number
+  (`set_patch` just stores the number). So a future 9.5 program-change-via-events would **not** need a guard on
+  that index (channel-range is already checked internally).
