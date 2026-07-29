@@ -163,6 +163,74 @@ fn note_to_freq(note: u8) -> f64;
 **Done:** a held chord sounds all its pitches simultaneously (non-last notes provably present), and
 higher velocity yields a louder note — both green.
 
-## Task 9.2.4 — Hot-path gates on the node's `process`  · planned
-_(program design drafted at pickup — extends `crates/engine/tests/no_alloc.rs` with the chassis; the
-counting allocator asserts zero over ≥128 event-driven blocks + a voice-steal burst.)_
+## Task 9.2.4 — Hot-path gates on the node's `process`  · done
+
+Two homes, no `src` change:
+- **Zero-alloc** → a new sub-function in `crates/engine/tests/no_alloc.rs`, called (serially, per that
+  file's shared-counter note) from the existing `#[test] process_paths_are_allocation_free`.
+- **Panic-free (adversarial)** → a test in `crates/engine/tests/soundfont.rs` (the node's behavioral
+  home), reusing `chassis` / `play_events`.
+- **Wasm** → no new code; `cargo wasm` in the gate already builds `engine` + `rustysynth` for wasm32
+  (green since 9.2.1). Just re-confirmed.
+
+**Zero-alloc sub-function (mirrors `voice_with_events_and_params_is_allocation_free`):**
+
+```rust
+fn soundfont_chassis_is_allocation_free() {
+    // Font read + SoundFont::new + compile all allocate — but BEFORE the measured window opens.
+    let bytes = std::fs::read(concat!(env!("CARGO_MANIFEST_DIR"),
+                                      "/../../assets/soundfonts/TimGM6mb.sf2")).unwrap();
+    let block = 1024;                       // 1024 analog = 128 digital frames = 2 rustysynth blocks
+    let mut g = Graph::new();
+    let src = g.add(SoundFontSource::new(&bytes, 0).expect("valid soundfont"));
+    let da  = g.add(DaConverter::new(SampleRate::new(48_000.0), BitDepth::new(24),
+                                     Volts::new(1.0), Ohms::new(150.0)));
+    g.connect_ideal(src, 0, da, 0);
+    g.set_output(da, 0);
+    let mut sched = compile(g, block, rate(), 0).expect("valid chassis");
+    let ev = sched.event_input(src, 0).expect("open event input");  // drive the source directly
+
+    // Pre-queue everything (pushes are pre-allocated, and happen before the window anyway):
+    //  - a C-E-G chord held at offset 0 → steady-state ACTIVE voices across all 128 blocks
+    //    (the 9.1 gate's real condition — activating a pooled voice must grow nothing), and
+    //  - an 80-note-on burst staggered over the first blocks → voice-stealing past the 64 pool.
+    let mut events = EventQueue::with_capacity(128);
+    for note in [60, 64, 67] { events.push(0, ev, NoteOn { note, velocity: 100 }); }
+    for k in 0..80 { events.push(block as u64 * 2 + k, ev, NoteOn { note: 36 + (k%60) as u8, velocity: 100 }); }
+
+    let mut out = VoltageBuffer::zeros(block, rate());
+    let before = ALLOCS.load(Ordering::Relaxed);
+    for _ in 0..128 { sched.process_with_events(&mut out, &mut events); }
+    let after = ALLOCS.load(Ordering::Relaxed);
+    assert_eq!(before, after, "SoundFont chassis allocated {} time(s) over 128 blocks", after - before);
+}
+```
+
+This proves the *node's* real `process` — event drain, sub-sliced chunked render, L+R fold, ±1 clamp,
+then the DA — is zero-alloc through voice activation, steady-state, and stealing. (The 9.1 spike proved
+only raw `render()` over fixed 128-slices; this covers the wrapper the spike didn't build.)
+
+**Panic-free adversarial test (`soundfont.rs`):**
+
+```rust
+#[test]
+fn adversarial_events_do_not_panic() {
+    // Out-of-MIDI-range note/velocity (u8 up to 255), a note-off for a never-played note, and an
+    // exhausted polyphony burst — the node clamps + rustysynth range-checks, so nothing panics and
+    // the output stays finite. The test completing IS the panic-free proof; the finite check guards
+    // against NaN leaking downstream.
+    let block = 8_192;
+    let mut events = vec![
+        (0, NoteOn { note: 200, velocity: 200 }),   // clamped to 127/127
+        (0, NoteOn { note: 255, velocity: 1 }),
+        (0, NoteOff { note: 250 }),                  // never on → no-op
+    ];
+    for k in 0..100 { events.push((k*4, NoteOn { note: 30 + (k%70) as u8, velocity: 90 })); }  // steal
+    let out = play_events(0, block, &events);
+    assert!(out.iter().all(|v| v.is_finite()), "adversarial events must not produce NaN/inf");
+}
+```
+
+**Done:** `no_alloc.rs` asserts zero allocations over 128 event-driven blocks (chord held + steal
+burst) through the node's `process`; adversarial events are panic-free + finite; `cargo wasm` green;
+the full pre-push gate passes — the Story 9.2 Validate gate met.

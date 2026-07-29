@@ -14,10 +14,10 @@
 )]
 
 use engine::{
-    AnalogRate, BalancedDriver, BalancedReceiver, BitDepth, Cable, ClockDomainId, DcBlocker,
-    EventMessage, EventQueue, EventThru, Farads, GainStage, Graph, InputZ, Lane,
+    AnalogRate, BalancedDriver, BalancedReceiver, BitDepth, Cable, ClockDomainId, DaConverter,
+    DcBlocker, EventMessage, EventQueue, EventThru, Farads, GainStage, Graph, InputZ, Lane,
     MultitrackRecorder, Node, NoiseDensity, Ohms, ParamQueue, Params, PassiveSum, SampleBuffer,
-    SampleRate, SynthVoice, TestSource, VoltageBuffer, Volts, compile,
+    SampleRate, SoundFontSource, SynthVoice, TestSource, VoltageBuffer, Volts, compile,
 };
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -57,6 +57,7 @@ fn process_paths_are_allocation_free() {
     analog_chain_is_allocation_free();
     voice_with_events_and_params_is_allocation_free();
     multitrack_recorder_is_allocation_free();
+    soundfont_chassis_is_allocation_free();
 }
 
 fn analog_chain_is_allocation_free() {
@@ -243,6 +244,78 @@ fn voice_with_events_and_params_is_allocation_free() {
         before,
         after,
         "process_io() allocated {} time(s) over 128 blocks",
+        after - before
+    );
+}
+
+fn soundfont_chassis_is_allocation_free() {
+    // The Epic 9 instrument chassis on the hot path: a `SoundFontSource` (event-driven `rustysynth`
+    // render → mono fold → ±1 clamp) into a `DaConverter` (8× to the analog rate). The 9.1 spike
+    // proved raw `render()` over fixed 128-slices is zero-alloc; this proves the *node's* real
+    // `process` — event drain, sub-sliced chunked render, the fold — plus the DA, all through a
+    // compiled schedule. Font read + parse + `compile` allocate freely at construction; the assert
+    // is only on the render loop.
+    //
+    // Steady state means voices already active (the 9.1 condition): a C-E-G chord is held across all
+    // 128 blocks, so activating a pooled voice must grow nothing. An 80-note-on burst then forces
+    // voice-stealing past the 64-voice pool inside the measured window.
+    let bytes = std::fs::read(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../assets/soundfonts/TimGM6mb.sf2"
+    ))
+    .expect("the vendored TimGM6mb.sf2 asset");
+
+    let block = 1024; // 1024 analog = 128 digital frames @ 48 kHz = two rustysynth internal blocks
+    let mut g = Graph::new();
+    let src = g.add(SoundFontSource::new(&bytes, 0).expect("valid soundfont"));
+    let da = g.add(DaConverter::new(
+        SampleRate::new(48_000.0),
+        BitDepth::new(24),
+        Volts::new(1.0),
+        Ohms::new(150.0),
+    ));
+    g.connect_ideal(src, 0, da, 0);
+    g.set_output(da, 0);
+    let mut sched = compile(g, block, rate(), 0).expect("valid chassis");
+    let ev = sched
+        .event_input(src, 0)
+        .expect("the source's open event input");
+
+    // Pre-queue everything (the queue is pre-allocated, and the pushes happen before the window):
+    // the held chord, then the voice-stealing burst staggered over the early blocks.
+    let mut events = EventQueue::with_capacity(128);
+    for note in [60, 64, 67] {
+        events.push(
+            0,
+            ev,
+            EventMessage::NoteOn {
+                note,
+                velocity: 100,
+            },
+        );
+    }
+    for k in 0..80 {
+        events.push(
+            block as u64 * 2 + k,
+            ev,
+            EventMessage::NoteOn {
+                note: 36 + (k % 60) as u8,
+                velocity: 100,
+            },
+        );
+    }
+
+    let mut out = VoltageBuffer::zeros(block, rate());
+    let before = ALLOCS.load(Ordering::Relaxed);
+    for _ in 0..128 {
+        sched.process_with_events(&mut out, &mut events);
+    }
+    let after = ALLOCS.load(Ordering::Relaxed);
+
+    assert_eq!(
+        before,
+        after,
+        "SoundFont chassis process allocated {} time(s) over 128 blocks",
         after - before
     );
 }

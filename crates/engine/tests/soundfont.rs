@@ -285,6 +285,48 @@ fn velocity_scales_loudness() {
     );
 }
 
+// ---- Task 9.2.4: adversarial events are panic-free (the hot-path panic gate) -------------------
+
+#[test]
+fn adversarial_events_do_not_panic() {
+    // Out-of-MIDI-range note/velocity (a `u8` can carry 128..=255), a note-off for a note never
+    // played, and a polyphony-exhausting burst. The node clamps to 7-bit and rustysynth range-checks
+    // internally, so none of these panic and no NaN/inf leaks downstream. The test *completing* is
+    // the panic-free proof; the finite check guards the digital bus.
+    let block = 8_192;
+    let mut events = vec![
+        (
+            0,
+            EventMessage::NoteOn {
+                note: 200,
+                velocity: 200,
+            },
+        ),
+        (
+            0,
+            EventMessage::NoteOn {
+                note: 255,
+                velocity: 1,
+            },
+        ),
+        (0, EventMessage::NoteOff { note: 250 }), // never sounded → a no-op
+    ];
+    for k in 0..100_u64 {
+        events.push((
+            k * 4,
+            EventMessage::NoteOn {
+                note: 30 + (k % 70) as u8,
+                velocity: 90,
+            },
+        ));
+    }
+    let out = play_events(0, block, &events);
+    assert!(
+        out.iter().all(|v| v.is_finite()),
+        "adversarial events must not produce NaN/inf"
+    );
+}
+
 // ---- Local measurement helpers (ported from the crate-internal `test_util`) --------------------
 
 /// MIDI note → frequency (Hz), 12-TET with A4 (note 69) = 440 Hz.
