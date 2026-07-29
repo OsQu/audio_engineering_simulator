@@ -129,7 +129,7 @@ fn chassis(preset: u8, block: usize) -> (Schedule, EventInputId) {
 **Done:** the headless chassis turns note events into recognizable, correctly-pitched volts; gating +
 release verified.
 
-## Task 9.2.3 — Polyphony + velocity  · building
+## Task 9.2.3 — Polyphony + velocity  · done
 
 Tests only, in `crates/engine/tests/soundfont.rs`, reusing the 9.2.2 `chassis` + the ported
 `rms`/`tone_amplitude`. No `src` change — polyphony and velocity are the black box's job (Epic 1's

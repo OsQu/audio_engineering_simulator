@@ -127,24 +127,31 @@ fn chassis(preset: u8, block: usize) -> (Schedule, EventInputId) {
     (sched, ev)
 }
 
-/// Play a single note-on at `offset` (and an optional note-off), render one `block`, return the volts.
-fn play(preset: u8, block: usize, note: u8, on_at: u64, off_at: Option<u64>) -> Vec<f32> {
+/// Render one `block` of `preset` playing `events` (each a block offset + message), return the volts.
+fn play_events(preset: u8, block: usize, events: &[(u64, EventMessage)]) -> Vec<f32> {
     let (mut sched, ev) = chassis(preset, block);
-    let mut q = EventQueue::with_capacity(4);
-    q.push(
-        on_at,
-        ev,
-        EventMessage::NoteOn {
-            note,
-            velocity: 100,
-        },
-    );
-    if let Some(off) = off_at {
-        q.push(off, ev, EventMessage::NoteOff { note });
+    let mut q = EventQueue::with_capacity(events.len().max(1));
+    for &(at, message) in events {
+        q.push(at, ev, message);
     }
     let mut out = VoltageBuffer::zeros(block, rate());
     sched.process_with_events(&mut out, &mut q);
     out.as_slice().to_vec()
+}
+
+/// Play a single note-on at `on_at` (velocity 100) and an optional note-off, over one `block`.
+fn play(preset: u8, block: usize, note: u8, on_at: u64, off_at: Option<u64>) -> Vec<f32> {
+    let mut events = vec![(
+        on_at,
+        EventMessage::NoteOn {
+            note,
+            velocity: 100,
+        },
+    )];
+    if let Some(off) = off_at {
+        events.push((off, EventMessage::NoteOff { note }));
+    }
+    play_events(preset, block, &events)
 }
 
 #[test]
@@ -228,7 +235,62 @@ fn chassis_note_off_releases_to_near_silence() {
     );
 }
 
+// ---- Task 9.2.3: polyphony + velocity (delegated to the black box) -----------------------------
+
+#[test]
+fn chassis_is_polyphonic() {
+    // A held C-major chord (60, 64, 67) vs. only its last note (67). If the voice were monophonic
+    // (last-note priority, like `SynthVoice`), 60 and 64 would be silenced by 67. That they keep
+    // ringing in the chord — but are near-silent when only 67 plays — is polyphony, proven by
+    // contrast (261.6 / 329.6 Hz aren't harmonics of 67's 392 Hz, so the single-67 bins stay clean).
+    let block = 32_768;
+    let on = |note| {
+        (
+            0,
+            EventMessage::NoteOn {
+                note,
+                velocity: 100,
+            },
+        )
+    };
+    let chord = play_events(GM_ORGAN, block, &[on(60), on(64), on(67)]);
+    let single = play_events(GM_ORGAN, block, &[on(67)]);
+    let (chord_tail, single_tail) = (&chord[block / 4..], &single[block / 4..]);
+
+    for note in [60_u8, 64] {
+        let f = note_to_freq(note);
+        let in_chord = tone_amplitude(chord_tail, f, rate());
+        let in_single = tone_amplitude(single_tail, f, rate());
+        assert!(
+            in_chord > 1e-3 && in_chord > in_single * 5.0,
+            "chord tone {note} ({f:.1} Hz) must sound in the chord ({in_chord}) but not when only \
+             67 plays ({in_single})"
+        );
+    }
+}
+
+#[test]
+fn velocity_scales_loudness() {
+    // Same note (A4), soft vs. hard: the black box maps velocity to loudness, so the harder strike
+    // has the greater sustained energy. RMS (not a single bin) because velocity moves brightness too.
+    let block = 32_768;
+    let vel = |velocity| (0, EventMessage::NoteOn { note: 69, velocity });
+    let quiet = play_events(GM_ORGAN, block, &[vel(30)]);
+    let loud = play_events(GM_ORGAN, block, &[vel(120)]);
+    let (q, l) = (rms(&quiet[block / 4..]), rms(&loud[block / 4..]));
+    assert!(q > 1e-4, "even a soft note should be audible, rms {q}");
+    assert!(
+        l > q * 1.5,
+        "a harder strike should be louder: velocity 120 rms {l} vs velocity 30 rms {q}"
+    );
+}
+
 // ---- Local measurement helpers (ported from the crate-internal `test_util`) --------------------
+
+/// MIDI note → frequency (Hz), 12-TET with A4 (note 69) = 440 Hz.
+fn note_to_freq(note: u8) -> f64 {
+    440.0 * 2.0_f64.powf((f64::from(note) - 69.0) / 12.0)
+}
 
 /// Root-mean-square of a slice (empty → 0).
 fn rms(samples: &[f32]) -> f32 {
