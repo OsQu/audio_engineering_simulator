@@ -60,10 +60,15 @@ Biome doesn't format Svelte). Run it after editing any web file.
 This governs every body of work:
 
 1. **Create tasks** for the work before starting.
-2. After completing a task, make sure it **compiles, lints, and passes tests** before reporting it done.
-3. **Do not commit.** Stop and let the user verify what was done.
-4. **Discuss and follow up** on any changes together — the user commits the code himself.
-5. When the user says he has verified and committed, **review his commit message** to confirm it
+2. **Draft the task's program design first, and do not start implementing until the user has gone
+   through it with you.** Before each task, write/refresh its program-design entry in the Story's
+   companion file, then **stop and review it together** — the user must sign off on the shape of the
+   code before any implementation begins. Do not roll from drafting the design straight into writing
+   code unless the user has separately given permission to proceed without the review.
+3. After completing a task, make sure it **compiles, lints, and passes tests** before reporting it done.
+4. **Do not commit.** Stop and let the user verify what was done.
+5. **Discuss and follow up** on any changes together — the user commits the code himself.
+6. When the user says he has verified and committed, **review his commit message** to confirm it
    accurately reflects the work.
 
 Never run `git commit` unless explicitly asked. Committing is the user's verification gate, not a
