@@ -945,7 +945,7 @@ whole front-end story (mic choice, phantom, gain staging, the pad, feedback) —
 
 ---
 
-## Epic 9 — Instruments: SoundFont-Based MIDI Voices — 🚧 **In progress (9.1 ✅)**
+## Epic 9 — Instruments: SoundFont-Based MIDI Voices — 🚧 **In progress (9.1 ✅; 9.2 planning)**
 
 **Progress:** Story 9.1 ✅ **done — the feasibility spike returned GO**: `rustysynth` v1.3.6 (MIT) renders a
 recognizable GM note and its render path is **zero-alloc** (even including the first render, with a chord
@@ -1047,6 +1047,7 @@ Coarse until picked up, per "flesh out on arrival." 9.1 is elaborated below.
 - **Story 9.1** — SoundFont hot-path feasibility spike (**the go/no-go gate**) — *elaborated below.*
 - **Story 9.2** — The `SoundFontSource` node + internal-DA chassis (headless): events → 48 kHz render →
   mono → 8× → volts; monophonic-through-polyphonic notes proven by tests; zero-alloc/panic-free green.
+  — *elaborated below.*
 - **Story 9.3** — Asset-delivery seam: host fetches the `.sf2`, bytes cross the wasm boundary to the node
   (DawControl-style upload or imperative catalog builder); construct-time parse; preset selection.
 - **Story 9.4** — Instrument devices + web: an electric-guitar device (voltage instrument-out → dist pedal
@@ -1129,3 +1130,80 @@ rule):
   *rejected*, TimGM6mb accepted. Validate any candidate `.sf2` against `SoundFont::new` before adopting it.
 - **Consequence for 9.2+:** `rustysynth` is **not** carried as an engine dependency yet — it enters as a real
   `[dependencies]` entry when the `SoundFontSource` node lands in Story 9.2, isolated behind that one module.
+
+### Story 9.2 — The `SoundFontSource` node + internal-DA chassis (headless) — 🚧 **In progress**
+
+*Goal:* build the black-box instrument core as a real engine node and prove the whole digital→analog chassis
+headless. `SoundFontSource` consumes the **event lane** (note-on/off + velocity), renders a GM voice through
+`rustysynth` at **48 kHz**, folds stereo→mono, and emits on the **`Sample` lane**; the existing `DaConverter`
+takes it **8× → 384 kHz volts**. This realizes the epic's "an instrument is a digital sound module with an
+internal DA" decision (`PROJECT_PLAN` §5.6 "one chassis, many nodes") end to end, with everything **inside the
+zero-alloc / panic-free / deterministic hot-path contract** — the risk the 9.1 spike de-risked for raw
+`rustysynth`, now re-proven on the *node's own* `process` (event drain + chunked render + fold). No devices,
+no faceplates, no byte seam yet — the font is fed straight in for tests (asset delivery is 9.3; the
+voltage/acoustic output faces + catalog are 9.4).
+
+*Watch out:*
+- **The hot path is the whole risk (again).** The spike proved raw `render()` over 128-frame slices is
+  zero-alloc; 9.2 must re-prove it for the *node's* `process` — event draining, **sub-sliced** renders at
+  arbitrary event frames, and the stereo→mono fold — under `no_alloc.rs`. Verify, don't assume the spike covers it.
+- **rustysynth quantizes note starts to its internal `block_size`** (default **64** frames ≈ 1.3 ms). A
+  `note_on` between `render` calls only takes effect at the next internal block boundary — so sub-slicing our
+  renders at event frames buys ordering + timing down to `block_size`, not to the individual frame. This is the
+  honest control-rate of a sample module, **not a bug**; documented so the sample-accuracy expectation is calibrated.
+- **`prepare()` gives only the analog rate, never the block length** — so a heap scratch buffer for rustysynth's
+  stereo output can't be sized at compile. Render in fixed-size **stack** chunks (`[f32; 64]`) instead; no heap
+  scratch, and the chunk loop *is* the event-sub-slicing loop.
+- **The source writes `Sample` with no AD in front of it**, so it must **clamp its own mono output to ±1.0** —
+  it is the module's internal full-scale digital bus, and rustysynth can exceed ±1 on reverb/transient peaks.
+- **Keep `rustysynth` out of engine's *public* API.** The constructor takes **bytes** and parses internally
+  (fallible: wrap `SanityCheckFailed`); no `rustysynth::*` type appears in a `pub` signature. Isolated behind
+  the one `node/sound_font.rs` module.
+- **Novel node topology:** event-in + digital-out (the `SynthVoice` is event-in/analog-out; the AD is
+  analog-in/digital-out). It's the first of its kind — verify the schedule partitions/sizes it correctly (it
+  reuses the AD's `DigitalFace` lane-sizing path, so this should be free, but confirm at build).
+
+*Design notes (settled at planning):*
+- **Timing: sub-slice the render at event digital-frames.** In `process`, drain events in order; for each event
+  at digital frame `f = offset / M`, render frames `[cursor, f)` (in `[f32; 64]` stack chunks, folding
+  L+R→mono), then apply the clamped `note_on`/`note_off`; render the remainder after the last event.
+  Granularity resolves to rustysynth's `block_size` (kept at the default **64**). *Rejected:* block-rate MIDI
+  (apply all events at frame 0, one full render) — simpler but throws away the event lane's sample-accuracy
+  entirely (quantizes to the whole ~2.67 ms engine block), against the two-lane ethos (`CLAUDE.md` §5). Finer
+  `block_size` (≈16) was also rejected for v1: ~4× the reverb/chorus/env overhead for sub-ms gains nobody asked for.
+- **Stereo→mono fold = `0.5·(L+R)`.** The engine is mono epic-wide; averaging (not summing) keeps a centered
+  voice at unity rather than doubling it.
+- **Reverb/chorus OFF for the headless chassis.** Cleaner release-to-silence assertions (no reverb tail) and
+  lower DSP; both are deterministic either way (the determinism claim holds on or off). Richness is a 9.4 call.
+- **Source is param-free in 9.2.** Preset selection is a 9.3 config concern; loudness rides the DA reference /
+  downstream gain; velocity rides the event. `Gate(bool)` events are **ignored** (a soundfont note needs a
+  pitch a bare gate can't supply). `note_on` key/velocity are **clamped to 0–127** as the safe wrapper (the
+  9.1 panic audit found the note path clean, but clamping costs nothing and future-proofs).
+- **Font fed straight in for tests.** `SoundFontSource::new(&sf2_bytes, preset)` parses at construction; tests
+  read `assets/soundfonts/TimGM6mb.sf2` (a **shared** repo-root asset the 9.4 web build will reuse) via
+  `CARGO_MANIFEST_DIR` at runtime. `rustysynth` enters `crates/engine/Cargo.toml` as a real dependency here.
+- **Headless DA chassis is provisional.** For 9.2 the `DaConverter` reference/`z_out` are chosen for clean test
+  assertions (a 1.0 V reference ⇒ full-scale ±1 → ±1 V); the real hi-Z instrument-out vs acoustic-out faces and
+  their calibration are 9.4 — **not a bug** that 9.2's numbers are stand-ins.
+
+- **Task 9.2.1** — `rustysynth` dep + the shared `TimGM6mb.sf2` asset + the `SoundFontSource` node skeleton
+  (event-in / `Sample`-out @ 48 kHz, construct-time fallible parse, clamped note wrapper, chunked stereo→mono
+  render). *Done:* a native test drives the node alone — note-on middle C, run `process`, assert the `Sample`
+  lane is finite and non-silent; garbage bytes → a construction error, not a panic.
+- **Task 9.2.2** — The headless chassis end-to-end: `SoundFontSource → DaConverter` in a `Graph` (digital edge,
+  8× → 384 kHz). *Done:* silent-until-triggered; a played note is finite non-silent volts; its fundamental
+  matches the played pitch (hand-checked via `tone_amplitude`); a mid-block note-on is silent before its
+  (block-quantized) frame; note-off releases toward silence.
+- **Task 9.2.3** — Polyphony + velocity from the black box. *Done:* a held chord sounds multiple simultaneous
+  pitches (each fundamental present); higher velocity ⇒ larger output — proven by tests.
+- **Task 9.2.4** — The hot-path gates on the *node's* `process`. *Done:* `no_alloc.rs` extended with the
+  `SoundFontSource → DA` chassis driven by events asserts **zero** allocations over ≥128 blocks (chord held +
+  voice-steal burst); adversarial events (out-of-range key/velocity, exhausted polyphony, note-off for absent
+  notes) are panic-free; `cargo wasm` still compiles `engine` with `rustysynth` in the tree.
+
+*Program design:* `docs/epics/epic-9/story-9.2-soundfont-source.md`
+
+*Validate:* the headless `SoundFontSource → DaConverter` chassis turns note-on/off + velocity events into a
+recognizable, correctly-pitched, polyphonic GM voice in **volts**, verified **zero-alloc and panic-free on the
+node's `process`** under the counting allocator (chord held + voice-stealing), deterministic, with `cargo wasm`
+green — the full pre-push gate passing.
