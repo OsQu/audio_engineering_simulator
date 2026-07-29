@@ -945,10 +945,15 @@ whole front-end story (mic choice, phantom, gain staging, the pad, feedback) —
 
 ---
 
-## Epic 9 — Instruments: SoundFont-Based MIDI Voices — 🚧 **In progress (9.1)**
+## Epic 9 — Instruments: SoundFont-Based MIDI Voices — 🚧 **In progress (9.1 ✅)**
 
-**Progress:** Story 9.1 🚧 in progress (the feasibility spike — the go/no-go gate); Stories 9.2–9.5 coarse,
-fleshed out on arrival. This is the epic Epic 8 explicitly deferred ("SoundFont / multisample instruments —
+**Progress:** Story 9.1 ✅ **done — the feasibility spike returned GO**: `rustysynth` v1.3.6 (MIT) renders a
+recognizable GM note and its render path is **zero-alloc** (even including the first render, with a chord
+held, and through a voice-stealing burst past its 64-voice pool, reverb/chorus on), **panic-free** on the
+note path under adversarial input, and **compiles for `wasm32-unknown-unknown`** loading the font from a
+`Cursor<&[u8]>`. No fork / `OxiSynth` fallback needed. **Next: Story 9.2 — the `SoundFontSource` node +
+internal-DA chassis.** Stories 9.2–9.5 stay coarse, fleshed out on arrival. This is the epic Epic 8
+explicitly deferred ("SoundFont / multisample instruments —
 a separate future epic (no rustysynth, no sample assets, no polyphony machinery here)"). It gives the
 simulator **recognizable played instruments** — an electric guitar you patch into a dist pedal + amp, an
 acoustic guitar / horn you mic — using a General-MIDI SoundFont played by a ready-made Rust synth
@@ -1006,8 +1011,9 @@ exists after a converter" holds — the converter simply lives *inside* the blac
 - **Wrap `rustysynth` as the black-box DSP core; do not write an SF2 sampler.** The black-box philosophy
   (`PROJECT_PLAN` §3) explicitly permits delegating internal DSP; an SF2 engine (generators, modulators,
   loop points, filters, per-voice envelopes) is large and buys nothing given instruments are non-realistic.
-  Fallback if 9.1's audit fails: [`OxiSynth`](https://github.com/PolyMeilex/OxiSynth) (also pure-Rust SF2),
-  or a small fork of `rustysynth` with a fixed-pool + clamped-index guarantee.
+  **Confirmed by the 9.1 spike — no fork or fallback needed** (`rustysynth` v1.3.6 is zero-alloc + panic-free
+  on the render path as-is). The [`OxiSynth`](https://github.com/PolyMeilex/OxiSynth) / fixed-pool-fork
+  fallback is therefore **not exercised** and recorded only as a contingency if a future need arises.
 - **Polyphony and velocity come from the black box, not from us.** This satisfies Epic 1's deferred
   *polyphony / voice allocation* item **by delegation** — `rustysynth` owns voice allocation / stealing and
   velocity layers. The engine's `EventMessage::NoteOn { note, velocity }` already carries velocity (today's
@@ -1025,8 +1031,11 @@ exists after a converter" holds — the converter simply lives *inside* the blac
 - **Asset delivery mirrors the DAW byte seam.** The host (JS/wasm boundary) fetches the `.sf2` and hands
   the bytes to the node via a `DawControl`-style upload keyed by device id (or an imperative `CatalogEntry`
   builder — the catalog already flags this as an unbuilt extension point). Parse happens at construction;
-  `SoundFont::new` reads from a `Cursor<&[u8]>` on wasm (no `File`). Default GM set: **TimGM6mb (~6 MB)**;
-  *not* FluidR3 (~140 MB).
+  `SoundFont::new` reads from a `Cursor<&[u8]>` on wasm (no `File`). Default GM set: **TimGM6mb (~6 MB)**
+  (the font `rustysynth`'s own example ships; loads cleanly); *not* FluidR3 (~140 MB). **The font is a real
+  compatibility decision, not a free variable** — `rustysynth` runs a structural `SanityCheckFailed` gate at
+  load, and the 9.1 spike found the tiny FluidSynth demo font (VintageDreamsWaves) *rejected* by it while
+  TimGM6mb loaded. Validate any candidate font against `SoundFont::new` before adopting it.
 - **Determinism preserved.** SoundFont playback is deterministic (no RNG; `rustysynth` reverb/chorus are
   deterministic DSP, and none of the render path touches `Instant`/`SystemTime`/threads). Same seed ⇒ same
   output holds.
@@ -1046,7 +1055,7 @@ Coarse until picked up, per "flesh out on arrival." 9.1 is elaborated below.
 - **Story 9.5** *(optional/later)* — depth: velocity curves, more GM instruments, and — if wanted — an
   `EventMessage` extension for pitch-bend / sustain-pedal (revisits the note-only decision).
 
-### Story 9.1 — SoundFont hot-path feasibility spike — 🚧 **In progress**
+### Story 9.1 — SoundFont hot-path feasibility spike — ✅ **Done** (verdict: **GO**)
 
 *Goal:* prove — **before** building anything on it — that `rustysynth` can serve as the black-box synth
 core inside the engine's non-negotiable hot path: zero-alloc and panic-free in steady state under the
@@ -1095,5 +1104,28 @@ verdict + any required mitigation (fork / `OxiSynth` fallback).
 *Validate:* `rustysynth` renders a recognizable GM note in-repo, verified **zero-alloc and panic-free on the
 render path** under the counting allocator (chord held + voice-stealing), and `cargo wasm` compiles the
 engine with it loading a SoundFont from bytes — the go/no-go verdict (and, if no-go, the fork / `OxiSynth`
-fallback decision) recorded. The full green gate holds:
-`cargo fmt --check && cargo lint && cargo test && cargo wasm && cargo docs`.
+fallback decision) recorded.
+
+*Delivered (spike — GO):* proven with `rustysynth` **v1.3.6** (MIT) + **TimGM6mb.sf2** (~6 MB GM, the font
+`rustysynth`'s example uses). All four gates green, in a throwaway integration test + a throwaway wasm crate
+(both removed after the verdict was recorded — kept only in commit history, per the "spike is throwaway"
+rule):
+- **9.1.1** — plays a recognizable middle-C GM note (finite, non-silent). Synth defaults observed: **64-voice
+  polyphony, 64-frame block, reverb+chorus on**.
+- **9.1.2 — the go/no-go gate: PASS.** A counting `#[global_allocator]` (the `no_alloc.rs` pattern) recorded
+  **zero** allocations on the render path — *including the very first `render`*, across 128 blocks with a
+  C-E-G chord held, **and** through a voice-stealing burst (80 note-ons past the 64-voice pool), with
+  reverb/chorus enabled. `rustysynth` pre-allocates its voice pool at construction and grows nothing in
+  `render`; it drops into the hot path **as-is** — no fork, no `OxiSynth` fallback.
+- **9.1.3 — panic-free (note path).** Adversarial `note_on(99, 200, 300)`, `note_on(0, -5, -1)`,
+  `note_off(50, 999)` + `render` did not panic. **Nuance:** this exercised only the *note* path; the known
+  unchecked `self.sound_font.presets[preset]` index is on the **program-change** path, which v1 never drives
+  (preset is set once at construction, per the note-only event scope). **If 9.5 ever adds program-change via
+  events, that index needs a guard** — recorded so it isn't forgotten.
+- **9.1.4 — wasm: PASS.** `rustysynth` compiles for `wasm32-unknown-unknown` and loads the font from a
+  `Cursor<&[u8]>` (bytes, not `File`) — the exact browser path.
+- **Learning — font choice is a compatibility decision, not a free variable:** `rustysynth` runs a
+  structural `SanityCheckFailed` gate at load; the tiny FluidSynth demo font (VintageDreamsWaves) was
+  *rejected*, TimGM6mb accepted. Validate any candidate `.sf2` against `SoundFont::new` before adopting it.
+- **Consequence for 9.2+:** `rustysynth` is **not** carried as an engine dependency yet — it enters as a real
+  `[dependencies]` entry when the `SoundFontSource` node lands in Story 9.2, isolated behind that one module.
