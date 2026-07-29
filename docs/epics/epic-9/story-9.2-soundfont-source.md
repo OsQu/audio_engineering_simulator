@@ -129,8 +129,39 @@ fn chassis(preset: u8, block: usize) -> (Schedule, EventInputId) {
 **Done:** the headless chassis turns note events into recognizable, correctly-pitched volts; gating +
 release verified.
 
-## Task 9.2.3 — Polyphony + velocity  · planned
-_(program design drafted at pickup)_
+## Task 9.2.3 — Polyphony + velocity  · building
+
+Tests only, in `crates/engine/tests/soundfont.rs`, reusing the 9.2.2 `chassis` + the ported
+`rms`/`tone_amplitude`. No `src` change — polyphony and velocity are the black box's job (Epic 1's
+deferred *voice allocation*, satisfied by delegation), so this task **proves** them, it doesn't build
+them. Organ (GM 16) throughout: a sustained tone reads cleanly on the single-bin DFT.
+
+**Helpers (key signatures) — a small reuse cleanup:**
+
+```rust
+// Generalize the single-note `play` into an arbitrary event list; refactor `play` to delegate to it.
+fn play_events(preset: u8, block: usize, events: &[(u64, EventMessage)]) -> Vec<f32>;
+// 12-TET note → Hz, so a test can name a bin by MIDI note (440·2^((n−69)/12)).
+fn note_to_freq(note: u8) -> f64;
+```
+
+**Test plan:**
+- **Polyphony (a differential test, not a control bin).** Play a held **C-major chord** (notes 60,
+  64, 67 all at offset 0) and, separately, play **only note 67** (the last note). In the chord render
+  the fundamentals of the *non-last* notes — `freq(60)` ≈ 261.6 Hz and `freq(64)` ≈ 329.6 Hz — are
+  strongly present; in the single-67 render those same bins are near-silent (261.6 / 329.6 aren't
+  harmonics of 392 Hz). Assert `tone_amplitude(chord, freq(60)) ≫ tone_amplitude(single, freq(60))`
+  (and likewise for 64), each by a wide margin. This is the crux: a **monophonic** voice (like
+  `SynthVoice`) would sound only note 67, so the non-last notes ringing *is* polyphony — proven by
+  contrast, robust to DFT leakage.
+- **Velocity scales loudness.** Play note 69 at velocity **30** and at **120** (same preset, same
+  block); compare the sustain `rms` (tail after `block/4`). Assert the loud render is materially
+  louder (`loud > quiet · 1.5`, exact factor tuned at implement — the 30→120 span is wide) and the
+  soft one is still audible. RMS (not a single bin) because velocity in a SoundFont moves both level
+  and brightness; total energy is the honest, monotonic thing to assert.
+
+**Done:** a held chord sounds all its pitches simultaneously (non-last notes provably present), and
+higher velocity yields a louder note — both green.
 
 ## Task 9.2.4 — Hot-path gates on the node's `process`  · planned
 _(program design drafted at pickup — extends `crates/engine/tests/no_alloc.rs` with the chassis; the
