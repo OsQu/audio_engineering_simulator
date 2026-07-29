@@ -86,11 +86,48 @@ No `group_delay_samples` override (the DA reports the chassis latency).
 **Done:** the node renders a recognizable middle-C GM note onto its `Sample` lane (finite, non-silent);
 garbage bytes surface `SoundFontError` at construction, not a panic.
 
-## Task 9.2.2 — The headless chassis end-to-end (→ DA → volts)  · planned
+## Task 9.2.2 — The headless chassis end-to-end (→ DA → volts)  · done
 
-_(program design drafted at pickup — expected shape: a `Graph` wiring `SoundFontSource → DaConverter`
-with a 1.0 V reference, compiled at 384 kHz; a test helper mirroring `synth.rs`'s `voice_chain` that
-returns the schedule + event-input handle; pitch checked with `tone_amplitude`.)_
+No new `src`: the chassis is wired **in the test** (the device/catalog grouping is 9.4). Tests live in
+`crates/engine/tests/soundfont.rs` alongside 9.2.1 (the shared-asset runtime-read pattern; `test_util` is
+`#[cfg(test)]`-internal and unreachable from an integration test, so small local `rms`/`tone_amplitude`
+helpers are ported in — a single-bin DFT, ~15 lines).
+
+**Chassis wiring + helper (key signatures):**
+
+```rust
+// A compiled SoundFontSource → DaConverter chassis + its open event input.
+fn chassis(preset: u8, block: usize) -> (Schedule, EventInputId) {
+    let mut g = Graph::new();
+    let src = g.add(SoundFontSource::new(&soundfont_bytes(), preset).expect("valid GM soundfont"));
+    let da  = g.add(DaConverter::new(SampleRate::new(48_000.0), BitDepth::new(24),
+                                     Volts::new(1.0), Ohms::new(150.0)));  // 1.0 V ref: full scale → ±1 V
+    g.connect_ideal(src, 0, da, 0);   // the digital edge → a DigitalRoute (8× to 384 kHz)
+    g.set_output(da, 0);              // schedule output is analog volts
+    let sched = compile(g, block, rate(), 0).expect("valid chassis");
+    let ev = sched.event_input(src, 0).expect("open event input");
+    (sched, ev)
+}
+// drive: EventQueue::with_capacity(n).push(offset, ev, NoteOn{..}); sched.process_with_events(&mut volts, &mut q)
+```
+
+**Test plan & the fuzz the DA introduces:**
+- `block` a multiple of `M = 8` (compile rejects otherwise); a large-ish block (e.g. 32 768 analog =
+  4096 digital frames ≈ 85 ms) so a note clearly sounds.
+- **silent-until-triggered:** no events ⇒ DA of digital silence is exact 0 V.
+- **finite, non-silent volts** on a played note; peak within a sane band (the 1 V reference ⇒ ≈±1 V).
+- **in-tune:** play A4 (note 69). Use a **sustained** preset (drawbar organ, GM **16**) so the tone is
+  steady for the DFT (piano decays); assert `tone_amplitude(tail, 440) ≫ tone_amplitude(tail, 550)` (a
+  non-harmonic bin), mirroring `synth.rs`'s in-tune check.
+- **timing honored (not sample-exact):** note-on at analog `block/2`; the region *well before* it is
+  silent and *after* it sounds — with a **guard band** for the DA's linear-phase group delay (~80 analog
+  samples for 161 taps) **plus** rustysynth's `block_size` quantization (64 frames · M = 512 analog). Not
+  a sample-exact boundary (the DA smears it) — documented, not a bug.
+- **note-off releases:** organ note-on at 0, note-off at `block/4`; the final tail's `rms` falls to near
+  silence (reverb/chorus off ⇒ no lingering tail).
+
+**Done:** the headless chassis turns note events into recognizable, correctly-pitched volts; gating +
+release verified.
 
 ## Task 9.2.3 — Polyphony + velocity  · planned
 _(program design drafted at pickup)_
