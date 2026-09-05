@@ -945,7 +945,7 @@ whole front-end story (mic choice, phantom, gain staging, the pad, feedback) —
 
 ---
 
-## Epic 9 — Instruments: SoundFont-Based MIDI Voices — 🚧 **In progress (9.1 ✅; 9.2 ✅)**
+## Epic 9 — Instruments: SoundFont-Based MIDI Voices — 🚧 **In progress (9.1 ✅; 9.2 ✅; 9.3 🚧)**
 
 **Progress:** Story 9.1 ✅ **done — the feasibility spike returned GO**: `rustysynth` v1.3.6 (MIT) renders a
 recognizable GM note and its render path is **zero-alloc** (even including the first render, with a chord
@@ -953,9 +953,11 @@ held, and through a voice-stealing burst past its 64-voice pool, reverb/chorus o
 note path under adversarial input, and **compiles for `wasm32-unknown-unknown`** loading the font from a
 `Cursor<&[u8]>`. No fork / `OxiSynth` fallback needed. Story 9.2 ✅ **done**: the `SoundFontSource` node +
 headless `→ DaConverter →` volts chassis — events become a recognizable, correctly-pitched, polyphonic,
-velocity-sensitive GM voice, zero-alloc and panic-free on the node's own `process`. **Next: Story 9.3 — the
-asset-delivery byte seam (host fetches the `.sf2` across the wasm boundary) + preset selection.** Stories
-9.3–9.5 stay coarse, fleshed out on arrival. This is the epic Epic 8
+velocity-sensitive GM voice, zero-alloc and panic-free on the node's own `process`. Story 9.3 🚧 **in
+progress** — *elaborated below*: a shared parsed-bank asset cache, asset-aware device construction, and
+browser→worklet→WASM delivery of the `.sf2`, with preset selection kept as structural config. **Next
+after 9.3: Story 9.4 — the audible payoff (instrument devices + web).** Stories 9.4–9.5 stay coarse,
+fleshed out on arrival. This is the epic Epic 8
 explicitly deferred ("SoundFont / multisample instruments —
 a separate future epic (no rustysynth, no sample assets, no polyphony machinery here)"). It gives the
 simulator **recognizable played instruments** — an electric guitar you patch into a dist pedal + amp, an
@@ -1031,10 +1033,14 @@ exists after a converter" holds — the converter simply lives *inside* the blac
   (hi-Z); the acoustic instrument exposes an **acoustic-out** (Pa via a sample→transducer, reusing the
   Epic-8 `PoweredMonitor` pattern) to be mic'd. Same `SoundFontSource` core; the face and the loaded GM
   preset differ per device.
-- **Asset delivery mirrors the DAW byte seam.** The host (JS/wasm boundary) fetches the `.sf2` and hands
-  the bytes to the node via a `DawControl`-style upload keyed by device id (or an imperative `CatalogEntry`
-  builder — the catalog already flags this as an unbuilt extension point). Parse happens at construction;
-  `SoundFont::new` reads from a `Cursor<&[u8]>` on wasm (no `File`). Default GM set: **TimGM6mb (~6 MB)**
+- **Asset delivery is construction context, not a live node-control lane.** The host fetches the `.sf2`
+  before initial patch compilation and transfers it across the worklet/WASM boundary under a stable
+  **asset id**. `SceneEngine` owns the parsed-bank cache across schedule swaps; asset-aware device builders
+  borrow it and each instrument constructs independent synth/voice state over the shared immutable bank.
+  *Rejected:* a `DawControl`-style upload keyed by device id — the node needs the bank to construct its
+  synth, an unloaded/silent node is a bad intermediate state, and identical instruments would duplicate the
+  same parse/sample data. `SoundFont::new` reads from a `Cursor<&[u8]>` on wasm (no `File`). Default GM set:
+  **TimGM6mb (~6 MB)**
   (the font `rustysynth`'s own example ships; loads cleanly); *not* FluidR3 (~140 MB). **The font is a real
   compatibility decision, not a free variable** — `rustysynth` runs a structural `SanityCheckFailed` gate at
   load, and the 9.1 spike found the tiny FluidSynth demo font (VintageDreamsWaves) *rejected* by it while
@@ -1045,14 +1051,15 @@ exists after a converter" holds — the converter simply lives *inside* the blac
 
 ### Stories
 
-Coarse until picked up, per "flesh out on arrival." 9.1 is elaborated below.
+Coarse until picked up, per "flesh out on arrival." Stories 9.1–9.3 are elaborated below.
 
 - **Story 9.1** — SoundFont hot-path feasibility spike (**the go/no-go gate**) — *elaborated below.*
 - **Story 9.2** — The `SoundFontSource` node + internal-DA chassis (headless): events → 48 kHz render →
   mono → 8× → volts; monophonic-through-polyphonic notes proven by tests; zero-alloc/panic-free green.
   — *elaborated below.*
-- **Story 9.3** — Asset-delivery seam: host fetches the `.sf2`, bytes cross the wasm boundary to the node
-  (DawControl-style upload or imperative catalog builder); construct-time parse; preset selection.
+- **Story 9.3** — Asset-delivery seam: host fetches the `.sf2`, bytes cross the worklet/WASM boundary
+  under a stable asset id; parse once, cache the parsed bank across recompiles, and feed it to fallible
+  asset-aware device construction; preset selection stays structural config. — *elaborated below.*
 - **Story 9.4** — Instrument devices + web: an electric-guitar device (voltage instrument-out → dist pedal
   + amp chain) and an acoustic device (acoustic-out → mic'd); catalog entries, faceplates, focus keybed,
   played in-browser. The epic's audible payoff.
@@ -1245,3 +1252,76 @@ under the full pre-push gate.
   actually **safe** — `preset` there is a *resolved* lookup value with a GM fallback, not the raw program number
   (`set_patch` just stores the number). So a future 9.5 program-change-via-events would **not** need a guard on
   that index (channel-range is already checked internally).
+
+### Story 9.3 — Shared SoundFont assets across the browser boundary — 🚧 **In progress**
+
+*Goal:* turn Story 9.2's test-only `SoundFontSource::new(&bytes, preset)` construction into the real
+asset seam Story 9.4's devices can build on. The browser fetches the vendored `.sf2` once, transfers it
+through the AudioWorklet boundary before the initial patch compiles, and WASM parses it once into a
+long-lived cache under a stable asset id. Device construction borrows that cache: every instrument gets
+independent mutable synth/voice state and a structurally selected GM preset, while all instances and later
+schedule recompiles share the same immutable parsed sample bank. This Story delivers infrastructure and
+its end-to-end proof; the player-visible electric/acoustic devices and faceplates remain Story 9.4.
+
+*Watch out:*
+- **Asset work is cold-path only.** Fetching, byte transfer, parsing, cache mutation, synth construction,
+  and error formatting happen before rendering or during a structural rebuild — never in `process`.
+  `SoundFontSource::process` must remain zero-alloc, panic-free, deterministic, and byte-I/O-free.
+- **The initial patch cannot race its assets.** An asset-dependent device must not compile as a silent
+  placeholder and wake up later. Required assets arrive before `build_patch`; missing/rejected assets are
+  legible build errors and the current live scene survives a failed hot-swap.
+- **Share only immutable bank data.** A parsed SoundFont may be shared (`Arc` internally), but each device
+  must own a fresh `Synthesizer`; sharing one synth would leak notes, envelopes, and voice stealing between
+  instruments.
+- **Do not bloat the WASM binary or duplicate the source asset.** `TimGM6mb.sf2` stays the single tracked
+  repo asset and is staged as a generated web artifact for fetch; it is not `include_bytes!`-embedded in
+  Rust and not committed a second time under `web/public`.
+- **Distribution provenance is a real gate.** Story 9.1 says the font's license was recorded, but no
+  license/attribution file exists beside the asset today. Verify and record its redistributable terms
+  before treating the browser-shipped font as complete.
+
+*Design notes (settled at planning):*
+- **Split the immutable bank from the mutable player.** Add an opaque, cloneable engine `SoundFontBank`
+  that owns `Arc<rustysynth::SoundFont>`; parsing bytes builds the bank once. `SoundFontSource::from_bank`
+  constructs a fresh `Synthesizer` from it for each device. No `rustysynth` type enters a public signature.
+- **Cache by stable asset id, not device id.** The cache maps a content identity such as `tim_gm_6mb` to
+  one parsed bank. Several guitars/horns share it while keeping their own preset and synth state; renaming
+  or removing a scene device does not affect asset lifetime. *Rejected:* per-device caching, which conflates
+  resource identity with placement identity and duplicates the same ~6 MB parse/sample data.
+- **`SceneEngine` owns cache lifetime across schedules.** The cache sits above `BuiltScene`, so
+  `load_patch`/config changes can build a replacement schedule from cloned bank handles without reparsing.
+  The built schedule owns the handles it needs; swapping/dropping a schedule cannot invalidate the cache.
+- **Device building becomes asset-aware and fallible.** Assets are explicit construction context rather
+  than globals. The ordinary asset-free catalog entries remain simple; an asset-backed builder reports a
+  missing bank or synth-construction failure through `BuildError`. Descriptor generation must not parse the
+  font merely to discover the node's fixed ports.
+- **Preset stays structural and per device.** A scalar `preset` config is normalized to GM program
+  `0..=127` when the device builds a fresh synth; changing it follows the existing config→recompile path.
+  It is not a smoothed param and does not add program-change to the event lane. The visible selector and
+  concrete preset-bearing instrument entries arrive in 9.4; 9.3 proves the construction contract with a
+  private fixture.
+- **Preload the known v1 asset.** The main thread fetches the generated `/soundfonts/TimGM6mb.sf2` artifact
+  once, carries its `ArrayBuffer` in the initial processor options, and the worklet supplies the asset
+  bundle when constructing `SceneEngine`. Dynamic user-imported fonts and eviction are intentionally out of
+  scope; the stable one-font manifest is enough for the planned instruments and leaves the cache additive.
+
+- **Task 9.3.1** — Separate SoundFont parsing from voice construction: add `SoundFontBank`, construct
+  independent `SoundFontSource`s from a shared bank, migrate the 9.2 tests/no-alloc chassis, and prove two
+  sources share immutable data without sharing note state.
+- **Task 9.3.2** — Add the asset-aware construction context: a stable-id bank library passed explicitly
+  through device/patch building, fallible asset-backed builders with missing/build error variants, and the
+  scalar preset normalization contract; prove it with a private fixture without publishing a 9.4 device.
+- **Task 9.3.3** — Carry the default asset browser→worklet→WASM before initial compilation: stage the one
+  tracked `.sf2` into generated web output, fetch/transfer it once, populate `SceneEngine`'s persistent cache,
+  and record the asset's verified distribution license/provenance.
+- **Task 9.3.4** — Prove the lifecycle end to end: initial construction and preset change use the cached
+  bank, repeated patch hot-swaps do not reparse it, multiple sources remain state-independent, and
+  missing/malformed assets fail legibly without replacing the live scene; run the full Rust/WASM/web gates.
+
+*Program design:* `docs/epics/epic-9/story-9.3-soundfont-assets.md`
+
+*Validate:* from the browser-facing initialization path, the one tracked TimGM asset is fetched and
+transferred before patch construction, parsed exactly once under a stable asset id, and reused by
+independent preset-selected sources across config changes and schedule hot-swaps. Missing or malformed
+assets produce legible cold-path errors and never replace a live scene; the SoundFont render path remains
+deterministic, zero-alloc, panic-free, and wasm-buildable, with the complete Rust and web gates green.
