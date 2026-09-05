@@ -34,7 +34,10 @@
 
 use std::borrow::Cow;
 
-use crate::scene::ConfigSetting;
+use crate::{
+    assets::{AssetBuildError, BuildContext, SoundFontBankLibrary},
+    scene::ConfigSetting,
+};
 use engine::{
     AdConverter, BitDepth, CondenserMic, DaConverter, DigitalDemux, DigitalMeter, DigitalMux,
     Domain, DynamicMic, EqBand, EventThru, GainStage, Graph, InputZ, Matrix, MicPreamp, Node,
@@ -365,6 +368,39 @@ struct InternalEdge {
 /// A node builder: constructs one engine node from the device's structural [`DeviceConfig`]. Most
 /// ignore the config; a config-driven builder reads a key to pick an impedance or topology.
 type NodeBuilder = fn(&DeviceConfig) -> Box<dyn Node>;
+
+/// A cold-path builder for a node that needs a host-supplied parsed asset. The normal catalog keeps
+/// using [`NodeBuilder`]; this separate signature prevents asset-free entries from gaining needless
+/// error handling while giving a future instrument entry the explicit construction context it needs.
+pub type AssetNodeBuilder =
+    fn(&DeviceConfig, &BuildContext) -> Result<Box<dyn Node>, AssetBuildError>;
+
+/// Build an asset-backed node with the explicit context supplied by patch assembly.
+///
+/// This is the fallible counterpart to the catalog's ordinary node builders. It is intentionally
+/// public for a future catalog entry, but 9.3 exercises it only with a private fixture: visible
+/// instruments remain Story 9.4 work.
+pub fn build_asset_node(
+    builder: AssetNodeBuilder,
+    config: &DeviceConfig,
+    context: &BuildContext,
+) -> Result<Box<dyn Node>, AssetBuildError> {
+    builder(config, context)
+}
+
+/// Normalize scalar structural config to a GM program number. Finite values round to the nearest
+/// integer then clamp to `0..=127`; non-finite values use the normalized default.
+#[must_use]
+pub fn gm_preset(config: &DeviceConfig, key: &str, default: f32) -> u8 {
+    let normalize = |value: f32| {
+        if value.is_finite() {
+            value.round().clamp(0.0, 127.0) as u8
+        } else {
+            default.round().clamp(0.0, 127.0) as u8
+        }
+    };
+    normalize(config.get_or(key, default))
+}
 
 /// One device type in the catalog — the single place a device is defined. Bundles its identity, its
 /// **node builders** + **internal edges** (the chassis), and the **UI metadata** for its panel. The
@@ -2027,6 +2063,18 @@ fn expand(entry: &CatalogEntry, config: &DeviceConfig) -> Expansion {
 /// `usb_sends`/`usb_returns` grow its port lanes, crosspoints, and readouts — so the returned map is
 /// built for *this* config, not a canonical one.
 pub fn instantiate(type_id: &str, config: &DeviceConfig, g: &mut Graph) -> Option<BuiltDevice> {
+    let assets = SoundFontBankLibrary::default();
+    instantiate_with_assets(type_id, config, g, &BuildContext::new(&assets))
+}
+
+/// Asset-aware variant of [`instantiate`]. Ordinary catalog entries ignore `context`; an
+/// asset-backed entry can instead use [`build_asset_node`] to resolve the bank it needs.
+pub fn instantiate_with_assets(
+    type_id: &str,
+    config: &DeviceConfig,
+    g: &mut Graph,
+    _context: &BuildContext,
+) -> Option<BuiltDevice> {
     let entry = entry(type_id)?;
     let Expansion {
         nodes,
@@ -2240,6 +2288,96 @@ pub fn describe_device(type_id: &str, config: &DeviceConfig) -> Option<DeviceDes
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    const FIXTURE_SOUNDFONT_ID: &str = "test-gm";
+
+    fn soundfont_fixture(
+        config: &DeviceConfig,
+        context: &BuildContext,
+    ) -> Result<Box<dyn Node>, AssetBuildError> {
+        let bank = context.soundfont(FIXTURE_SOUNDFONT_ID).ok_or_else(|| {
+            AssetBuildError::MissingSoundFont {
+                asset_id: FIXTURE_SOUNDFONT_ID.into(),
+            }
+        })?;
+        Ok(Box::new(engine::SoundFontSource::from_bank(
+            bank,
+            gm_preset(config, "preset", 0.0),
+        )?))
+    }
+
+    #[test]
+    fn asset_builder_requires_a_stable_id_and_normalizes_preset_config() {
+        let missing = SoundFontBankLibrary::default();
+        let config = [ConfigSetting {
+            key: "preset".into(),
+            value: 200.0,
+        }];
+        let err = match build_asset_node(
+            soundfont_fixture,
+            &DeviceConfig::new(&config),
+            &BuildContext::new(&missing),
+        ) {
+            Err(err) => err,
+            Ok(_) => panic!("a missing stable asset id must fail construction"),
+        };
+        assert_eq!(
+            err,
+            AssetBuildError::MissingSoundFont {
+                asset_id: FIXTURE_SOUNDFONT_ID.into()
+            }
+        );
+        assert!(matches!(
+            crate::BuildError::from(err),
+            crate::BuildError::Asset(_)
+        ));
+
+        let bytes = std::fs::read(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../assets/soundfonts/TimGM6mb.sf2"
+        ))
+        .expect("the vendored TimGM6mb.sf2 asset");
+        let mut assets = SoundFontBankLibrary::default();
+        assets.insert(
+            FIXTURE_SOUNDFONT_ID,
+            engine::SoundFontBank::parse(&bytes).expect("valid GM soundfont"),
+        );
+        let node = build_asset_node(
+            soundfont_fixture,
+            &DeviceConfig::new(&config),
+            &BuildContext::new(&assets),
+        )
+        .expect("the supplied bank builds an independent source");
+        assert_eq!(node.inputs().len(), 1, "fixture is a SoundFont source");
+        assert_eq!(gm_preset(&DeviceConfig::new(&config), "preset", 0.0), 127);
+    }
+
+    #[test]
+    fn gm_preset_clamps_rounds_and_rejects_non_finite_values() {
+        let settings = [
+            ConfigSetting {
+                key: "low".into(),
+                value: -0.6,
+            },
+            ConfigSetting {
+                key: "middle".into(),
+                value: 16.6,
+            },
+            ConfigSetting {
+                key: "high".into(),
+                value: 127.6,
+            },
+            ConfigSetting {
+                key: "bad".into(),
+                value: f32::NAN,
+            },
+        ];
+        let config = DeviceConfig::new(&settings);
+        assert_eq!(gm_preset(&config, "low", 4.0), 0);
+        assert_eq!(gm_preset(&config, "middle", 4.0), 17);
+        assert_eq!(gm_preset(&config, "high", 4.0), 127);
+        assert_eq!(gm_preset(&config, "bad", 4.0), 4);
+    }
 
     /// Each entry's hand-authored UI metadata lines up, position-for-position, with its *exposed*
     /// face — the open ports + concatenated params its nodes actually present. The guard against a node

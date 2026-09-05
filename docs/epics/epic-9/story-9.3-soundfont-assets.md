@@ -65,9 +65,32 @@ Tests must distinguish the two kinds of sharing, not merely show that both sourc
 - the existing pitch/polyphony/velocity/timing and 128-block allocation gates run through
   `from_bank`, ensuring the ownership refactor did not weaken 9.2.
 
-## Task 9.3.2 — Asset-aware, fallible device construction and preset config  · planned
+## Task 9.3.2 — Asset-aware, fallible device construction and preset config  · done
 
-_(program design drafted at pickup)_
+The devices crate owns the cold-path construction vocabulary, without teaching `engine` about asset
+ids or serialized scenes.
+
+```text
+SoundFontBankLibrary (stable String id → parsed SoundFontBank)
+        ↓ explicit borrow
+BuildContext
+        ↓
+build_patch_with_assets(...) → instantiate_with_assets(...)
+        ↓
+AssetNodeBuilder(config, context) → Result<Box<dyn Node>, AssetBuildError>
+```
+
+- `build_patch` remains the asset-free convenience wrapper; it constructs an empty library and routes
+  through `build_patch_with_assets`, so ordinary catalog entries keep their existing simple builder
+  signature and behavior.
+- `AssetBuildError` names a missing stable SoundFont id or a `SoundFontSource` construction failure;
+  `BuildError::Asset` carries it to a scene-building caller as a legible cold-path failure.
+- `gm_preset(config, "preset", default)` rounds finite scalar config, clamps it to GM `0..=127`, and
+  falls back to the normalized default for non-finite values. It is structural configuration only;
+  neither a smoothed param nor an event-lane program change.
+- A private catalog test fixture builds a `SoundFontSource` from an id-resolved bank. It proves the
+  missing-bank error surface and a supplied bank's construction path without publishing the 9.4
+  instrument device.
 
 ## Task 9.3.3 — Browser/worklet/WASM asset delivery and provenance  · planned
 

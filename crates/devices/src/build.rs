@@ -21,6 +21,7 @@ use std::collections::BTreeMap;
 use std::collections::btree_map::Entry;
 use std::fmt;
 
+use crate::assets::{AssetBuildError, BuildContext, SoundFontBankLibrary};
 use engine::{
     AnalogRate, Cable, CompileError, DawControl, EventInputId, Farads, Graph, NodeId, Ohms,
     ParamHandle, ReadoutHandle, Schedule, compile,
@@ -28,7 +29,7 @@ use engine::{
 
 use crate::catalog::{
     BuiltDevice, Connector, DeviceConfig, DeviceDescriptor, PortDescriptor, PortDirection,
-    PortDomain, connectors_compatible, describe_device, instantiate,
+    PortDomain, connectors_compatible, describe_device, instantiate_with_assets,
 };
 use crate::scene::{CableSpec, Connection, Patch, PortRef};
 
@@ -36,6 +37,8 @@ use crate::scene::{CableSpec, Connection, Patch, PortRef};
 /// patch). Each variant names the offending scene element so the UI can point at it.
 #[derive(Debug)]
 pub enum BuildError {
+    /// An asset-backed device could not resolve its required parsed bank or construct its source.
+    Asset(AssetBuildError),
     /// Two devices share an id; ids must be unique within a patch.
     DuplicateDevice { id: String },
     /// A device names a `type_id` that isn't in the catalog.
@@ -80,6 +83,7 @@ pub enum BuildError {
 impl fmt::Display for BuildError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::Asset(error) => write!(f, "asset build error: {error}"),
             Self::DuplicateDevice { id } => write!(f, "duplicate device id {id:?}"),
             Self::UnknownType { id, type_id } => {
                 write!(f, "device {id:?} has unknown type {type_id:?}")
@@ -128,6 +132,12 @@ impl std::error::Error for BuildError {}
 impl From<CompileError> for BuildError {
     fn from(e: CompileError) -> Self {
         Self::Compile(e)
+    }
+}
+
+impl From<AssetBuildError> for BuildError {
+    fn from(error: AssetBuildError) -> Self {
+        Self::Asset(error)
     }
 }
 
@@ -444,18 +454,31 @@ pub fn build_patch(
     rate: AnalogRate,
     seed: u64,
 ) -> Result<BuiltScene, BuildError> {
+    let assets = SoundFontBankLibrary::default();
+    build_patch_with_assets(patch, block_len, rate, seed, &assets)
+}
+
+/// Assemble a patch with the parsed assets its asset-backed devices may borrow. The library is an
+/// explicit cold-path input: it is never stored in the schedule or consulted on the audio path.
+pub fn build_patch_with_assets(
+    patch: &Patch,
+    block_len: usize,
+    rate: AnalogRate,
+    seed: u64,
+    soundfonts: &SoundFontBankLibrary,
+) -> Result<BuiltScene, BuildError> {
+    let context = BuildContext::new(soundfonts);
     let mut graph = Graph::new();
 
     // 1. Instantiate every device, keyed by its (unique) scene id.
     let mut devices: BTreeMap<String, BuiltDevice> = BTreeMap::new();
     for device in &patch.devices {
         let config = DeviceConfig::new(&device.config);
-        let built = instantiate(&device.type_id, &config, &mut graph).ok_or_else(|| {
-            BuildError::UnknownType {
+        let built = instantiate_with_assets(&device.type_id, &config, &mut graph, &context)
+            .ok_or_else(|| BuildError::UnknownType {
                 id: device.id.clone(),
                 type_id: device.type_id.clone(),
-            }
-        })?;
+            })?;
         match devices.entry(device.id.clone()) {
             Entry::Occupied(_) => {
                 return Err(BuildError::DuplicateDevice {
