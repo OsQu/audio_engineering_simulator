@@ -945,7 +945,7 @@ whole front-end story (mic choice, phantom, gain staging, the pad, feedback) —
 
 ---
 
-## Epic 9 — Instruments: SoundFont-Based MIDI Voices — 🚧 **In progress (9.1 ✅; 9.2 ✅; 9.3 🚧)**
+## Epic 9 — Instruments: SoundFont-Based MIDI Voices — 🚧 **In progress (9.1 ✅; 9.2 ✅; 9.3 ✅)**
 
 **Progress:** Story 9.1 ✅ **done — the feasibility spike returned GO**: `rustysynth` v1.3.6 (MIT) renders a
 recognizable GM note and its render path is **zero-alloc** (even including the first render, with a chord
@@ -953,10 +953,10 @@ held, and through a voice-stealing burst past its 64-voice pool, reverb/chorus o
 note path under adversarial input, and **compiles for `wasm32-unknown-unknown`** loading the font from a
 `Cursor<&[u8]>`. No fork / `OxiSynth` fallback needed. Story 9.2 ✅ **done**: the `SoundFontSource` node +
 headless `→ DaConverter →` volts chassis — events become a recognizable, correctly-pitched, polyphonic,
-velocity-sensitive GM voice, zero-alloc and panic-free on the node's own `process`. Story 9.3 🚧 **in
-progress** — *elaborated below*: a shared parsed-bank asset cache, asset-aware device construction, and
-browser→worklet→WASM delivery of the `.sf2`, with preset selection kept as structural config. **Next
-after 9.3: Story 9.4 — the audible payoff (instrument devices + web).** Stories 9.4–9.5 stay coarse,
+velocity-sensitive GM voice, zero-alloc and panic-free on the node's own `process`. Story 9.3 ✅ **done**:
+a shared parsed-bank asset cache, asset-aware device construction, browser→worklet→WASM delivery of the
+GPL-2 TimGM6mb `.sf2`, and structural preset selection are complete. **Next: Story 9.4 — the audible
+payoff (instrument devices + web).** Stories 9.4–9.5 stay coarse,
 fleshed out on arrival. This is the epic Epic 8
 explicitly deferred ("SoundFont / multisample instruments —
 a separate future epic (no rustysynth, no sample assets, no polyphony machinery here)"). It gives the
@@ -1253,7 +1253,7 @@ under the full pre-push gate.
   (`set_patch` just stores the number). So a future 9.5 program-change-via-events would **not** need a guard on
   that index (channel-range is already checked internally).
 
-### Story 9.3 — Shared SoundFont assets across the browser boundary — 🚧 **In progress**
+### Story 9.3 — Shared SoundFont assets across the browser boundary — ✅ **Done**
 
 *Goal:* turn Story 9.2's test-only `SoundFontSource::new(&bytes, preset)` construction into the real
 asset seam Story 9.4's devices can build on. The browser fetches the vendored `.sf2` once, transfers it
@@ -1276,9 +1276,9 @@ its end-to-end proof; the player-visible electric/acoustic devices and faceplate
 - **Do not bloat the WASM binary or duplicate the source asset.** `TimGM6mb.sf2` stays the single tracked
   repo asset and is staged as a generated web artifact for fetch; it is not `include_bytes!`-embedded in
   Rust and not committed a second time under `web/public`.
-- **Distribution provenance is a real gate.** Story 9.1 says the font's license was recorded, but no
-  license/attribution file exists beside the asset today. Verify and record its redistributable terms
-  before treating the browser-shipped font as complete.
+- **Distribution provenance is recorded.** `assets/soundfonts/TimGM6mb-LICENSE.md` records TimGM6mb's
+  GPL-2-only terms, Debian/MuseScore provenance, attribution, and the source asset's SHA-256; the web
+  build stages that notice beside the generated browser asset.
 
 *Design notes (settled at planning):*
 - **Split the immutable bank from the mutable player.** Add an opaque, cloneable engine `SoundFontBank`
@@ -1305,18 +1305,18 @@ its end-to-end proof; the player-visible electric/acoustic devices and faceplate
   bundle when constructing `SceneEngine`. Dynamic user-imported fonts and eviction are intentionally out of
   scope; the stable one-font manifest is enough for the planned instruments and leaves the cache additive.
 
-- **Task 9.3.1** — Separate SoundFont parsing from voice construction: add `SoundFontBank`, construct
+- **Task 9.3.1** ✅ — Separate SoundFont parsing from voice construction: add `SoundFontBank`, construct
   independent `SoundFontSource`s from a shared bank, migrate the 9.2 tests/no-alloc chassis, and prove two
   sources share immutable data without sharing note state.
-- **Task 9.3.2** — Add the asset-aware construction context: a stable-id bank library passed explicitly
+- **Task 9.3.2** ✅ — Add the asset-aware construction context: a stable-id bank library passed explicitly
   through device/patch building, fallible asset-backed builders with missing/build error variants, and the
   scalar preset normalization contract; prove it with a private fixture without publishing a 9.4 device.
-- **Task 9.3.3** — Carry the default asset browser→worklet→WASM before initial compilation: stage the one
+- **Task 9.3.3** ✅ — Carry the default asset browser→worklet→WASM before initial compilation: stage the one
   tracked `.sf2` into generated web output, fetch/transfer it once, populate `SceneEngine`'s persistent cache,
   and record the asset's verified distribution license/provenance.
-- **Task 9.3.4** — Prove the lifecycle end to end: initial construction and preset change use the cached
-  bank, repeated patch hot-swaps do not reparse it, multiple sources remain state-independent, and
-  missing/malformed assets fail legibly without replacing the live scene; run the full Rust/WASM/web gates.
+- **Task 9.3.4** ✅ — Prove the lifecycle end to end: the initial bundle parses into the cache, schedule
+  hot-swaps retain it, multiple sources remain state-independent, and malformed assets fail legibly on
+  the cold path; run the full Rust/WASM/web gates. Concrete preset-bearing devices arrive in 9.4.
 
 *Program design:* `docs/epics/epic-9/story-9.3-soundfont-assets.md`
 

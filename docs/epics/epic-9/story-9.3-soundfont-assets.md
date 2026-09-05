@@ -3,7 +3,7 @@
 > Companion to the Story 9.3 block in `docs/IMPLEMENTATION_PLAN.md`. Holds the per-Task
 > program design — the shape of the code — drafted just-in-time as each Task is picked up.
 
-## Task 9.3.1 — Split the parsed bank from per-device voice state  · planned
+## Task 9.3.1 — Split the parsed bank from per-device voice state  · done
 
 The first task stays inside `engine`: make the ownership boundary explicit without changing the
 event/sample/DA topology or the hot-path algorithm proven in 9.2.
