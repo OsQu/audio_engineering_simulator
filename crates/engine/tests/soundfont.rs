@@ -1,4 +1,4 @@
-//! Story 9.2 — the `SoundFontSource` node.
+//! Stories 9.2–9.3.1 — the `SoundFontSource` node and its shared parsed bank.
 //!
 //! - Task 9.2.1 drives the node **alone** (no schedule): parse a real GM font, play a note through
 //!   `process`, and confirm a recognizable, finite, non-silent signal lands on the digital `Sample`
@@ -11,7 +11,7 @@
 
 use engine::{
     AnalogRate, BitDepth, ClockDomainId, DaConverter, EventBuffer, EventInputId, EventMessage,
-    EventQueue, Graph, Lane, Node, Ohms, Params, SampleBuffer, SampleRate, Schedule,
+    EventQueue, Graph, Lane, Node, Ohms, Params, SampleBuffer, SampleRate, Schedule, SoundFontBank,
     SoundFontError, SoundFontSource, TimedEvent, VoltageBuffer, Volts, compile,
 };
 
@@ -32,6 +32,14 @@ fn soundfont_bytes() -> Vec<u8> {
         "/../../assets/soundfonts/TimGM6mb.sf2"
     );
     std::fs::read(path).expect("the vendored TimGM6mb.sf2 asset")
+}
+
+fn soundfont_bank() -> SoundFontBank {
+    SoundFontBank::parse(&soundfont_bytes()).expect("valid GM soundfont")
+}
+
+fn source(preset: u8) -> SoundFontSource {
+    SoundFontSource::from_bank(&soundfont_bank(), preset).expect("valid GM soundfont")
 }
 
 /// Build a node output/input pair and run `process` once over a `frames`-long digital block, with
@@ -56,7 +64,7 @@ fn render_block(node: &mut SoundFontSource, frames: usize, events: &[TimedEvent]
 fn plays_a_recognizable_note_onto_the_sample_lane() {
     // Middle C (MIDI 60) on the default GM preset (piano). 4096 frames @ 48 kHz ≈ 85 ms — well past
     // the attack, so the note has clearly sounded.
-    let mut node = SoundFontSource::new(&soundfont_bytes(), 0).expect("valid GM soundfont");
+    let mut node = source(0);
     node.prepare(rate());
 
     let note_on = TimedEvent {
@@ -87,7 +95,7 @@ fn plays_a_recognizable_note_onto_the_sample_lane() {
 #[test]
 fn silent_with_no_events() {
     // No note-on ⇒ no active voice ⇒ exact digital silence, however long we render.
-    let mut node = SoundFontSource::new(&soundfont_bytes(), 0).expect("valid GM soundfont");
+    let mut node = source(0);
     node.prepare(rate());
     let out = render_block(&mut node, 1024, &[]);
     assert!(
@@ -97,12 +105,55 @@ fn silent_with_no_events() {
 }
 
 #[test]
-fn garbage_bytes_error_at_construction_without_panicking() {
+fn garbage_bytes_error_at_bank_parse_without_panicking() {
     // A bad `.sf2` must surface a parse error, not panic — all fallibility lives at construction.
-    match SoundFontSource::new(b"not a soundfont", 0) {
+    match SoundFontBank::parse(b"not a soundfont") {
         Err(e) => assert_eq!(e, SoundFontError::Parse),
         Ok(_) => panic!("garbage bytes must not parse into a soundfont"),
     }
+}
+
+#[test]
+fn sources_share_a_bank_without_sharing_voice_state() {
+    let bank = soundfont_bank();
+    let mut middle_c = SoundFontSource::from_bank(&bank, GM_ORGAN).expect("build C source");
+    let mut g = SoundFontSource::from_bank(&bank, GM_ORGAN).expect("build G source");
+    middle_c.prepare(rate());
+    g.prepare(rate());
+
+    let c = render_block(
+        &mut middle_c,
+        4096,
+        &[TimedEvent {
+            offset: 0,
+            message: EventMessage::NoteOn {
+                note: 60,
+                velocity: 100,
+            },
+        }],
+    );
+    let silent_g = render_block(&mut g, 4096, &[]);
+    let g_note = render_block(
+        &mut g,
+        4096,
+        &[TimedEvent {
+            offset: 0,
+            message: EventMessage::NoteOn {
+                note: 67,
+                velocity: 100,
+            },
+        }],
+    );
+
+    assert!(rms(&c) > 1e-3, "the first source should play middle C");
+    assert!(
+        silent_g.iter().all(|&sample| sample == 0.0),
+        "a note in one source must not start a voice in another source"
+    );
+    assert!(
+        rms(&g_note) > 1e-3,
+        "the second source should independently play G"
+    );
 }
 
 // ---- Task 9.2.2: the headless chassis (SoundFontSource → DaConverter → volts) ------------------
@@ -113,7 +164,8 @@ fn garbage_bytes_error_at_construction_without_panicking() {
 /// of 8 (the 384 kHz ← 48 kHz factor), or `compile` rejects it.
 fn chassis(preset: u8, block: usize) -> (Schedule, EventInputId) {
     let mut g = Graph::new();
-    let src = g.add(SoundFontSource::new(&soundfont_bytes(), preset).expect("valid GM soundfont"));
+    let bank = soundfont_bank();
+    let src = g.add(SoundFontSource::from_bank(&bank, preset).expect("valid GM soundfont"));
     let da = g.add(DaConverter::new(
         SampleRate::new(48_000.0),
         BitDepth::new(24),

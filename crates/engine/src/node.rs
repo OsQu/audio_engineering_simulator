@@ -63,7 +63,7 @@ pub use matrix::Matrix;
 pub use mic_preamp::MicPreamp;
 pub use multitrack::MultitrackRecorder;
 pub use powered_monitor::PoweredMonitor;
-pub use sound_font::{SoundFontError, SoundFontSource};
+pub use sound_font::{SoundFontBank, SoundFontError, SoundFontSource};
 pub use sound_source::SoundSource;
 pub use source::TestSource;
 pub use speaker::Speaker;

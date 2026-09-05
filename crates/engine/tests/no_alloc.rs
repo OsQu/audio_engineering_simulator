@@ -17,7 +17,8 @@ use engine::{
     AnalogRate, BalancedDriver, BalancedReceiver, BitDepth, Cable, ClockDomainId, DaConverter,
     DcBlocker, EventMessage, EventQueue, EventThru, Farads, GainStage, Graph, InputZ, Lane,
     MultitrackRecorder, Node, NoiseDensity, Ohms, ParamQueue, Params, PassiveSum, SampleBuffer,
-    SampleRate, SoundFontSource, SynthVoice, TestSource, VoltageBuffer, Volts, compile,
+    SampleRate, SoundFontBank, SoundFontSource, SynthVoice, TestSource, VoltageBuffer, Volts,
+    compile,
 };
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -267,7 +268,8 @@ fn soundfont_chassis_is_allocation_free() {
 
     let block = 1024; // 1024 analog = 128 digital frames @ 48 kHz = two rustysynth internal blocks
     let mut g = Graph::new();
-    let src = g.add(SoundFontSource::new(&bytes, 0).expect("valid soundfont"));
+    let bank = SoundFontBank::parse(&bytes).expect("valid soundfont");
+    let src = g.add(SoundFontSource::from_bank(&bank, 0).expect("valid soundfont"));
     let da = g.add(DaConverter::new(
         SampleRate::new(48_000.0),
         BitDepth::new(24),

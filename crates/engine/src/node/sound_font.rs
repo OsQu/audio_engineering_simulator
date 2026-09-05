@@ -40,6 +40,31 @@ impl fmt::Display for SoundFontError {
 
 impl Error for SoundFontError {}
 
+/// Immutable parsed SoundFont data shared by one or more [`SoundFontSource`] instances.
+///
+/// Parsing is a cold-path operation. Cloning a bank only clones its [`Arc`], so every clone points
+/// at the same parsed sample data while each source constructed from it owns an independent mutable
+/// synthesizer and voice pool.
+#[derive(Clone)]
+pub struct SoundFontBank {
+    inner: Arc<SoundFont>,
+}
+
+impl SoundFontBank {
+    /// Parse `.sf2` bytes into an immutable bank suitable for sharing across instrument voices.
+    ///
+    /// # Errors
+    /// Returns [`SoundFontError::Parse`] when the bytes are not a valid SoundFont or fail
+    /// `rustysynth`'s structural sanity check.
+    pub fn parse(sf2_bytes: &[u8]) -> Result<Self, SoundFontError> {
+        let mut cursor = Cursor::new(sf2_bytes);
+        let sound_font = SoundFont::new(&mut cursor).map_err(|_| SoundFontError::Parse)?;
+        Ok(Self {
+            inner: Arc::new(sound_font),
+        })
+    }
+}
+
 /// A **SoundFont instrument voice**: MIDI note-on/off + velocity in (the event lane), a recognizable
 /// polyphonic General-MIDI voice out (the digital [`Sample`](crate::Lane::Sample) lane @ 48 kHz).
 ///
@@ -73,8 +98,8 @@ impl Error for SoundFontError {}
 ///
 /// [`NoteOff`]: EventMessage::NoteOff
 pub struct SoundFontSource {
-    /// The black-box synth. Owns its `Arc<SoundFont>` and a voice pool pre-allocated at construction;
-    /// its `render` grows nothing (proven zero-alloc by the Story 9.1 spike).
+    /// The black-box synth owns a fresh voice pool over its source bank; its `render` grows nothing
+    /// (proven zero-alloc by the Story 9.1 spike).
     synth: Synthesizer,
     /// Interpolation/decimation factor `M = analog rate / 48 kHz`, baked at [`prepare`](Node::prepare);
     /// an event at analog offset `o` maps to digital frame `o / M`. `1` until prepared.
@@ -99,21 +124,28 @@ impl SoundFontSource {
     /// [`prepare`](Node::prepare) couldn't size anyway, as it isn't told the block length).
     const CHUNK: usize = 64;
 
-    /// Build a voice from raw `.sf2` `sf2_bytes`, playing GM program `preset` (0 = piano). Parses the
-    /// font and constructs the synth **now** (fallible, allocating) so [`process`](Node::process)
-    /// stays total; the bytes are read from a `Cursor` (never a `File`), the exact wasm path.
+    /// Build a voice from raw `.sf2` `sf2_bytes`, playing GM program `preset` (0 = piano). This is
+    /// a convenience for one-off callers; hosts sharing an asset should parse a [`SoundFontBank`]
+    /// once and call [`from_bank`](Self::from_bank) for each voice.
     ///
     /// # Errors
     /// [`SoundFontError::Parse`] if the bytes aren't a valid `.sf2` (or fail `rustysynth`'s structural
     /// sanity check), [`SoundFontError::Build`] if the synthesizer can't be built from them.
     pub fn new(sf2_bytes: &[u8], preset: u8) -> Result<Self, SoundFontError> {
-        let mut cursor = Cursor::new(sf2_bytes);
-        let sound_font = Arc::new(SoundFont::new(&mut cursor).map_err(|_| SoundFontError::Parse)?);
+        Self::from_bank(&SoundFontBank::parse(sf2_bytes)?, preset)
+    }
 
+    /// Build a voice over a shared immutable parsed bank. The synthesizer, including its mutable
+    /// voice/envelope state, is newly allocated for this source and is never shared with another
+    /// source built from the same bank.
+    ///
+    /// # Errors
+    /// Returns [`SoundFontError::Build`] when the synthesizer cannot be constructed from `bank`.
+    pub fn from_bank(bank: &SoundFontBank, preset: u8) -> Result<Self, SoundFontError> {
         let mut settings = SynthesizerSettings::new(Self::RATE_HZ);
         settings.enable_reverb_and_chorus = false;
         let mut synth =
-            Synthesizer::new(&sound_font, &settings).map_err(|_| SoundFontError::Build)?;
+            Synthesizer::new(&bank.inner, &settings).map_err(|_| SoundFontError::Build)?;
 
         // Select the GM preset once, at construction (the event lane is note-only — program change is
         // not carried on it). A Program Change (0xC0) on channel 0; `note_on` resolves it through a
@@ -205,5 +237,25 @@ impl Node for SoundFontSource {
         if cursor < out.len() {
             self.render_into(out, cursor, out.len() - cursor);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use super::SoundFontBank;
+
+    #[test]
+    fn cloned_banks_share_the_parsed_allocation() {
+        let bytes = std::fs::read(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../assets/soundfonts/TimGM6mb.sf2"
+        ))
+        .expect("the vendored TimGM6mb.sf2 asset");
+        let bank = SoundFontBank::parse(&bytes).expect("valid GM soundfont");
+        let clone = bank.clone();
+
+        assert!(Arc::ptr_eq(&bank.inner, &clone.inner));
     }
 }
