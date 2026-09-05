@@ -101,6 +101,9 @@ patch. `SceneEngine` parses each bundle entry cold into its persistent `SoundFon
 that library for every scene build. The GPL-2-only attribution, upstream Debian/MuseScore provenance,
 and SHA-256 are recorded beside the source asset and staged with it.
 
-## Task 9.3.4 — Cache-lifecycle integration and failure hardening  · planned
+## Task 9.3.4 — Cache-lifecycle integration and failure hardening  · done
 
-_(program design drafted at pickup)_
+Native binding tests construct `SceneEngine` from the real initial bundle, confirm the stable-id bank
+survives a schedule hot-swap, and confirm malformed bytes return `BuildError::Asset` before any scene
+exists. Rebuilds call `build_patch_with_assets` over the engine-owned library, so an existing parsed bank
+is retained rather than reparsed; future asset-backed devices borrow it when their fresh schedules build.

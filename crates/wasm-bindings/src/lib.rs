@@ -719,6 +719,17 @@ mod tests {
         }
     }
 
+    fn default_soundfont_asset() -> SoundFontAsset {
+        SoundFontAsset {
+            id: "tim_gm_6mb".into(),
+            bytes: std::fs::read(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/../../assets/soundfonts/TimGM6mb.sf2"
+            ))
+            .expect("the vendored TimGM6mb asset"),
+        }
+    }
+
     /// Peak `|host sample|` over `n` rendered quanta — the native stand-in for "is it making sound".
     fn peak_over(engine: &mut SceneEngine, n: usize) -> f32 {
         let mut peak = 0.0_f32;
@@ -844,6 +855,41 @@ mod tests {
             peak_over(&mut engine, 32) > 0.05,
             "engine still sounds after a reload"
         );
+    }
+
+    #[test]
+    fn initial_soundfont_bundle_survives_schedule_rebuilds() {
+        let mut engine =
+            SceneEngine::from_soundfonts(&canonical_patch(), vec![default_soundfont_asset()])
+                .expect("the initial asset bundle parses before the first scene builds");
+        assert!(engine.soundfonts.get("tim_gm_6mb").is_some());
+
+        engine
+            .queue_patch(&canonical_patch())
+            .expect("a rebuild borrows the persistent cache");
+        engine.render_quantum();
+        assert!(
+            engine.soundfonts.get("tim_gm_6mb").is_some(),
+            "schedule replacement must not discard the cached parsed bank"
+        );
+    }
+
+    #[test]
+    fn malformed_initial_soundfont_fails_before_a_scene_is_constructed() {
+        let err = match SceneEngine::from_soundfonts(
+            &canonical_patch(),
+            vec![SoundFontAsset {
+                id: "tim_gm_6mb".into(),
+                bytes: b"not a soundfont".to_vec(),
+            }],
+        ) {
+            Err(err) => err,
+            Ok(_) => panic!("malformed asset must reject initial construction"),
+        };
+        assert!(matches!(
+            err,
+            BuildError::Asset(AssetBuildError::InvalidSoundFont { .. })
+        ));
     }
 
     /// The event-drop health counter still holds: flooding past the queue capacity drops
