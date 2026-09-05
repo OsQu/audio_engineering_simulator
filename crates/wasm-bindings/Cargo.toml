@@ -28,6 +28,7 @@ devices.workspace = true
 # owns only the `JsValue` conversion. (The durable save file is TS-owned versioned JSON; Rust only
 # ever sees the runnable projection, deserialized — it never writes the file.)
 serde-wasm-bindgen = "0.6"
+serde = { version = "1", features = ["derive"] }
 
 [lints]
 workspace = true

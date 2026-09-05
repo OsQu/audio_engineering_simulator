@@ -92,9 +92,14 @@ AssetNodeBuilder(config, context) → Result<Box<dyn Node>, AssetBuildError>
   missing-bank error surface and a supplied bank's construction path without publishing the 9.4
   instrument device.
 
-## Task 9.3.3 — Browser/worklet/WASM asset delivery and provenance  · planned
+## Task 9.3.3 — Browser/worklet/WASM asset delivery and provenance  · done
 
-_(program design drafted at pickup)_
+`build-wasm.sh` stages the one tracked font into generated `web/public/soundfonts/`; the main thread
+fetches it once alongside the WASM bytes and includes it as `{ id: "tim_gm_6mb", bytes }` in the initial
+worklet processor options. The worklet passes that bundle to `SceneEngine` before it builds the initial
+patch. `SceneEngine` parses each bundle entry cold into its persistent `SoundFontBankLibrary`, then uses
+that library for every scene build. The GPL-2-only attribution, upstream Debian/MuseScore provenance,
+and SHA-256 are recorded beside the source asset and staged with it.
 
 ## Task 9.3.4 — Cache-lifecycle integration and failure hardening  · planned
 

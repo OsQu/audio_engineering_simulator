@@ -208,14 +208,17 @@ export async function startEngine(
 
   // public/ assets are served from the web root by Vite (dev and build).
   await audio.audioWorklet.addModule("/processor.js");
-  handlers.onStatus("worklet module loaded — fetching wasm…");
-  const bytes = await (await fetch("/wasm_bindings_bg.wasm")).arrayBuffer();
+  handlers.onStatus("worklet module loaded — fetching wasm and SoundFont…");
+  const [bytes, soundfont] = await Promise.all([
+    fetch("/wasm_bindings_bg.wasm").then((response) => response.arrayBuffer()),
+    fetch("/soundfonts/TimGM6mb.sf2").then((response) => response.arrayBuffer()),
+  ]);
 
   // Deliver the wasm bytes *and* the runnable patch at construction; the processor instantiates the
   // module and builds SceneEngine(patch) synchronously in its constructor.
   const node = new AudioWorkletNode(audio, "scene-processor", {
     outputChannelCount: [2],
-    processorOptions: { bytes, patch },
+    processorOptions: { bytes, patch, soundfonts: [{ id: "tim_gm_6mb", bytes: soundfont }] },
   });
   const send = (msg: ControlMessage): void => node.port.postMessage(msg);
 

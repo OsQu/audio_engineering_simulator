@@ -14,10 +14,15 @@
 //! controlled **generically by device id**, and **hot-swapped** to a new scene at a block boundary.
 
 use capture::Capture;
-use devices::{BuildError, BuiltScene, Patch, build_patch, cable_types, descriptors};
-use engine::{
-    AnalogRate, EventMessage, EventQueue, ParamHandle, ParamQueue, SampleRate, VoltageBuffer,
+use devices::{
+    AssetBuildError, BuildError, BuiltScene, Patch, SoundFontBankLibrary, build_patch_with_assets,
+    cable_types, descriptors,
 };
+use engine::{
+    AnalogRate, EventMessage, EventQueue, ParamHandle, ParamQueue, SampleRate, SoundFontBank,
+    SoundFontError, VoltageBuffer,
+};
+use serde::Deserialize;
 use wasm_bindgen::prelude::*;
 
 // --- Device catalog + scene ingress: the thin JS-value bridge over the `devices` crate. ----------
@@ -166,6 +171,12 @@ const BLOCK_LEN: usize = 1024;
 /// Fixed seed (determinism) and monitor full-scale reference (speaker volts → ±1.0).
 const SEED: u64 = 0;
 const FULL_SCALE_V: f32 = 1.0;
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SoundFontAsset {
+    id: String,
+    bytes: Vec<u8>,
+}
 /// A4 (440 Hz) — the note the tests strike.
 #[cfg(test)]
 const NOTE: u8 = 69;
@@ -212,6 +223,8 @@ struct Pending {
 /// it stays correct across a hot-swap.
 #[wasm_bindgen]
 pub struct SceneEngine {
+    /// Parsed banks outlive schedules, so structural rebuilds borrow rather than reparse them.
+    soundfonts: SoundFontBankLibrary,
     /// The live scene: compiled schedule + control resolution by device id.
     current: BuiltScene,
     /// A scene built off-block by [`load_patch`](Self::load_patch), installed at the next
@@ -265,10 +278,25 @@ impl SceneEngine {
     ///
     /// # Errors
     /// A [`BuildError`] if the patch can't be assembled or compiled.
+    #[cfg(test)]
     pub(crate) fn from_patch(patch: &Patch) -> Result<Self, BuildError> {
+        Self::from_soundfonts(patch, Vec::new())
+    }
+
+    fn from_soundfonts(patch: &Patch, assets: Vec<SoundFontAsset>) -> Result<Self, BuildError> {
+        let mut soundfonts = SoundFontBankLibrary::default();
+        for asset in assets {
+            let bank = SoundFontBank::parse(&asset.bytes).map_err(|error| match error {
+                SoundFontError::Parse => AssetBuildError::InvalidSoundFont {
+                    asset_id: asset.id.clone(),
+                },
+                SoundFontError::Build => AssetBuildError::SoundFont(error),
+            })?;
+            soundfonts.insert(asset.id, bank);
+        }
         let analog_rate = AnalogRate::new(ANALOG_RATE_HZ);
         let host_rate = SampleRate::new(HOST_RATE_HZ);
-        let current = Self::build_scene(patch)?;
+        let current = Self::build_scene(patch, &soundfonts)?;
 
         let capture = Capture::new(analog_rate, host_rate, FULL_SCALE_V);
         let host = vec![0.0_f32; capture.host_len(BLOCK_LEN)];
@@ -278,6 +306,7 @@ impl SceneEngine {
         }
 
         Ok(Self {
+            soundfonts,
             current,
             pending: None,
             capture,
@@ -293,8 +322,17 @@ impl SceneEngine {
 
     /// Compile a patch into a [`BuiltScene`] at the pinned block length / analog rate / seed (so the
     /// same scene reproduces bit-for-bit).
-    fn build_scene(patch: &Patch) -> Result<BuiltScene, BuildError> {
-        build_patch(patch, BLOCK_LEN, AnalogRate::new(ANALOG_RATE_HZ), SEED)
+    fn build_scene(
+        patch: &Patch,
+        soundfonts: &SoundFontBankLibrary,
+    ) -> Result<BuiltScene, BuildError> {
+        build_patch_with_assets(
+            patch,
+            BLOCK_LEN,
+            AnalogRate::new(ANALOG_RATE_HZ),
+            SEED,
+            soundfonts,
+        )
     }
 
     /// Build a replacement scene off-block and queue it for install at the next block boundary.
@@ -302,7 +340,7 @@ impl SceneEngine {
     /// # Errors
     /// A [`BuildError`] if the patch can't be assembled or compiled (the live scene keeps running).
     pub(crate) fn queue_patch(&mut self, patch: &Patch) -> Result<(), BuildError> {
-        let scene = Self::build_scene(patch)?;
+        let scene = Self::build_scene(patch, &self.soundfonts)?;
         let initial = initial_params(patch, &scene);
         self.pending = Some(Pending { scene, initial });
         Ok(())
@@ -332,10 +370,13 @@ impl SceneEngine {
     /// # Errors
     /// Throws (Err → a JS exception) with a legible message if the patch can't be parsed or built.
     #[wasm_bindgen(constructor)]
-    pub fn new(patch: JsValue) -> Result<SceneEngine, JsValue> {
+    pub fn new(patch: JsValue, soundfonts: JsValue) -> Result<SceneEngine, JsValue> {
         let patch =
             parse_patch(patch).map_err(|e| JsValue::from_str(&format!("invalid patch: {e}")))?;
-        Self::from_patch(&patch).map_err(|e| JsValue::from_str(&format!("build failed: {e}")))
+        let soundfonts = serde_wasm_bindgen::from_value(soundfonts)
+            .map_err(|e| JsValue::from_str(&format!("invalid SoundFont bundle: {e}")))?;
+        Self::from_soundfonts(&patch, soundfonts)
+            .map_err(|e| JsValue::from_str(&format!("build failed: {e}")))
     }
 
     /// Replace the running scene. Compiles the new `patch` **off-block** (here, between quanta) and

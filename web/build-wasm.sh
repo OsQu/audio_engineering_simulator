@@ -21,6 +21,9 @@ wasm-pack build ../crates/wasm-bindings --target no-modules --release --out-dir 
 echo "concatenating polyfill + glue + processor → public/processor.js"
 cat worklet/worklet-polyfill.js "$TMP/wasm_bindings.js" worklet/processor-impl.js >public/processor.js
 cp "$TMP/wasm_bindings_bg.wasm" public/wasm_bindings_bg.wasm
+mkdir -p public/soundfonts
+cp ../assets/soundfonts/TimGM6mb.sf2 public/soundfonts/TimGM6mb.sf2
+cp ../assets/soundfonts/TimGM6mb-LICENSE.md public/soundfonts/TimGM6mb-LICENSE.md
 rm -rf "$TMP"
 
 echo "done. install deps and run the dev server:"

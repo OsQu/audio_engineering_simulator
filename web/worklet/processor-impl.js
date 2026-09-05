@@ -48,8 +48,10 @@ class SceneProcessor extends AudioWorkletProcessor {
     try {
       const bytes = options?.processorOptions?.bytes;
       const patch = options?.processorOptions?.patch;
+      const soundfonts = options?.processorOptions?.soundfonts;
       if (!bytes) throw new Error("no wasm bytes in processorOptions");
       if (!patch) throw new Error("no patch in processorOptions");
+      if (!soundfonts) throw new Error("no SoundFont bundle in processorOptions");
       // `wasm_bindgen` and `SceneEngine` come from the glue concatenated ahead of this file.
       if (typeof wasm_bindgen === "undefined") {
         throw new Error("wasm_bindgen global missing — glue not concatenated ahead of processor");
@@ -70,7 +72,7 @@ class SceneProcessor extends AudioWorkletProcessor {
       const cables =
         typeof wasm_bindgen.cable_catalog === "function" ? wasm_bindgen.cable_catalog() : [];
       // Build the engine from the scene's patch. Throws (Result→exception) on a bad patch — caught below.
-      this.engine = new wasm_bindgen.SceneEngine(patch);
+      this.engine = new wasm_bindgen.SceneEngine(patch, soundfonts);
       this.len = this.engine.out_len(); // host samples per quantum (= 128 = the render quantum)
       this.view = new Float32Array(this.memory.buffer, this.engine.out_ptr(), this.len);
       this.ready = true;

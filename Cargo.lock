@@ -399,6 +399,7 @@ dependencies = [
  "capture",
  "devices",
  "engine",
+ "serde",
  "serde-wasm-bindgen",
  "wasm-bindgen",
 ]

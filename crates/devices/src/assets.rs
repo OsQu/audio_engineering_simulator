@@ -50,6 +50,8 @@ impl<'a> BuildContext<'a> {
 /// Cold-path failure specific to an asset-backed device builder.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AssetBuildError {
+    /// Bytes supplied for a stable id were not a valid SoundFont.
+    InvalidSoundFont { asset_id: String },
     /// The patch/device requested a bank the host did not supply.
     MissingSoundFont { asset_id: String },
     /// A fresh synth could not be constructed over an otherwise available parsed bank.
@@ -59,6 +61,9 @@ pub enum AssetBuildError {
 impl fmt::Display for AssetBuildError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::InvalidSoundFont { asset_id } => {
+                write!(f, "invalid SoundFont asset {asset_id:?}")
+            }
             Self::MissingSoundFont { asset_id } => {
                 write!(f, "missing SoundFont asset {asset_id:?}")
             }
