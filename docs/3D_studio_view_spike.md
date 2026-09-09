@@ -90,6 +90,11 @@ transport state. Keep updates lightweight and do not duplicate full detailed pan
 
 ## Asset workflow
 
+Agreed budget direction: **code-generated studio gear + free furniture models + a small shared
+material palette**. This is a hobby project with a shoestring budget and no prior graphical or 3D
+modelling experience. Target **€0 in additional asset purchases or subscriptions**, using the existing
+coding assistance. Do not require commissioned art, a paid asset pack, or learning a modelling editor.
+
 Use a small reusable 3D kit with consistent scale, origins, materials, and lighting. The two camera
 views must render the same underlying objects, including credible backs and sides.
 
@@ -101,26 +106,85 @@ Start with:
 - Simplified computer/display, interface, keyboard, and speakers as needed by the fixture.
 - One wall-box representation, subject to the functional scope question below.
 
-Prefer scripted primitive geometry for boxes and repeated structures: desks, racks, chassis, speaker
-cabinets, and acoustic panels. Use Blender for reusable modelling, material authoring, and export where
-it helps; load exported models as glTF/GLB. Simple geometry can also be generated directly in Three.js.
+### Primary route: reusable Three.js generators
 
-AI assistance can supply art-direction references, texture ideas, modelling scripts, and candidate
-models for irregular props such as chairs or guitars. Image-to-3D services are optional experiments,
-not a required dependency. Inspect generated assets for dimensions, topology, materials, and cleanup
-cost before accepting them.
+Generate regular manufactured shapes directly in Three.js. AI assistance writes and revises the model
+generators; the user supplies references and visual feedback. Parameterized dimensions, colours, and
+repeated parts make additional equipment variations inexpensive and keep both camera views consistent.
 
+| Asset | Construction |
+| --- | --- |
+| Rack | Frame, rails, feet, and equipment arranged by U-slot |
+| EQ, compressor, interface | Rounded chassis, front/rear artwork, a few projecting knobs |
+| Monitor speaker | Cabinet, circular drivers, port, optional stand |
+| Desk | Shaped tabletop, legs, optional equipment shelf |
+| Keyboard | Chassis and repeated black/white keys |
+| Acoustic treatment | Repeated absorbers, slats, or foam shapes |
+| Wall box | Plate with repeated sockets and labels |
+
+Use Three.js geometry helpers such as `RoundedBoxGeometry` and canvas-generated textures where useful.
 Trial simplified front/rear artwork derived from the existing device designs as model textures. The
 capture/export method still needs validation. Fine labels and functional controls remain in Svelte.
 
+Prioritize readable silhouettes, composition, soft shadows, and consistent materials before small
+mechanical details. Regular gear is a strong fit for this approach; padded furniture and irregular
+instrument bodies are better candidates for existing models.
+
+### Free models and textures
+
+- **Kenney Furniture Kit:** a free CC0 furniture collection; inspect chairs and other furnishings before
+  generating equivalents. Its simple style is closer to the second visual reference.
+- **Poly Haven:** CC0 textures, models, and environment lighting assets. Start with restrained wood,
+  fabric, or flooring textures rather than loading a large material collection.
+
+Prefer one coherent furniture family and harmonize its colours with the generated equipment. Load
+imported models as glTF/GLB, converting only when needed. If an asset requires substantial manual mesh
+repair, select a simpler alternative. Manual sculpting, texture painting, and mesh repair must not be
+prerequisites for completing the spike.
+
+### Optional tools and generation experiments
+
+**Blender is optional initially**, not a minimum dependency. Introduce it when conversion or more complex
+modelling justifies it; prefer reproducible scripts over requiring manual editor operation.
+
+Image generation can help with art direction and texture ideas. Image-to-3D services can be trialled
+for one irregular prop, but are not the primary equipment pipeline. Generate an isolated object, not a
+whole studio: equipment needs separate identities and correct placement. Inspect shape, backs/sides,
+dimensions, materials, file size, and cleanup effort in our room before generating more assets.
+
+Research snapshot from the planning discussion (provider limits can change; recheck before use):
+
+| Service | Published free-plan constraints | Decision |
+| --- | --- | --- |
+| Meshy | 100 monthly credits; 10 monthly downloads for Meshy 6 Lite models; other listed versions require paid downloads; CC BY 4.0 output; no free API | Optional single-prop experiment, with attribution |
+| Tripo | 200 monthly credits; limited exports; public models and non-commercial use | Experiment only; less flexible as a lasting asset source |
+
+Defer local image-to-3D infrastructure as well. Hunyuan3D-2, for example, documents a multi-step setup
+and baseline requirements of 6 GB VRAM for shape generation or 16 GB for shape plus texture, alongside
+smaller variants. Selecting and maintaining a hardware-compatible pipeline is separate work. This
+recommendation is based on workflow fit and published tooling, not a hands-on quality benchmark of
+the generators.
+
+### First asset test and iteration loop
+
+Build **one desk, a speaker pair, a rack containing an existing processor, and one free chair** in a
+small room corner. Begin with procedural geometry and plain materials, then add a wood texture and
+refine lighting. Inspect both opposite views at actual overview size before expanding the kit or
+spending money on a generation service.
+
+The user supplies a reference and judges the result; the coding assistant implements geometry,
+materials, and placement, presents a browser preview, and revises it from feedback. Reuse successful
+parts for subsequent equipment. The test should establish whether this workflow can achieve the
+desired atmosphere without requiring the user to become a 3D artist.
+
 For each accepted asset record its source/provenance, dimensions, origin/pivot, orientation, selection
-bounds, materials, and reproducible export settings. Provide a generic chassis fallback for device
+bounds, materials, licence/attribution, and reproducible generation or export settings. Provide a generic chassis fallback for device
 types without custom artwork. Assemble assets together at actual overview scale early; judge consistency
 and recognition in the room, not only in isolated asset previews.
 
-Minimum additional tooling: Three.js and, for the proposed authored-asset workflow, Blender. An image
-generator or paid 3D-generation service is optional. No installation or asset generation is part of
-writing this plan.
+Minimum additional tooling: Three.js in the existing web toolchain. Blender, an image generator, and
+3D-generation services are optional. No installation, download, purchase, or asset generation is part
+of writing this plan.
 
 ## Existing foundations and gaps
 
@@ -160,9 +224,9 @@ These are high-level spike tasks, not approved task-level program designs.
 1. **Fixture and interaction definition.** Choose one existing playable setup; identify its desk,
    populated rack, and wall-box working areas. Resolve the wall-box scope question. Specify which
    devices appear together and how navigation preserves a pending cable.
-2. **Visual/asset proof.** Build the room, desk, and populated rack kit. Verify both opposite views,
-   recognizable silhouettes, dimensions, mounting, and rear artwork. Establish a repeatable export
-   path before producing more assets.
+2. **Visual/asset proof.** Run the zero-additional-cost asset test above using Three.js generators and
+   free furniture. Verify both opposite views, recognizable silhouettes, dimensions, mounting, and
+   rear artwork. Establish repeatable generation/import steps before producing more assets.
 3. **Scene-backed overview.** Render actual scene device IDs and resolved placements; add pan/zoom,
    corner switching, working-area selection, fallback models, and basic occlusion handling.
 4. **Shared Svelte interaction.** Open existing panels for the selected working area using the same
@@ -221,3 +285,11 @@ navigation between working areas, not physical restrictions on the operator.
 - [Blender command-line rendering](https://docs.blender.org/manual/en/dev/advanced/command_line/render.html)
 - [Meshy image-to-3D API](https://docs.meshy.ai/en/api/image-to-3d) — optional asset-workflow candidate,
   not a selected service or a quality guarantee.
+- [Three.js RoundedBoxGeometry](https://threejs.org/docs/pages/RoundedBoxGeometry.html)
+- [Three.js CanvasTexture](https://threejs.org/docs/pages/CanvasTexture.html)
+- [Kenney Furniture Kit](https://kenney.nl/assets/furniture-kit) — free CC0 furniture.
+- [Poly Haven asset licence](https://polyhaven.com/license) — CC0 models, textures, and lighting assets.
+- [Meshy free-plan details](https://help.meshy.ai/en/articles/15696428-what-is-included-on-the-free-plan)
+- [Tripo pricing and plan restrictions](https://www.tripo3d.ai/pricing)
+- [Hunyuan3D-2 repository](https://github.com/Tencent-Hunyuan/Hunyuan3D-2) — local-generation setup and
+  hardware requirements; deferred.
