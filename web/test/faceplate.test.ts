@@ -37,10 +37,10 @@ function portIds(src: string, dir: "input" | "output"): number[] {
   return ids.sort((a, b) => a - b);
 }
 
-/** Structural config keys a source places via ConfigSwitch (focus surfaces) or ConfigButton
+/** Structural config keys a source places via ConfigSwitch/ConfigSelect (focus surfaces) or ConfigButton
  *  (hardware faceplates), sorted. */
 function configKeys(src: string): string[] {
-  return [...src.matchAll(/<Config(?:Switch|Button)\b[^>]*?\bkey="([^"]+)"/g)]
+  return [...src.matchAll(/<Config(?:Switch|Button|Select)\b[^>]*?\bkey="([^"]+)"/g)]
     .map((m) => m[1])
     .sort();
 }
@@ -111,6 +111,23 @@ describe("Computer surfaces place its full exposed face", () => {
   });
 
   it("places the USB output (the return bus) on the faceplate", () => {
+    expect(portIds(faceplate, "output")).toEqual([0]);
+  });
+});
+
+describe("Guitar surfaces place their carrier-specific faces", () => {
+  const faceplate = surfaceSource("Guitar.svelte");
+  const focus = surfaceSource("GuitarFocus.svelte");
+
+  it("binds the structural preset selector on both the physical and focus surfaces", () => {
+    expect(configKeys(faceplate)).toEqual(["preset"]);
+    expect(configKeys(focus)).toEqual(["preset"]);
+  });
+
+  it("places MIDI in and the one carrier output, plus both possible chassis controls", () => {
+    // Electric exposes param 0 (DA power); acoustic exposes 0 (DA power) and 1 (monitor volume).
+    expect(literalParamIds(faceplate)).toEqual([0, 1]);
+    expect(portIds(faceplate, "input")).toEqual([0]);
     expect(portIds(faceplate, "output")).toEqual([0]);
   });
 });

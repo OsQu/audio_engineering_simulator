@@ -36,6 +36,8 @@ const DEFAULT_SKIN: DeviceSkin = { finish: "slate", cap: "dark" };
 /** Skins keyed by catalog `typeId`. Add an entry when a new device type lands. */
 const SKINS: Record<string, DeviceSkin> = {
   synth_voice: { finish: "black", cap: "cream" },
+  electric_guitar: { finish: "black", cap: "chrome", accent: "#b88339" },
+  acoustic_guitar: { finish: "grey", cap: "cream", accent: "#9a6539" },
   gain_stage: { finish: "slate", cap: "chrome" },
   channel_strip: { finish: "slate", cap: "dark" },
   three_band_eq: { finish: "grey", cap: "dark" },

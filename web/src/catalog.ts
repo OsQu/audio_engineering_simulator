@@ -21,7 +21,7 @@ export interface DeviceDescriptor {
   /** Scalar readouts (meter values read back over the node→host lane), in id order. Empty for a
    *  device that measures nothing. */
   readouts: ReadoutDescriptor[];
-  /** Structural config toggles (e.g. a preamp's INST/hi-Z), which the UI renders and whose change
+  /** Structural config choices (e.g. a preamp's INST/hi-Z or an instrument preset), whose change
    *  triggers a rebuild. Empty for a device with no structural options. */
   configs: ConfigDescriptor[];
 }
@@ -36,10 +36,18 @@ export interface ConfigDescriptor {
   kind: ConfigKind;
   /** Value the device builds with when the instance leaves this key unset. */
   default: number;
+  /** Authored choices for a structural selector; absent for a two-state toggle. */
+  options?: ConfigOption[];
 }
 
 /** Suggested control widget for a structural config option. */
-export type ConfigKind = "toggle";
+export type ConfigKind = "toggle" | "select";
+
+/** One labeled numeric choice for a structural selector. */
+export interface ConfigOption {
+  label: string;
+  value: number;
+}
 
 /** A device's physical form factor and size (content, authored on the Rust catalog). Internally
  *  tagged by `kind`, matching the Rust `#[serde(tag = "kind")]` enum. Rackmount gear occupies U-slots

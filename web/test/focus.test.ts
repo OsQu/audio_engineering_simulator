@@ -47,6 +47,8 @@ describe("isFocusable", () => {
 
   it("is true for a type with a dedicated focus surface (channel_strip → console)", () => {
     expect(isFocusable(device("channel_strip", [analogIn]))).toBe(true);
+    expect(isFocusable(device("electric_guitar", [analogIn]))).toBe(true);
+    expect(isFocusable(device("acoustic_guitar", [analogIn]))).toBe(true);
   });
 
   it("is false for a device with no deep-control surface", () => {

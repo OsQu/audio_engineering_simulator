@@ -15,6 +15,8 @@ const DEDICATED_FOCUS_SURFACES: ReadonlySet<string> = new Set([
   "scarlett_8i6",
   "computer",
   "midi_controller",
+  "electric_guitar",
+  "acoustic_guitar",
 ]);
 
 /** Whether a device opens a focus surface when clicked: a listed type opens its dedicated surface, and a

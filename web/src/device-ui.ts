@@ -24,6 +24,8 @@ import Computer from "./widgets/Computer.svelte";
 import ComputerMixer from "./widgets/ComputerMixer.svelte";
 import Console from "./widgets/Console.svelte";
 import FocusriteControl from "./widgets/FocusriteControl.svelte";
+import Guitar from "./widgets/Guitar.svelte";
+import GuitarFocus from "./widgets/GuitarFocus.svelte";
 import MidiController from "./widgets/MidiController.svelte";
 import MidiControllerFocus from "./widgets/MidiControllerFocus.svelte";
 import Panel from "./widgets/Panel.svelte";
@@ -99,6 +101,8 @@ const FACEPLATES: Record<string, Component<DeviceUiProps>> = {
   computer: Computer,
   speaker: Speaker,
   midi_controller: MidiController,
+  electric_guitar: Guitar,
+  acoustic_guitar: Guitar,
 };
 
 /** The faceplate component for a device type — its own, or the generic `Panel`. */
@@ -113,6 +117,8 @@ const FOCUS_SURFACES: Record<string, Component<DeviceUiProps>> = {
   scarlett_8i6: FocusriteControl,
   computer: ComputerMixer,
   midi_controller: MidiControllerFocus,
+  electric_guitar: GuitarFocus,
+  acoustic_guitar: GuitarFocus,
 };
 
 /** The focus-surface component for a device type — its dedicated surface, else its in-world faceplate. */
