@@ -8,7 +8,7 @@
 // the App adapter and passed in. A transition returns the next PatchState; the ones that can complete a
 // patch return a `commit` verdict alongside, and the caller commits it + hot-swaps.
 
-import { type DeviceDescriptor, descriptorFor } from "./catalog";
+import { type CableType, type DeviceDescriptor, descriptorFor } from "./catalog";
 import { type ConnectVerdict, type Endpoint, evaluateConnection } from "./connections";
 import { deviceById } from "./projection";
 import type { Connection } from "./scene";
@@ -34,7 +34,7 @@ export type PatchState = {
 // The jack under the pointer, resolved by the adapter: its data-jack key, the Endpoint it names, and its
 // measured anchor (null when the jack isn't currently measured / in view).
 export type JackHit = { key: string; endpoint: Endpoint; anchor: Pt | null };
-export type PatchDeps = { connections: Connection[] };
+export type PatchDeps = { connections: Connection[]; cables?: CableType[] };
 // A transition result; `commit` present ⇒ the caller should commit that verdict and hot-swap.
 export type PatchResult = { state: PatchState; commit?: ConnectVerdict };
 
@@ -98,7 +98,7 @@ export function pointerMove(
   if (!state) return null;
   const srcPoint = srcAnchor ?? state.srcPoint;
   if (hit && hit.key !== jackKeyOf(state.source)) {
-    const verdict = evaluateConnection(state.source, hit.endpoint, deps.connections);
+    const verdict = evaluateConnection(state.source, hit.endpoint, deps.connections, deps.cables);
     return {
       ...state,
       srcPoint,
@@ -137,7 +137,7 @@ export function pointerUp(
   if (!clickNotDrag) return { state }; // a press-and-drag is a pan — keep the pick
   if (!hit) return { state }; // empty space / a non-jack (e.g. the switcher) — keep it through the switch
   if (hit.key === jackKeyOf(state.source)) return { state: null }; // re-clicking the source cancels
-  const verdict = evaluateConnection(state.source, hit.endpoint, deps.connections);
+  const verdict = evaluateConnection(state.source, hit.endpoint, deps.connections, deps.cables);
   if (verdict.ok) return { state: null, commit: verdict }; // a legal destination commits
   return { state }; // an illegal jack — keep the pick so another target can be tried
 }

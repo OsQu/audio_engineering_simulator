@@ -69,6 +69,8 @@ export interface PortRef {
 
 /** A cable's electrical spec, in SI units. */
 export interface CableSpec {
+  /** Stable cable-catalog id; required for an adapter cable between unlike jack shapes. */
+  typeId?: string;
   resistanceOhms: number;
   capacitanceFarads: number;
 }

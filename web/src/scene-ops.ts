@@ -58,31 +58,41 @@ export function connectionKind(scene: Scene, catalog: DeviceDescriptor[], c: Con
   return desc?.ports.find((p) => p.direction === "output" && p.id === c.from.port)?.kind ?? "line";
 }
 
-// The physical connector of a connection (from its output port). Both ends share it — legality requires
-// compatible connectors — so this is the axis the cable picker filters on and the default cable matches.
-// `null` when the output port can't be resolved.
-export function connectionConnector(
+// The physical connectors of a connection. A cable fits only if its two ends match this pair (in either
+// orientation); `null` when either endpoint can no longer be resolved.
+export function connectionConnectors(
   scene: Scene,
   catalog: DeviceDescriptor[],
   c: Connection,
-): Connector | null {
-  const dev = deviceById(scene, c.from.device);
-  const desc = dev ? descriptorFor(catalog, dev.typeId) : undefined;
-  return (
-    desc?.ports.find((p) => p.direction === "output" && p.id === c.from.port)?.connector ?? null
-  );
+): [Connector, Connector] | null {
+  const fromDevice = deviceById(scene, c.from.device);
+  const toDevice = deviceById(scene, c.to.device);
+  const from = fromDevice ? descriptorFor(catalog, fromDevice.typeId) : undefined;
+  const to = toDevice ? descriptorFor(catalog, toDevice.typeId) : undefined;
+  const fromConnector = from?.ports.find(
+    (p) => p.direction === "output" && p.id === c.from.port,
+  )?.connector;
+  const toConnector = to?.ports.find(
+    (p) => p.direction === "input" && p.id === c.to.port,
+  )?.connector;
+  return fromConnector && toConnector ? [fromConnector, toConnector] : null;
 }
 
-// The cable presets that physically fit `c` — those whose connector matches the connection's ports.
-// The inspector picker offers only these (you can't plug an XLR cable into a ¼" jack).
+// The cable presets that physically fit `c`, including an asymmetric adapter in either orientation.
 export function cablesFor(
   scene: Scene,
   catalog: DeviceDescriptor[],
   cables: CableType[],
   c: Connection,
 ): CableType[] {
-  const connector = connectionConnector(scene, catalog, c);
-  return connector === null ? [] : cables.filter((ct) => ct.connector === connector);
+  const connectors = connectionConnectors(scene, catalog, c);
+  if (!connectors) return [];
+  const [from, to] = connectors;
+  return cables.filter(
+    (ct) =>
+      (ct.fromConnector === from && ct.toConnector === to) ||
+      (ct.fromConnector === to && ct.toConnector === from),
+  );
 }
 
 // Apply a legal verdict to the patch: drop the replaced edge (fan-in is illegal, so a new cable into an
@@ -162,7 +172,7 @@ function attachedInterface(
     if (!ends.includes(computerId)) continue;
     const peer = ends.find((id) => id !== computerId);
     if (!peer || isComputer(scene, peer)) continue;
-    if (connectionConnector(scene, catalog, c) !== "usb") continue;
+    if (connectionConnectors(scene, catalog, c)?.[0] !== "usb") continue;
     return peer;
   }
   return null;

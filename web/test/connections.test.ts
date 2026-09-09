@@ -127,6 +127,34 @@ describe("evaluateConnection — legality", () => {
     if (!v.ok) expect(v.reason).toMatch(/connector/);
   });
 
+  it("accepts XLR ↔ ¼-inch only when a matching adapter cable is available", () => {
+    const adapter: CableType = {
+      typeId: "balanced_trs_xlr_3m",
+      label: "Balanced TRS ↔ XLR (3 m)",
+      kind: "line",
+      fromConnector: "quarterInch",
+      toConnector: "xlr",
+      lengthM: 3,
+      resistanceOhms: 0.15,
+      capacitanceFarads: 1.5e-10,
+    };
+    expect(
+      evaluateConnection(
+        out("if", 4, "analog", "quarterInch"),
+        inp("luma", 0, "analog", "xlr"),
+        [],
+      ),
+    ).toEqual(expect.objectContaining({ ok: false }));
+    expect(
+      evaluateConnection(
+        out("if", 4, "analog", "quarterInch"),
+        inp("luma", 0, "analog", "xlr"),
+        [],
+        [adapter],
+      ),
+    ).toEqual(expect.objectContaining({ ok: true }));
+  });
+
   it('accepts same-connector analog ports despite differing signal-class (instrument → line, both ¼")', () => {
     const v = evaluateConnection(
       out("synth", 0, "analog", "quarterInch"),
@@ -303,7 +331,8 @@ describe("cable spec ↔ type-id round-trip", () => {
       typeId: "patch_short",
       label: "Patch",
       kind: "line",
-      connector: "quarterInch",
+      fromConnector: "quarterInch",
+      toConnector: "quarterInch",
       lengthM: 0.5,
       resistanceOhms: 0.05,
       capacitanceFarads: 5e-11,
@@ -312,15 +341,20 @@ describe("cable spec ↔ type-id round-trip", () => {
       typeId: "instrument_6m",
       label: "Instr 6m",
       kind: "instrument",
-      connector: "quarterInch",
+      fromConnector: "quarterInch",
+      toConnector: "quarterInch",
       lengthM: 6,
       resistanceOhms: 0.3,
       capacitanceFarads: 6e-10,
     },
   ];
 
-  it("cableSpec extracts just the R·C the engine reads", () => {
-    expect(cableSpec(cables[1])).toEqual({ resistanceOhms: 0.3, capacitanceFarads: 6e-10 });
+  it("cableSpec persists the selected catalog cable with its R·C", () => {
+    expect(cableSpec(cables[1])).toEqual({
+      typeId: "instrument_6m",
+      resistanceOhms: 0.3,
+      capacitanceFarads: 6e-10,
+    });
   });
 
   it("cableTypeIdFor recovers the preset id from a stored spec", () => {

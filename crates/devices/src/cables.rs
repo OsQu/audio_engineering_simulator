@@ -3,7 +3,7 @@
 //! A cable is **physical content** — its series resistance and shunt capacitance are as intrinsic as a
 //! device's impedance — so, like device dimensions (Story 4.3), it lives here on the content layer, not
 //! invented in the TypeScript UI where it would drift. Each [`CableType`] maps a stable `type_id` to a
-//! realistic R·C (authored from a per-metre basis at a nominal length) plus a connector `kind` for jack
+//! realistic R·C (authored from a per-metre basis at a nominal length) plus endpoint connectors for jack
 //! styling. The UI fetches the table, the user picks one when wiring an **analog↔analog** connection,
 //! and the chosen R·C rides the edge as the scene [`CableSpec`](crate::CableSpec) — where the engine's
 //! loading divider + one-pole treble rolloff emerge from it (Epic 1.2).
@@ -36,9 +36,10 @@ pub struct CableType {
     pub label: String,
     /// Connector kind, for jack/cable styling (mirrors a port's `kind`).
     pub kind: PortKind,
-    /// Physical connector shape — which jacks this cable can plug into (mirrors a port's `connector`).
-    /// The picker offers a connection only the cables whose `connector` matches its ports.
-    pub connector: Connector,
+    /// Physical connector at one end of this cable. A passive adapter lead may differ at its other end.
+    pub from_connector: Connector,
+    /// Physical connector at the other end of this cable.
+    pub to_connector: Connector,
     /// Nominal length in metres the R·C was authored at (display + length-scaling seam).
     pub length_m: f32,
     /// Series resistance, ohms (the `Zcable` term of the loading divider).
@@ -55,7 +56,8 @@ struct CableEntry {
     type_id: &'static str,
     label: &'static str,
     kind: PortKind,
-    connector: Connector,
+    from_connector: Connector,
+    to_connector: Connector,
     length_m: f32,
     resistance_ohms: f32,
     capacitance_farads: f32,
@@ -69,7 +71,8 @@ const CABLES: &[CableEntry] = &[
         type_id: "patch_short",
         label: "Patch Cable (0.5 m)",
         kind: PortKind::Line,
-        connector: Connector::QuarterInch,
+        from_connector: Connector::QuarterInch,
+        to_connector: Connector::QuarterInch,
         length_m: 0.5,
         resistance_ohms: 0.05,
         capacitance_farads: 5.0e-11, // 0.5 m × ~100 pF/m = 50 pF
@@ -79,7 +82,8 @@ const CABLES: &[CableEntry] = &[
         type_id: "instrument_3m",
         label: "Instrument Cable (3 m)",
         kind: PortKind::Instrument,
-        connector: Connector::QuarterInch,
+        from_connector: Connector::QuarterInch,
+        to_connector: Connector::QuarterInch,
         length_m: 3.0,
         resistance_ohms: 0.15,
         capacitance_farads: 3.0e-10, // 3 m × ~100 pF/m = 300 pF
@@ -89,7 +93,8 @@ const CABLES: &[CableEntry] = &[
         type_id: "instrument_6m",
         label: "Instrument Cable (6 m)",
         kind: PortKind::Instrument,
-        connector: Connector::QuarterInch,
+        from_connector: Connector::QuarterInch,
+        to_connector: Connector::QuarterInch,
         length_m: 6.0,
         resistance_ohms: 0.3,
         capacitance_farads: 6.0e-10, // 6 m × ~100 pF/m = 600 pF
@@ -99,7 +104,8 @@ const CABLES: &[CableEntry] = &[
         type_id: "mic_10m",
         label: "Mic Cable (10 m)",
         kind: PortKind::Mic,
-        connector: Connector::Xlr,
+        from_connector: Connector::Xlr,
+        to_connector: Connector::Xlr,
         length_m: 10.0,
         resistance_ohms: 0.5,
         capacitance_farads: 5.0e-10, // 10 m × ~50 pF/m = 500 pF
@@ -109,10 +115,24 @@ const CABLES: &[CableEntry] = &[
         type_id: "speaker_5m",
         label: "Speaker Cable (5 m)",
         kind: PortKind::Speaker,
-        connector: Connector::Speakon,
+        from_connector: Connector::Speakon,
+        to_connector: Connector::Speakon,
         length_m: 5.0,
         resistance_ohms: 0.1,
         capacitance_farads: 2.5e-10,
+    },
+    // A balanced studio interconnect: TRS at an interface/patchbay end, XLR at outboard gear.
+    // It carries the same two analog conductors with no conversion; the endpoint shapes are why it
+    // belongs in the cable catalog rather than weakening the jack-compatibility rule globally.
+    CableEntry {
+        type_id: "balanced_trs_xlr_3m",
+        label: "Balanced TRS ↔ XLR (3 m)",
+        kind: PortKind::Line,
+        from_connector: Connector::QuarterInch,
+        to_connector: Connector::Xlr,
+        length_m: 3.0,
+        resistance_ohms: 0.15,
+        capacitance_farads: 1.5e-10, // 3 m × ~50 pF/m = 150 pF
     },
 ];
 
@@ -126,12 +146,24 @@ pub fn cable_types() -> Vec<CableType> {
             type_id: c.type_id.to_owned(),
             label: c.label.to_owned(),
             kind: c.kind,
-            connector: c.connector,
+            from_connector: c.from_connector,
+            to_connector: c.to_connector,
             length_m: c.length_m,
             resistance_ohms: c.resistance_ohms,
             capacitance_farads: c.capacitance_farads,
         })
         .collect()
+}
+
+/// Whether the named cable physically mates with `a` and `b`, regardless of which end the user starts
+/// dragging from. This is the cable-mediated complement to direct jack compatibility.
+#[must_use]
+pub fn cable_matches_connectors(type_id: &str, a: Connector, b: Connector) -> bool {
+    CABLES.iter().any(|c| {
+        c.type_id == type_id
+            && ((c.from_connector == a && c.to_connector == b)
+                || (c.from_connector == b && c.to_connector == a))
+    })
 }
 
 #[cfg(test)]
@@ -282,17 +314,29 @@ mod tests {
         assert!(json.contains("resistanceOhms"));
         assert!(json.contains("capacitanceFarads"));
         assert!(json.contains("lengthM"));
-        assert!(json.contains("connector"));
+        assert!(json.contains("fromConnector"));
+        assert!(json.contains("toConnector"));
         assert!(json.contains("instrument_6m"), "expected the 6 m preset");
     }
 
-    /// Each preset carries the physical connector its jacks present: ¼" for patch/instrument, XLR for the
-    /// mic cable, speakON for the speaker cable — the axis the UI cable picker filters on.
+    /// Each preset carries physical endpoint connectors; the balanced adapter deliberately differs.
     #[test]
-    fn presets_carry_expected_connectors() {
-        assert_eq!(preset("patch_short").connector, Connector::QuarterInch);
-        assert_eq!(preset("instrument_6m").connector, Connector::QuarterInch);
-        assert_eq!(preset("mic_10m").connector, Connector::Xlr);
-        assert_eq!(preset("speaker_5m").connector, Connector::Speakon);
+    fn presets_carry_expected_endpoint_connectors() {
+        let patch = preset("patch_short");
+        assert_eq!(patch.from_connector, Connector::QuarterInch);
+        assert_eq!(patch.to_connector, Connector::QuarterInch);
+        let adapter = preset("balanced_trs_xlr_3m");
+        assert_eq!(adapter.from_connector, Connector::QuarterInch);
+        assert_eq!(adapter.to_connector, Connector::Xlr);
+        assert!(cable_matches_connectors(
+            "balanced_trs_xlr_3m",
+            Connector::QuarterInch,
+            Connector::Xlr
+        ));
+        assert!(cable_matches_connectors(
+            "balanced_trs_xlr_3m",
+            Connector::Xlr,
+            Connector::QuarterInch
+        ));
     }
 }

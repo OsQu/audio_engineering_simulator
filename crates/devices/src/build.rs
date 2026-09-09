@@ -27,6 +27,7 @@ use engine::{
     ParamHandle, ReadoutHandle, Schedule, compile,
 };
 
+use crate::cable_matches_connectors;
 use crate::catalog::{
     BuiltDevice, Connector, DeviceConfig, DeviceDescriptor, PortDescriptor, PortDirection,
     PortDomain, connectors_compatible, describe_device, instantiate_with_assets,
@@ -353,7 +354,12 @@ fn add_edge(
     ) && fp.domain == tp.domain
     {
         // Connector-shape compatibility — a hard mechanical constraint (an XLR won't seat in a ¼" jack).
-        if !connectors_compatible(fp.connector, tp.connector) {
+        let cable_adapts = cable.as_ref().is_some_and(|spec| {
+            spec.type_id.as_deref().is_some_and(|type_id| {
+                cable_matches_connectors(type_id, fp.connector, tp.connector)
+            })
+        });
+        if !connectors_compatible(fp.connector, tp.connector) && !cable_adapts {
             return Err(BuildError::ConnectorMismatch {
                 from: from.device.clone(),
                 to: to.device.clone(),
@@ -1246,6 +1252,7 @@ mod tests {
                     port: 0,
                 },
                 cable: Some(crate::scene::CableSpec {
+                    type_id: None,
                     resistance_ohms: 10_000.0,
                     capacitance_farads: 0.0,
                 }),
@@ -1571,11 +1578,43 @@ mod tests {
     fn cabled_connection_builds() {
         let mut patch = canonical_patch();
         patch.connections[0].cable = Some(crate::scene::CableSpec {
+            type_id: None,
             resistance_ohms: 150.0,
             capacitance_farads: 1e-9,
         });
         let mut scene = build_patch(&patch, BLOCK_LEN, rate(), 0).expect("cabled patch builds");
         assert!(peak_after_note(&mut scene, "synth", 32) > 0.05);
+    }
+
+    #[test]
+    fn balanced_trs_xlr_adapter_is_required_for_the_luma_line_input() {
+        // Scarlett Line Out 3 is a balanced ¼-inch line jack (output id 4); Luma Line In is balanced
+        // XLR. Their two analog conductors are compatible electrically, but only the catalog's named
+        // passive adapter lead makes the unlike physical endpoints legal.
+        let patch = |cable| Patch {
+            devices: vec![device("if", "scarlett_8i6"), device("luma", "luma_leveler")],
+            connections: vec![Connection {
+                cable,
+                ..conn("if", 4, "luma", 0)
+            }],
+            output: PortRef {
+                device: "luma".into(),
+                port: 0,
+            },
+        };
+        let adapter = crate::scene::CableSpec {
+            type_id: Some("balanced_trs_xlr_3m".into()),
+            resistance_ohms: 0.15,
+            capacitance_farads: 1.5e-10,
+        };
+        build_patch(&patch(Some(adapter)), BLOCK_LEN, rate(), 0)
+            .expect("the catalog-backed balanced adapter builds");
+
+        let err = build_patch(&patch(None), BLOCK_LEN, rate(), 0).unwrap_err();
+        assert!(
+            matches!(err, BuildError::ConnectorMismatch { .. }),
+            "got {err:?}"
+        );
     }
 
     /// The static loading-loss readout reads each connection's baked divider. In the canonical patch
@@ -1614,6 +1653,7 @@ mod tests {
     fn a_cable_deepens_the_loading_loss() {
         let mut patch = canonical_patch();
         patch.connections[2].cable = Some(crate::scene::CableSpec {
+            type_id: None,
             resistance_ohms: 1000.0,
             capacitance_farads: 1e-9,
         });

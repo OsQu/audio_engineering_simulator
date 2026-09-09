@@ -8,6 +8,7 @@
 // `$effect` with the scene-view dep list); the controller just exposes `measure(worldApi)` + the store.
 
 import type { JackAnchor } from "./cable-view";
+import type { CableType } from "./catalog";
 import type { ConnectVerdict } from "./connections";
 import { measureJacks as measureJacksDom } from "./jack-anchors";
 import type { JackHit, PatchState } from "./patching";
@@ -53,8 +54,8 @@ export class PatchController {
     return endpoint ? { key, endpoint, anchor: this.jackAnchors[key] ?? null } : null;
   }
 
-  #patchDeps(): { connections: Connection[] } {
-    return { connections: this.#session.scene.patch.connections };
+  #patchDeps(): { connections: Connection[]; cables: CableType[] } {
+    return { connections: this.#session.scene.patch.connections, cables: this.#session.cables };
   }
 
   // The patching handlers are thin adapters: they read the DOM into a JackHit + surface coords, keep the

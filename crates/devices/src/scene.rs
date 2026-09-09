@@ -74,7 +74,7 @@ pub struct ConfigSetting {
 /// position in the device's exposed param list (what `BuiltScene::param` indexes), *not* the
 /// node-local `ParamId`. For a single-node device the two coincide; for a multi-node device they
 /// differ (each stage's `ParamId`s restart at 0, but the exposed positions run 0..n across stages).
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ParamSetting {
     /// Exposed param id — its position in the device's exposed param list (matches `ParamDescriptor.id`).
@@ -117,9 +117,13 @@ pub struct PortRef {
 
 /// A cable's electrical spec: series resistance and shunt capacitance, in SI units. Mapped to the
 /// engine's `Cable` at build; the loading divider and treble rolloff emerge from it.
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CableSpec {
+    /// Optional stable cable-catalog id. Required when this cable bridges two otherwise incompatible
+    /// connector shapes; absent legacy specs remain valid on directly compatible jacks.
+    #[serde(default)]
+    pub type_id: Option<String>,
     /// Series resistance, ohms.
     pub resistance_ohms: f32,
     /// Shunt capacitance, farads.
@@ -162,6 +166,7 @@ mod tests {
                     port: 0,
                 },
                 cable: Some(CableSpec {
+                    type_id: Some("patch_short".into()),
                     resistance_ohms: 150.0,
                     capacitance_farads: 0.5,
                 }),

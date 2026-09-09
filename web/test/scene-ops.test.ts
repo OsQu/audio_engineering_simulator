@@ -119,7 +119,8 @@ const CABLES: CableType[] = [
     typeId: "trs",
     label: "TRS 6 m",
     kind: "line",
-    connector: "quarterInch",
+    fromConnector: "quarterInch",
+    toConnector: "quarterInch",
     lengthM: 6,
     resistanceOhms: 50,
     capacitanceFarads: 1e-9,
@@ -128,7 +129,8 @@ const CABLES: CableType[] = [
     typeId: "long",
     label: "TRS 30 m",
     kind: "line",
-    connector: "quarterInch",
+    fromConnector: "quarterInch",
+    toConnector: "quarterInch",
     lengthM: 30,
     resistanceOhms: 250,
     capacitanceFarads: 5e-9,
@@ -202,6 +204,7 @@ describe("commitCable", () => {
     expect(scene.patch.connections).toHaveLength(1);
     // analog ⇒ carries the first preset's R·C
     expect(scene.patch.connections[0].cable).toEqual({
+      typeId: "trs",
       resistanceOhms: 50,
       capacitanceFarads: 1e-9,
     });
@@ -280,7 +283,8 @@ describe("connector-aware cable selection", () => {
       typeId: "xlr",
       label: "XLR 3 m",
       kind: "mic",
-      connector: "xlr",
+      fromConnector: "xlr",
+      toConnector: "xlr",
       lengthM: 3,
       resistanceOhms: 1,
       capacitanceFarads: 1e-10,
@@ -305,6 +309,7 @@ describe("connector-aware cable selection", () => {
     commitCable(scene, CATALOG, mixedCables, { ok: true, connection: analogConn, replaces: null });
     // trs (first ¼" preset), not the XLR that leads the list.
     expect(scene.patch.connections[0].cable).toEqual({
+      typeId: "trs",
       resistanceOhms: 50,
       capacitanceFarads: 1e-9,
     });
@@ -337,6 +342,7 @@ describe("setCableType", () => {
     const scene = base();
     setCableType(scene, CABLES, scene.patch.connections[0], "long");
     expect(scene.patch.connections[0].cable).toEqual({
+      typeId: "long",
       resistanceOhms: 250,
       capacitanceFarads: 5e-9,
     });

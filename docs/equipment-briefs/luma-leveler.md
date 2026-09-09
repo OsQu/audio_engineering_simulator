@@ -139,6 +139,38 @@ impedance taps are explicitly deferred.
 - **Scene schema impact and reason:** none expected. Adding a device type without changing persisted
   scene semantics or existing positional IDs does not require a schema bump.
 
+## Architecture gap — balanced XLR ↔ ¼-inch line cables (2026-09-09) · resolved
+
+- **Blocked requirement:** patch a Scarlett 8i6 balanced ¼-inch Line Out (for example, Line Out 3) into
+  the Luma Leveler's balanced XLR Line In using a real-world TRS-to-XLR balanced lead.
+- **Current seam:** `Connector` and `connectors_compatible` in `crates/devices/src/catalog.rs` only admit
+  equal shapes plus a combo jack; `CableType` in `crates/devices/src/cables.rs` carries one `connector`;
+  `web/src/connections.ts` and `crates/devices/src/build.rs` reject mismatched endpoints before a cable
+  can be selected; `web/src/scene-ops.ts` filters the picker by that single connector.
+- **Concrete limitation:** both ports are two-conductor analog line faces, but an XLR connector does not
+  equal a ¼-inch connector, so the simulator cannot represent an adapter/hybrid cable even though the
+  underlying balanced voltage lanes and impedance model can carry the signal honestly.
+- **Affected contracts:** Rust cable-catalog serialization, TypeScript `CableType` mirror and picker,
+  live connection verdict, build-time connection validation, and persisted `CableSpec` selection behavior.
+- **Smallest architectural question:** should cable content expose ordered endpoint connectors
+  (`from_connector` / `to_connector`, accepted in either physical orientation for a passive balanced
+  lead) and make legality depend on a matching cable, rather than globally declaring XLR and ¼-inch
+  jacks directly compatible? The endpoint-cable model is recommended: it preserves the mechanical rule,
+  lets the UI show a specific TRS↔XLR lead, and leaves the existing analog R·C physics unchanged.
+
+**Resolution approved and implemented:** cable content now owns an ordered connector pair
+(`from_connector` / `to_connector`) and is matched in either physical orientation. The catalog adds
+`balanced_trs_xlr_3m`, a passive balanced 3 m lead with 0.15 Ω series resistance and 150 pF shunt
+capacitance. The selected stable cable `type_id` is persisted in `CableSpec`; Rust build validation
+allows unlike connectors only when that catalog cable matches the two endpoints. Existing same-shape
+cables and legacy cable specs remain valid without a type ID.
+
+The UI mirrors that rule for live patching and filters its picker by both endpoint connectors. This is a
+physical connector adaptation only: the Scarlett and Luma remain two-conductor analog line devices, with
+no hidden converter or Luma-specific exception. Coverage proves the UI rejects a bare XLR↔¼-inch pair,
+accepts it with the catalog adapter, and that `build_patch` accepts Focusrite Line Out 3 → Luma Line In
+only with the persisted adapter cable.
+
 ## Workbench acceptance
 
 - **Browser path used:** not yet exercised; use `/devices/luma_leveler` after implementation.

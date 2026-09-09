@@ -156,7 +156,7 @@ export function connectorsCompatible(a: Connector, b: Connector): boolean {
 }
 
 /** A cable type the UI offers when wiring an analog connection — a realistic R·C preset (physical
- *  content authored on the Rust side, `crates/devices/src/cables.rs`) plus a connector kind for styling.
+ *  content authored on the Rust side, `crates/devices/src/cables.rs`) plus physical endpoint connectors.
  *  Fetched via the wasm `cable_catalog()` export. The chosen R·C rides the connection as a `CableSpec`;
  *  the engine's loading loss + treble rolloff emerge from it. Realistic cables into today's low-Z sources
  *  are inaudible by design (the effect is a numeric oracle; audible payoff arrives with Epic 5's high-Z
@@ -168,8 +168,10 @@ export interface CableType {
   label: string;
   /** Connector kind, for cable/jack styling. */
   kind: PortKind;
-  /** Physical connector shape — which jacks this cable can plug into (the picker filters on it). */
-  connector: Connector;
+  /** Physical connector at one end. A passive adapter lead may differ at the other end. */
+  fromConnector: Connector;
+  /** Physical connector at the other end. */
+  toConnector: Connector;
   /** Nominal length in metres the R·C was authored at (display + length-scaling seam). */
   lengthM: number;
   /** Series resistance, ohms (the loading-divider term). */

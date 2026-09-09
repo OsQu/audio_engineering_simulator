@@ -19,7 +19,7 @@ mod scene;
 
 pub use assets::{AssetBuildError, BuildContext, SoundFontBankLibrary};
 pub use build::{BuildError, BuiltScene, build_patch, build_patch_with_assets};
-pub use cables::{CableType, cable_types};
+pub use cables::{CableType, cable_matches_connectors, cable_types};
 pub use catalog::{
     AssetNodeBuilder, BuiltDevice, ConfigDescriptor, ConfigKind, ConfigOption, Connector,
     DeviceConfig, DeviceDescriptor, ParamDescriptor, ParamKind, ParamTaper, PortDescriptor,

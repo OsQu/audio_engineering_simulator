@@ -88,6 +88,7 @@ export function evaluateConnection(
   a: Endpoint,
   b: Endpoint,
   existing: Connection[],
+  cables: CableType[] = [],
 ): ConnectVerdict {
   // A **duplex** link (USB-C, Ethernet): one physical connector carries both directions. Both jacks
   // are duplex (each bound to its output side), so the drag authors a single duplex `Connection` that
@@ -146,9 +147,13 @@ export function evaluateConnection(
     return { ok: false, reason: `domain mismatch: ${out.domain} → ${inp.domain}` };
   }
 
-  // Same physical connector — an XLR won't seat in a ¼" jack. Checked after domain (a cross-domain
-  // pair is reported as a domain mismatch), mirroring `build_patch`'s domain-then-connector order.
-  if (!connectorsCompatible(out.connector, inp.connector)) {
+  // Unlike jack shapes need a catalog-backed adapter cable. Checked after domain, matching Rust.
+  const adapter = cables.find(
+    (cable) =>
+      (cable.fromConnector === out.connector && cable.toConnector === inp.connector) ||
+      (cable.fromConnector === inp.connector && cable.toConnector === out.connector),
+  );
+  if (!connectorsCompatible(out.connector, inp.connector) && !adapter) {
     return { ok: false, reason: `connector mismatch: ${out.connector} → ${inp.connector}` };
   }
 
@@ -200,7 +205,11 @@ export function cableAllowed(domain: PortDomain): boolean {
 
 /** The R·C spec a `Connection` carries for a cable preset (the subset the engine reads). */
 export function cableSpec(ct: CableType): CableSpec {
-  return { resistanceOhms: ct.resistanceOhms, capacitanceFarads: ct.capacitanceFarads };
+  return {
+    typeId: ct.typeId,
+    resistanceOhms: ct.resistanceOhms,
+    capacitanceFarads: ct.capacitanceFarads,
+  };
 }
 
 /** The catalog type id whose R·C matches `spec`, or `""` when there is no cable (ideal wire) or the spec
@@ -209,6 +218,7 @@ export function cableSpec(ct: CableType): CableSpec {
  *  field on the IR). */
 export function cableTypeIdFor(cables: CableType[], spec: CableSpec | undefined): string {
   if (!spec) return "";
+  if (spec.typeId) return cables.some((c) => c.typeId === spec.typeId) ? spec.typeId : "";
   const match = cables.find(
     (c) =>
       c.resistanceOhms === spec.resistanceOhms && c.capacitanceFarads === spec.capacitanceFarads,
