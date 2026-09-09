@@ -769,6 +769,75 @@ mod tests {
         }
     }
 
+    /// Electric guitar → deliberately overdriven gain stage → voltage-capture speaker. The gain
+    /// stage has a fixed ±10 V rail in the catalog, so the raw speaker tap is the physical oracle;
+    /// the host capture below deliberately normalizes that rail to its own ±1.0 full scale.
+    fn electric_guitar_distortion_patch() -> Patch {
+        let mut gain = dev("gain", "gain_stage");
+        gain.params = vec![ParamSetting {
+            id: 0,
+            value: 1_000.0,
+        }];
+        let mut guitar = dev("guitar", "electric_guitar");
+        // GM Distortion Guitar has a sufficiently hot sample for this deliberately overdriven
+        // product path; the default clean-guitar preset remains the catalog's normal face.
+        guitar.config = vec![ConfigSetting {
+            key: "preset".into(),
+            value: 30.0,
+        }];
+        Patch {
+            devices: vec![guitar, gain, dev("spk", "speaker")],
+            connections: vec![conn("guitar", 0, "gain", 0), conn("gain", 0, "spk", 0)],
+            output: PortRef {
+                device: "spk".into(),
+                port: 0,
+            },
+        }
+    }
+
+    /// Acoustic guitar → dynamic mic → mic preamp → voltage-capture speaker. The guitar only
+    /// exposes acoustic pressure, so this cannot sound unless its internal DA/monitor, the air
+    /// edge, and the mic transducer all participate in the compiled graph.
+    fn acoustic_guitar_micing_patch() -> Patch {
+        let mut interface = dev("if", "scarlett_8i6");
+        // The interface boots powered down; its device-level Power group drives every relevant
+        // preamp/converter/monitor stage, and the Monitor control opens the captured line out.
+        interface.params = vec![
+            // Route Combo In 1 (matrix input 0) to Monitor L (matrix output 8). The stock matrix
+            // identity sends it only to USB Out 1, which is intentionally inaudible at Line Out 1.
+            ParamSetting { id: 16, value: 1.0 },
+            ParamSetting {
+                id: 0,
+                value: 100.0,
+            },
+            ParamSetting {
+                id: 204,
+                value: 1.0,
+            },
+            ParamSetting {
+                id: 205,
+                value: 1.0,
+            },
+        ];
+        Patch {
+            devices: vec![
+                dev("guitar", "acoustic_guitar"),
+                dev("mic", "dynamic_mic"),
+                interface,
+                dev("spk", "speaker"),
+            ],
+            connections: vec![
+                conn("guitar", 0, "mic", 0),
+                conn("mic", 0, "if", 0),
+                conn("if", 2, "spk", 0),
+            ],
+            output: PortRef {
+                device: "spk".into(),
+                port: 0,
+            },
+        }
+    }
+
     fn default_soundfont_asset() -> SoundFontAsset {
         SoundFontAsset {
             id: "tim_gm_6mb".into(),
@@ -786,6 +855,20 @@ mod tests {
         for _ in 0..n {
             engine.render_quantum();
             peak = engine.host.iter().fold(peak, |p, &s| p.max(s.abs()));
+        }
+        peak
+    }
+
+    /// Peak at the simulation's analog speaker tap, before the host-only capture normalizes it.
+    fn speaker_voltage_peak_over(engine: &mut SceneEngine, n: usize) -> f32 {
+        let mut peak = 0.0_f32;
+        for _ in 0..n {
+            engine.render_quantum();
+            peak = engine
+                .out
+                .as_slice()
+                .iter()
+                .fold(peak, |p, &volts| p.max(volts.abs()));
         }
         peak
     }
@@ -821,6 +904,54 @@ mod tests {
         assert!(
             sounding > 0.05,
             "expected audible output after note_on, got {sounding}"
+        );
+    }
+
+    #[test]
+    fn electric_guitar_reaches_the_overdriven_gain_rail() {
+        let mut engine = SceneEngine::from_soundfonts(
+            &electric_guitar_distortion_patch(),
+            vec![default_soundfont_asset()],
+        )
+        .expect("electric guitar product path builds with its bundled bank");
+        // A high-velocity low note is the deliberately overdriven product scenario; it also keeps
+        // the rendered waveform deterministic across SoundFont voice allocation details.
+        engine.note_on("guitar", 48, 127);
+
+        // The SoundFont source, internal DA, high-impedance instrument output, and 1,000× gain
+        // clip the gain stage at ±10 V. The speaker's 10 kΩ input loads its 150 Ω output, so the
+        // actual capture tap's predicted rail is 10 × 10_000 / (10_000 + 150) = 9.852216 V.
+        // Measure after the 5 ms gain glide and the converter/capture FIRs have settled.
+        let rail_peak = speaker_voltage_peak_over(&mut engine, 64);
+        assert!(
+            (rail_peak - 10.0 * 10_000.0 / 10_150.0).abs() < 0.001,
+            "electric guitar should clip at the speaker-loaded 10 V rail, got {rail_peak} V"
+        );
+        let captured_peak = peak_over(&mut engine, 16);
+        assert!(
+            captured_peak >= 0.99,
+            "the clipped speaker feed should reach host full scale, got {captured_peak}"
+        );
+    }
+
+    #[test]
+    fn acoustic_guitar_is_audible_only_after_its_air_path_is_micd() {
+        let mut engine = SceneEngine::from_soundfonts(
+            &acoustic_guitar_micing_patch(),
+            vec![default_soundfont_asset()],
+        )
+        .expect("acoustic guitar micing path builds with its bundled bank");
+        engine.note_on("guitar", NOTE, 100);
+
+        let speaker_peak = speaker_voltage_peak_over(&mut engine, 64);
+        assert!(
+            speaker_peak > 0.01,
+            "acoustic guitar pressure should cross the mic into the analog speaker path, got {speaker_peak} V"
+        );
+        let captured_peak = peak_over(&mut engine, 16);
+        assert!(
+            captured_peak > 0.005,
+            "the mic'd acoustic guitar should produce audible host samples, got {captured_peak}"
         );
     }
 
