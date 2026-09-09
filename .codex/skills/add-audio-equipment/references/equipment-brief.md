@@ -1,7 +1,8 @@
 # Equipment brief
 
 Use only the sections that affect the device. Keep the brief concise, cite claims close to their source,
-and label uncertain visual readings as inference.
+and label uncertain visual readings as inference. After the user approves the researched scope, store the
+settled brief at `docs/equipment-briefs/<type-id>.md`; do not leave the authoritative version only in chat.
 
 ## Inspiration and boundary
 
@@ -60,12 +61,40 @@ Record conflicts instead of silently choosing a convenient value.
 ## Code fit
 
 - Existing nodes to compose:
-- Smallest missing engine behavior:
+- Additive device-specific node, if needed:
 - Existing UI widgets to reuse:
 - New reusable widget, if justified:
 - Catalog ports/params/configs/readouts:
 - Likely files and guardrail tests:
-- Scene schema impact and reason:
+- Scene schema impact: none, or architectural gap requiring a separate session
+
+## Delivery handoff
+
+- Equipment Story: [`../equipment-stories/<type-id>.md`](../equipment-stories/<type-id>.md)
+- Standalone device-owned files:
+- Common-base prerequisites and prewired registries:
+- Shared family core/widgets that must land before parallel device work:
+- Device branch/worktree ownership:
+- Declared central integration task and merge order:
+- Shared files device-local tasks must not edit:
+
+## Architecture fit
+
+- Can the approved equipment be implemented additively through existing seams? Yes / No
+- Existing seams used:
+- Shared contracts that remain unchanged:
+- Non-blocking improvements recorded for later:
+
+If **No**, complete this gap report and stop the equipment task:
+
+- Blocked equipment requirement:
+- Current seam and concrete limitation:
+- Evidence from landed code:
+- Affected shared files/contracts:
+- Why a device-local workaround would be misleading or duplicative:
+- Smallest architectural question for the separate session:
+- Preserved research/visual decisions:
+- Exact equipment resume point after the architecture lands:
 
 ## Workbench acceptance
 

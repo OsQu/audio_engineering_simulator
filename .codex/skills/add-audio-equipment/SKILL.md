@@ -9,10 +9,46 @@ Add recognizable, educational audio gear without making a 1:1 product emulation.
 physical identity and operating feel; implement only enough honest engine behavior to support the
 approved face first, then refine the audio in later increments.
 
-Honor the repository workflow in `CLAUDE.md`: create tasks, draft the current task's program design,
-stop for user review before implementation, validate completed work, and never commit unless explicitly
-asked. Read the relevant current Story and settled decisions in `docs/IMPLEMENTATION_PLAN.md` before
-planning edits.
+Honor the repository constraints and engineering conventions in `CLAUDE.md`. This skill has a deliberate
+equipment-specific execution gate: research and planning are collaborative, but once the user explicitly
+approves the equipment Story for autonomous execution, that approval authorizes the listed tasks and one
+focused commit per completed task. It does not authorize unlisted scope, architectural work, destructive
+operations, or external side effects. Read the relevant settled decisions in `docs/IMPLEMENTATION_PLAN.md`
+before planning edits.
+
+## Architectural boundary
+
+Equipment additions are **additive content work**. Use the architecture and extension seams that already
+exist; do not make major architectural decisions or redesign shared infrastructure while adding a device.
+
+Ordinary additive work may include:
+
+- A catalog entry composed from existing nodes.
+- A new device-specific node that implements the existing `Node` contract without changing it.
+- A bespoke faceplate or a narrowly reusable widget using the existing `DeviceUiProps`/handle seams.
+- Device-specific tests, styles, tokens, and readout presentation that preserve existing protocols.
+
+Treat work as an architectural gap when an honest implementation would require changing a shared contract
+or system shape, including the node/graph/schedule model, signal domains or clock model, catalog descriptor
+schema, param/config/readout lanes, scene or worklet protocols, session/patching architecture, workbench
+responsibilities, or the UI/engine ownership boundary. A large workaround, hidden conversion, duplicated
+framework path, or device-specific exception in shared orchestration is also evidence of a gap, not
+permission to proceed.
+
+When a gap appears:
+
+1. Verify it against the landed code and explain why the existing seams cannot implement the equipment
+   honestly and additively.
+2. Write a concise gap report in the equipment brief: the blocked requirement, current seam, concrete
+   limitation, affected files/contracts, and the smallest architectural question that must be resolved.
+3. Preserve the equipment research, approved visual scope, and intended resume point.
+4. **Stop the equipment task.** Do not choose or implement the architectural solution, smuggle it into a
+   device task, or continue with a misleading approximation.
+5. Ask the user to solve and review the architectural gap in a separate session/body of work.
+
+Resume the equipment addition only after that architecture has landed and been verified. Re-read the
+changed seams, update the equipment brief and task design, obtain the normal program-design approval, and
+continue from the recorded resume point.
 
 ## Argument
 
@@ -61,7 +97,11 @@ Present the researched brief and a proposed first increment before editing code.
 
 Stop for user approval of this scope.
 
-### 2. Draft the task's program design
+After approval, store the settled brief at `docs/equipment-briefs/<type-id>.md`. Treat that file as the
+source of truth for the visual target, first increment, explicit deferrals, citations, and any later
+architecture-gap report. Do not begin implementation planning from an unapproved or chat-only brief.
+
+### 2. Plan an executable equipment Story
 
 Cross-check the requested device against the landed code, not only the plans. Determine:
 
@@ -73,7 +113,8 @@ Cross-check the requested device against the landed code, not only the plans. De
 - Runtime params versus structural configs.
 - Required readouts and their units/ballistics.
 - Existing engine nodes that can be composed behind one chassis.
-- The smallest missing node or reusable UI widget, if any.
+- Any additive device-specific node or reusable UI widget needed within existing contracts.
+- Whether any requirement exposes an architectural gap under the boundary above.
 
 The Rust catalog is the truth for the exposed face: a bespoke Svelte faceplate binds controls, sockets,
 configs, and readings by the IDs derived from its catalog nodes. Therefore a visual-first device still
@@ -89,23 +130,77 @@ A deliberately neutral first increment is acceptable. A wrong carrier domain, fa
 converter, or control that appears functional while having no documented behavior is not. Mark any
 intentionally shallow control behavior in the task design and deferred list.
 
-Draft or refresh the task's program-design entry in the active Story companion file. Include only the
-call tree, file-tree delta, or key signatures that carry a real decision. Stop for user approval before
-implementation.
+If none of the existing seams can express the approved device without changing a shared contract, follow
+the architectural-gap stop procedure. Do not draft a device implementation around an unapproved new
+architecture.
 
-### 3. Implement the visual slice
+Read `references/equipment-story.md` and create `docs/equipment-stories/<type-id>.md`. Link it to the
+approved brief and break the implementation into dependency-ordered tasks. Size every task so that it:
+
+- Has one coherent outcome and can be understood and executed from the repository plus the two equipment
+  documents, without relying on chat history.
+- States its dependencies, owned files/shared seams, relevant program design, acceptance checks, and
+  focused validation commands.
+- Produces exactly one focused commit when complete. Split a task before execution if it cannot remain one
+  reviewable commit.
+- Leaves the repository compiling and tests relevant to the increment passing.
+
+The task order should preserve the look-and-feel-first gates: thin honest model, physical faceplate,
+workbench visual iteration and approval, then preapproved good-enough sonic behavior. A task may depend on
+earlier tasks; “independently executable” means its inputs, scope, done-state, and commit boundary are
+explicit, not that tasks can be run in arbitrary order.
+
+For each clear task, include only the call tree, file-tree delta, or key signatures that carry a real
+decision. Later task details may be refined just in time, but only within the approved Story. Stop and
+present the complete Story/task breakdown for user approval. Ask explicitly whether approval includes
+autonomous execution and per-task commits; do not infer commit authorization from approval of the visual
+brief alone.
+
+After the user approves autonomous execution, proceed through the listed tasks without requiring the
+normal per-task review from `CLAUDE.md`. The approved Story is the separate permission contemplated by
+that workflow. Still stop at the visual-approval gate, an architectural gap, a material scope change, a
+destructive action, or any new permission boundary.
+
+### 3. Keep device work isolated and parallel-friendly
+
+Prefer standalone, device-owned files so separate equipment Stories can be developed in branches or
+worktrees with small merge surfaces:
+
+```text
+docs/equipment-briefs/<type-id>.md
+docs/equipment-stories/<type-id>.md
+crates/devices/src/catalog/<device>.rs
+crates/engine/src/node/<device-or-shared-family-node>.rs
+web/src/widgets/<Device>.svelte
+web/test/faceplates/<device>.test.ts
+```
+
+Use the existing `catalog/computer.rs` child-module pattern for device catalog definitions where it fits.
+For a parallel batch, first agree and land a common scaffold on the shared base: shared family processing
+primitives/widgets and all predictable central module, re-export, catalog, faceplate, skin, focus, and test
+registrations. Then give each device task explicit file ownership and keep branch-local work out of shared
+registries.
+
+Central aggregation edits that cannot be prewired should be a small, declared integration task with a
+defined merge order. If a device branch discovers a new shared prerequisite, stop that branch and handle
+the prerequisite centrally; if it changes a shared contract or system shape, use the architectural-gap
+procedure. Do not introduce auto-discovery, code generation, or a new registry mechanism merely to avoid
+merge conflicts during equipment work.
+
+### 4. Implement the visual slice
 
 Add the thinnest valid Rust catalog/model slice, then concentrate on the bespoke faceplate. Normally
 inspect or edit these seams:
 
-- `crates/devices/src/catalog.rs` — identity, dimensions, node expansion, UI metadata, ports, configs,
-  and readouts.
-- `crates/engine/src/node*.rs` — only when the exposed face cannot be represented honestly with existing
-  nodes.
+- `crates/devices/src/catalog/<device>.rs` — preferred home for identity, dimensions, node expansion, UI
+  metadata, ports, configs, and readouts; keep the central `catalog.rs` edit to module/registry aggregation.
+- `crates/engine/src/node*.rs` — only for an additive node that fits the existing `Node`/signal/param/
+  readout contracts unchanged.
 - `web/src/widgets/<Device>.svelte` — bespoke front and rear faces.
 - `web/src/device-ui.ts` — faceplate registration and an optional dedicated focus surface.
 - `web/src/skin.ts` and `web/src/styles/tokens.css` — skin choices or genuinely reusable visual tokens.
-- `web/test/faceplate.test.ts` — exposed-face coverage for bespoke surfaces.
+- `web/test/faceplates/<device>.test.ts` — preferred device-owned exposed-face coverage; use the central
+  test file only when the current harness requires a small declared aggregation edit.
 
 Compose existing physical-layout and bound widgets before adding one-off markup: `Chassis`, `Row`, `Col`,
 `Place`, `Control`, `Socket`, `Reading`, `Legend`, `Led`, and the config controls. Layout is authored at
@@ -116,10 +211,16 @@ Create a reusable widget only when the equipment genuinely introduces a recurrin
 display, such as a rotary selector, illuminated pushbutton, stepped control, dual-concentric knob, or
 gain-reduction meter. Do not stretch an existing widget until its meaning becomes misleading.
 
-Adding a new device alone does not require a scene schema bump. Bump `SCHEMA_VERSION` only when persisted
-scene semantics or existing positional IDs change.
+Do not refactor the catalog, workbench, session, patching, or engine architecture as cleanup bundled with
+the equipment. Record worthwhile but non-blocking improvements separately and continue through existing
+seams. For a blocking improvement, use the architectural-gap stop procedure.
 
-### 4. Iterate in the workbench and obtain visual approval
+Adding a new device alone does not require a scene schema bump. If the equipment would require new
+persisted scene semantics, treat that as an architectural gap and stop. Change `SCHEMA_VERSION` during
+equipment work only when following an already-settled existing convention, such as invalidating saved
+positions after an approved change to an existing device's exposed IDs; do not design new schema here.
+
+### 5. Iterate in the workbench and obtain visual approval
 
 Build the WASM and run the web development loop described in `CLAUDE.md`. Open:
 
@@ -149,7 +250,7 @@ Use fixed front and rear views at a stated workbench zoom when comparing iterati
 and stop for explicit user approval of the look and feel. Do not begin detailed DSP merely because the
 page renders.
 
-### 5. Add the good-enough sonic identity
+### 6. Add the good-enough sonic identity
 
 After visual approval, define the smallest audible and measurable behavior that distinguishes the
 archetype. Start from what the learner should hear, see on the meters, and understand by operating it.
@@ -167,10 +268,69 @@ Do not grow a component-level circuit simulation unless the user explicitly expa
 Preserve the repository's signal-type split: an analog chassis should not silently become a digital
 effect through an invented conversion path.
 
-Implement behavior incrementally, with program-design review before each task as required by
-`CLAUDE.md`.
+Implement behavior incrementally. During an approved autonomous Story, refresh the task's program design
+and execution record in the equipment Story without requesting another review unless the refinement
+changes an approved decision or crosses a stop condition.
 
-### 6. Validate each increment
+### 7. Supervise implementation with Terra subagents
+
+For an approved autonomous Story, the primary/orchestrating Codex session is the harness and remains
+accountable for scope, architecture, verification, Story state, and commits. Delegate implementation to
+Terra-tier subagents (`gpt-5.6-terra` in the current harness) instead of consuming the primary session on
+long code-writing stretches. If Terra subagents are unavailable, report that limitation and obtain the
+user's direction before silently changing the agreed execution model.
+
+Use this loop for each task:
+
+1. The primary session re-reads the approved brief, Story task, landed code, and current git status. It
+   records the task baseline and confirms that dependencies and declared seams still match reality.
+2. Spawn one Terra implementation agent with a bounded assignment containing the task outcome, owned
+   files, allowed shared seams, program design, acceptance checks, focused test commands, architecture
+   stop rule, and the instruction **not to commit**. Give it the brief and Story paths so its work remains
+   resumable and grounded in the approved scope.
+3. Let that agent implement and run focused checks. It must report changed files, tests run, remaining
+   uncertainty, and any suspected architecture or scope gap. Its report is evidence to inspect, not task
+   acceptance.
+4. The primary session independently reviews the actual diff and relevant surrounding code, checks for
+   unrelated/user-owned changes and architectural drift, and reruns the acceptance checks itself. For UI
+   work, the primary session also performs the browser/workbench inspection; a subagent's screenshot or
+   claim does not replace the harness's verification or the user's visual approval.
+5. If correction is needed within scope, send a precise follow-up to the same Terra agent and repeat the
+   review. Do not fix substantial implementation defects in the supervising context or lower the checks
+   merely to keep the autonomous run moving. Stop on a material scope decision or architectural gap.
+6. Only after independent acceptance does the primary session finalize the Story record, stage the exact
+   task diff, and create the task commit.
+
+Do not run multiple implementation agents concurrently in the same working tree. Parallel device work is
+allowed only when each agent has an explicitly isolated branch/worktree, standalone file ownership, a
+landed common scaffold, and a declared integration order. The primary session must still verify each
+result in its integration context before committing or merging it.
+
+### 8. Execute, document, validate, and commit each task
+
+At task pickup, re-read the approved brief, Story, dependencies, and landed code. Update the task marker
+to `building` and refine its program design if needed. Keep the Story current while working: record
+material decisions, deviations, deferred follow-ups, exact validation performed, and the next resume
+point. Do not silently change the task's goal.
+
+When the task meets its acceptance checks:
+
+1. Run its focused validation and any broader gate proportional to the change. For the final task, run
+   the full Story gate and prepare the Story-completion record before committing.
+2. Update the task to `done` in `docs/equipment-stories/<type-id>.md`, including delivered behavior,
+   validation results, remaining shallowness, and the intended commit subject.
+3. Review the diff for unrelated or user-owned changes and stage only the task's files/hunks.
+4. Create exactly one focused commit for the task using the recorded subject. Do not rewrite or absorb
+   pre-existing user changes. Do not add a second metadata-only commit just to record the resulting hash;
+   a resumed session can recover it from `git log`.
+5. Re-read the next task against the now-landed code and continue autonomously if it remains within the
+   approved Story.
+
+If validation fails, keep the task `building`, record the failure and resume point, and fix it within the
+task. If the required fix expands scope, touches an undeclared shared seam, or exposes an architectural
+gap, stop instead of committing a partial or misleading result.
+
+### 9. Validate the Story
 
 Visual and interaction checks:
 
@@ -193,9 +353,11 @@ Audio checks:
 - Preserve determinism and the no-allocation/no-panic audio-path constraints.
 - Include an end-to-end representative patch or render when it tests behavior not covered at node level.
 
-Run the focused tests during iteration and the full Rust and web gates before handoff. Format web files
-with the repository's combined formatter. Report what was verified, what remains intentionally shallow,
-and which researched characteristics are deferred. Do not commit.
+Run focused tests during iteration. Before committing the final task, run the full Rust and web gates and
+format web files with the repository's combined formatter. Update the Story with its final validation,
+delivered summary, intentionally shallow behavior, deferred researched characteristics, and completion/
+resume state, then include that durable record in the final task commit. Report the ordered task commits
+and any deferred work to the user.
 
 ## Family decisions
 
