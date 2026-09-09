@@ -40,9 +40,10 @@ use crate::{
 };
 use engine::{
     AdConverter, BitDepth, CondenserMic, DaConverter, DigitalDemux, DigitalMeter, DigitalMux,
-    Domain, DynamicMic, EqBand, EventThru, GainStage, Graph, InputPort, InputZ, Matrix, MicPreamp,
-    Node, NodeId, NoiseDensity, Ohms, OutputPort, ParamId, Pascals, PoweredMonitor, ReadoutId,
-    SampleRate, SoundFontSource, SoundSource, Speaker, SynthVoice, ThreeBandEq, Volts, VuMeter,
+    Domain, DynamicMic, EqBand, EventThru, GainStage, Graph, InputPort, InputZ, LumaLeveler,
+    Matrix, MicPreamp, Node, NodeId, NoiseDensity, Ohms, OutputPort, ParamId, Pascals,
+    PoweredMonitor, ReadoutId, SampleRate, SoundFontSource, SoundSource, Speaker, SynthVoice,
+    ThreeBandEq, Volts, VuMeter,
 };
 use serde::Serialize;
 
@@ -1554,6 +1555,67 @@ const CATALOG: &[CatalogEntry] = &[
         ]),
         configs: &[],
     },
+    // A fictional 3U electro-optical-style leveler: one balanced analog node owns the
+    // difference-first detector, downward curve, post-reduction gain, power glide, and the two
+    // readings its physical meter will select between. It stays voltage-native end to end.
+    CatalogEntry {
+        type_id: "luma_leveler",
+        name: "Luma Leveler",
+        form_factor: FormFactor::Rackmount { rack_units: 3 },
+        nodes: &[NodeSpec::Plain(|_cfg| Box::new(LumaLeveler::new()))],
+        internal: &[],
+        params: &[
+            ParamUi {
+                label: "Peak Reduction",
+                unit: "",
+                kind: ParamKind::Knob,
+                taper: ParamTaper::Linear,
+            },
+            ParamUi {
+                label: "Gain",
+                unit: "dB",
+                kind: ParamKind::Knob,
+                taper: ParamTaper::Log,
+            },
+            ParamUi {
+                label: "Limit",
+                unit: "",
+                kind: ParamKind::Switch,
+                taper: ParamTaper::Linear,
+            },
+            ParamUi {
+                label: "Power",
+                unit: "",
+                kind: ParamKind::Switch,
+                taper: ParamTaper::Linear,
+            },
+        ],
+        param_groups: &[],
+        param_grid: None,
+        inputs: &[PortUi {
+            label: "Line In",
+            kind: PortKind::Line,
+            connector: Connector::Xlr,
+        }],
+        outputs: &[PortUi {
+            label: "Line Out",
+            kind: PortKind::Line,
+            connector: Connector::Xlr,
+        }],
+        delayed_outputs: &[],
+        duplex_links: &[],
+        readouts: ReadoutSpec::Static(&[
+            ReadoutUi {
+                label: "Gain Reduction",
+                unit: "dB",
+            },
+            ReadoutUi {
+                label: "Output",
+                unit: "dBu",
+            },
+        ]),
+        configs: &[],
+    },
     // A digital level meter — inline passthrough on a digital channel, reporting peak and RMS in
     // dBFS. Placed after the AD, it's the digital half of the across-converter gain-staging story.
     CatalogEntry {
@@ -3055,6 +3117,52 @@ mod tests {
             vec![0, 1, 2, 3],
             "exposed positions, not node-local ids"
         );
+    }
+
+    #[test]
+    fn luma_leveler_expands_as_one_balanced_analog_line_processor() {
+        let descriptor = descriptors()
+            .into_iter()
+            .find(|d| d.type_id == "luma_leveler")
+            .expect("luma_leveler is in the catalog");
+        assert_eq!(
+            descriptor.form_factor,
+            FormFactor::Rackmount { rack_units: 3 }
+        );
+        assert_eq!(
+            descriptor
+                .params
+                .iter()
+                .map(|p| p.label.as_str())
+                .collect::<Vec<_>>(),
+            ["Peak Reduction", "Gain", "Limit", "Power"]
+        );
+        assert_eq!(
+            descriptor
+                .readouts
+                .iter()
+                .map(|r| (r.label.as_str(), r.unit.as_str()))
+                .collect::<Vec<_>>(),
+            [("Gain Reduction", "dB"), ("Output", "dBu")]
+        );
+        assert!(descriptor.configs.is_empty());
+        assert_eq!(descriptor.ports.len(), 2);
+        for port in &descriptor.ports {
+            assert_eq!(port.domain, PortDomain::Analog);
+            assert_eq!(port.channels, 2, "balanced line has two conductors");
+            assert_eq!(port.kind, PortKind::Line);
+            assert_eq!(port.connector, Connector::Xlr);
+        }
+
+        let mut graph = Graph::new();
+        let built = instantiate("luma_leveler", &DeviceConfig::EMPTY, &mut graph)
+            .expect("luma_leveler instantiates");
+        assert_eq!(built.nodes.len(), 1);
+        assert_eq!(graph.connection_count(), 0);
+        assert_eq!(built.inputs.len(), 1);
+        assert_eq!(built.outputs.len(), 1);
+        assert_eq!(built.params.len(), 4);
+        assert_eq!(built.readouts.len(), 2);
     }
 
     /// The chassis seam: a multi-node device expands into several nodes wired by its internal edge,
