@@ -7,21 +7,36 @@
     /** Needle position: 0 = hard left / silence, 1 = full right. Values outside 0..1 are clamped. */
     fraction: number;
     /** Left-hand cap label (e.g. "OUT" for the master monitor, "VU" for a meter device). */
-    label: string;
+    label?: string;
     /** Formatted numeric readout shown to the right (e.g. "-6 dBFS", "-2.0 VU", "—" for silence). */
-    readout: string;
+    readout?: string;
+    /** Center label printed on the meter card. Defaults to the conventional VU marking. */
+    scaleLabel?: string;
+    /** Optional physical card width in mm for equipment that carries an oversized meter. */
+    widthMm?: number;
     /** Shrink the face to fit a thin (1U) device front. The header monitor uses the full size. */
     compact?: boolean;
   }
-  let { fraction, label, readout, compact = false }: Props = $props();
+  let {
+    fraction,
+    label = "",
+    readout = "",
+    scaleLabel = "VU",
+    widthMm,
+    compact = false,
+  }: Props = $props();
 
   // The needle sweeps a 100° arc, -50°..+50° from vertical, across the 0..1 fraction.
   const needle = $derived(Math.max(0, Math.min(1, fraction)) * 100 - 50);
   const ticks = [-50, -25, 0, 25, 50];
 </script>
 
-<div class="vu" class:compact>
-  <span class="cap">{label}</span>
+<div
+  class="vu"
+  class:compact
+  style={widthMm === undefined ? undefined : `--vu-width: ${widthMm}px`}
+>
+  {#if label}<span class="cap">{label}</span>{/if}
   <div class="bezel">
     <div class="glass">
       <svg class="face" viewBox="0 0 150 92" aria-hidden="true">
@@ -31,7 +46,7 @@
         {#each ticks as t (t)}
           <line class="tick" x1="75" y1="24" x2="75" y2="30" transform={`rotate(${t} 75 86)`} />
         {/each}
-        <text class="mark" x="75" y="78" text-anchor="middle">VU</text>
+        <text class="mark" x="75" y="78" text-anchor="middle">{scaleLabel}</text>
         <line
           class="needle"
           x1="75"
@@ -44,7 +59,7 @@
       </svg>
     </div>
   </div>
-  <span class="readout">{readout}</span>
+  {#if readout}<span class="readout">{readout}</span>{/if}
 </div>
 
 <style>
@@ -69,7 +84,7 @@
       inset 0 0 0 1px #000;
   }
   .glass {
-    width: 8rem;
+    width: var(--vu-width, 8rem);
     border-radius: 3px;
     overflow: hidden;
     background: linear-gradient(to bottom, var(--ae-vu-face-top), var(--ae-vu-face-bot));
@@ -125,7 +140,7 @@
     padding: 3px;
   }
   .vu.compact .glass {
-    width: 3rem;
+    width: var(--vu-width, 3rem);
   }
   .vu.compact .cap {
     font-size: 0.55rem;

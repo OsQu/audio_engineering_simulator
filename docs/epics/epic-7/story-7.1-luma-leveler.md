@@ -74,9 +74,76 @@ Test oracles:
   derived from the processed voltage rather than copied from a control value;
 - catalog tests prove the single node's balanced XLR face, IDs, controls, and readings agree.
 
-## Task 7.1.2 — Luma physical faceplate · planned
+## Task 7.1.2 — Luma physical faceplate · done
 
-_(program design drafted at pickup)_
+The Luma's physical controls remain the four catalog-bound controls from Task 7.1.1. The three-position
+meter selector is local presentation state: it switches the one needle between the always-live
+Gain-Reduction and Output-dBu readings, without writing a nonexistent audio param or adding persisted scene
+semantics.
+
+File-tree delta:
+
+```text
+web/src/device-ui.ts
+web/src/skin.ts
++ web/src/widgets/LumaLeveler.svelte
+web/src/widgets/VuFace.svelte                 // backward-compatible presentation extension
+web/test/faceplate.test.ts
+```
+
+Surface shape:
+
+```text
+LumaLeveler.svelte
+  Chassis(handle, flipped, finish="grey", name)
+    front — 482.6 × 133.35 mm warm-silver face
+      Control(2)                         // Compress / Limit toggle, with original paired legends
+      Control(1, dark, ~32 mm)           // Output Gain
+      VuFace(large, scaleLabel)          // selected gain reduction / +4 dBu / +10 dBu needle
+      Control(0, dark, ~32 mm)           // Peak Reduction
+      local meter selector (GR | +4 | +10)
+      Control(3)                         // Power toggle
+    back — dark chassis
+      Socket(input, 0, XLR) · tube/transformer silhouettes · Socket(output, 0, XLR)
+```
+
+`VuFace` stays a pure display component. Its props gain only a scale label and optional physical width;
+existing callers retain the same VU scale and dimensions. The Luma maps `Gain Reduction` to a reversed
+0–40 dB sweep (zero reduction at the right), and maps Output dBu against +4 or +10 reference marks. The
+selector is an accessible three-button radio group owned by `LumaLeveler.svelte`; it deliberately resets
+with the rendered surface because it is not a device state.
+
+The faceplate uses `Chassis`, `Place`, `Control`, `Legend`, and `Socket` at 1 px/mm. Its
+unique brushed warm-silver sheet, cream meter card, dark hardware, restrained red meter detail, and
+original Luma typography are local decorative CSS; no general material token is justified by one device.
+Rear tube/transformer forms are noninteractive decoration. `skin.ts` adds the grey/dark Luma skin and the
+registry maps `luma_leveler` to this one physical faceplate. The faceplate guardrail adds literal coverage
+for params `0..3`, input `0`, and output `0`.
+
+Browser review state after implementation: `/devices/luma_leveler`, 100% browser zoom, a recorded workbench
+camera zoom and matching front/rear views. Patch a balanced source or DA output into Line In, then Line Out
+to the monitor path; record whether meter motion and AudioWorklet audibility are observed. Stop for the
+separate visual-approval gate before Task 7.1.3.
+
+Visual iteration 1 (2026-09-09): inspected in the in-app browser at
+`/devices/luma_leveler`. The initial 1.4 px/mm full-frame pass exposed the gain-reduction readout colliding
+with the Peak Reduction group and redundant Mode/Limit text. The correction makes the VU card self-contained,
+puts its numerical reading below it, and retains only the catalog-bound Limit label. The selector changed
+state in-browser and console logs contained no warnings or errors. A post-reload pass used the bench's default
+3.0 px/mm state; it confirms the corrected front grouping, while a fixed full-frame follow-up is still needed
+for approval. Audio and meter motion remain unverified: the bench had no input source patch. The browser
+reported denied Web MIDI permission, which is unrelated to this analog device.
+
+Visual iteration 2 (2026-09-09): increased primary front/rear legends, knob scales, and the meter's
+numeric caption after the user reported that the physical-scale labels were too small. The browser reload
+completed with no console warnings or errors; web check, typecheck, and 287 Vitest assertions pass. Resume
+at the fixed full-frame review state for a final front/rear readability check.
+
+Accepted for the visual gate by the user on 2026-09-09. Delivered: the original Luma 3U front/rear,
+catalog-bound controls and XLR anchors, local accessible GR / +4 / +10 meter selector, and readable
+physical-scale silkscreen. Browser evidence: selector interaction works and no console warnings/errors;
+meter motion and audio remain unverified because this review bench has no input source patch. No commit was
+created; the user retains the repository verification/commit gate.
 
 ## Task 7.1.3 — Post-approval sonic refinement · planned
 

@@ -131,3 +131,16 @@ describe("Guitar surfaces place their carrier-specific faces", () => {
     expect(portIds(faceplate, "output")).toEqual([0]);
   });
 });
+
+describe("Luma Leveler faceplate places its complete balanced line face", () => {
+  const faceplate = surfaceSource("LumaLeveler.svelte");
+
+  it("places its four hardware controls", () => {
+    expect(literalParamIds(faceplate)).toEqual([0, 1, 2, 3]);
+  });
+
+  it("places its one balanced XLR input and output on the rear", () => {
+    expect(portIds(faceplate, "input")).toEqual([0]);
+    expect(portIds(faceplate, "output")).toEqual([0]);
+  });
+});

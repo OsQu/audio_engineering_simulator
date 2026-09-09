@@ -26,6 +26,7 @@ import Console from "./widgets/Console.svelte";
 import FocusriteControl from "./widgets/FocusriteControl.svelte";
 import Guitar from "./widgets/Guitar.svelte";
 import GuitarFocus from "./widgets/GuitarFocus.svelte";
+import LumaLeveler from "./widgets/LumaLeveler.svelte";
 import MidiController from "./widgets/MidiController.svelte";
 import MidiControllerFocus from "./widgets/MidiControllerFocus.svelte";
 import Panel from "./widgets/Panel.svelte";
@@ -103,6 +104,7 @@ const FACEPLATES: Record<string, Component<DeviceUiProps>> = {
   midi_controller: MidiController,
   electric_guitar: Guitar,
   acoustic_guitar: Guitar,
+  luma_leveler: LumaLeveler,
 };
 
 /** The faceplate component for a device type — its own, or the generic `Panel`. */
