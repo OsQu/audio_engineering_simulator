@@ -42,7 +42,7 @@ use engine::{
     AdConverter, BitDepth, CondenserMic, DaConverter, DigitalDemux, DigitalMeter, DigitalMux,
     Domain, DynamicMic, EqBand, EventThru, GainStage, Graph, InputPort, InputZ, Matrix, MicPreamp,
     Node, NodeId, NoiseDensity, Ohms, OutputPort, ParamId, Pascals, PoweredMonitor, ReadoutId,
-    SampleRate, SoundSource, Speaker, SynthVoice, ThreeBandEq, Volts, VuMeter,
+    SampleRate, SoundFontSource, SoundSource, Speaker, SynthVoice, ThreeBandEq, Volts, VuMeter,
 };
 use serde::Serialize;
 
@@ -82,6 +82,52 @@ impl<'a> DeviceConfig<'a> {
 const HOST_RATE_HZ: f64 = 48_000.0;
 const BITS: u32 = 16;
 
+const TIM_GM_6MB: &str = "tim_gm_6mb";
+const GUITAR_PRESET_KEY: &str = "preset";
+const ELECTRIC_GUITAR_PRESET: f32 = 27.0;
+const ACOUSTIC_GUITAR_PRESET: f32 = 25.0;
+const GUITAR_DA_RATE_HZ: f64 = 48_000.0;
+const GUITAR_DA_BITS: u32 = 24;
+const ELECTRIC_GUITAR_REFERENCE_V: f32 = 1.0;
+const ELECTRIC_GUITAR_Z_OUT_OHMS: f32 = 100_000.0;
+const ACOUSTIC_GUITAR_REFERENCE_V: f32 = 1.0;
+const ACOUSTIC_GUITAR_MONITOR_SENSITIVITY_PA_PER_V: f32 = 1.0;
+
+const GUITAR_PRESET_OPTIONS: &[ConfigOptionUi] = &[
+    ConfigOptionUi {
+        label: "Nylon Guitar",
+        value: 24.0,
+    },
+    ConfigOptionUi {
+        label: "Steel Guitar",
+        value: 25.0,
+    },
+    ConfigOptionUi {
+        label: "Jazz Guitar",
+        value: 26.0,
+    },
+    ConfigOptionUi {
+        label: "Clean Guitar",
+        value: 27.0,
+    },
+    ConfigOptionUi {
+        label: "Muted Guitar",
+        value: 28.0,
+    },
+    ConfigOptionUi {
+        label: "Overdrive Guitar",
+        value: 29.0,
+    },
+    ConfigOptionUi {
+        label: "Distortion Guitar",
+        value: 30.0,
+    },
+    ConfigOptionUi {
+        label: "Guitar Harmonics",
+        value: 31.0,
+    },
+];
+
 /// A device type's full UI descriptor — everything the UI needs to list it in the catalog and draw
 /// its panel. Built by [`descriptors`] (numeric/domain fields from the node, labels from the entry).
 #[derive(Debug, Clone, Serialize)]
@@ -116,6 +162,9 @@ pub struct ConfigDescriptor {
     pub label: String,
     /// Suggested control widget for the structural toggle.
     pub kind: ConfigKind,
+    /// Authored choices for a structural selector. Empty for a toggle.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub options: Vec<ConfigOption>,
     /// Value the device builds with when the instance leaves this key unset.
     pub default: f32,
 }
@@ -126,6 +175,16 @@ pub struct ConfigDescriptor {
 pub enum ConfigKind {
     /// A two-state structural switch (`0.0` / `1.0`) — e.g. a preamp's INST/hi-Z.
     Toggle,
+    /// An enumerated structural selection; its authored numeric options ride on the descriptor.
+    Select,
+}
+
+/// One labeled numeric option for a structural [`ConfigKind::Select`].
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ConfigOption {
+    pub label: String,
+    pub value: f32,
 }
 
 /// A device's physical form factor and size — intrinsic **content** (as fixed as its impedance),
@@ -489,6 +548,12 @@ struct ConfigUi {
     /// Value the device builds with when the instance leaves this key unset — must match what the
     /// node builder passes to [`DeviceConfig::get_or`] for this key.
     default: f32,
+    options: &'static [ConfigOptionUi],
+}
+
+struct ConfigOptionUi {
+    label: &'static str,
+    value: f32,
 }
 
 /// A **device-level param group**: one exposed control bound to N node params that are driven
@@ -703,6 +768,70 @@ fn scarlett_gain() -> Box<dyn Node> {
     )
 }
 
+fn guitar_source_face(_config: &DeviceConfig) -> NodeFace {
+    NodeFace {
+        inputs: SoundFontSource::input_face().to_vec(),
+        outputs: SoundFontSource::output_face().to_vec(),
+        params: Vec::new(),
+        readouts: Vec::new(),
+    }
+}
+
+fn guitar_source(
+    config: &DeviceConfig,
+    context: &BuildContext,
+    default_preset: f32,
+) -> Result<Box<dyn Node>, AssetBuildError> {
+    let bank = context
+        .soundfont(TIM_GM_6MB)
+        .ok_or_else(|| AssetBuildError::MissingSoundFont {
+            asset_id: TIM_GM_6MB.into(),
+        })?;
+    Ok(Box::new(SoundFontSource::from_bank(
+        bank,
+        gm_preset(config, GUITAR_PRESET_KEY, default_preset),
+    )?))
+}
+
+fn electric_guitar_source(
+    config: &DeviceConfig,
+    context: &BuildContext,
+) -> Result<Box<dyn Node>, AssetBuildError> {
+    guitar_source(config, context, ELECTRIC_GUITAR_PRESET)
+}
+
+fn acoustic_guitar_source(
+    config: &DeviceConfig,
+    context: &BuildContext,
+) -> Result<Box<dyn Node>, AssetBuildError> {
+    guitar_source(config, context, ACOUSTIC_GUITAR_PRESET)
+}
+
+fn electric_guitar_da(_config: &DeviceConfig) -> Box<dyn Node> {
+    Box::new(DaConverter::new(
+        SampleRate::new(GUITAR_DA_RATE_HZ),
+        BitDepth::new(GUITAR_DA_BITS),
+        Volts::new(ELECTRIC_GUITAR_REFERENCE_V),
+        Ohms::new(ELECTRIC_GUITAR_Z_OUT_OHMS),
+    ))
+}
+
+fn acoustic_guitar_da(_config: &DeviceConfig) -> Box<dyn Node> {
+    Box::new(DaConverter::new(
+        SampleRate::new(GUITAR_DA_RATE_HZ),
+        BitDepth::new(GUITAR_DA_BITS),
+        Volts::new(ACOUSTIC_GUITAR_REFERENCE_V),
+        Ohms::new(150.0),
+    ))
+}
+
+fn acoustic_guitar_monitor(_config: &DeviceConfig) -> Box<dyn Node> {
+    Box::new(PoweredMonitor::new(
+        ACOUSTIC_GUITAR_MONITOR_SENSITIVITY_PA_PER_V,
+        InputZ::new(Ohms::new(10_000.0)),
+    ))
+}
+
 /// The device catalog: every type the UI can place, builders + descriptor together. Each entry's
 /// `params`/`inputs`/`outputs` lengths must match its exposed face — `catalog_aligns_with_exposed_face`
 /// guards it (the `zip` in `describe` would otherwise silently truncate).
@@ -810,6 +939,128 @@ const CATALOG: &[CatalogEntry] = &[
         duplex_links: &[],
         readouts: ReadoutSpec::Static(&[]),
         configs: &[],
+    },
+    // A digital guitar module with a pickup-like electrical face: SoundFont playback crosses one
+    // internal DA, then presents a deliberately high source impedance to make cable/loading lessons
+    // observable at an existing instrument input.
+    CatalogEntry {
+        type_id: "electric_guitar",
+        name: "Electric Guitar",
+        form_factor: FormFactor::Desktop {
+            width_mm: 330.0,
+            height_mm: 45.0,
+            depth_mm: 110.0,
+        },
+        nodes: &[
+            NodeSpec::Asset {
+                build: electric_guitar_source,
+                face: guitar_source_face,
+            },
+            NodeSpec::Plain(electric_guitar_da),
+        ],
+        internal: &[InternalEdge {
+            from_node: 0,
+            from_port: 0,
+            to_node: 1,
+            to_port: 0,
+        }],
+        params: &[ParamUi {
+            label: "Power",
+            unit: "",
+            kind: ParamKind::Switch,
+            taper: ParamTaper::Linear,
+        }],
+        param_groups: &[],
+        param_grid: None,
+        inputs: &[PortUi {
+            label: "MIDI",
+            kind: PortKind::Midi,
+            connector: Connector::Din5,
+        }],
+        outputs: &[PortUi {
+            label: "Out",
+            kind: PortKind::Instrument,
+            connector: Connector::QuarterInch,
+        }],
+        delayed_outputs: &[],
+        duplex_links: &[],
+        readouts: ReadoutSpec::Static(&[]),
+        configs: &[ConfigUi {
+            key: GUITAR_PRESET_KEY,
+            label: "Preset",
+            kind: ConfigKind::Select,
+            default: ELECTRIC_GUITAR_PRESET,
+            options: GUITAR_PRESET_OPTIONS,
+        }],
+    },
+    // The acoustic sibling uses the same SoundFont source and DA, then radiates through the shipped
+    // voltage→pressure transducer. Only air leaves its face, so it must be mic'd to enter an analog chain.
+    CatalogEntry {
+        type_id: "acoustic_guitar",
+        name: "Acoustic Guitar",
+        form_factor: FormFactor::Desktop {
+            width_mm: 330.0,
+            height_mm: 45.0,
+            depth_mm: 110.0,
+        },
+        nodes: &[
+            NodeSpec::Asset {
+                build: acoustic_guitar_source,
+                face: guitar_source_face,
+            },
+            NodeSpec::Plain(acoustic_guitar_da),
+            NodeSpec::Plain(acoustic_guitar_monitor),
+        ],
+        internal: &[
+            InternalEdge {
+                from_node: 0,
+                from_port: 0,
+                to_node: 1,
+                to_port: 0,
+            },
+            InternalEdge {
+                from_node: 1,
+                from_port: 0,
+                to_node: 2,
+                to_port: 0,
+            },
+        ],
+        params: &[
+            ParamUi {
+                label: "Power",
+                unit: "",
+                kind: ParamKind::Switch,
+                taper: ParamTaper::Linear,
+            },
+            ParamUi {
+                label: "Volume",
+                unit: "dB",
+                kind: ParamKind::Knob,
+                taper: ParamTaper::Log,
+            },
+        ],
+        param_groups: &[],
+        param_grid: None,
+        inputs: &[PortUi {
+            label: "MIDI",
+            kind: PortKind::Midi,
+            connector: Connector::Din5,
+        }],
+        outputs: &[PortUi {
+            label: "Air",
+            kind: PortKind::Acoustic,
+            connector: Connector::Acoustic,
+        }],
+        delayed_outputs: &[],
+        duplex_links: &[],
+        readouts: ReadoutSpec::Static(&[]),
+        configs: &[ConfigUi {
+            key: GUITAR_PRESET_KEY,
+            label: "Preset",
+            kind: ConfigKind::Select,
+            default: ACOUSTIC_GUITAR_PRESET,
+            options: GUITAR_PRESET_OPTIONS,
+        }],
     },
     // A generic acoustic sound source ("vox") — the catalog face of `engine::SoundSource`. A sine at a
     // chosen loudness radiating into the air: patch its acoustic output into a mic's capsule (over the
@@ -1913,18 +2164,21 @@ const CATALOG: &[CatalogEntry] = &[
                 label: "Inst 1",
                 kind: ConfigKind::Toggle,
                 default: 0.0,
+                options: &[],
             },
             ConfigUi {
                 key: "inst2",
                 label: "Inst 2",
                 kind: ConfigKind::Toggle,
                 default: 0.0,
+                options: &[],
             },
             ConfigUi {
                 key: PHANTOM_KEY,
                 label: "48V",
                 kind: ConfigKind::Toggle,
                 default: 0.0,
+                options: &[],
             },
         ],
     },
@@ -2355,6 +2609,14 @@ fn describe(entry: &CatalogEntry, config: &DeviceConfig) -> DeviceDescriptor {
             label: c.label.to_owned(),
             kind: c.kind,
             default: c.default,
+            options: c
+                .options
+                .iter()
+                .map(|option| ConfigOption {
+                    label: option.label.to_owned(),
+                    value: option.value,
+                })
+                .collect(),
         })
         .collect();
 
@@ -2538,6 +2800,66 @@ mod tests {
         assert_eq!(gm_preset(&config, "bad", 4.0), 4);
     }
 
+    #[test]
+    fn guitar_catalog_entries_pin_their_faces_presets_and_fresh_voice_state() {
+        let electric = describe_device("electric_guitar", &DeviceConfig::EMPTY)
+            .expect("electric guitar descriptor");
+        let acoustic = describe_device("acoustic_guitar", &DeviceConfig::EMPTY)
+            .expect("acoustic guitar descriptor");
+        assert_eq!(electric.ports[0].domain, PortDomain::Events);
+        assert_eq!(electric.ports[1].domain, PortDomain::Analog);
+        assert_eq!(electric.ports[1].kind, PortKind::Instrument);
+        assert_eq!(acoustic.ports[0].domain, PortDomain::Events);
+        assert_eq!(acoustic.ports[1].domain, PortDomain::Acoustic);
+        assert_eq!(acoustic.ports[1].kind, PortKind::Acoustic);
+        for (descriptor, default) in [(&electric, 27.0), (&acoustic, 25.0)] {
+            let preset = descriptor.configs.first().expect("preset selector");
+            assert_eq!(preset.kind, ConfigKind::Select);
+            assert_eq!(preset.default, default);
+            assert_eq!(preset.options.len(), 8);
+            assert_eq!(preset.options[0].value, 24.0);
+            assert_eq!(preset.options[7].value, 31.0);
+        }
+
+        let bytes = std::fs::read(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../assets/soundfonts/TimGM6mb.sf2"
+        ))
+        .expect("the vendored TimGM6mb asset");
+        let mut assets = SoundFontBankLibrary::default();
+        assets.insert(
+            TIM_GM_6MB,
+            engine::SoundFontBank::parse(&bytes).expect("valid GM soundfont"),
+        );
+        let context = BuildContext::new(&assets);
+        let electric_entry = entry("electric_guitar").expect("electric guitar entry");
+        let first = build_expansion(electric_entry, &DeviceConfig::EMPTY, &context)
+            .expect("shared bank builds an electric guitar");
+        let second = build_expansion(electric_entry, &DeviceConfig::EMPTY, &context)
+            .expect("the same bank builds an independent electric guitar");
+        assert_eq!(first.nodes.len(), 2);
+        assert_eq!(
+            first.nodes[1].outputs()[0]
+                .analog()
+                .expect("electric DA is analog")
+                .z_out()
+                .get(),
+            ELECTRIC_GUITAR_Z_OUT_OHMS
+        );
+        assert!(
+            !std::ptr::addr_eq(&*first.nodes[0], &*second.nodes[0]),
+            "each guitar owns a fresh SoundFont synth over the shared immutable bank"
+        );
+        let acoustic_entry = entry("acoustic_guitar").expect("acoustic guitar entry");
+        let acoustic_build = build_expansion(acoustic_entry, &DeviceConfig::EMPTY, &context)
+            .expect("shared bank builds an acoustic guitar");
+        assert_eq!(acoustic_build.nodes.len(), 3);
+        assert_eq!(
+            acoustic_build.nodes[2].outputs()[0].domain(),
+            Domain::Acoustic
+        );
+    }
+
     /// Each entry's hand-authored UI metadata lines up, position-for-position, with its *exposed*
     /// face — the open ports + concatenated params its nodes actually present. The guard against a node
     /// (or an internal edge) changing what's exposed without the catalog following; the `zip` in
@@ -2609,6 +2931,9 @@ mod tests {
     #[test]
     fn catalog_group_targets_carry_identical_decls() {
         for entry in CATALOG {
+            if entry.param_groups.is_empty() {
+                continue;
+            }
             let nodes: Vec<Box<dyn Node>> = entry
                 .nodes
                 .iter()
