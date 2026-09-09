@@ -46,9 +46,24 @@ superseded sketches rather than accumulating a transcript.
 
 - Workbench URL and fixed view:
 - Evidence/screenshots:
+- Manager grade history: <iteration, overall 0–5 score, category evidence, required corrections>
+- Current manager score:
+- Identity-critical categories all at least 4: yes/no
 - User decision/date:
 - Requested changes:
 - Sonic tasks released by approval:
+
+## End-to-end DSP approval gate
+
+- Unit-test coverage and numeric oracles:
+- Behaviors only covered at integration level, with reason:
+- Representative workbench patch/configuration:
+- Exact user actions:
+- Expected audible results:
+- Expected meter/readout/control results:
+- Manager preflight evidence and unavailable capabilities:
+- User decision/date:
+- Requested corrections and retest result:
 
 ## Architecture gap
 
@@ -72,6 +87,12 @@ superseded sketches rather than accumulating a transcript.
 - A task may depend on prior tasks, but it must describe everything a fresh session needs to execute it.
 - Use a Terra-tier subagent for implementation and keep commit authority with the primary supervising
   session. Do not treat the implementer's report as independent verification.
+- Keep the visual task `building` while the manager score is below 4 and while user approval is pending.
+  A score of 4–5 opens the user review gate; only recorded user approval releases DSP work and allows the
+  visual task to be marked done and committed.
+- Cover DSP with focused deterministic unit tests as far as existing seams permit. Keep the final DSP/
+  end-to-end task `building` until the manager has preflighted a representative workbench path and the
+  user has jointly verified its audible and visible behavior.
 - Update status and the exact resume point before yielding at any gate or blocker.
 - Include the Story update in the same commit as the task it records. Record the intended commit subject,
   not its self-referential hash.

@@ -146,9 +146,10 @@ approved brief and break the implementation into dependency-ordered tasks. Size 
 - Leaves the repository compiling and tests relevant to the increment passing.
 
 The task order should preserve the look-and-feel-first gates: thin honest model, physical faceplate,
-workbench visual iteration and approval, then preapproved good-enough sonic behavior. A task may depend on
-earlier tasks; “independently executable” means its inputs, scope, done-state, and commit boundary are
-explicit, not that tasks can be run in arbitrary order.
+workbench visual iteration and approval, preapproved good-enough sonic behavior with unit tests, then a
+representative end-to-end verification gate with the user. A task may depend on earlier tasks;
+“independently executable” means its inputs, scope, done-state, and commit boundary are explicit, not that
+tasks can be run in arbitrary order.
 
 For each clear task, include only the call tree, file-tree delta, or key signatures that carry a real
 decision. Later task details may be refined just in time, but only within the approved Story. Stop and
@@ -246,9 +247,18 @@ Review the face in this order:
 4. Materials, color, typography, and silkscreen.
 5. Interaction, readability, cable clearance, and meter motion.
 
-Use fixed front and rear views at a stated workbench zoom when comparing iterations. Present the result
-and stop for explicit user approval of the look and feel. Do not begin detailed DSP merely because the
-page renders.
+Use fixed front and rear views at a stated workbench zoom when comparing iterations. After every visual
+pass, the primary supervising manager—not the Terra implementer—grades the rendered device from 0 to 5
+using the rubric in `references/browser-test-loop.md`. Record the score, evidence, and highest-priority
+mismatches in the equipment Story.
+
+If the score is below 4, send concrete corrections to the Terra implementer and continue the visual loop
+without asking the user to review an unfinished face. A score of 4 or 5 makes the faceplate eligible for
+the user gate; it is not user approval. Present the consistent front/rear evidence, manager score, rubric
+reasoning, and known departures, then stop for explicit user approval. Keep the visual task open through
+this gate. If the user requests changes, return to the Terra loop and regrade. Mark and commit the visual
+task only after user approval. Do not begin detailed DSP merely because the page renders or the manager
+score reaches 4.
 
 ### 6. Add the good-enough sonic identity
 
@@ -272,6 +282,14 @@ Implement behavior incrementally. During an approved autonomous Story, refresh t
 and execution record in the equipment Story without requesting another review unless the refinement
 changes an approved decision or crosses a stop condition.
 
+Make DSP behavior unit-testable as far as the current architecture permits. Prefer deterministic tests at
+the narrowest honest seam: node transfer behavior, control mapping, detector/envelope timing, state
+transitions, bypass/power behavior, readout values, channel symmetry, and edge conditions as applicable.
+Use hand-calculated numeric oracles for analog behavior and state the calculation in the test. Do not rely
+on listening, screenshots, or one broad end-to-end test where a focused unit test can identify the fault.
+If an important behavior cannot reasonably be unit tested through existing seams, record why and cover it
+at the nearest integration level without changing architecture merely for test convenience.
+
 ### 7. Supervise implementation with Terra subagents
 
 For an approved autonomous Story, the primary/orchestrating Codex session is the harness and remains
@@ -293,8 +311,9 @@ Use this loop for each task:
    acceptance.
 4. The primary session independently reviews the actual diff and relevant surrounding code, checks for
    unrelated/user-owned changes and architectural drift, and reruns the acceptance checks itself. For UI
-   work, the primary session also performs the browser/workbench inspection; a subagent's screenshot or
-   claim does not replace the harness's verification or the user's visual approval.
+   work, the primary session also performs the browser/workbench inspection and assigns the rubric score;
+   a subagent's screenshot, self-score, or claim does not replace the harness's verification or the user's
+   visual approval.
 5. If correction is needed within scope, send a precise follow-up to the same Terra agent and repeat the
    review. Do not fix substantial implementation defects in the supervising context or lower the checks
    merely to keep the autonomous run moving. Stop on a material scope decision or architectural gap.
@@ -326,6 +345,16 @@ When the task meets its acceptance checks:
 5. Re-read the next task against the now-landed code and continue autonomously if it remains within the
    approved Story.
 
+For the visual task, manager score 4–5 is only readiness for user review. Do not mark it done or commit it
+until the user approves the visuals. DSP tasks remain blocked until that approval is recorded in the Story.
+
+Keep the final DSP/end-to-end task open until joint user verification. The primary manager may build and
+preflight the representative workbench patch, run all available automated checks, and prepare exact user
+steps and expected audible/visible results. It must then present that scenario to the user and stop. Mark
+and commit the task, and mark the Story done, only after the user confirms the end-to-end behavior. If the
+joint check finds an in-scope defect, return it to a Terra implementer, rerun unit and integration checks,
+and repeat the user gate. A material behavioral change requires renewed scope approval.
+
 If validation fails, keep the task `building`, record the failure and resume point, and fix it within the
 task. If the required fix expands scope, touches an undeclared shared seam, or exposes an architectural
 gap, stop instead of committing a partial or misleading result.
@@ -348,10 +377,22 @@ Structural checks:
 
 Audio checks:
 
+- Unit-test DSP at the narrowest deterministic seam as far as possible; document any behavior that can
+  only be covered at integration level.
 - Use hand-calculated numeric tests for analog behavior, with the calculation in the test comment.
-- Test the defining static curve, timing, bypass/power behavior, and meter reading as applicable.
+- Test the defining static curve, timing, bypass/power behavior, meter reading, channel behavior, and
+  relevant edge conditions as applicable.
 - Preserve determinism and the no-allocation/no-panic audio-path constraints.
 - Include an end-to-end representative patch or render when it tests behavior not covered at node level.
+
+End-to-end acceptance:
+
+- The primary manager preflights one representative device path in the real workbench and records the
+  exact patch, controls, actions, and expected audible and visible results.
+- Present those steps and the manager's observed evidence to the user for joint verification.
+- Do not substitute automated/unit coverage for this user gate, and do not claim acceptance from an
+  unobserved or unavailable browser/audio path.
+- Do not mark the final DSP task or Story done until the user confirms the end-to-end behavior.
 
 Run focused tests during iteration. Before committing the final task, run the full Rust and web gates and
 format web files with the repository's combined formatter. Update the Story with its final validation,
