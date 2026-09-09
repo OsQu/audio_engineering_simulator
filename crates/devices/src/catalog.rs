@@ -93,7 +93,9 @@ const ELECTRIC_GUITAR_Z_OUT_OHMS: f32 = 100_000.0;
 const ACOUSTIC_GUITAR_REFERENCE_V: f32 = 1.0;
 const ACOUSTIC_GUITAR_MONITOR_SENSITIVITY_PA_PER_V: f32 = 1.0;
 
-const GUITAR_PRESET_OPTIONS: &[ConfigOptionUi] = &[
+/// GM's two acoustic guitar voices. An acoustic guitar radiates through its body and must be mic'd,
+/// so its selector deliberately cannot choose electric pickup tones.
+const ACOUSTIC_GUITAR_PRESET_OPTIONS: &[ConfigOptionUi] = &[
     ConfigOptionUi {
         label: "Nylon Guitar",
         value: 24.0,
@@ -102,6 +104,10 @@ const GUITAR_PRESET_OPTIONS: &[ConfigOptionUi] = &[
         label: "Steel Guitar",
         value: 25.0,
     },
+];
+
+/// GM's electric guitar voices. These leave the electric guitar's high-impedance instrument output.
+const ELECTRIC_GUITAR_PRESET_OPTIONS: &[ConfigOptionUi] = &[
     ConfigOptionUi {
         label: "Jazz Guitar",
         value: 26.0,
@@ -990,7 +996,7 @@ const CATALOG: &[CatalogEntry] = &[
             label: "Preset",
             kind: ConfigKind::Select,
             default: ELECTRIC_GUITAR_PRESET,
-            options: GUITAR_PRESET_OPTIONS,
+            options: ELECTRIC_GUITAR_PRESET_OPTIONS,
         }],
     },
     // The acoustic sibling uses the same SoundFont source and DA, then radiates through the shipped
@@ -1059,7 +1065,7 @@ const CATALOG: &[CatalogEntry] = &[
             label: "Preset",
             kind: ConfigKind::Select,
             default: ACOUSTIC_GUITAR_PRESET,
-            options: GUITAR_PRESET_OPTIONS,
+            options: ACOUSTIC_GUITAR_PRESET_OPTIONS,
         }],
     },
     // A generic acoustic sound source ("vox") — the catalog face of `engine::SoundSource`. A sine at a
@@ -2812,14 +2818,19 @@ mod tests {
         assert_eq!(acoustic.ports[0].domain, PortDomain::Events);
         assert_eq!(acoustic.ports[1].domain, PortDomain::Acoustic);
         assert_eq!(acoustic.ports[1].kind, PortKind::Acoustic);
-        for (descriptor, default) in [(&electric, 27.0), (&acoustic, 25.0)] {
-            let preset = descriptor.configs.first().expect("preset selector");
-            assert_eq!(preset.kind, ConfigKind::Select);
-            assert_eq!(preset.default, default);
-            assert_eq!(preset.options.len(), 8);
-            assert_eq!(preset.options[0].value, 24.0);
-            assert_eq!(preset.options[7].value, 31.0);
-        }
+        let electric_preset = electric.configs.first().expect("electric preset selector");
+        assert_eq!(electric_preset.kind, ConfigKind::Select);
+        assert_eq!(electric_preset.default, 27.0);
+        assert_eq!(electric_preset.options.len(), 6);
+        assert_eq!(electric_preset.options[0].value, 26.0);
+        assert_eq!(electric_preset.options[5].value, 31.0);
+
+        let acoustic_preset = acoustic.configs.first().expect("acoustic preset selector");
+        assert_eq!(acoustic_preset.kind, ConfigKind::Select);
+        assert_eq!(acoustic_preset.default, 25.0);
+        assert_eq!(acoustic_preset.options.len(), 2);
+        assert_eq!(acoustic_preset.options[0].value, 24.0);
+        assert_eq!(acoustic_preset.options[1].value, 25.0);
 
         let bytes = std::fs::read(concat!(
             env!("CARGO_MANIFEST_DIR"),
