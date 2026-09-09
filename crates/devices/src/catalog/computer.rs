@@ -4,7 +4,7 @@ use crate::{
     Connector, DeviceConfig, ParamKind, PortKind,
     catalog::{
         BITS, CatalogEntry, FormFactor, GridAxis, GridSpec, HOST_RATE_HZ, InternalEdge, MeterBank,
-        PortUi, ReadoutSpec, ReadoutUi,
+        NodeSpec, PortUi, ReadoutSpec, ReadoutUi,
     },
 };
 
@@ -80,16 +80,16 @@ pub(super) const COMPUTER: CatalogEntry = CatalogEntry {
     },
     nodes: &[
         // 0 — send input meters (pre-fader), all N send lanes behind one port.
-        |cfg| {
+        NodeSpec::Plain(|cfg| {
             let (sends, _returns) = usb_channel_count(cfg);
             Box::new(DigitalMeter::new(
                 SampleRate::new(HOST_RATE_HZ),
                 BitDepth::new(BITS),
                 sends as u16,
             ))
-        },
+        }),
         // 1 — the track channels: N sends in → T post-fader channels out.
-        |cfg| {
+        NodeSpec::Plain(|cfg| {
             let (sends, _returns) = usb_channel_count(cfg);
             let tracks = track_count(cfg);
             Box::new(MultitrackRecorder::new(
@@ -98,18 +98,18 @@ pub(super) const COMPUTER: CatalogEntry = CatalogEntry {
                 sends,
                 tracks,
             ))
-        },
+        }),
         // 2 — per-track after-fader meters.
-        |cfg| {
+        NodeSpec::Plain(|cfg| {
             let tracks = track_count(cfg);
             Box::new(DigitalMeter::new(
                 SampleRate::new(HOST_RATE_HZ),
                 BitDepth::new(BITS),
                 tracks as u16,
             ))
-        },
+        }),
         // 3 — the bus crossbar: T track channels → M returns.
-        |cfg| {
+        NodeSpec::Plain(|cfg| {
             let (_sends, returns) = usb_channel_count(cfg);
             let tracks = track_count(cfg);
             Box::new(Matrix::new_single_ports(
@@ -119,16 +119,16 @@ pub(super) const COMPUTER: CatalogEntry = CatalogEntry {
                 returns,
                 crossbar_defaults(tracks, returns),
             ))
-        },
+        }),
         // 4 — return / bus meters.
-        |cfg| {
+        NodeSpec::Plain(|cfg| {
             let (_sends, returns) = usb_channel_count(cfg);
             Box::new(DigitalMeter::new(
                 SampleRate::new(HOST_RATE_HZ),
                 BitDepth::new(BITS),
                 returns as u16,
             ))
-        },
+        }),
     ],
     internal: &[
         // send meter -> recorder -> track meter -> crossbar -> return meter

@@ -124,6 +124,24 @@ impl SoundFontSource {
     /// [`prepare`](Node::prepare) couldn't size anyway, as it isn't told the block length).
     const CHUNK: usize = 64;
 
+    /// The fixed event input face, available without parsing a SoundFont or constructing a synth.
+    /// Catalogs use this to describe an instrument before its asset has arrived.
+    #[must_use]
+    pub fn input_face() -> [InputPort; 1] {
+        [EventFace::new(Self::EVENT_CAPACITY).into()]
+    }
+
+    /// The fixed digital output face, available without parsing a SoundFont or constructing a synth.
+    #[must_use]
+    pub fn output_face() -> [OutputPort; 1] {
+        [DigitalFace::new(AudioFormat::new(
+            SampleRate::new(f64::from(Self::RATE_HZ)),
+            BitDepth::new(Self::BITS),
+            1,
+        ))
+        .into()]
+    }
+
     /// Build a voice from raw `.sf2` `sf2_bytes`, playing GM program `preset` (0 = piano). This is
     /// a convenience for one-off callers; hosts sharing an asset should parse a [`SoundFontBank`]
     /// once and call [`from_bank`](Self::from_bank) for each voice.
@@ -155,13 +173,8 @@ impl SoundFontSource {
         Ok(Self {
             synth,
             m: 1,
-            inputs: [EventFace::new(Self::EVENT_CAPACITY).into()],
-            outputs: [DigitalFace::new(AudioFormat::new(
-                SampleRate::new(f64::from(Self::RATE_HZ)),
-                BitDepth::new(Self::BITS),
-                1,
-            ))
-            .into()],
+            inputs: Self::input_face(),
+            outputs: Self::output_face(),
         })
     }
 

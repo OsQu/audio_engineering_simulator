@@ -474,7 +474,7 @@ pub fn build_patch_with_assets(
     let mut devices: BTreeMap<String, BuiltDevice> = BTreeMap::new();
     for device in &patch.devices {
         let config = DeviceConfig::new(&device.config);
-        let built = instantiate_with_assets(&device.type_id, &config, &mut graph, &context)
+        let built = instantiate_with_assets(&device.type_id, &config, &mut graph, &context)?
             .ok_or_else(|| BuildError::UnknownType {
                 id: device.id.clone(),
                 type_id: device.type_id.clone(),

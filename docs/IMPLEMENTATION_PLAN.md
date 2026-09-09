@@ -945,7 +945,7 @@ whole front-end story (mic choice, phantom, gain staging, the pad, feedback) —
 
 ---
 
-## Epic 9 — Instruments: SoundFont-Based MIDI Voices — 🚧 **In progress (9.1 ✅; 9.2 ✅; 9.3 ✅)**
+## Epic 9 — Instruments: SoundFont-Based MIDI Voices — 🚧 **In progress (9.1 ✅; 9.2 ✅; 9.3 ✅; 9.4 🚧)**
 
 **Progress:** Story 9.1 ✅ **done — the feasibility spike returned GO**: `rustysynth` v1.3.6 (MIT) renders a
 recognizable GM note and its render path is **zero-alloc** (even including the first render, with a chord
@@ -956,8 +956,8 @@ headless `→ DaConverter →` volts chassis — events become a recognizable, c
 velocity-sensitive GM voice, zero-alloc and panic-free on the node's own `process`. Story 9.3 ✅ **done**:
 a shared parsed-bank asset cache, asset-aware device construction, browser→worklet→WASM delivery of the
 GPL-2 TimGM6mb `.sf2`, and structural preset selection are complete. **Next: Story 9.4 — the audible
-payoff (instrument devices + web).** Stories 9.4–9.5 stay coarse,
-fleshed out on arrival. This is the epic Epic 8
+payoff (instrument devices + web), now in progress.** Story 9.5 stays coarse, fleshed out on arrival.
+This is the epic Epic 8
 explicitly deferred ("SoundFont / multisample instruments —
 a separate future epic (no rustysynth, no sample assets, no polyphony machinery here)"). It gives the
 simulator **recognizable played instruments** — an electric guitar you patch into a dist pedal + amp, an
@@ -1051,7 +1051,7 @@ exists after a converter" holds — the converter simply lives *inside* the blac
 
 ### Stories
 
-Coarse until picked up, per "flesh out on arrival." Stories 9.1–9.3 are elaborated below.
+Coarse until picked up, per "flesh out on arrival." Stories 9.1–9.4 are elaborated below.
 
 - **Story 9.1** — SoundFont hot-path feasibility spike (**the go/no-go gate**) — *elaborated below.*
 - **Story 9.2** — The `SoundFontSource` node + internal-DA chassis (headless): events → 48 kHz render →
@@ -1325,3 +1325,78 @@ transferred before patch construction, parsed exactly once under a stable asset 
 independent preset-selected sources across config changes and schedule hot-swaps. Missing or malformed
 assets produce legible cold-path errors and never replace a live scene; the SoundFont render path remains
 deterministic, zero-alloc, panic-free, and wasm-buildable, with the complete Rust and web gates green.
+
+### Story 9.4 — Instrument devices + web — 🚧 **In progress**
+
+*Goal:* deliver Epic 9's player-visible and audible payoff: place an electric guitar or acoustic guitar,
+play either polyphonically from QWERTY, Web MIDI, or an on-screen focus keybed, and hear TimGM's recognizable
+guitar voices travel through the correct carrier. The electric guitar presents a high-impedance,
+instrument-level voltage output for an analog chain; the acoustic guitar radiates Pascals for an Epic-8 mic
+to transduce. Both remain deliberately recognizable rather than realistic, while their internal
+`SoundFontSource → DA` chassis keeps the digital/analog boundary honest.
+
+*Watch out:*
+- **Finish the asset seam before publishing devices.** Story 9.3 supplied `AssetNodeBuilder` and the cache,
+  but the landed `CatalogEntry` still stores only infallible `NodeBuilder`s and
+  `instantiate_with_assets` does not yet consume its context. Real entries must propagate missing/build
+  failures on the cold path; descriptor generation must neither parse the font nor construct a silent
+  placeholder synth.
+- **Keep each face physically honest.** The electric path crosses its internal DA once and exposes volts
+  with a high source impedance; the acoustic path crosses the DA once, then the existing pointwise
+  voltage→pressure transducer, and exposes only air. No direct sample→volts or sample→Pascals shortcut.
+- **Preset changes are structural.** The curated GM guitar selector edits scalar config and recompiles
+  against the cached bank. It is not a smoothed param or a MIDI program-change event; rebuilding must not
+  reparse the `.sf2` or disturb the live scene if construction fails.
+- **Do not smuggle new effect models into the payoff.** The landed catalog has no dedicated distortion
+  pedal or guitar amp. This Story demonstrates audible clipping with the existing overdriven `GainStage`
+  into the existing capture `Speaker`; named pedal/amp devices are separate future content.
+
+*Design notes (settled at planning):*
+- **Two catalog types, one source asset and one curated program family.** `electric_guitar` defaults to GM
+  Clean Guitar (program 27); `acoustic_guitar` defaults to GM Steel Guitar (program 25). Both selectors
+  expose the eight GM guitar programs (24–31), enough to exercise structural preset choice without pulling
+  Story 9.5's broader instrument library into this Story. Every instance owns independent synth state over
+  the shared `tim_gm_6mb` bank.
+- **Cold descriptor metadata is explicit for asset nodes.** Extend the catalog's node specification with
+  an asset-backed variant carrying both its fallible runtime builder and an asset-free face description.
+  The face is sourced from the same `SoundFontSource` port declarations used by construction. *Rejected:*
+  parsing the 6 MB font to list the catalog, or constructing an unloaded/silent synth merely for metadata.
+- **The electric face models a pickup-like source.** `SoundFontSource → DaConverter` uses an
+  instrument-level full-scale reference and a deliberately high effective output impedance, making the
+  existing instrument-input toggle and cable R·C/loading lessons observable. It exposes MIDI in and one
+  unbalanced quarter-inch instrument out; the internal digital edge is hidden.
+- **The acoustic face reuses shipped converters.** `SoundFontSource → DaConverter → PoweredMonitor`
+  exposes MIDI in and an acoustic connector, with the monitor's volume param serving as radiated level.
+  The 1 V DA reference and 1 Pa/V transducer anchor full scale at 1 Pa peak (about 94 dB SPL). *Rejected:*
+  a new sample→pressure node, which would conceal the required DA boundary and duplicate existing behavior.
+- **Preset choice is an enumerated structural config.** Add a descriptor-level select kind with authored
+  numeric options, mirrored in TypeScript and rendered by a bound select widget. It uses the existing
+  config→hot-swap path; no new engine control lane is introduced.
+- **Instrument focus is reusable UI composition.** Both guitar faceplates share a dedicated instrument
+  focus surface containing the preset selector and the existing `Keybed`. The existing focus-target logic
+  then gives the open, topmost instrument QWERTY/Web-MIDI input; a cable-driven MIDI input keeps the keybed
+  visibly inert under the established rule.
+
+- **Task 9.4.1** — Complete production asset-aware catalog expansion: introduce an ordinary/asset node
+  specification, asset-free face metadata for descriptors, and fallible instantiation that distinguishes
+  unknown types from asset failures; migrate the Story-9.3 fixture into the real expansion path and prove
+  catalog listing performs no parse/build.
+- **Task 9.4.2** — Add the two headless guitar devices and enumerated preset config: build the electric and
+  acoustic multi-node chassis over `tim_gm_6mb`, pin their exposed carriers, impedances, calibration, preset
+  defaults/options, cache reuse, state isolation, and structural rebuild behavior with native tests.
+- **Task 9.4.3** — Add the web surfaces: mirror select config metadata, build the bound preset selector,
+  electric/acoustic faceplates, and their shared focus keybed; cover registry/binding/focus behavior with web
+  tests and bump the disposable scene schema where the stock/demo scene changes.
+- **Task 9.4.4** — Prove the audible product paths and close the Epic exit gate: electric guitar → overdriven
+  `GainStage` → `Speaker` reaches and clips at the predicted rail; acoustic guitar → mic → analog monitor
+  chain is non-silent through the acoustic carrier; run the full Rust/WASM/web gates and record the manual
+  in-browser QWERTY, Web-MIDI, preset-swap, distortion, and micing pass.
+
+*Program design:* `docs/epics/epic-9/story-9.4-instrument-devices.md`
+
+*Validate:* from the browser, both guitar devices can be placed, focused, selected among the curated GM
+guitar programs, and played polyphonically by on-screen keys, QWERTY, and Web MIDI. The electric device's
+voltage output audibly hard-clips through an overdriven existing gain stage and reaches the capture speaker;
+the acoustic device can only be heard by patching its pressure output through a mic and analog monitoring
+chain. Preset rebuilds reuse the parsed bank, failed builds preserve the live scene, independent instances do
+not share notes, and the complete cargo plus web format/check/typecheck/test gates are green.

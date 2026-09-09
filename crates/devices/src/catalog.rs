@@ -40,9 +40,9 @@ use crate::{
 };
 use engine::{
     AdConverter, BitDepth, CondenserMic, DaConverter, DigitalDemux, DigitalMeter, DigitalMux,
-    Domain, DynamicMic, EqBand, EventThru, GainStage, Graph, InputZ, Matrix, MicPreamp, Node,
-    NodeId, NoiseDensity, Ohms, ParamId, Pascals, PoweredMonitor, ReadoutId, SampleRate,
-    SoundSource, Speaker, SynthVoice, ThreeBandEq, Volts, VuMeter,
+    Domain, DynamicMic, EqBand, EventThru, GainStage, Graph, InputPort, InputZ, Matrix, MicPreamp,
+    Node, NodeId, NoiseDensity, Ohms, OutputPort, ParamId, Pascals, PoweredMonitor, ReadoutId,
+    SampleRate, SoundSource, Speaker, SynthVoice, ThreeBandEq, Volts, VuMeter,
 };
 use serde::Serialize;
 
@@ -375,6 +375,30 @@ type NodeBuilder = fn(&DeviceConfig) -> Box<dyn Node>;
 pub type AssetNodeBuilder =
     fn(&DeviceConfig, &BuildContext) -> Result<Box<dyn Node>, AssetBuildError>;
 
+/// A constructor-independent node declaration used solely to describe an asset-backed face.
+pub(super) struct NodeFace {
+    inputs: Vec<InputPort>,
+    outputs: Vec<OutputPort>,
+    params: Vec<engine::ParamDecl>,
+    readouts: Vec<engine::ReadoutDecl>,
+}
+
+type NodeFaceBuilder = fn(&DeviceConfig) -> NodeFace;
+
+/// A catalog node is either ordinary or needs a parsed host asset to construct. Both variants
+/// still provide an exposed face before the graph is built.
+pub(super) enum NodeSpec {
+    Plain(NodeBuilder),
+    #[allow(
+        dead_code,
+        reason = "the production guitar entries that use this variant arrive in Task 9.4.2"
+    )]
+    Asset {
+        build: AssetNodeBuilder,
+        face: NodeFaceBuilder,
+    },
+}
+
 /// Build an asset-backed node with the explicit context supplied by patch assembly.
 ///
 /// This is the fallible counterpart to the catalog's ordinary node builders. It is intentionally
@@ -411,9 +435,9 @@ struct CatalogEntry {
     name: &'static str,
     /// Physical form factor + size — intrinsic content, hand-authored like the labels.
     form_factor: FormFactor,
-    /// The internal node(s), in order; each is a [`NodeBuilder`] constructing one engine node from the
-    /// device's structural config. Length 1 is the single-node case.
-    nodes: &'static [NodeBuilder],
+    /// The internal node(s), in order. Asset nodes have an explicit, construction-independent face
+    /// so catalog listing never parses an asset or constructs a placeholder synth.
+    nodes: &'static [NodeSpec],
     /// Edges wiring the internal nodes. Empty for a single-node device.
     internal: &'static [InternalEdge],
     /// One per **ungrouped** exposed param (node params not captured by a group, concatenated in node
@@ -693,7 +717,9 @@ const CATALOG: &[CatalogEntry] = &[
             height_mm: 62.0,
             depth_mm: 150.0,
         },
-        nodes: &[|_cfg| Box::new(SynthVoice::new(Volts::new(1.0), Ohms::new(1.0)))],
+        nodes: &[NodeSpec::Plain(|_cfg| {
+            Box::new(SynthVoice::new(Volts::new(1.0), Ohms::new(1.0)))
+        })],
         internal: &[],
         params: &[
             ParamUi {
@@ -765,7 +791,7 @@ const CATALOG: &[CatalogEntry] = &[
             height_mm: 42.0,
             depth_mm: 110.0,
         },
-        nodes: &[|_cfg| Box::new(EventThru::new(64))],
+        nodes: &[NodeSpec::Plain(|_cfg| Box::new(EventThru::new(64)))],
         internal: &[],
         params: &[],
         param_groups: &[],
@@ -802,7 +828,9 @@ const CATALOG: &[CatalogEntry] = &[
             depth_mm: 200.0,
         },
         // ~1 Pa peak (≈94 dB SPL) default at 220 Hz — a plausible sung fundamental.
-        nodes: &[|_cfg| Box::new(SoundSource::new(Pascals::new(1.0)))],
+        nodes: &[NodeSpec::Plain(|_cfg| {
+            Box::new(SoundSource::new(Pascals::new(1.0)))
+        })],
         internal: &[],
         params: &[
             ParamUi {
@@ -854,7 +882,9 @@ const CATALOG: &[CatalogEntry] = &[
         },
         // ~10 mV/Pa sensitivity (a typical studio condenser) from a 150 Ω balanced source (the
         // classic mic output impedance).
-        nodes: &[|_cfg| Box::new(CondenserMic::new(0.01, Ohms::new(150.0)))],
+        nodes: &[NodeSpec::Plain(|_cfg| {
+            Box::new(CondenserMic::new(0.01, Ohms::new(150.0)))
+        })],
         internal: &[],
         params: &[],
         param_groups: &[],
@@ -893,7 +923,9 @@ const CATALOG: &[CatalogEntry] = &[
         },
         // ~2 mV/Pa sensitivity (a quieter, less-efficient moving coil) from a 200 Ω balanced source
         // (typical moving-coil output impedance).
-        nodes: &[|_cfg| Box::new(DynamicMic::new(0.002, Ohms::new(200.0)))],
+        nodes: &[NodeSpec::Plain(|_cfg| {
+            Box::new(DynamicMic::new(0.002, Ohms::new(200.0)))
+        })],
         internal: &[],
         params: &[],
         param_groups: &[],
@@ -918,14 +950,14 @@ const CATALOG: &[CatalogEntry] = &[
         type_id: "gain_stage",
         name: "Gain Stage",
         form_factor: FormFactor::Rackmount { rack_units: 1 },
-        nodes: &[|_cfg| {
+        nodes: &[NodeSpec::Plain(|_cfg| {
             Box::new(GainStage::new(
                 1.0,
                 Volts::new(10.0),
                 InputZ::new(Ohms::new(10_000.0)),
                 Ohms::new(150.0),
             ))
-        }],
+        })],
         internal: &[],
         params: &[
             ParamUi {
@@ -962,7 +994,7 @@ const CATALOG: &[CatalogEntry] = &[
         type_id: "three_band_eq",
         name: "3-Band EQ",
         form_factor: FormFactor::Rackmount { rack_units: 1 },
-        nodes: &[|_cfg| {
+        nodes: &[NodeSpec::Plain(|_cfg| {
             Box::new(ThreeBandEq::new(
                 SampleRate::new(HOST_RATE_HZ),
                 BitDepth::new(BITS),
@@ -972,7 +1004,7 @@ const CATALOG: &[CatalogEntry] = &[
                 EqBand::new(1_000.0, 0.7, 0.0),
                 EqBand::new(8_000.0, 0.7, 0.0),
             ))
-        }],
+        })],
         internal: &[],
         params: &[],
         param_groups: &[],
@@ -996,14 +1028,14 @@ const CATALOG: &[CatalogEntry] = &[
         type_id: "ad_converter",
         name: "AD Converter",
         form_factor: FormFactor::Rackmount { rack_units: 1 },
-        nodes: &[|_cfg| {
+        nodes: &[NodeSpec::Plain(|_cfg| {
             Box::new(AdConverter::new(
                 SampleRate::new(HOST_RATE_HZ),
                 BitDepth::new(BITS),
                 Volts::new(1.0),
                 Ohms::new(1_000_000.0),
             ))
-        }],
+        })],
         internal: &[],
         // The converter's `powered` gate — a standalone AD exposes it as one power switch.
         params: &[ParamUi {
@@ -1033,14 +1065,14 @@ const CATALOG: &[CatalogEntry] = &[
         type_id: "da_converter",
         name: "DA Converter",
         form_factor: FormFactor::Rackmount { rack_units: 1 },
-        nodes: &[|_cfg| {
+        nodes: &[NodeSpec::Plain(|_cfg| {
             Box::new(DaConverter::new(
                 SampleRate::new(HOST_RATE_HZ),
                 BitDepth::new(BITS),
                 Volts::new(1.0),
                 Ohms::new(150.0),
             ))
-        }],
+        })],
         internal: &[],
         // The converter's `powered` gate — a standalone DA exposes it as one power switch.
         params: &[ParamUi {
@@ -1076,7 +1108,9 @@ const CATALOG: &[CatalogEntry] = &[
             height_mm: 170.0,
             depth_mm: 150.0,
         },
-        nodes: &[|_cfg| Box::new(Speaker::new(1.0, InputZ::new(Ohms::new(10_000.0))))],
+        nodes: &[NodeSpec::Plain(|_cfg| {
+            Box::new(Speaker::new(1.0, InputZ::new(Ohms::new(10_000.0))))
+        })],
         internal: &[],
         params: &[],
         param_groups: &[],
@@ -1117,7 +1151,9 @@ const CATALOG: &[CatalogEntry] = &[
         },
         // ~1 Pa/V (the calibration anchor: 1 V ⇒ 1 Pa ≈ 94 dB SPL at unity volume), on a bridging line
         // input so it doesn't load its source (like the speaker terminus — we model no amplifier power).
-        nodes: &[|_cfg| Box::new(PoweredMonitor::new(1.0, InputZ::new(Ohms::new(10_000.0))))],
+        nodes: &[NodeSpec::Plain(|_cfg| {
+            Box::new(PoweredMonitor::new(1.0, InputZ::new(Ohms::new(10_000.0))))
+        })],
         internal: &[],
         params: &[ParamUi {
             // Volume is a linear level multiplier (an attenuator from unity); the web shows it in dB via
@@ -1157,22 +1193,22 @@ const CATALOG: &[CatalogEntry] = &[
         name: "Channel Strip",
         form_factor: FormFactor::Rackmount { rack_units: 2 },
         nodes: &[
-            |_cfg| {
+            NodeSpec::Plain(|_cfg| {
                 Box::new(GainStage::new(
                     1.0,
                     Volts::new(10.0),
                     InputZ::new(Ohms::new(10_000.0)),
                     Ohms::new(150.0),
                 ))
-            },
-            |_cfg| {
+            }),
+            NodeSpec::Plain(|_cfg| {
                 Box::new(GainStage::new(
                     1.0,
                     Volts::new(10.0),
                     InputZ::new(Ohms::new(10_000.0)),
                     Ohms::new(150.0),
                 ))
-            },
+            }),
         ],
         internal: &[InternalEdge {
             from_node: 0,
@@ -1232,7 +1268,7 @@ const CATALOG: &[CatalogEntry] = &[
         type_id: "vu_meter",
         name: "VU Meter",
         form_factor: FormFactor::Rackmount { rack_units: 1 },
-        nodes: &[|_cfg| Box::new(VuMeter::new())],
+        nodes: &[NodeSpec::Plain(|_cfg| Box::new(VuMeter::new()))],
         internal: &[],
         params: &[],
         param_groups: &[],
@@ -1267,13 +1303,13 @@ const CATALOG: &[CatalogEntry] = &[
         type_id: "digital_meter",
         name: "Digital Meter",
         form_factor: FormFactor::Rackmount { rack_units: 1 },
-        nodes: &[|_cfg| {
+        nodes: &[NodeSpec::Plain(|_cfg| {
             Box::new(DigitalMeter::new(
                 SampleRate::new(HOST_RATE_HZ),
                 BitDepth::new(BITS),
                 1,
             ))
-        }],
+        })],
         internal: &[],
         params: &[],
         param_groups: &[],
@@ -1328,57 +1364,57 @@ const CATALOG: &[CatalogEntry] = &[
         //   22,23 input meters (combo 1/2). The meters are appended last so adding them left every
         //   earlier node index — and thus every param id and internal edge — unchanged.
         nodes: &[
-            |cfg| scarlett_preamp(cfg, "inst1"),
-            |cfg| scarlett_preamp(cfg, "inst2"),
-            |_cfg| scarlett_ad(1_000_000.0), // preamp 1 AD (buffered feed ⇒ high Z, unity divider)
-            |_cfg| scarlett_ad(1_000_000.0), // preamp 2 AD
-            |_cfg| scarlett_ad(10_000.0),    // line in 3 (line-level input impedance)
-            |_cfg| scarlett_ad(10_000.0),    // line in 4
-            |_cfg| scarlett_ad(10_000.0),    // line in 5
-            |_cfg| scarlett_ad(10_000.0),    // line in 6
-            |_cfg| {
+            NodeSpec::Plain(|cfg| scarlett_preamp(cfg, "inst1")),
+            NodeSpec::Plain(|cfg| scarlett_preamp(cfg, "inst2")),
+            NodeSpec::Plain(|_cfg| scarlett_ad(1_000_000.0)), // preamp 1 AD (buffered feed ⇒ high Z, unity divider)
+            NodeSpec::Plain(|_cfg| scarlett_ad(1_000_000.0)), // preamp 2 AD
+            NodeSpec::Plain(|_cfg| scarlett_ad(10_000.0)), // line in 3 (line-level input impedance)
+            NodeSpec::Plain(|_cfg| scarlett_ad(10_000.0)), // line in 4
+            NodeSpec::Plain(|_cfg| scarlett_ad(10_000.0)), // line in 5
+            NodeSpec::Plain(|_cfg| scarlett_ad(10_000.0)), // line in 6
+            NodeSpec::Plain(|_cfg| {
                 Box::new(DigitalDemux::new(
                     SampleRate::new(HOST_RATE_HZ),
                     BitDepth::new(BITS),
                     2,
                 ))
-            }, // S/PDIF in (2ch)
-            |_cfg| {
+            }), // S/PDIF in (2ch)
+            NodeSpec::Plain(|_cfg| {
                 Box::new(DigitalDemux::new(
                     SampleRate::new(HOST_RATE_HZ),
                     BitDepth::new(BITS),
                     6,
                 ))
-            }, // USB return (6ch)
-            |_cfg| {
+            }), // USB return (6ch)
+            NodeSpec::Plain(|_cfg| {
                 Box::new(DigitalMux::new(
                     SampleRate::new(HOST_RATE_HZ),
                     BitDepth::new(BITS),
                     8,
                 ))
-            }, // USB send (8ch)
-            |_cfg| {
+            }), // USB send (8ch)
+            NodeSpec::Plain(|_cfg| {
                 Box::new(DigitalMux::new(
                     SampleRate::new(HOST_RATE_HZ),
                     BitDepth::new(BITS),
                     2,
                 ))
-            }, // S/PDIF out (2ch)
-            |_cfg| scarlett_da(),            // monitor L DA
-            |_cfg| scarlett_da(),            // monitor R DA
-            |_cfg| scarlett_gain(),          // monitor L amp → Line Out 1
-            |_cfg| scarlett_gain(),          // monitor R amp → Line Out 2
-            |_cfg| scarlett_da(),            // line out 3 DA
-            |_cfg| scarlett_da(),            // line out 4 DA
-            |_cfg| scarlett_gain(),          // phones 1 amp
-            |_cfg| scarlett_gain(),          // phones 2 amp
-            |_cfg| Box::new(EventThru::new(64)),
+            }), // S/PDIF out (2ch)
+            NodeSpec::Plain(|_cfg| scarlett_da()),         // monitor L DA
+            NodeSpec::Plain(|_cfg| scarlett_da()),         // monitor R DA
+            NodeSpec::Plain(|_cfg| scarlett_gain()),       // monitor L amp → Line Out 1
+            NodeSpec::Plain(|_cfg| scarlett_gain()),       // monitor R amp → Line Out 2
+            NodeSpec::Plain(|_cfg| scarlett_da()),         // line out 3 DA
+            NodeSpec::Plain(|_cfg| scarlett_da()),         // line out 4 DA
+            NodeSpec::Plain(|_cfg| scarlett_gain()),       // phones 1 amp
+            NodeSpec::Plain(|_cfg| scarlett_gain()),       // phones 2 amp
+            NodeSpec::Plain(|_cfg| Box::new(EventThru::new(64))),
             // The routing matrix (Focusrite Control's mixer, gains only). 14 ins (2 preamp + 4 line +
             // 2 S/PDIF + 6 USB return) × 14 outs (8 USB send + 4 line + 2 S/PDIF). Identity default:
             // input i → output i — hardware inputs to USB sends (record), USB returns to the analog /
             // S-PDIF outs (playback) — the standard interface routing, so behavior is unchanged until
             // the user re-routes in the focus view.
-            |_cfg| {
+            NodeSpec::Plain(|_cfg| {
                 let n = 14;
                 let mut d = vec![0.0; n * n];
                 for i in 0..n {
@@ -1391,13 +1427,13 @@ const CATALOG: &[CatalogEntry] = &[
                     n,
                     d,
                 ))
-            },
+            }),
             // 22,23: input meters on combo 1/2, inserted post-preamp (pre-AD). Appended *after* the
             // matrix so every existing node index (and thus every param id + the internal wiring) is
             // unchanged; a `VuMeter` is a transparent bridging passthrough, so it meters the gained
             // input level (the ring around the gain knob) without altering the record path.
-            |_cfg| Box::new(VuMeter::new()), // input 1 meter
-            |_cfg| Box::new(VuMeter::new()), // input 2 meter
+            NodeSpec::Plain(|_cfg| Box::new(VuMeter::new())), // input 1 meter
+            NodeSpec::Plain(|_cfg| Box::new(VuMeter::new())), // input 2 meter
         ],
         // The internal chassis wiring. preamp→meter→AD (×2, the meters tap combo 1/2's input level);
         // the 6 ADs + S/PDIF-in demux (2) + USB-return
@@ -1951,6 +1987,11 @@ struct ExposedReadout {
 /// (reads domains + UI labels).
 struct Expansion {
     nodes: Vec<Box<dyn Node>>,
+    face: FaceExpansion,
+}
+
+/// The exposed ports, params, and readouts computed from node declarations alone.
+struct FaceExpansion {
     inputs: Vec<ExposedPort>,
     outputs: Vec<ExposedPort>,
     params: Vec<ExposedParam>,
@@ -1965,15 +2006,14 @@ fn entry(type_id: &str) -> Option<&'static CatalogEntry> {
 /// Build a device's nodes and compute its exposed face by convention: an input/output port is exposed
 /// when no internal edge consumes it (open ports, in node order); every node param is exposed,
 /// concatenated in node order. Cold path; the node-building cost is negligible.
-fn expand(entry: &CatalogEntry, config: &DeviceConfig) -> Expansion {
-    let nodes: Vec<Box<dyn Node>> = entry.nodes.iter().map(|build| build(config)).collect();
+fn expose(entry: &CatalogEntry, nodes: &[NodeFace]) -> FaceExpansion {
     let mut inputs = Vec::new();
     let mut outputs = Vec::new();
     let mut params = Vec::new();
     let mut readouts = Vec::new();
 
     for (ni, node) in nodes.iter().enumerate() {
-        for (port, face) in node.inputs().iter().enumerate() {
+        for (port, face) in node.inputs.iter().enumerate() {
             let consumed = entry
                 .internal
                 .iter()
@@ -1987,7 +2027,7 @@ fn expand(entry: &CatalogEntry, config: &DeviceConfig) -> Expansion {
                 });
             }
         }
-        for (port, face) in node.outputs().iter().enumerate() {
+        for (port, face) in node.outputs.iter().enumerate() {
             let consumed = entry
                 .internal
                 .iter()
@@ -2001,7 +2041,7 @@ fn expand(entry: &CatalogEntry, config: &DeviceConfig) -> Expansion {
                 });
             }
         }
-        for decl in node.params() {
+        for decl in &node.params {
             // A param captured by a group is hidden from the positional walk (like a port an
             // internal edge consumes); it's driven via the appended group entry instead.
             let grouped = entry
@@ -2017,7 +2057,7 @@ fn expand(entry: &CatalogEntry, config: &DeviceConfig) -> Expansion {
                 });
             }
         }
-        for decl in node.readouts() {
+        for decl in &node.readouts {
             readouts.push(ExposedReadout {
                 node: ni,
                 id: decl.id,
@@ -2031,7 +2071,7 @@ fn expand(entry: &CatalogEntry, config: &DeviceConfig) -> Expansion {
     for group in entry.param_groups {
         let (ni, id) = group.targets[0];
         let decl = nodes[ni]
-            .params()
+            .params
             .iter()
             .find(|d| d.id == id)
             .expect("a param group targets a param its node declares");
@@ -2043,13 +2083,53 @@ fn expand(entry: &CatalogEntry, config: &DeviceConfig) -> Expansion {
         });
     }
 
-    Expansion {
-        nodes,
+    FaceExpansion {
         inputs,
         outputs,
         params,
         readouts,
     }
+}
+
+fn node_face(node: &dyn Node) -> NodeFace {
+    NodeFace {
+        inputs: node.inputs().to_vec(),
+        outputs: node.outputs().to_vec(),
+        params: node.params().to_vec(),
+        readouts: node.readouts().to_vec(),
+    }
+}
+
+fn describe_expansion(entry: &CatalogEntry, config: &DeviceConfig) -> FaceExpansion {
+    let nodes: Vec<NodeFace> = entry
+        .nodes
+        .iter()
+        .map(|spec| match spec {
+            NodeSpec::Plain(build) => node_face(&*build(config)),
+            NodeSpec::Asset { face, .. } => face(config),
+        })
+        .collect();
+    expose(entry, &nodes)
+}
+
+fn build_expansion(
+    entry: &CatalogEntry,
+    config: &DeviceConfig,
+    context: &BuildContext,
+) -> Result<Expansion, AssetBuildError> {
+    let nodes: Vec<Box<dyn Node>> = entry
+        .nodes
+        .iter()
+        .map(|spec| match spec {
+            NodeSpec::Plain(build) => Ok(build(config)),
+            NodeSpec::Asset { build, .. } => build(config, context),
+        })
+        .collect::<Result<_, _>>()?;
+    let faces: Vec<NodeFace> = nodes.iter().map(|node| node_face(&**node)).collect();
+    Ok(Expansion {
+        face: expose(entry, &faces),
+        nodes,
+    })
 }
 
 /// Expand the device type `type_id` (built with structural `config`) into `g`: add its node(s), wire
@@ -2065,24 +2145,32 @@ fn expand(entry: &CatalogEntry, config: &DeviceConfig) -> Expansion {
 pub fn instantiate(type_id: &str, config: &DeviceConfig, g: &mut Graph) -> Option<BuiltDevice> {
     let assets = SoundFontBankLibrary::default();
     instantiate_with_assets(type_id, config, g, &BuildContext::new(&assets))
+        .ok()
+        .flatten()
 }
 
 /// Asset-aware variant of [`instantiate`]. Ordinary catalog entries ignore `context`; an
-/// asset-backed entry can instead use [`build_asset_node`] to resolve the bank it needs.
+/// asset-backed entry can instead use [`build_asset_node`] to resolve the bank it needs. `Ok(None)`
+/// means the type is unknown; `Err` preserves an asset-construction failure for patch assembly.
 pub fn instantiate_with_assets(
     type_id: &str,
     config: &DeviceConfig,
     g: &mut Graph,
-    _context: &BuildContext,
-) -> Option<BuiltDevice> {
-    let entry = entry(type_id)?;
+    context: &BuildContext,
+) -> Result<Option<BuiltDevice>, AssetBuildError> {
+    let Some(entry) = entry(type_id) else {
+        return Ok(None);
+    };
     let Expansion {
         nodes,
-        inputs,
-        outputs,
-        params,
-        readouts,
-    } = expand(entry, config);
+        face:
+            FaceExpansion {
+                inputs,
+                outputs,
+                params,
+                readouts,
+            },
+    } = build_expansion(entry, config, context)?;
 
     let node_ids: Vec<NodeId> = nodes.into_iter().map(|node| g.add_boxed(node)).collect();
     for edge in entry.internal {
@@ -2094,7 +2182,7 @@ pub fn instantiate_with_assets(
         );
     }
 
-    Some(BuiltDevice {
+    Ok(Some(BuiltDevice {
         inputs: inputs.iter().map(|p| (node_ids[p.node], p.port)).collect(),
         outputs: outputs.iter().map(|p| (node_ids[p.node], p.port)).collect(),
         params: params
@@ -2108,7 +2196,7 @@ pub fn instantiate_with_assets(
             .collect(),
         readouts: readouts.iter().map(|r| (node_ids[r.node], r.id)).collect(),
         nodes: node_ids,
-    })
+    }))
 }
 
 /// The full catalog of device descriptors, one per `CATALOG` entry. Each is built by reading freshly
@@ -2126,7 +2214,7 @@ pub fn descriptors() -> Vec<DeviceDescriptor> {
 fn describe(entry: &CatalogEntry, config: &DeviceConfig) -> DeviceDescriptor {
     // The type-catalog descriptor is built with the EMPTY config — the device's *default* face (2×2
     // for the config-driven computer). A per-instance, config-aware descriptor is a later story.
-    let face = expand(entry, config);
+    let face = describe_expansion(entry, config);
     // The grid's column (return) count — the summed exposed output lanes.
     let m_out = face.outputs.iter().map(|o| usize::from(o.channels)).sum();
 
@@ -2288,8 +2376,72 @@ pub fn describe_device(type_id: &str, config: &DeviceConfig) -> Option<DeviceDes
 #[cfg(test)]
 mod tests {
     use super::*;
-
     const FIXTURE_SOUNDFONT_ID: &str = "test-gm";
+
+    const ASSET_FIXTURE: CatalogEntry = CatalogEntry {
+        type_id: "asset_soundfont_fixture",
+        name: "Asset SoundFont Fixture",
+        form_factor: FormFactor::Rackmount { rack_units: 1 },
+        nodes: &[NodeSpec::Asset {
+            build: soundfont_fixture,
+            face: soundfont_face,
+        }],
+        internal: &[],
+        params: &[],
+        param_groups: &[],
+        param_grid: None,
+        inputs: &[PortUi {
+            label: "MIDI",
+            kind: PortKind::Midi,
+            connector: Connector::Din5,
+        }],
+        outputs: &[PortUi {
+            label: "Digital",
+            kind: PortKind::Digital,
+            connector: Connector::Digital,
+        }],
+        delayed_outputs: &[],
+        duplex_links: &[],
+        readouts: ReadoutSpec::Static(&[]),
+        configs: &[],
+    };
+
+    const COLD_DESCRIPTOR_FIXTURE: CatalogEntry = CatalogEntry {
+        type_id: "cold_asset_fixture",
+        name: "Cold Asset Fixture",
+        form_factor: FormFactor::Rackmount { rack_units: 1 },
+        nodes: &[NodeSpec::Asset {
+            build: must_not_build,
+            face: soundfont_face,
+        }],
+        internal: &[],
+        params: &[],
+        param_groups: &[],
+        param_grid: None,
+        inputs: &[PortUi {
+            label: "MIDI",
+            kind: PortKind::Midi,
+            connector: Connector::Din5,
+        }],
+        outputs: &[PortUi {
+            label: "Digital",
+            kind: PortKind::Digital,
+            connector: Connector::Digital,
+        }],
+        delayed_outputs: &[],
+        duplex_links: &[],
+        readouts: ReadoutSpec::Static(&[]),
+        configs: &[],
+    };
+
+    fn soundfont_face(_config: &DeviceConfig) -> NodeFace {
+        NodeFace {
+            inputs: engine::SoundFontSource::input_face().to_vec(),
+            outputs: engine::SoundFontSource::output_face().to_vec(),
+            params: Vec::new(),
+            readouts: Vec::new(),
+        }
+    }
 
     fn soundfont_fixture(
         config: &DeviceConfig,
@@ -2304,6 +2456,13 @@ mod tests {
             bank,
             gm_preset(config, "preset", 0.0),
         )?))
+    }
+
+    fn must_not_build(
+        _config: &DeviceConfig,
+        _context: &BuildContext,
+    ) -> Result<Box<dyn Node>, AssetBuildError> {
+        panic!("describing an asset-backed catalog entry must not build its node")
     }
 
     #[test]
@@ -2386,7 +2545,7 @@ mod tests {
     #[test]
     fn catalog_aligns_with_exposed_face() {
         for entry in CATALOG {
-            let face = expand(entry, &DeviceConfig::EMPTY);
+            let face = describe_expansion(entry, &DeviceConfig::EMPTY);
             // Generated labels size to the built face, so materialize the grid with the same counts
             // `describe` uses: columns = exposed return lanes, rows = the matrix's own crosspoints over
             // the columns (so a crossbar whose inputs exceed the input ports still aligns). `Named`
@@ -2453,7 +2612,10 @@ mod tests {
             let nodes: Vec<Box<dyn Node>> = entry
                 .nodes
                 .iter()
-                .map(|build| build(&DeviceConfig::EMPTY))
+                .map(|spec| match spec {
+                    NodeSpec::Plain(build) => build(&DeviceConfig::EMPTY),
+                    NodeSpec::Asset { .. } => panic!("catalog test fixture is not in CATALOG"),
+                })
                 .collect();
             for group in entry.param_groups {
                 let decl_of = |&(ni, id): &(usize, ParamId)| {
@@ -2504,7 +2666,7 @@ mod tests {
     #[test]
     fn descriptors_carry_engine_truth() {
         for entry in CATALOG {
-            let face = expand(entry, &DeviceConfig::EMPTY);
+            let face = describe_expansion(entry, &DeviceConfig::EMPTY);
             let desc = describe(entry, &DeviceConfig::EMPTY);
 
             for (i, (pd, ep)) in desc.params.iter().zip(&face.params).enumerate() {
@@ -3102,6 +3264,37 @@ mod tests {
             vu.readouts,
             vec![(vu.nodes[0], ReadoutId(0)), (vu.nodes[0], ReadoutId(1))]
         );
+    }
+
+    #[test]
+    fn asset_catalog_face_is_described_without_building_and_instantiates_fallibly() {
+        let descriptor = describe(&COLD_DESCRIPTOR_FIXTURE, &DeviceConfig::EMPTY);
+        assert_eq!(descriptor.ports.len(), 2);
+
+        let missing = SoundFontBankLibrary::default();
+        let error = match build_expansion(
+            &ASSET_FIXTURE,
+            &DeviceConfig::EMPTY,
+            &BuildContext::new(&missing),
+        ) {
+            Err(error) => error,
+            Ok(_) => panic!("the fixture requires its stable-id bank"),
+        };
+        assert_eq!(
+            error,
+            AssetBuildError::MissingSoundFont {
+                asset_id: FIXTURE_SOUNDFONT_ID.into(),
+            }
+        );
+        let mut graph = Graph::new();
+        let unknown = instantiate_with_assets(
+            "not-a-catalog-device",
+            &DeviceConfig::EMPTY,
+            &mut graph,
+            &BuildContext::new(&missing),
+        )
+        .expect("unknown types are not asset failures");
+        assert!(unknown.is_none());
     }
 
     /// Every device carries a sane physical form factor (content for the spatial world): a rackmount
