@@ -22,7 +22,11 @@ use engine::{
     AnalogRate, EventMessage, EventQueue, ParamHandle, ParamQueue, SampleRate, SoundFontBank,
     SoundFontError, VoltageBuffer,
 };
-use serde::Deserialize;
+use serde::{
+    Deserialize,
+    de::{Deserializer, SeqAccess, Visitor},
+};
+use std::fmt;
 use wasm_bindgen::prelude::*;
 
 // --- Device catalog + scene ingress: the thin JS-value bridge over the `devices` crate. ----------
@@ -175,7 +179,53 @@ const FULL_SCALE_V: f32 = 1.0;
 #[serde(rename_all = "camelCase")]
 struct SoundFontAsset {
     id: String,
+    // `ArrayBuffer` / `Uint8Array` is not a JS sequence. Ask serde-wasm-bindgen for its byte-buffer
+    // path explicitly so processorOptions can transfer the fetched binary without expanding it into a
+    // six-million-element number array.
+    #[serde(deserialize_with = "deserialize_soundfont_bytes")]
     bytes: Vec<u8>,
+}
+
+fn deserialize_soundfont_bytes<'de, D>(deserializer: D) -> Result<Vec<u8>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    struct Bytes;
+
+    impl<'de> Visitor<'de> for Bytes {
+        type Value = Vec<u8>;
+
+        fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+            formatter.write_str("a SoundFont byte buffer")
+        }
+
+        fn visit_bytes<E>(self, value: &[u8]) -> Result<Self::Value, E>
+        where
+            E: serde::de::Error,
+        {
+            Ok(value.to_vec())
+        }
+
+        fn visit_byte_buf<E>(self, value: Vec<u8>) -> Result<Self::Value, E>
+        where
+            E: serde::de::Error,
+        {
+            Ok(value)
+        }
+
+        fn visit_seq<A>(self, mut sequence: A) -> Result<Self::Value, A::Error>
+        where
+            A: SeqAccess<'de>,
+        {
+            let mut bytes = Vec::new();
+            while let Some(byte) = sequence.next_element()? {
+                bytes.push(byte);
+            }
+            Ok(bytes)
+        }
+    }
+
+    deserializer.deserialize_byte_buf(Bytes)
 }
 /// A4 (440 Hz) — the note the tests strike.
 #[cfg(test)]
