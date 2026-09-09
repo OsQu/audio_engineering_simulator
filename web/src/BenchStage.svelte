@@ -127,6 +127,22 @@
   // in `scene.ui.bench` (round-trips through the bench's URL persistence); `dragging` is the live move
   // preview. Bench placement is free — no walls/racks, overlaps allowed.
   let dragging = $state<{ id: string; x: number; y: number } | null>(null);
+  // A supporting device's toolbar can overhang its narrow chassis. Give diagonal pointer travel to an
+  // overhanging button a short grace period instead of hiding the toolbar the instant the chassis ends.
+  let openChromeId = $state<string | null>(null);
+  let chromeCloseTimer: ReturnType<typeof setTimeout> | undefined;
+  function showChrome(id: string): void {
+    if (chromeCloseTimer !== undefined) clearTimeout(chromeCloseTimer);
+    chromeCloseTimer = undefined;
+    openChromeId = id;
+  }
+  function hideChromeSoon(id: string): void {
+    if (chromeCloseTimer !== undefined) clearTimeout(chromeCloseTimer);
+    chromeCloseTimer = setTimeout(() => {
+      if (openChromeId === id) openChromeId = null;
+      chromeCloseTimer = undefined;
+    }, 300);
+  }
   function benchOffset(id: string): { x: number; y: number } {
     if (dragging?.id === id) return { x: dragging.x, y: dragging.y };
     const b = session.scene.ui.bench?.[id];
@@ -292,12 +308,16 @@
           <!-- One device: drag its body to move it on the bench (the shared `draggable` action, same as
                  the scene view). Its jacks/controls/flip opt out (DRAG_EXCLUDE); its committed offset +
                  facing live in `scene.ui.bench`. The transform is surface mm, applied inside the surface. -->
+          <!-- svelte-ignore a11y_no_static_element_interactions -->
           <div
             class="device-group"
             class:dut={isDut}
             class:dragging={dragging?.id === bd.id}
+            class:chrome-open={openChromeId === bd.id}
             style:transform="translate({benchOffset(bd.id).x}px, {benchOffset(bd.id).y}px)"
-            style:z-index={dragging?.id === bd.id ? 10 : zBase}
+            style:z-index={dragging?.id === bd.id ? 10 : openChromeId === bd.id ? 6 : zBase}
+            onpointerenter={() => showChrome(bd.id)}
+            onpointerleave={() => hideChromeSoon(bd.id)}
             use:draggable={{
               origin: () => benchOffset(bd.id),
               scale: () => camera.zoom,
@@ -549,6 +569,7 @@
   /* Reveal the shared hover header (DeviceChrome) when the device group is hovered / focused within — the
      bar's appearance + hidden default live in that component; this is just the per-view reveal trigger. */
   .device-group:hover :global(.device-chrome),
+  .device-group.chrome-open :global(.device-chrome),
   .device-group:focus-within :global(.device-chrome) {
     opacity: 1;
     transform: none;

@@ -116,6 +116,25 @@
   // action feeds back, so `shown()` can render the item at the dragged position and flag illegal spots.
   let drag = $state<{ id: string; x: number; y: number; legal: boolean } | null>(null);
 
+  // A toolbar can be wider than the device that reveals it. Keep it open briefly after the pointer
+  // leaves the chassis so a diagonal move toward an overhanging control (usually remove, at the far
+  // right) can reach the toolbar. Entering the toolbar re-enters the device subtree and cancels this
+  // close. The active device is also lifted above cables and sibling devices so every control can be hit.
+  let openChromeId = $state<string | null>(null);
+  let chromeCloseTimer: ReturnType<typeof setTimeout> | undefined;
+  function showChrome(id: string): void {
+    if (chromeCloseTimer !== undefined) clearTimeout(chromeCloseTimer);
+    chromeCloseTimer = undefined;
+    openChromeId = id;
+  }
+  function hideChromeSoon(id: string): void {
+    if (chromeCloseTimer !== undefined) clearTimeout(chromeCloseTimer);
+    chromeCloseTimer = setTimeout(() => {
+      if (openChromeId === id) openChromeId = null;
+      chromeCloseTimer = undefined;
+    }, 300);
+  }
+
   const legalAt = (id: string, x: number, y: number): boolean => canPlace?.(id, x, y) ?? true;
 
   // Keyboard nudge fires only when the device box itself is focused — arrow keys bubbling up from a
@@ -240,11 +259,14 @@
         class:background={it.background}
         class:dragging={drag?.id === it.id}
         class:illegal={drag?.id === it.id && !drag.legal}
+        class:chrome-open={openChromeId === it.id}
         style="left: {p.x}px; bottom: {p.y}px; width: {it.rect.width}px; height: {it.rect.height}px;
-               z-index: {drag?.id === it.id ? 10 : (it.z ?? 2)};"
+               z-index: {drag?.id === it.id ? 10 : openChromeId === it.id ? 6 : (it.z ?? 2)};"
         role="button"
         tabindex="0"
         aria-label="{it.id} — drag to move"
+        onpointerenter={() => showChrome(it.id)}
+        onpointerleave={() => hideChromeSoon(it.id)}
         use:draggable={{
           origin: () => ({ x: it.rect.x, y: it.rect.y }),
           scale: () => camera.zoom,
@@ -366,6 +388,7 @@
      appearance + hidden default live in that component; this is just the per-view reveal trigger. The
      device escapes the chassis clip because overflow:hidden lives on `.content`, not `.device`. */
   .device:hover :global(.device-chrome),
+  .device.chrome-open :global(.device-chrome),
   .device:focus-within :global(.device-chrome) {
     opacity: 1;
     transform: none;
