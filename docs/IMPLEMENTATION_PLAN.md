@@ -752,8 +752,8 @@ Stage 5 — the roadmap-scale "breadth & challenges" work that outlived Epic 5's
 Epic 5 delivered the fidelity slice (a faithful interface + the computer-as-DAW); these are the genuinely
 big, mostly-independent efforts that remain.
 
-**Progress:** Story 7.1 is in progress: Task 7.1.1 established the Luma Leveler's balanced analog model
-and catalog face. The other stories remain deliberately coarse.
+**Progress:** Story 7.1 is complete: the Luma Leveler now has its balanced analog model, approved physical
+faceplate, and program-dependent optical recovery. The other stories remain deliberately coarse.
 
 **Exit criteria:** the same engine credibly supports studio, routing, and live-sound scenarios; structured
 challenges layer on top of the sandbox.
@@ -767,7 +767,7 @@ hand-calc oracles and watch-outs) only when we pick it up, per the "flesh out on
 
 _Tasks to be elaborated when we reach this Epic._
 
-### Story 7.1 — More devices: Luma Leveler — 🚧 **In progress**
+### Story 7.1 — More devices: Luma Leveler — ✅ **Complete**
 
 *Goal:* add a recognizable, educational analog outboard processor through the existing catalog, engine,
 and faceplate seams. The first device is the fictional Luma Leveler: a 3U, balanced mono electro-optical
@@ -775,9 +775,9 @@ leveler whose sparse Gain / Peak Reduction workflow makes analog dynamics and le
 
 *Watch out:* it remains an analog voltage device end to end — no implicit AD/DSP/DA path. Its balanced
 node must take `V+ − V−` before detector or nonlinear processing, then drive the two output legs
-symmetrically. The audio path remains deterministic, allocation-free, and panic-free. Do not broaden this
-equipment task into program-dependent optical release, coloration, impedance switching, or a workbench /
-catalog redesign.
+symmetrically. The audio path remains deterministic, allocation-free, and panic-free. Program-dependent
+optical release is complete; coloration, impedance switching, and any workbench/catalog redesign remain
+outside this Story.
 
 *Design notes (settled at planning):* fixed 600 Ω balanced XLR input and output faces model the ordinary
 line path documented by the reference manual; selectable taps and barrier-strip I/O are deferred. A
@@ -792,17 +792,17 @@ modeling.
 
 - **Task 7.1.1** — Luma analog leveler model and catalog face: ✅ balanced node, catalog descriptor,
   numeric oracles, and catalog coverage for the honest minimum behavior.
-- **Task 7.1.2** — Luma physical faceplate: compose the front/rear 3U chassis, meter presentation,
-  controls, and XLR I/O; run the workbench visual loop and stop for approval.
-- **Task 7.1.3** — Post-approval sonic refinement: only after the faceplate approval, assess and add any
-  separately designed optical-release / color refinements warranted by the brief.
+- **Task 7.1.2** — Luma physical faceplate: ✅ approved original front/rear 3U chassis, meter presentation,
+  controls, and XLR I/O.
+- **Task 7.1.3** — Post-approval sonic refinement: ✅ program-dependent optical release with numeric
+  dwell/recovery oracles; transformer/tube color and sidechain emphasis remain deferred.
 
 *Program design:* [`story-7.1-luma-leveler.md`](./epics/epic-7/story-7.1-luma-leveler.md)
 
 *Validate:* Task 7.1.1's focused Rust and catalog tests prove the static curve, timing, symmetric balanced
-behavior, power glide, and readouts against stated numeric oracles. Task 7.1.2 passes faceplate guardrails,
-the applicable Rust/WASM/web gates, and is observed in `/devices/luma_leveler` at a fixed workbench state;
-the user explicitly approves the rendered front and rear before Task 7.1.3 begins.
+behavior, power glide, readouts, and optical recovery against stated numeric oracles. The approved faceplate
+passes its guardrails and applicable Rust/WASM/web gates; the completed Story also passes the full workspace
+test suite and web validation gates.
 
 - **Story 7.2** — Routing & live-sound scenarios at scale (multi-core partition of the schedule if
   needed). Includes **networked audio** (Dante/AES67) as a carrier: digital-audio sample streams over

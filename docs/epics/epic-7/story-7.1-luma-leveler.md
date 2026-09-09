@@ -211,3 +211,10 @@ Validation passed: `cargo fmt --check`; `cargo test -p engine luma_leveler` (8 t
 287 tests), and `pnpm run wasm`. No commit was created because autonomous per-task commit authority was
 not granted. Remaining intentional fidelity limits are tube/transformer coloration and a frequency-dependent
 sidechain emphasis control.
+
+## Story completion
+
+Story 7.1 is complete as of 2026-09-09. The delivered Luma Leveler is an original 3U balanced analog
+leveler with four catalog-bound controls, gain-reduction/output metering, an approved interactive physical
+face, and rate-baked program-dependent optical recovery. The deliberate next-fidelity candidates remain
+bounded coloration and detector emphasis; neither is implied by this completed Story.
