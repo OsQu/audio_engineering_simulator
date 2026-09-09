@@ -17,9 +17,12 @@ use crate::signal::{AnalogRate, Lane, Volts};
 /// converter or digital carrier is involved.
 pub struct LumaLeveler {
     detector_coeff_attack: f64,
-    detector_coeff_release: f64,
+    optical_release_coeffs: [f64; Self::OPTICAL_RELEASE_STEPS],
+    optical_memory_charge_coeff: f64,
+    optical_memory_fade_coeff: f64,
     output_meter_coeff: f64,
     detector: f64,
+    optical_memory: f64,
     output_mean_square: f64,
     gain_reduction_db: f32,
     output_dbu: f32,
@@ -50,7 +53,11 @@ impl LumaLeveler {
     const PEAK_REDUCTION_DEFAULT: f32 = 0.0;
     const GAIN_DEFAULT: f32 = 1.0;
     const ATTACK_MS: f64 = 10.0;
-    const RELEASE_MS: f64 = 500.0;
+    const OPTICAL_RELEASE_MIN_MS: f64 = 500.0;
+    const OPTICAL_RELEASE_MAX_MS: f64 = 5_000.0;
+    const OPTICAL_MEMORY_CHARGE_MS: f64 = 125.0;
+    const OPTICAL_MEMORY_FADE_MS: f64 = 6_000.0;
+    const OPTICAL_RELEASE_STEPS: usize = 256;
     const OUTPUT_METER_MS: f64 = 65.0;
     const KNEE_DB: f64 = 6.0;
     const COMPRESS_RATIO: f64 = 3.0;
@@ -63,9 +70,12 @@ impl LumaLeveler {
     pub fn new() -> Self {
         Self {
             detector_coeff_attack: 1.0,
-            detector_coeff_release: 1.0,
+            optical_release_coeffs: [1.0; Self::OPTICAL_RELEASE_STEPS],
+            optical_memory_charge_coeff: 1.0,
+            optical_memory_fade_coeff: 1.0,
             output_meter_coeff: 1.0,
             detector: 0.0,
+            optical_memory: 0.0,
             output_mean_square: 0.0,
             gain_reduction_db: 0.0,
             output_dbu: Self::READING_FLOOR_DBU,
@@ -142,6 +152,23 @@ impl LumaLeveler {
         };
         reduction.clamp(0.0, Self::MAX_REDUCTION_DB)
     }
+
+    fn release_coeff(&self) -> f64 {
+        let index = (self.optical_memory * (Self::OPTICAL_RELEASE_STEPS - 1) as f64) as usize;
+        self.optical_release_coeffs[index.min(Self::OPTICAL_RELEASE_STEPS - 1)]
+    }
+
+    fn update_optical_memory(&mut self, reduction: f64) {
+        let target = (reduction / Self::MAX_REDUCTION_DB).clamp(0.0, 1.0);
+        let coeff = if target > self.optical_memory {
+            self.optical_memory_charge_coeff
+        } else {
+            self.optical_memory_fade_coeff
+        };
+        self.optical_memory =
+            flush_denormal(self.optical_memory + coeff * (target - self.optical_memory))
+                .clamp(0.0, 1.0);
+    }
 }
 
 impl Default for LumaLeveler {
@@ -169,7 +196,14 @@ impl Node for LumaLeveler {
 
     fn prepare(&mut self, rate: AnalogRate) {
         self.detector_coeff_attack = Self::coeff(rate, Self::ATTACK_MS);
-        self.detector_coeff_release = Self::coeff(rate, Self::RELEASE_MS);
+        for (index, coeff) in self.optical_release_coeffs.iter_mut().enumerate() {
+            let memory = index as f64 / (Self::OPTICAL_RELEASE_STEPS - 1) as f64;
+            let release_ms = Self::OPTICAL_RELEASE_MIN_MS
+                + (Self::OPTICAL_RELEASE_MAX_MS - Self::OPTICAL_RELEASE_MIN_MS) * memory;
+            *coeff = Self::coeff(rate, release_ms);
+        }
+        self.optical_memory_charge_coeff = Self::coeff(rate, Self::OPTICAL_MEMORY_CHARGE_MS);
+        self.optical_memory_fade_coeff = Self::coeff(rate, Self::OPTICAL_MEMORY_FADE_MS);
         self.output_meter_coeff = Self::coeff(rate, Self::OUTPUT_METER_MS);
     }
 
@@ -179,11 +213,7 @@ impl Node for LumaLeveler {
         let (out_plus, out_minus) = outputs.split_at_mut(1);
         let out_plus = out_plus[0].voltage_mut().as_mut_slice();
         let out_minus = out_minus[0].voltage_mut().as_mut_slice();
-        let (attack, release, meter_coeff) = (
-            self.detector_coeff_attack,
-            self.detector_coeff_release,
-            self.output_meter_coeff,
-        );
+        let (attack, meter_coeff) = (self.detector_coeff_attack, self.output_meter_coeff);
         let (mut detector, mut output_mean_square) = (self.detector, self.output_mean_square);
         let mut gain_reduction_db = 0.0_f32;
 
@@ -201,7 +231,7 @@ impl Node for LumaLeveler {
             let coeff = if magnitude > detector {
                 attack
             } else {
-                release
+                self.release_coeff()
             };
             detector = flush_denormal(detector + coeff * (magnitude - detector));
 
@@ -211,6 +241,7 @@ impl Node for LumaLeveler {
             let limit = params.value_at_or(Self::LIMIT, i, 0.0);
             let powered = params.value_at_or(Self::POWERED, i, 1.0);
             let reduction = Self::reduction_db(detector, peak_reduction, limit);
+            self.update_optical_memory(reduction);
             let compressed = f64::from(differential) * 10.0_f64.powf(-reduction / 20.0);
             // The rail belongs to one conductor. Clamp the differential to twice that rail before
             // splitting it, so both balanced legs stay equal and opposite even at output overload.
@@ -321,6 +352,76 @@ mod tests {
         let silent = vec![0.0; input.len()];
         let _ = process(&mut leveler, &input, &silent);
         assert_relative_eq!(leveler.detector, 1.0 - (-1.0_f64).exp(), epsilon = 1e-3);
+    }
+
+    #[test]
+    fn optical_memory_charges_with_program_dwell() {
+        let mut leveler = LumaLeveler::new();
+        leveler.prepare(rate());
+
+        // A 25 ms full-reduction hold is 9,600 samples at 384 kHz. With a 125 ms charge time,
+        // the one-pole memory reaches 1 − e^(−25/125) = 0.18127 of its full target.
+        for _ in 0..9_600 {
+            leveler.update_optical_memory(LumaLeveler::MAX_REDUCTION_DB);
+        }
+        assert_relative_eq!(
+            leveler.optical_memory,
+            1.0 - (-0.2_f64).exp(),
+            epsilon = 1e-4
+        );
+
+        leveler.optical_memory = 0.0;
+        // A 1 s hold is eight charge constants, so it reaches 1 − e^(−8) = 0.99966.
+        for _ in 0..384_000 {
+            leveler.update_optical_memory(LumaLeveler::MAX_REDUCTION_DB);
+        }
+        assert_relative_eq!(
+            leveler.optical_memory,
+            1.0 - (-8.0_f64).exp(),
+            epsilon = 1e-4
+        );
+    }
+
+    #[test]
+    fn longer_reduction_recovers_more_slowly_and_stays_balanced() {
+        let mut short = LumaLeveler::new();
+        let mut long = LumaLeveler::new();
+        short.prepare(rate());
+        long.prepare(rate());
+
+        // These are the two dwell states proved above: a 25 ms full-reduction hold starts at
+        // ~0.181 memory (about 1.31 s release), while a 1 s hold starts at ~0.9997 (about 5 s).
+        // After the same 250 ms low-level recovery signal, the longer dwell must still show more
+        // reduction. The 0.1 V differential is below either held detector value, so it exercises
+        // release while giving the balanced output a nonzero signal to check.
+        short.detector = 10.0;
+        short.optical_memory = 1.0 - (-0.2_f64).exp();
+        long.detector = 10.0;
+        long.optical_memory = 1.0 - (-8.0_f64).exp();
+        let recovery = vec![0.1; 96_000];
+        let quiet = vec![0.0; recovery.len()];
+        let short_output = process(&mut short, &recovery, &quiet);
+        let long_output = process(&mut long, &recovery, &quiet);
+
+        let mut short_readouts = [0.0; 2];
+        let mut long_readouts = [0.0; 2];
+        short.read_readouts(&mut short_readouts);
+        long.read_readouts(&mut long_readouts);
+        assert!(long_readouts[0] > short_readouts[0]);
+        for (&plus, &minus) in long_output[0]
+            .as_slice()
+            .iter()
+            .zip(long_output[1].as_slice())
+        {
+            assert_relative_eq!(plus, -minus, epsilon = 1e-6);
+        }
+        for (&plus, &minus) in short_output[0]
+            .as_slice()
+            .iter()
+            .zip(short_output[1].as_slice())
+        {
+            assert_relative_eq!(plus, -minus, epsilon = 1e-6);
+        }
     }
 
     #[test]

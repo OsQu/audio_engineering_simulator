@@ -145,6 +145,69 @@ physical-scale silkscreen. Browser evidence: selector interaction works and no c
 meter motion and audio remain unverified because this review bench has no input source patch. No commit was
 created; the user retains the repository verification/commit gate.
 
-## Task 7.1.3 — Post-approval sonic refinement · planned
+## Task 7.1.3 — Post-approval sonic refinement · done
 
-_(program design drafted at pickup, after explicit visual approval)_
+**Outcome:** replace the fixed 500 ms detector recovery with a deliberately small optical-memory
+approximation. A sustained reduction recovers more slowly than an equally deep, short reduction. This
+is the one deferred behavior that materially changes the learner's operating feel without inventing a
+maintenance control, changing the analog signal domain, or starting a component-level tube simulation.
+
+**Owned files:**
+
+```text
+crates/engine/src/node/luma_leveler.rs
+docs/epics/epic-7/story-7.1-luma-leveler.md
+```
+
+No catalog, parameter, readout, scene, UI, or shared engine-contract changes are needed. The existing
+Peak Reduction, Gain, Compress/Limit, and meter behavior stay exactly as exposed by the approved face.
+Tube/transformer coloration and frequency-dependent sidechain emphasis remain deferred.
+
+**Processing shape:** `LumaLeveler` gains a scalar `optical_memory` and rate-baked coefficients for a
+125 ms charge and a 6 s fade. After the existing differential detector computes its instantaneous
+gain reduction, memory moves toward the normalized reduction (`reduction_db / 40`). It charges with the
+125 ms coefficient when reduction increases and fades with the 6 s coefficient when it falls. On each
+detector-decay sample, the release time is interpolated from 500 ms at empty memory to 5 s at full
+memory; attack remains the existing fixed 10 ms.
+
+```text
+differential = V+ − V−
+detector = attack_or_release(detector, abs(differential), release_ms(optical_memory))
+reduction = soft_knee_gain(detector, Peak Reduction, Compress/Limit)
+optical_memory = one_pole(optical_memory, reduction / 40, charge_or_fade_coeff)
+output = balanced_split(differential × reduction_gain × Gain × Power)
+```
+
+Memory is internal, bounded to `0..=1`, reset only with node construction, and has no new control or
+readout: it is the device's optical history, not a hidden user setting. `prepare(AnalogRate)` continues
+to bake every coefficient; the hot path remains allocation-free and only updates scalars.
+
+**Numeric oracle:** use a fixed 384 kHz test signal driven far enough above the full-drive threshold to
+reach the 40 dB cap. A 25 ms hold charges memory to approximately
+`1 − exp(−25 / 125) = 0.181`, so its initial release time is about
+`0.5 + 4.5 × 0.181 = 1.31 s`. A 1 s hold charges it to approximately
+`1 − exp(−1000 / 125) = 0.9997`, so it begins its release at about `5.0 s`. After the same 250 ms of
+low-level recovery signal, the long-held detector must retain more gain reduction than the short-held detector. The test
+will assert that ordering from the public gain-reduction readout, and separately assert both output legs
+remain equal and opposite during the recovery. Existing 10 ms attack and fixed-face tests continue to
+pass unchanged.
+
+**Acceptance checks:**
+
+- `cargo test -p engine luma_leveler`
+- `cargo fmt --check`
+- targeted catalog test if the existing Luma catalog coverage shares this node test path
+- final Story gate: `cargo test --workspace`, `cd web && pnpm run check && pnpm run typecheck && pnpm run test`, and `cd web && pnpm run wasm`
+
+Delivered on 2026-09-09: a 256-step rate-baked optical release table, 125 ms optical-memory charge,
+6 s fade, and a 500 ms–5 s history-dependent detector release. There are no new controls, catalog
+semantics, readouts, UI behavior, or digital-domain conversion. The two new node tests prove stated
+memory charge values and gain-reduction ordering after a 250 ms recovery interval while checking both
+balanced legs remain equal and opposite.
+
+Validation passed: `cargo fmt --check`; `cargo test -p engine luma_leveler` (8 tests); `cargo test -p devices luma_leveler`;
+`cargo test --workspace` (including allocation-free process-path coverage); `cd web && pnpm run check`,
+`pnpm run typecheck` (0 errors; 2 pre-existing `FloatingWindow` warnings), `pnpm run test` (22 files,
+287 tests), and `pnpm run wasm`. No commit was created because autonomous per-task commit authority was
+not granted. Remaining intentional fidelity limits are tube/transformer coloration and a frequency-dependent
+sidechain emphasis control.
