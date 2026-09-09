@@ -39,9 +39,9 @@ use crate::{
     scene::ConfigSetting,
 };
 use engine::{
-    AdConverter, BitDepth, CondenserMic, DaConverter, DigitalDemux, DigitalMeter, DigitalMux,
-    Domain, DynamicMic, EqBand, EventThru, GainStage, Graph, InputPort, InputZ, LumaLeveler,
-    Matrix, MicPreamp, Node, NodeId, NoiseDensity, Ohms, OutputPort, ParamId, Pascals,
+    AdConverter, BalancedReceiver, BitDepth, CondenserMic, DaConverter, DigitalDemux, DigitalMeter,
+    DigitalMux, Domain, DynamicMic, EqBand, EventThru, GainStage, Graph, InputPort, InputZ,
+    LumaLeveler, Matrix, MicPreamp, Node, NodeId, NoiseDensity, Ohms, OutputPort, ParamId, Pascals,
     PoweredMonitor, ReadoutId, SampleRate, SoundFontSource, SoundSource, Speaker, SynthVoice,
     ThreeBandEq, Volts, VuMeter,
 };
@@ -751,6 +751,13 @@ fn scarlett_ad(z_in_ohms: f32) -> Box<dyn Node> {
         Volts::new(1.0),
         Ohms::new(z_in_ohms),
     ))
+}
+
+/// Differential front end for each rear balanced ¼-inch TRS line input (3–6). The receiver presents
+/// the specified 44 kΩ input impedance and rejects common mode before feeding the ordinary buffered
+/// ADC. TS sources still work through the graph's grounded-cold path.
+fn scarlett_line_receiver() -> Box<dyn Node> {
+    Box::new(BalancedReceiver::new(Ohms::new(44_000.0), Ohms::new(1.0)))
 }
 fn scarlett_da() -> Box<dyn Node> {
     Box::new(DaConverter::new(
@@ -1677,20 +1684,23 @@ const CATALOG: &[CatalogEntry] = &[
         // Signal-flow layout. Every routing-matrix port is internal (fed by the ADs/demuxes, consumed
         // by the muxes/DAs), so the matrix is placed **last** — its 196 generated crosspoints become the
         // trailing exposed params without disturbing the port face. Node order:
-        //   0,1 preamps · 2,3 preamp ADs · 4–7 line-in ADs (3–6) · 8 S/PDIF-in demux · 9 USB-return
-        //   demux · 10 USB-send mux · 11 S/PDIF-out mux · 12,13 monitor DAs (L/R) · 14,15 monitor amps
-        //   (Line Out 1/2) · 16,17 line-out DAs (3/4) · 18,19 phones amps · 20 MIDI thru · 21 matrix ·
-        //   22,23 input meters (combo 1/2). The meters are appended last so adding them left every
-        //   earlier node index — and thus every param id and internal edge — unchanged.
+        //   0,1 preamps · 2,3 preamp ADs · 4–7 line receivers (3–6) · 8–11 line-in ADs ·
+        //   12 S/PDIF-in demux · 13 USB-return demux · 14 USB-send mux · 15 S/PDIF-out mux ·
+        //   16,17 monitor DAs (L/R) · 18,19 monitor amps (Line Out 1/2) · 20,21 line-out DAs (3/4) ·
+        //   22,23 phones amps · 24 MIDI thru · 25 matrix · 26,27 input meters (combo 1/2).
         nodes: &[
             NodeSpec::Plain(|cfg| scarlett_preamp(cfg, "inst1")),
             NodeSpec::Plain(|cfg| scarlett_preamp(cfg, "inst2")),
             NodeSpec::Plain(|_cfg| scarlett_ad(1_000_000.0)), // preamp 1 AD (buffered feed ⇒ high Z, unity divider)
             NodeSpec::Plain(|_cfg| scarlett_ad(1_000_000.0)), // preamp 2 AD
-            NodeSpec::Plain(|_cfg| scarlett_ad(10_000.0)), // line in 3 (line-level input impedance)
-            NodeSpec::Plain(|_cfg| scarlett_ad(10_000.0)), // line in 4
-            NodeSpec::Plain(|_cfg| scarlett_ad(10_000.0)), // line in 5
-            NodeSpec::Plain(|_cfg| scarlett_ad(10_000.0)), // line in 6
+            NodeSpec::Plain(|_cfg| scarlett_line_receiver()), // line in 3 differential front end
+            NodeSpec::Plain(|_cfg| scarlett_line_receiver()), // line in 4 differential front end
+            NodeSpec::Plain(|_cfg| scarlett_line_receiver()), // line in 5 differential front end
+            NodeSpec::Plain(|_cfg| scarlett_line_receiver()), // line in 6 differential front end
+            NodeSpec::Plain(|_cfg| scarlett_ad(1_000_000.0)), // buffered line in 3 AD
+            NodeSpec::Plain(|_cfg| scarlett_ad(1_000_000.0)), // buffered line in 4 AD
+            NodeSpec::Plain(|_cfg| scarlett_ad(1_000_000.0)), // buffered line in 5 AD
+            NodeSpec::Plain(|_cfg| scarlett_ad(1_000_000.0)), // buffered line in 6 AD
             NodeSpec::Plain(|_cfg| {
                 Box::new(DigitalDemux::new(
                     SampleRate::new(HOST_RATE_HZ),
@@ -1719,14 +1729,14 @@ const CATALOG: &[CatalogEntry] = &[
                     2,
                 ))
             }), // S/PDIF out (2ch)
-            NodeSpec::Plain(|_cfg| scarlett_da()),         // monitor L DA
-            NodeSpec::Plain(|_cfg| scarlett_da()),         // monitor R DA
-            NodeSpec::Plain(|_cfg| scarlett_gain()),       // monitor L amp → Line Out 1
-            NodeSpec::Plain(|_cfg| scarlett_gain()),       // monitor R amp → Line Out 2
-            NodeSpec::Plain(|_cfg| scarlett_da()),         // line out 3 DA
-            NodeSpec::Plain(|_cfg| scarlett_da()),         // line out 4 DA
-            NodeSpec::Plain(|_cfg| scarlett_gain()),       // phones 1 amp
-            NodeSpec::Plain(|_cfg| scarlett_gain()),       // phones 2 amp
+            NodeSpec::Plain(|_cfg| scarlett_da()),            // monitor L DA
+            NodeSpec::Plain(|_cfg| scarlett_da()),            // monitor R DA
+            NodeSpec::Plain(|_cfg| scarlett_gain()),          // monitor L amp → Line Out 1
+            NodeSpec::Plain(|_cfg| scarlett_gain()),          // monitor R amp → Line Out 2
+            NodeSpec::Plain(|_cfg| scarlett_da()),            // line out 3 DA
+            NodeSpec::Plain(|_cfg| scarlett_da()),            // line out 4 DA
+            NodeSpec::Plain(|_cfg| scarlett_gain()),          // phones 1 amp
+            NodeSpec::Plain(|_cfg| scarlett_gain()),          // phones 2 amp
             NodeSpec::Plain(|_cfg| Box::new(EventThru::new(64))),
             // The routing matrix (Focusrite Control's mixer, gains only). 14 ins (2 preamp + 4 line +
             // 2 S/PDIF + 6 USB return) × 14 outs (8 USB send + 4 line + 2 S/PDIF). Identity default:
@@ -1747,15 +1757,14 @@ const CATALOG: &[CatalogEntry] = &[
                     d,
                 ))
             }),
-            // 22,23: input meters on combo 1/2, inserted post-preamp (pre-AD). Appended *after* the
-            // matrix so every existing node index (and thus every param id + the internal wiring) is
-            // unchanged; a `VuMeter` is a transparent bridging passthrough, so it meters the gained
-            // input level (the ring around the gain knob) without altering the record path.
+            // 26,27: input meters on combo 1/2, inserted post-preamp (pre-AD). Appended *after* the
+            // matrix; a `VuMeter` is a transparent bridging passthrough, so it meters the gained input
+            // level (the ring around the gain knob) without altering the record path.
             NodeSpec::Plain(|_cfg| Box::new(VuMeter::new())), // input 1 meter
             NodeSpec::Plain(|_cfg| Box::new(VuMeter::new())), // input 2 meter
         ],
-        // The internal chassis wiring. preamp→meter→AD (×2, the meters tap combo 1/2's input level);
-        // the 6 ADs + S/PDIF-in demux (2) + USB-return
+        // The internal chassis wiring. preamp→meter→AD (×2), line receiver→AD (×4), then the
+        // 6 ADs + S/PDIF-in demux (2) + USB-return
         // demux (6) feed the matrix's 14 inputs; the matrix's 14 outputs feed the USB-send mux (8), the
         // monitor + line-out DAs (4), and the S/PDIF-out mux (2); each monitor DA fans to its line-out
         // amp and a phones amp.
@@ -1764,11 +1773,11 @@ const CATALOG: &[CatalogEntry] = &[
             InternalEdge {
                 from_node: 0,
                 from_port: 0,
-                to_node: 22,
+                to_node: 26,
                 to_port: 0,
             },
             InternalEdge {
-                from_node: 22,
+                from_node: 26,
                 from_port: 0,
                 to_node: 2,
                 to_port: 0,
@@ -1776,212 +1785,237 @@ const CATALOG: &[CatalogEntry] = &[
             InternalEdge {
                 from_node: 1,
                 from_port: 0,
-                to_node: 23,
+                to_node: 27,
                 to_port: 0,
             },
             InternalEdge {
-                from_node: 23,
+                from_node: 27,
                 from_port: 0,
                 to_node: 3,
+                to_port: 0,
+            },
+            // Rear balanced line receivers → their buffered single-ended ADs.
+            InternalEdge {
+                from_node: 4,
+                from_port: 0,
+                to_node: 8,
+                to_port: 0,
+            },
+            InternalEdge {
+                from_node: 5,
+                from_port: 0,
+                to_node: 9,
+                to_port: 0,
+            },
+            InternalEdge {
+                from_node: 6,
+                from_port: 0,
+                to_node: 10,
+                to_port: 0,
+            },
+            InternalEdge {
+                from_node: 7,
+                from_port: 0,
+                to_node: 11,
                 to_port: 0,
             },
             // ADs (preamp 1/2, line 3–6) → matrix ins 0–5
             InternalEdge {
                 from_node: 2,
                 from_port: 0,
-                to_node: 21,
+                to_node: 25,
                 to_port: 0,
             },
             InternalEdge {
                 from_node: 3,
                 from_port: 0,
-                to_node: 21,
+                to_node: 25,
                 to_port: 1,
             },
             InternalEdge {
-                from_node: 4,
+                from_node: 8,
                 from_port: 0,
-                to_node: 21,
+                to_node: 25,
                 to_port: 2,
             },
             InternalEdge {
-                from_node: 5,
+                from_node: 9,
                 from_port: 0,
-                to_node: 21,
+                to_node: 25,
                 to_port: 3,
             },
             InternalEdge {
-                from_node: 6,
+                from_node: 10,
                 from_port: 0,
-                to_node: 21,
+                to_node: 25,
                 to_port: 4,
             },
             InternalEdge {
-                from_node: 7,
+                from_node: 11,
                 from_port: 0,
-                to_node: 21,
+                to_node: 25,
                 to_port: 5,
             },
             // S/PDIF-in demux (2ch) → matrix ins 6,7
             InternalEdge {
-                from_node: 8,
+                from_node: 12,
                 from_port: 0,
-                to_node: 21,
+                to_node: 25,
                 to_port: 6,
             },
             InternalEdge {
-                from_node: 8,
+                from_node: 12,
                 from_port: 1,
-                to_node: 21,
+                to_node: 25,
                 to_port: 7,
             },
             // USB-return demux (6ch) → matrix ins 8–13
             InternalEdge {
-                from_node: 9,
+                from_node: 13,
                 from_port: 0,
-                to_node: 21,
+                to_node: 25,
                 to_port: 8,
             },
             InternalEdge {
-                from_node: 9,
+                from_node: 13,
                 from_port: 1,
-                to_node: 21,
+                to_node: 25,
                 to_port: 9,
             },
             InternalEdge {
-                from_node: 9,
+                from_node: 13,
                 from_port: 2,
-                to_node: 21,
+                to_node: 25,
                 to_port: 10,
             },
             InternalEdge {
-                from_node: 9,
+                from_node: 13,
                 from_port: 3,
-                to_node: 21,
+                to_node: 25,
                 to_port: 11,
             },
             InternalEdge {
-                from_node: 9,
+                from_node: 13,
                 from_port: 4,
-                to_node: 21,
+                to_node: 25,
                 to_port: 12,
             },
             InternalEdge {
-                from_node: 9,
+                from_node: 13,
                 from_port: 5,
-                to_node: 21,
+                to_node: 25,
                 to_port: 13,
             },
             // matrix outs 0–7 → USB-send mux (8ch)
             InternalEdge {
-                from_node: 21,
+                from_node: 25,
                 from_port: 0,
-                to_node: 10,
+                to_node: 14,
                 to_port: 0,
             },
             InternalEdge {
-                from_node: 21,
+                from_node: 25,
                 from_port: 1,
-                to_node: 10,
+                to_node: 14,
                 to_port: 1,
             },
             InternalEdge {
-                from_node: 21,
+                from_node: 25,
                 from_port: 2,
-                to_node: 10,
+                to_node: 14,
                 to_port: 2,
             },
             InternalEdge {
-                from_node: 21,
+                from_node: 25,
                 from_port: 3,
-                to_node: 10,
+                to_node: 14,
                 to_port: 3,
             },
             InternalEdge {
-                from_node: 21,
+                from_node: 25,
                 from_port: 4,
-                to_node: 10,
+                to_node: 14,
                 to_port: 4,
             },
             InternalEdge {
-                from_node: 21,
+                from_node: 25,
                 from_port: 5,
-                to_node: 10,
+                to_node: 14,
                 to_port: 5,
             },
             InternalEdge {
-                from_node: 21,
+                from_node: 25,
                 from_port: 6,
-                to_node: 10,
+                to_node: 14,
                 to_port: 6,
             },
             InternalEdge {
-                from_node: 21,
+                from_node: 25,
                 from_port: 7,
-                to_node: 10,
+                to_node: 14,
                 to_port: 7,
             },
             // matrix outs 8–11 → monitor + line-out DAs
             InternalEdge {
-                from_node: 21,
+                from_node: 25,
                 from_port: 8,
-                to_node: 12,
-                to_port: 0,
-            },
-            InternalEdge {
-                from_node: 21,
-                from_port: 9,
-                to_node: 13,
-                to_port: 0,
-            },
-            InternalEdge {
-                from_node: 21,
-                from_port: 10,
                 to_node: 16,
                 to_port: 0,
             },
             InternalEdge {
-                from_node: 21,
-                from_port: 11,
+                from_node: 25,
+                from_port: 9,
                 to_node: 17,
+                to_port: 0,
+            },
+            InternalEdge {
+                from_node: 25,
+                from_port: 10,
+                to_node: 20,
+                to_port: 0,
+            },
+            InternalEdge {
+                from_node: 25,
+                from_port: 11,
+                to_node: 21,
                 to_port: 0,
             },
             // matrix outs 12,13 → S/PDIF-out mux (2ch)
             InternalEdge {
-                from_node: 21,
+                from_node: 25,
                 from_port: 12,
-                to_node: 11,
+                to_node: 15,
                 to_port: 0,
             },
             InternalEdge {
-                from_node: 21,
+                from_node: 25,
                 from_port: 13,
-                to_node: 11,
+                to_node: 15,
                 to_port: 1,
             },
             // monitor DAs fan out to their line-out amp and a phones amp
             InternalEdge {
-                from_node: 12,
-                from_port: 0,
-                to_node: 14,
-                to_port: 0,
-            }, // mon L → Line Out 1
-            InternalEdge {
-                from_node: 12,
+                from_node: 16,
                 from_port: 0,
                 to_node: 18,
                 to_port: 0,
+            }, // mon L → Line Out 1
+            InternalEdge {
+                from_node: 16,
+                from_port: 0,
+                to_node: 22,
+                to_port: 0,
             }, // mon L → Phones 1
             InternalEdge {
-                from_node: 13,
+                from_node: 17,
                 from_port: 0,
-                to_node: 15,
+                to_node: 19,
                 to_port: 0,
             }, // mon R → Line Out 2
             InternalEdge {
-                from_node: 13,
+                from_node: 17,
                 from_port: 0,
-                to_node: 19,
+                to_node: 23,
                 to_port: 0,
             }, // mon R → Phones 2
         ],
@@ -2041,7 +2075,7 @@ const CATALOG: &[CatalogEntry] = &[
                 taper: ParamTaper::Log,
             },
         ],
-        // The routing matrix's crosspoints (node 21, the last param-contributing node): 14 inputs ×
+        // The routing matrix's crosspoints (node 25, the last param-contributing node): 14 inputs ×
         // 14 outputs, labels generated as "input → output". Rendered as a grid in Focusrite Control.
         param_grid: Some(GridSpec {
             inputs: GridAxis::Named(&[
@@ -2067,7 +2101,7 @@ const CATALOG: &[CatalogEntry] = &[
                     kind: ParamKind::Knob,
                     taper: ParamTaper::Log,
                 },
-                targets: &[(14, GainStage::GAIN), (15, GainStage::GAIN)],
+                targets: &[(18, GainStage::GAIN), (19, GainStage::GAIN)],
             },
             ParamGroup {
                 ui: ParamUi {
@@ -2081,18 +2115,18 @@ const CATALOG: &[CatalogEntry] = &[
                     (1, MicPreamp::POWERED),
                     (2, AdConverter::POWERED),
                     (3, AdConverter::POWERED),
-                    (4, AdConverter::POWERED),
-                    (5, AdConverter::POWERED),
-                    (6, AdConverter::POWERED),
-                    (7, AdConverter::POWERED),
-                    (12, DaConverter::POWERED),
-                    (13, DaConverter::POWERED),
+                    (8, AdConverter::POWERED),
+                    (9, AdConverter::POWERED),
+                    (10, AdConverter::POWERED),
+                    (11, AdConverter::POWERED),
                     (16, DaConverter::POWERED),
                     (17, DaConverter::POWERED),
-                    (14, GainStage::POWERED),
-                    (15, GainStage::POWERED),
+                    (20, DaConverter::POWERED),
+                    (21, DaConverter::POWERED),
                     (18, GainStage::POWERED),
                     (19, GainStage::POWERED),
+                    (22, GainStage::POWERED),
+                    (23, GainStage::POWERED),
                 ],
             },
         ],
@@ -2197,7 +2231,7 @@ const CATALOG: &[CatalogEntry] = &[
         delayed_outputs: &[],
         // The single USB-C jack is duplex: USB Out (output 0) + USB In (input 7) are one connector.
         duplex_links: &[(0, 7)],
-        // Input meters on combo 1/2 (nodes 22,23), each a VuMeter exposing VU + peak-dBu — in node
+        // Input meters on combo 1/2 (nodes 26,27), each a VuMeter exposing VU + peak-dBu — in node
         // order, so the four exposed readouts are In 1 (VU, Peak) then In 2 (VU, Peak). The web
         // faceplate renders these as the level ring around each preamp's gain knob.
         readouts: ReadoutSpec::Static(&[
@@ -3403,7 +3437,7 @@ mod tests {
         );
     }
 
-    /// The full Scarlett 8i6 expands into its 24 internal nodes wired by 36 internal edges, and its
+    /// The full Scarlett 8i6 expands into its 28 internal nodes wired by 40 internal edges, and its
     /// exposed face maps to the right `(NodeId, …)`. This pins the big remap: 9 inputs (2 combo, 4 line,
     /// S/PDIF, USB return, MIDI-in), 9 outputs (USB send, S/PDIF, 4 line, 2 phones, MIDI-out), the
     /// param face — the preamp + phones controls, the 196 matrix crosspoints, the Monitor group, and the
@@ -3416,12 +3450,12 @@ mod tests {
             .expect("scarlett_8i6 is in the catalog");
         let n = &dev.nodes;
 
-        // 22 signal/routing nodes + 2 input meters (appended last, so earlier indices are unchanged).
-        assert_eq!(n.len(), 24, "24 internal nodes");
-        // 34 original edges + 2: each preamp→AD became preamp→meter→AD (one extra edge per meter).
-        assert_eq!(g.connection_count(), 36, "36 internal edges");
+        // 22 original signal/routing nodes + 4 line receivers + 2 input meters.
+        assert_eq!(n.len(), 28, "28 internal nodes");
+        // 34 original edges + 2 meter hops + 4 receiver→AD hops.
+        assert_eq!(g.connection_count(), 40, "40 internal edges");
 
-        // Inputs: 2 preamps, 4 line-in ADs, S/PDIF-in demux, USB-return demux, MIDI-in (in node order).
+        // Inputs: 2 preamps, 4 line receivers, S/PDIF-in demux, USB-return demux, MIDI-in.
         assert_eq!(
             dev.inputs,
             vec![
@@ -3431,9 +3465,9 @@ mod tests {
                 (n[5], 0),
                 (n[6], 0),
                 (n[7], 0),
-                (n[8], 0),
-                (n[9], 0),
-                (n[20], 0),
+                (n[12], 0),
+                (n[13], 0),
+                (n[24], 0),
             ]
         );
         // Outputs: USB-send mux, S/PDIF-out mux, monitor amps (Line 1/2), line-out DAs (3/4), phones
@@ -3441,15 +3475,15 @@ mod tests {
         assert_eq!(
             dev.outputs,
             vec![
-                (n[10], 0),
-                (n[11], 0),
                 (n[14], 0),
                 (n[15], 0),
-                (n[16], 0),
-                (n[17], 0),
                 (n[18], 0),
                 (n[19], 0),
                 (n[20], 0),
+                (n[21], 0),
+                (n[22], 0),
+                (n[23], 0),
+                (n[24], 0),
             ]
         );
         // Param face boundaries: 8 hand-authored ungrouped + 196 crosspoints + Monitor + Power = 206.
@@ -3461,38 +3495,38 @@ mod tests {
         );
         assert_eq!(
             dev.params[6],
-            vec![(n[18], ParamId(0))],
+            vec![(n[22], ParamId(0))],
             "id 6 = phones 1 amp Gain"
         );
         assert_eq!(
             dev.params[7],
-            vec![(n[19], ParamId(0))],
+            vec![(n[23], ParamId(0))],
             "id 7 = phones 2 amp Gain"
         );
-        // Crosspoints 8..=203 are all on the matrix (node 21), ParamId 0..=195, in order.
-        assert_eq!(dev.params[8], vec![(n[21], ParamId(0))], "first crosspoint");
+        // Crosspoints 8..=203 are all on the matrix (node 25), ParamId 0..=195, in order.
+        assert_eq!(dev.params[8], vec![(n[25], ParamId(0))], "first crosspoint");
         assert_eq!(
             dev.params[203],
-            vec![(n[21], ParamId(195))],
+            vec![(n[25], ParamId(195))],
             "last crosspoint"
         );
         // Monitor group (id 204): the two monitor amps' GAIN. Power group (id 205): all 16 `powered`.
         assert_eq!(
             dev.params[204],
-            vec![(n[14], ParamId(0)), (n[15], ParamId(0))],
+            vec![(n[18], ParamId(0)), (n[19], ParamId(0))],
             "Monitor group over the monitor pair"
         );
         assert_eq!(dev.params[205].len(), 16, "Power group over all 16 stages");
 
-        // The two input meters (nodes 22,23) each expose VU + peak-dBu, in node order → 4 readouts,
+        // The two input meters (nodes 26,27) each expose VU + peak-dBu, in node order → 4 readouts,
         // which the faceplate binds as the level ring around gain knobs 1 and 2.
         assert_eq!(
             dev.readouts,
             vec![
-                (n[22], ReadoutId(0)),
-                (n[22], ReadoutId(1)),
-                (n[23], ReadoutId(0)),
-                (n[23], ReadoutId(1)),
+                (n[26], ReadoutId(0)),
+                (n[26], ReadoutId(1)),
+                (n[27], ReadoutId(0)),
+                (n[27], ReadoutId(1)),
             ],
             "In 1/In 2 VU + peak readouts"
         );

@@ -1587,7 +1587,7 @@ mod tests {
     }
 
     #[test]
-    fn balanced_trs_xlr_adapter_is_required_for_the_luma_line_input() {
+    fn balanced_trs_xlr_adapter_connects_luma_and_scarlett_in_both_directions() {
         // Scarlett Line Out 3 is a balanced ¼-inch line jack (output id 4); Luma Line In is balanced
         // XLR. Their two analog conductors are compatible electrically, but only the catalog's named
         // passive adapter lead makes the unlike physical endpoints legal.
@@ -1607,7 +1607,7 @@ mod tests {
             resistance_ohms: 0.15,
             capacitance_farads: 1.5e-10,
         };
-        build_patch(&patch(Some(adapter)), BLOCK_LEN, rate(), 0)
+        build_patch(&patch(Some(adapter.clone())), BLOCK_LEN, rate(), 0)
             .expect("the catalog-backed balanced adapter builds");
 
         let err = build_patch(&patch(None), BLOCK_LEN, rate(), 0).unwrap_err();
@@ -1615,6 +1615,23 @@ mod tests {
             matches!(err, BuildError::ConnectorMismatch { .. }),
             "got {err:?}"
         );
+
+        // The reverse route uses the same passive lead. Scarlett inputs 3–6 are balanced TRS
+        // differential inputs, so a balanced XLR Luma output can land on Line In 3 without a
+        // lossy fake unbalancing stage.
+        let reverse = Patch {
+            devices: vec![device("luma", "luma_leveler"), device("if", "scarlett_8i6")],
+            connections: vec![Connection {
+                cable: Some(adapter),
+                ..conn("luma", 0, "if", 2)
+            }],
+            output: PortRef {
+                device: "if".into(),
+                port: 2, // Line Out 1 is the first analogue-facing Scarlett output.
+            },
+        };
+        build_patch(&reverse, BLOCK_LEN, rate(), 0)
+            .expect("the same balanced adapter connects Luma output to Scarlett Line In 3");
     }
 
     /// The static loading-loss readout reads each connection's baked divider. In the canonical patch

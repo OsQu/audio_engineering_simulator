@@ -141,6 +141,12 @@ impedance taps are explicitly deferred.
 
 ## Architecture gap — balanced XLR ↔ ¼-inch line cables (2026-09-09) · resolved
 
+Follow-up correction: the modeled Scarlett 8i6 rear Line Inputs 3–6 had been declared as
+single-conductor ADC inputs even though the hardware uses balanced TRS sockets. They now use the
+engine's existing balanced receiver front end (with the specified 44 kΩ input impedance) before
+feeding the ordinary ADC, so the same named XLR↔TRS lead works in both directions: Scarlett line
+out → Luma line in and Luma line out → Scarlett line in.
+
 - **Blocked requirement:** patch a Scarlett 8i6 balanced ¼-inch Line Out (for example, Line Out 3) into
   the Luma Leveler's balanced XLR Line In using a real-world TRS-to-XLR balanced lead.
 - **Current seam:** `Connector` and `connectors_compatible` in `crates/devices/src/catalog.rs` only admit
@@ -170,6 +176,40 @@ physical connector adaptation only: the Scarlett and Luma remain two-conductor a
 no hidden converter or Luma-specific exception. Coverage proves the UI rejects a bare XLR↔¼-inch pair,
 accepts it with the catalog adapter, and that `build_patch` accepts Focusrite Line Out 3 → Luma Line In
 only with the persisted adapter cable.
+
+## Architecture gap — safe hardware inserts through a mixed-domain interface (2026-09-09) · open
+
+- **Blocked requirement:** patch a conventional hardware insert at the same time:
+  Scarlett Line Out → Luma Line In → Luma Line Out → Scarlett Line In, with Focusrite Control routing
+  a DAW return to the send output and the return input to a USB send. Those routes do not feed the
+  returned signal back to the same output, so the operating signal path is not a feedback loop.
+- **Current seam:** `web/src/connections.ts::wouldCreateCycle` reduces every device to one vertex and
+  rejects any second inter-device edge that closes a device-level directed cycle. It cannot see the
+  Scarlett's internal Line In → AD → digital `Matrix` → DA → Line Out topology or its selected
+  crosspoints. `evaluateConnection` therefore rejects the second insert cable before `build_patch` or
+  `compile` can inspect the real node graph.
+- **Concrete limitation:** exposed port direction/domain/connector/channel metadata does not publish
+  internal port-to-port reachability or where a path may legally carry latency. The engine already works
+  at node level and can break a cycle containing a digital edge with one block of bounded latency, but
+  the browser's coarser preflight cannot distinguish that safe mixed-domain insert from an unbreakable
+  all-analog feedback loop. Simply removing the browser check is incomplete: `hotSwap` currently mutates
+  the authoritative scene before the worklet asynchronously accepts or rejects `loadPatch`, and a rejected
+  patch is reported as an error without rolling the scene mutation back.
+- **Affected contracts/files:** the connection verdict in `web/src/connections.ts`; patch commit and
+  hot-swap ownership in `web/src/patch-controller.svelte.ts`, `web/src/scene-ops.ts`, and
+  `web/src/session.svelte.ts`; the `loadPatch` request/error protocol in `web/src/engine.ts` and the
+  AudioWorklet source; potentially `PortDescriptor` / catalog serialization only if exact client-side
+  topology preflight is chosen instead.
+- **Smallest architectural question:** should patch validity become engine-authoritative and transactional
+  (submit a candidate patch, receive an accept/reject acknowledgement, then commit or roll back the UI
+  scene), or should the catalog publish enough internal reachability/delay metadata for the browser to
+  reproduce the engine's cycle decision exactly? The former reuses the existing compiler as the single
+  oracle and avoids duplicating topology rules; the latter preserves immediate local feedback but adds a
+  new shared descriptor contract that must stay aligned with every device's internal graph.
+- **Resume point:** solve and review this as a separate architecture task. Its acceptance case must include
+  the complete two-cable Scarlett → Luma → Scarlett insert, a genuinely unbreakable all-analog loop that
+  remains rejected without corrupting the scene, and clear UI feedback for both outcomes. Resume Luma's
+  end-to-end equipment verification only after that seam lands.
 
 ## Workbench acceptance
 
