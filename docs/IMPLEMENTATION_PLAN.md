@@ -1107,7 +1107,7 @@ coordinate implementation—and may reuse authored catalog/scene data without co
 - **Task 10.1.2** — ✅ Executing known-regression suite: rack/device hover stacking, cable hover stacking,
   click-click versus drag-drop without a final move, min/max zoom targeting, and populated-rack drag all name
   Story 10.5 or 10.7 and fail if they start passing without graduation.
-- **Task 10.1.3** — Real-worklet patch-acceptance smoke seam: run a minimal compatible patch through the
+- **Task 10.1.3** — ✅ Real-worklet patch-acceptance smoke seam: run a minimal compatible patch through the
   generated worklet/WASM in an isolated browser context and semantically observe request acceptance, without
   sharing the deterministic session adapter.
 - **Task 10.1.4** — Pure resolver-contract fixture matrix: provide compact, table-driven fixtures for all

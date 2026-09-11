@@ -17,6 +17,7 @@
     "test": "vitest run",
     "test:browser": "playwright test",
     "test:browser:known": "playwright test test-browser/known-regressions.spec.ts",
+    "test:browser:worklet": "playwright test test-browser/worklet-patch-acceptance.spec.ts",
     "format": "pnpm run format:biome && pnpm run format:svelte",
     "format:biome": "biome format --write .",
     "format:svelte": "prettier --write \"src/**/*.svelte\"",

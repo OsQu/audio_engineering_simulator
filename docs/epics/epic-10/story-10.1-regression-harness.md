@@ -167,9 +167,84 @@ test` passes 291 tests; and `pnpm --dir web check` / `typecheck` pass with the t
 (`6`) instead of its required layer (`1`) caused Playwright's `Expected to fail, but passed` error, proving
 the graduation mechanism fails closed; the assertion was restored before this record was written.
 
-## Task 10.1.3 — Real-worklet patch-acceptance smoke seam  · planned
+## Task 10.1.3 — Real-worklet patch-acceptance smoke seam  · done
 
-_(program design drafted at pickup)_
+This task adds a deliberately separate browser seam for one fact that the deterministic
+`TestSceneSession` cannot establish: the generated AudioWorklet plus its production WASM accepts a
+compatible patch. It does not reuse the test-session adapter or become a general integration-test
+environment. The browser route imports the normal `startEngine`, which loads `/processor.js`,
+`/wasm_bindings_bg.wasm`, and the public SoundFont exactly as production does.
+
+File-tree diff:
+
+```text
+web/
+  package.json                               add a focused real-worklet smoke command
+  src/
+    Root.svelte                              reserved worklet-smoke route alongside fixture routes
+    engine.ts                                expose bounded engine cleanup for isolated callers
+    testing/
+      WorkletSmokeRoot.svelte                test-only production-engine composition and semantic state
+  test-browser/
+    worklet-patch-acceptance.spec.ts         required real generated-worklet acceptance smoke
+```
+
+Key ownership and protocol:
+
+```ts
+// Existing production bootstrap is the only worklet entry point used by the test route.
+async function startEngine(
+  patch: Patch,
+  handlers: EngineHandlers,
+  initialVolume?: number,
+): Promise<EngineControl>;
+
+interface EngineControl {
+  send(message: ControlMessage): void;
+  close(): Promise<void>;                    // closes this caller's AudioContext
+}
+
+// Test-only view state, exposed as semantic DOM rather than console output.
+type WorkletSmokeState = "idle" | "starting" | "ready" | "accepted" | "rejected" | "error";
+```
+
+Composition and assertion flow:
+
+```text
+Playwright fresh Chromium context
+  /__test__/worklet/patch-acceptance
+    WorkletSmokeRoot
+      user-gesture start control
+        defaultScene().patch -> production startEngine(...)
+          AudioWorklet.addModule("/processor.js")
+          generated WASM and SoundFont public assets load
+      ready callback renders data-testid="worklet-state" = ready
+      send loadPatch with a fresh requestId and the compatible fixture patch
+      onPatchAccepted(requestId) renders state = accepted
+
+required browser spec
+  click start
+  observe ready, then accepted with a bounded expectation
+  browser/context teardown invokes EngineControl.close()
+```
+
+The small explicit route is selected only beneath `/__test__/worklet/`; normal studio and deterministic
+fixture URLs cannot accidentally enable it. The smoke uses `defaultScene().patch` as a known compatible,
+ordinary patch and asserts only the request-correlated `patchAccepted` protocol response. Rejection cases
+remain for Story 10.2's validation suite, where they can be designed against its formal patch-flow
+contract. The focused command runs only this spec; the ordinary `test:browser` command includes it so a
+regression cannot hide behind an opt-in gate.
+
+Expected verification: `pnpm --dir web test:browser:worklet`, then the complete
+`pnpm --dir web test:browser`, `pnpm --dir web check`, `pnpm --dir web test`, and
+`pnpm --dir web typecheck` suite. A failure should retain the existing Playwright trace/screenshot
+artifacts and report a semantic state/rejection message, rather than relying on an audio waveform or a
+timing screenshot.
+
+Validation passed: `pnpm --dir web test:browser:worklet` passed its isolated generated-worklet acceptance
+smoke. `pnpm --dir web test:browser` passed its required fixture smoke, this worklet smoke, and all six
+intentional known-regression expected failures. `pnpm --dir web test` passed 291 tests; `check` passed;
+and `typecheck` found zero errors with the two existing `FloatingWindow.svelte` accessibility warnings.
 
 ## Task 10.1.4 — Pure resolver-contract fixture matrix  · planned
 

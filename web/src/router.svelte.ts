@@ -10,9 +10,11 @@
 export type Route =
   | { view: "scene" }
   | { view: "workbench"; typeId: string }
-  | { view: "test-fixture"; fixtureId: string };
+  | { view: "test-fixture"; fixtureId: string }
+  | { view: "test-worklet-smoke" };
 
 export function parseRoute(pathname: string): Route {
+  if (pathname === "/__test__/worklet/patch-acceptance") return { view: "test-worklet-smoke" };
   const fixture = pathname.match(/^\/__test__\/studio\/([^/]+)\/?$/);
   if (fixture) return { view: "test-fixture", fixtureId: decodeURIComponent(fixture[1]) };
   const m = pathname.match(/^\/devices(?:\/([^/]*))?\/?$/);

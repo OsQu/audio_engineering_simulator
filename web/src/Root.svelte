@@ -5,6 +5,7 @@
 
   import App from "./App.svelte";
   import BrowserFixtureRoot from "./testing/BrowserFixtureRoot.svelte";
+  import WorkletSmokeRoot from "./testing/WorkletSmokeRoot.svelte";
   import { Router } from "./router.svelte";
   import Workbench from "./Workbench.svelte";
 
@@ -20,6 +21,8 @@
 
 {#if router.route.view === "test-fixture"}
   <BrowserFixtureRoot fixtureId={router.route.fixtureId} />
+{:else if router.route.view === "test-worklet-smoke"}
+  <WorkletSmokeRoot />
 {:else if router.route.view === "workbench"}
   <Workbench typeId={router.route.typeId} navigate={router.navigate} />
 {:else}

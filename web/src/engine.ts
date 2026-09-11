@@ -135,6 +135,9 @@ export interface EngineControl {
    *  user gesture, per the Epic-6 autoplay policy) — so this must be called from a user gesture to hear
    *  anything. The scene view calls it from its start button; the workbench from the first interaction. */
   resume: () => Promise<void>;
+  /** Release this engine's browser resources. Callers that mount a short-lived engine (such as the
+   *  real-worklet browser smoke) must close its context when they unmount. */
+  close: () => Promise<void>;
 }
 
 /** Callbacks the host drives as the worklet reports back. */
@@ -285,6 +288,7 @@ export async function startEngine(
       monitor.gain.value = Math.max(0, gain);
     },
     resume: (): Promise<void> => audio.resume(),
+    close: (): Promise<void> => audio.close(),
   };
 }
 
