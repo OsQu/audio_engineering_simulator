@@ -27,11 +27,11 @@ items carry far more detail than future ones** — the density of an entry track
 under-specified by neglect; it's deliberately left coarse until its turn, because the earlier work
 routinely changes its shape.
 
-**Detail gradient (concretely):** Epics 1–6 are built — their completed Stories carry full design notes
-and per-task delivery records, now **archived to `EPIC_<N>_NOTES.md`** with only a summary kept here
-(Epic 4's one deferred Story, 4.7, keeps its coarse sketch; Epic 6's Story 6.4 is implemented, pending
-verify + commit). **Epic 7 — the remaining "breadth & challenges" roadmap — stays coarse at Story level**;
-its Tasks get written when we reach them. Don't over-plan work whose shape the earlier work will change.
+**Detail gradient (concretely):** completed Epics keep their full design notes and per-task delivery records
+in **`EPIC_<N>_NOTES.md`**, with only a constraining summary retained here (Epic 4's deferred Story 4.7 and
+Epic 7's remaining independent breadth Stories stay coarse). **Epic 10 is the current corrective roadmap**;
+all its Stories are named and sketched, but each gets Tasks and program design only when picked up through
+the Story-planning workflow. Don't over-plan work whose shape the earlier work will change.
 
 **Branch convention:** one branch per **Story**, `e<epic>-s<story>/<short-story-slug>`,
 e.g. `e1-s2/electrical-primitives`. Its Tasks are commits on that branch; PR (or
@@ -1012,3 +1012,162 @@ whole front-end story (mic choice, phantom, gain staging, the pad, feedback) —
 - **9.2 — source + DA chassis** ✅: event-driven, polyphonic SoundFont playback joined the engine’s digital-to-analog topology.
 - **9.3 — shared browser assets** ✅: construction-time asset context, stable-id cache, provenance, and browser→worklet→WASM delivery landed.
 - **9.4 — instrument devices + web** ✅: electric/acoustic guitar chassis, selector, faceplates, focus keybed, and audible end-to-end paths landed.
+
+---
+
+## Epic 10 — Authoritative Visibility, Location & Patch Interaction
+
+**Progress:** not started. Story 10.1 is next. The Epic is deliberately coarse at Story level; use
+`$story-planning` to elaborate one Story at a time in the order below.
+
+**Goal:** make one pure, deterministic presentation model authoritative for effective rack/device
+placement, presented faces, socket visibility and patchability, cable endpoints and portals, physical
+occlusion, and pointer targets across studio wall/top views and the device workbench. Svelte components
+render the resolved model and forward gestures instead of independently interpreting physical state.
+
+**Source design:** [`VISIBILITY_AND_LOCATION_FIX.md`](./VISIBILITY_AND_LOCATION_FIX.md) is the settled
+architectural source for this Epic; [`PATCHING_AND_VISIBILITY.md`](./PATCHING_AND_VISIBILITY.md) records
+the observed failures and root causes. Story planning should cross-check both against the then-landed code.
+
+**Exit criteria:** the studio and workbench consume one resolved view; committed and preview placement
+share a path; racks behave as parent assemblies; full, portal, and held cables share endpoint resolution;
+physical layering is stable under hover/focus/drag; patch gestures share one target and release policy;
+topology submissions cannot silently disappear or stall forever; the known-regression list is empty and
+the pure, browser, real-worklet, and manual matrices in the source design pass.
+
+**Watch-outs:** this is a corrective web-architecture Epic, not an engine, scene-graph, or faceplate
+rewrite. Keep the current scene schema readable, preserve existing faceplate controls, avoid a second
+socket-layout source, keep pure APIs free of Svelte/DOM state and wall-clock reads, and remove temporary
+adapters once their consumers migrate. Each Story must leave the simulator usable.
+
+### Settled architecture decisions
+
+- **Stored placement is not effective placement.** Free devices resolve from their own placement; mounted
+  devices inherit room, wall, projected position, and facing from their rack plus U-slot. Invalid parents,
+  slots, descriptors, or rooms resolve diagnostically, never through stale copied fields.
+- **The resolver returns semantic data.** A pure `resolveView`-shaped boundary consumes scene, effective
+  instance descriptors, view, preview, face-local geometry, and explicit presentation state, and returns
+  objects, faces, sockets, connections, hit targets, occluders, and diagnostics in view-local millimetres.
+  Exact names and module splits remain Story-level design decisions.
+- **Face and socket identity are explicit.** Studio faces, simultaneous workbench DUT faces, and duplicate
+  focus-window faces cannot borrow one another's geometry or patch identity. One physical duplex socket may
+  alias multiple logical endpoints but produces one hit target.
+- **Geometry is face-local input.** DOM measurement is an adapter for existing faceplates, not the source of
+  world truth. Empty or stale geometry is explicit and disables unresolved targets/leads without changing
+  view membership.
+- **Visibility, interaction, and connection routing are separate.** Presented, hidden, transitioning,
+  occluded, off-view, and geometry-pending states are modeled independently. Full cables, portals, and held
+  cables derive from the same endpoint state.
+- **Physical order is stable.** Hover, focus, toolbar grace, and dragging do not reorder chassis, racks, or
+  cables. The resolver emits deterministic semantic layers, silhouettes, and cable mask sets; controls live
+  in a separate interaction overlay.
+- **Approved transition and workbench policy (U1/U2).** Leads touching a flipping device or rack are
+  suppressed during transition while a held pick retains its logical source/banner. The workbench uses the
+  same hidden-face chassis exits as the studio and shows a labeled listening badge when the monitored socket
+  is hidden; hidden sockets remain non-patchable.
+- **Approved ejection policy (U3).** Ejected gear, including occupants of a removed rack, moves atomically to
+  the nearest legal free position from its effective location while preserving effective room, wall, and
+  facing; failure leaves the scene unchanged.
+- **Hit testing consumes resolved targets.** Press, move, and release use current client-space targets and a
+  shared capture-phase ownership decision. Release recomputes destination legality; cancellation is distinct
+  from successful completion.
+- **Topology acknowledgement stays outside the view resolver.** Structural engine changes use a serialized,
+  revisioned transaction with accepted/rejected/unknown outcomes and explicit recovery. UI placement and
+  runtime state must not be overwritten by a stale reply.
+
+### Story 10.1 — Regression harness & resolver contract
+
+*Goal:* establish the browser/component seam and pure fixture vocabulary that make the confirmed rack,
+cable, face, and patch-target failures reproducible before migration begins.
+
+*Watch out:* keep deterministic fixtures independent of the real audio engine, with a separate real-worklet
+smoke seam. Known failures stay in a named regression suite mapped to their implementing Stories; no blanket
+retries, permanent skips, or screenshot-only substitutes for semantic assertions.
+
+*Validate:* the confirmed failures can be run deterministically; pure fixtures cover studio walls/top,
+workbench faces, free/mounted placement, hidden faces, and local/remote connection combinations; the harness
+can graduate each fixed case into the required passing suite.
+
+### Story 10.2 — Acknowledged topology transactions
+
+*Goal:* make connect, disconnect, cable/config/device changes, and load/reload explicit acknowledged
+transactions so browser patch tests can distinguish gesture failures from engine transport failures.
+
+*Watch out:* this Story is intentionally independent of the view resolver. Serialize structural changes,
+track engine generation separately from topology and UI revisions, preserve endpoints on busy/rejection,
+and treat a missing acknowledgement as unknown—not as rejection. Late replies must never restore stale
+placement, parameters, tracks, or UI state.
+
+*Validate:* fake transport/clock coverage proves accepted, rejected, busy, unavailable, timeout, recovery,
+late-reply, concurrent UI-edit, and protocol-mismatch behavior; a real-worklet smoke test proves acceptance
+and rejection without silently losing the user's pending action.
+
+### Story 10.3 — Effective placement hierarchy & live previews
+
+*Goal:* centralize stored-location reading, rack inheritance, U-slot positioning, view projection, and
+transient free/rack/mount previews behind one pure effective-placement path.
+
+*Watch out:* preserve the current rack frame-origin convention and scene compatibility. Preview placement
+alone does not complete renderer, cable, or hit-target following; those integrations belong to later
+Stories. Corrupt references produce unresolved diagnostics, never mixed fallback placement.
+
+*Validate:* mounted devices always inherit effective room/wall/facing from their rack; rack previews move
+every occupant; cancel is mutation-free; commit matches the final preview; projection and placement tests
+cover all walls, top view, workbench, invalid references, and mount/eject candidates.
+
+### Story 10.4 — Explicit faces & face-local socket geometry
+
+*Goal:* resolve stable face instances for studio and workbench presentations and replace transformed
+world-space jack sweeps with revisioned, face-local socket geometry registration.
+
+*Watch out:* initial faces must render before geometry exists, hidden faces must not create a second live
+control tree, and descriptor/layout/font revisions must reject stale measurements. Flip completion is event-
+and generation-driven, including reversal, cancellation, unmount, and reduced motion; correctness must not
+depend on a fixed timer. Preserve one physical identity for duplex sockets and their endpoint aliases.
+
+*Validate:* studio/support devices expose one stable face, the workbench DUT exposes independent front and
+back instances, focus windows cannot collide with patchable identities, geometry survives camera and
+placement changes without remeasurement, and pending/stale/duplicate/configured-instance cases are covered
+by pure and focused browser tests.
+
+### Story 10.5 — Resolved presentation, stable layers & rack assemblies
+
+*Goal:* have studio and workbench render resolved objects/faces using deterministic physical layers,
+silhouettes, and rack parentage, with controls in an object-ID-keyed interaction overlay.
+
+*Watch out:* rack transforms must move the frame and occupants as one assembly without trapping children in
+a DOM stacking context. Preview must not reorder objects. Apply U3 atomically by computing every ejected
+free placement before mutating the scene, with deterministic nearest-position tie-breaking.
+
+*Validate:* hover, focus, toolbar grace, and drag cannot change physical occlusion; racks stay behind their
+occupants; stationary occupant controls/sockets remain usable; assembly previews are coherent; rack removal
+and ejection either produce explicit legal free placements or leave the scene untouched.
+
+### Story 10.6 — Unified cable, portal & held-lead presentation
+
+*Goal:* derive ordinary cables, portal stubs/chips, and held leads from resolved socket presentation so all
+three share endpoint identity, hidden-face exits, preview following, transitions, and occlusion masks.
+
+*Watch out:* use canonical face-local socket positions and deterministic nearest-edge exits rather than
+interior estimates or incidental CSS z-index. Main and foreground passes share path geometry and resolver-
+supplied mask sets; invisible segments must not remain selectable. Persisted portal offsets apply only after
+the local physical endpoint resolves.
+
+*Validate:* visible leads meet their sockets; hidden-face leads exit and remain masked through the owner;
+front/rear overlaps and remote-view changes are deterministic; portals obey ordinary cable rules; held leads
+follow device/rack movement, view changes, and settled flips without retaining stale absolute anchors.
+
+### Story 10.7 — Unified patch targets & gesture lifecycle
+
+*Goal:* derive patchable hit targets from resolved sockets and give controls, sockets, visible cables,
+device movement, and backdrop panning one capture-phase ownership and pointer lifecycle across both stages.
+
+*Watch out:* use named screen-space mouse/pen and touch tolerances clipped by viewport and foreground
+blockers. Exact physical hit wins, then nearest eligible centre, paint order, and stable ID; do not skip an
+illegal nearest socket for a farther legal one. Re-resolve and revalidate on release, and keep cancel/lost
+capture/blur/unmount distinct from commit.
+
+*Validate:* click-click and drag-drop return the same verdict without requiring a final move event; behavior
+is stable at minimum/default/maximum zoom; hidden, transitioning, occluded, off-view, and focus-window
+sockets cannot leak into targets; near-socket presses cannot start device moves; multi-pointer, blockers,
+illegal-target feedback, cancellation, and view navigation pass the pure/browser/manual matrices.

@@ -31,11 +31,16 @@
   import DuplexSocket from "./DuplexSocket.svelte";
   import Legend from "./Legend.svelte";
   import Socket from "./Socket.svelte";
+  import { scarlettGainHaloState } from "./Scarlett8i6/gain-halo";
 
   let props: DeviceUiProps = $props();
   const skin = $derived(skinFor(props.typeId));
   // makeHandle reads the (stable) props object lazily, so capture it once; untrack documents that.
   const handle = makeHandle(untrack(() => props));
+  // The two fast input-peak readouts are exposed in dBu. The device-local helper converts those to the
+  // Scarlett's calibrated dBFS LED-ring thresholds without changing the shared readout protocol.
+  const gain1Halo = $derived(scarlettGainHaloState(handle.reading(1)));
+  const gain2Halo = $derived(scarlettGainHaloState(handle.reading(3)));
 
   // Physical control sizes in **mm** (the panel is laid out at 1 px/mm; the world/bench zoom scales it).
   // Set once on each face as inherited CSS vars so every Legend/Led/Jack picks a real-gear size; a few
@@ -59,7 +64,9 @@
       <Col gap={1.5} alignSelf="stretch">
         <Row pt={2} gap={1} align="start">
           <Legend text="1" />
-          <Control id={0} cap="dark" size={14} />
+          <div class="gain-halo" data-level={gain1Halo}>
+            <Control id={0} cap="dark" size={14} />
+          </div>
         </Row>
         <Row gap={1} mt="auto" pb={9}>
           <Led on={handle.config("inst1") >= 0.5} label="Inst" />
@@ -73,7 +80,9 @@
       <Col gap={1.5} alignSelf="stretch">
         <Row pt={2} gap={1} align="start">
           <Legend text="2" />
-          <Control id={3} cap="dark" size={14} />
+          <div class="gain-halo" data-level={gain2Halo}>
+            <Control id={3} cap="dark" size={14} />
+          </div>
         </Row>
         <Row gap={1} mt="auto" pb={9}>
           <Led on={handle.config("inst2") >= 0.5} label="Inst" />
@@ -216,6 +225,50 @@
      This block keeps only genuine *decoration* (frames, silkscreen, wordmark type), not layout. */
   .monitor {
     padding: 1.5px 2.5px;
+  }
+  /* A fixed 14 mm frame around the existing gain Control: its pseudo-element is purely visual, so the
+     control keeps the same flex footprint and drag target as before. */
+  .gain-halo {
+    position: relative;
+    width: 14px;
+    height: 14px;
+    isolation: isolate;
+  }
+  .gain-halo::before {
+    position: absolute;
+    z-index: -1;
+    inset: -1.4px;
+    border: 0.9px solid rgba(237, 242, 235, 0.16);
+    border-radius: 50%;
+    box-shadow: inset 0 0 1.5px rgba(0, 0, 0, 0.55);
+    content: "";
+    opacity: 0.55;
+    pointer-events: none;
+    transition:
+      border-color 70ms linear,
+      box-shadow 70ms linear,
+      opacity 70ms linear;
+  }
+  .gain-halo[data-level="green"]::before {
+    border-color: #75df65;
+    box-shadow:
+      0 0 2.5px rgba(93, 225, 82, 0.75),
+      inset 0 0 1.5px rgba(0, 0, 0, 0.55);
+    opacity: 1;
+  }
+  .gain-halo[data-level="amber"]::before {
+    border-color: #ffd54a;
+    box-shadow:
+      0 0 2.5px rgba(255, 201, 50, 0.78),
+      inset 0 0 1.5px rgba(0, 0, 0, 0.55);
+    opacity: 1;
+  }
+  .gain-halo[data-level="red"]::before {
+    border-color: #ff5c50;
+    box-shadow:
+      0 0 2.5px rgba(255, 72, 62, 0.82),
+      inset 0 0 1.5px rgba(0, 0, 0, 0.55);
+    opacity: 1;
   }
   /* Brand wordmark type; "8i6" in the accent red. Position is owned by the enclosing <Place x b>. */
   .wordmark {
