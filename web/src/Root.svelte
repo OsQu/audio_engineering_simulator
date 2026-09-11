@@ -4,6 +4,7 @@
   // SceneSession, so they never share engine state; the router is the only thing above them.
 
   import App from "./App.svelte";
+  import BrowserFixtureRoot from "./testing/BrowserFixtureRoot.svelte";
   import { Router } from "./router.svelte";
   import Workbench from "./Workbench.svelte";
 
@@ -17,7 +18,9 @@
   });
 </script>
 
-{#if router.route.view === "workbench"}
+{#if router.route.view === "test-fixture"}
+  <BrowserFixtureRoot fixtureId={router.route.fixtureId} />
+{:else if router.route.view === "workbench"}
   <Workbench typeId={router.route.typeId} navigate={router.navigate} />
 {:else}
   <App />

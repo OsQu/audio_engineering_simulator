@@ -40,13 +40,18 @@
   import WorldView from "./widgets/WorldView.svelte";
   import type { WorldApi } from "./world-api";
 
+  interface Props {
+    /** An explicit composition seam for browser fixtures. Normal navigation supplies nothing. */
+    session?: SceneSession;
+  }
+
+  let { session = new SceneSession(loadScene() ?? defaultScene()) }: Props = $props();
+
   // The engine session: the view-agnostic consumer surface over the worklet engine (engine lifecycle,
   // live readout state, monitor volume, the authoritative scene + param/config lanes). App constructs
   // one — seeding the scene from a saved one if present, else the default studio — and reads it
   // throughout; the Story-6.2 workbench will construct its own (seeding from the URL in 6.3). Note
   // routing and patching move onto it over the rest of Story 6.1.
-  const session = new SceneSession(loadScene() ?? defaultScene());
-
   // A reactive view of the session's scene: reads track it, and a `session.load()` reassignment
   // re-derives, so every `scene.*` read below stays live without App owning the state. App never
   // reassigns it — the scene lane lives on the session now.
@@ -55,6 +60,7 @@
   // The patch controller: the pointer/drag patching glue (drag + click-to-pick + cross-view pending,
   // the measured jack-anchor store, commit/disconnect/setCableType). App delegates its window pointer
   // handlers to it; the Story-6.2 workbench will drive the identical machinery.
+  // svelte-ignore state_referenced_locally
   const patch = new PatchController(session);
   // A reactive, read-only view of the in-flight patch, so the template can narrow `{#if dragCable}` on a
   // plain identifier (member-access narrowing across a block isn't reliable). App never assigns it —
@@ -74,6 +80,7 @@
 
   // --- The spatial world ---------------------------------------------------------------------------
   // The space (room) currently shown; switching changes the rendered/interactable set.
+  // svelte-ignore state_referenced_locally
   let currentSpace = $state(session.scene.ui.spaces[0]?.id ?? "");
   // The view within the current space: one of the four wall elevations, or the top-down floor plan.
   // "top" lands in Story 4.6.4; the wall elevations render here.
@@ -337,6 +344,7 @@
   // QWERTY capture + the target-explicit `playNote` wrapper — the shared keyboard-input glue (also used by
   // the bench). The focused instrument is played from the computer keyboard and Web MIDI (wired below),
   // both feeding the same `playNote`.
+  // svelte-ignore state_referenced_locally
   const playNote = wireKeyboardInput(session, () =>
     keyboardTarget === null ? [] : [keyboardTarget],
   );

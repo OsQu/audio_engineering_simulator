@@ -7,9 +7,14 @@
 // The resolved route. `workbench` with an empty `typeId` (bare `/devices`) is the catalog index; a
 // non-empty `typeId` is a specific device (which the workbench resolves against the catalog — an unknown
 // id also falls back to the index, but that decision needs the catalog, so it lives in the workbench).
-export type Route = { view: "scene" } | { view: "workbench"; typeId: string };
+export type Route =
+  | { view: "scene" }
+  | { view: "workbench"; typeId: string }
+  | { view: "test-fixture"; fixtureId: string };
 
 export function parseRoute(pathname: string): Route {
+  const fixture = pathname.match(/^\/__test__\/studio\/([^/]+)\/?$/);
+  if (fixture) return { view: "test-fixture", fixtureId: decodeURIComponent(fixture[1]) };
   const m = pathname.match(/^\/devices(?:\/([^/]*))?\/?$/);
   if (m) return { view: "workbench", typeId: m[1] ? decodeURIComponent(m[1]) : "" };
   return { view: "scene" };

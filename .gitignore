@@ -9,3 +9,7 @@
 /crates/wasm-bindings/pkg*
 
 .DS_Store
+
+# Playwright artifacts are produced only by browser-test runs.
+/web/test-results/
+/web/playwright-report/

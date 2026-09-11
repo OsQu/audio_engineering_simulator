@@ -1017,8 +1017,9 @@ whole front-end story (mic choice, phantom, gain staging, the pad, feedback) —
 
 ## Epic 10 — Authoritative Visibility, Location & Patch Interaction
 
-**Progress:** not started. Story 10.1 is next. The Epic is deliberately coarse at Story level; use
-`$story-planning` to elaborate one Story at a time in the order below.
+**Progress:** Story 10.1 is 🚧 in progress (planned; implementation not started). It establishes the
+deterministic browser, real-worklet, and pure-fixture seams that every later corrective Story graduates
+regressions through. Stories 10.2–10.7 remain deliberately coarse until their respective planning passes.
 
 **Goal:** make one pure, deterministic presentation model authoritative for effective rack/device
 placement, presented faces, socket visibility and patchability, cable endpoints and portals, physical
@@ -1075,18 +1076,52 @@ adapters once their consumers migrate. Each Story must leave the simulator usabl
   revisioned transaction with accepted/rejected/unknown outcomes and explicit recovery. UI placement and
   runtime state must not be overwritten by a stale reply.
 
-### Story 10.1 — Regression harness & resolver contract
+### Story 10.1 — Regression harness & resolver contract — 🚧 **In progress**
 
-*Goal:* establish the browser/component seam and pure fixture vocabulary that make the confirmed rack,
-cable, face, and patch-target failures reproducible before migration begins.
+*Goal:* establish the browser/component seam, real-worklet smoke seam, and pure fixture vocabulary that
+make the confirmed rack, cable, face, and patch-target failures reproducible before migration begins. This
+locks the behavioral contract for the authoritative presentation model while the current simulator remains
+usable.
 
-*Watch out:* keep deterministic fixtures independent of the real audio engine, with a separate real-worklet
-smoke seam. Known failures stay in a named regression suite mapped to their implementing Stories; no blanket
-retries, permanent skips, or screenshot-only substitutes for semantic assertions.
+*Watch out:* keep deterministic geometry and gesture fixtures independent of the real audio engine; the
+real-worklet smoke is a separate project/gate. Exercise the actual Svelte/DOM event and stacking seams rather
+than recreating them in test-only components. Do not implement `resolveView`, repair the known failures, or
+turn test expectations into a second socket-layout source in this Story. No blanket retries, permanent skips,
+or screenshot-only substitutes for semantic assertions.
 
-*Validate:* the confirmed failures can be run deterministically; pure fixtures cover studio walls/top,
-workbench faces, free/mounted placement, hidden faces, and local/remote connection combinations; the harness
-can graduate each fixed case into the required passing suite.
+*Design notes (settled at planning):* Playwright against Vite is the supported browser/component harness;
+Node-only Vitest remains the fast pure-test runner. A test-only URL selects unsaved deterministic fixtures and
+injects an engine-independent `SceneSession` test adapter through a narrow composition seam, so browser tests
+exercise the real `App`/`WorldView`/`BenchStage`/`PatchController` tree without starting audio. This was chosen
+over either jsdom component tests, which cannot prove browser hit testing or CSS/SVG stacking, or a duplicated
+mini-stage, which would test a second implementation. Confirmed failures execute in a named known-regression
+suite with an explicit owner Story and an expected-failure marker; an unexpected pass fails the suite until
+the case is moved to the required passing suite. The real AudioWorklet acceptance smoke stays separate because
+its generated WASM/worklet lifecycle is precisely the boundary the deterministic adapter removes. Resolver
+contract fixtures are semantic, table-driven input/expectation records—not a stub resolver or production
+coordinate implementation—and may reuse authored catalog/scene data without copying socket coordinates.
+
+- **Task 10.1.1** — ✅ Supported browser harness and deterministic app seam: Playwright/Vite configuration,
+  an isolated fixture route, the engine-independent session adapter, and a passing browser smoke proving the
+  real studio component tree is under test.
+- **Task 10.1.2** — Executing known-regression suite: cover rack/device hover stacking, cable hover stacking,
+  click-click versus drag-drop, release without a final move, min/max zoom targeting, and populated-rack drag;
+  each case names Story 10.5 or 10.7 and fails if it starts passing without graduation.
+- **Task 10.1.3** — Real-worklet patch-acceptance smoke seam: run a minimal compatible patch through the
+  generated worklet/WASM in an isolated browser context and semantically observe request acceptance, without
+  sharing the deterministic session adapter.
+- **Task 10.1.4** — Pure resolver-contract fixture matrix: provide compact, table-driven fixtures for all
+  studio walls/top, workbench support/DUT faces, free/mounted placement and rack facing, visible/hidden
+  sockets, and local/local, local/remote-wall, local/remote-room, and remote/remote connections.
+
+*Program design:* [`story-10.1-regression-harness.md`](./epics/epic-10/story-10.1-regression-harness.md)
+
+*Validate:* the required browser smoke and real-worklet acceptance smoke pass in isolated contexts; every
+confirmed UI failure executes deterministically in the named known-regression suite with a later Story owner;
+the pure matrix covers the promised studio/workbench, placement, face, socket, and connection cases with
+semantic assertions; and an intentionally demonstrated unexpected pass proves the graduation mechanism fails
+closed. Vitest, typecheck, format/check, and the new browser gates are green apart from the explicitly tracked
+expected failures.
 
 ### Story 10.2 — Acknowledged topology transactions
 
