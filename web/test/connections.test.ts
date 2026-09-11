@@ -292,7 +292,7 @@ describe("evaluateConnection — duplex (USB-C)", () => {
   });
 });
 
-describe("wouldCreateCycle / feedback-loop rejection", () => {
+describe("wouldCreateCycle / engine-authoritative feedback validation", () => {
   // A → B → C already wired.
   const chain = [conn("a", 0, "b", 0), conn("b", 0, "c", 0)];
 
@@ -308,10 +308,12 @@ describe("wouldCreateCycle / feedback-loop rejection", () => {
     expect(wouldCreateCycle("a", "a", [])).toBe(true);
   });
 
-  it("evaluateConnection rejects a drag that would feed back (C.out → A.in)", () => {
+  it("submits a loop-closing drag (C.out → A.in) for engine-level validation", () => {
     const v = evaluateConnection(out("c"), inp("a"), chain);
-    expect(v.ok).toBe(false);
-    if (!v.ok) expect(v.reason).toMatch(/loop/);
+    expect(v).toMatchObject({
+      ok: true,
+      connection: { from: { device: "c", port: 0 }, to: { device: "a", port: 0 } },
+    });
   });
 });
 

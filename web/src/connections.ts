@@ -7,8 +7,8 @@
 //      mirrors the engine's own rules so the UI can give live feedback *before* `loadPatch` compiles:
 //      an output feeds an input; both ends share a carrier domain; a device can't patch itself; an input
 //      takes exactly **one** source (the engine rejects fan-in), so dropping onto an occupied input
-//      *replaces* the existing cable. Deeper cycles are the one illegality not visible locally — they
-//      surface as a `BuildError` from compile (handled at the call site).
+//      *replaces* the existing cable. Cycle safety is decided by the engine: only it knows internal
+//      routing and which edge may carry a block of latency.
 //   2. **Geometry** — the bezier a cable is drawn along, and hit-testing a point against it (for
 //      click-to-delete). Coordinate-agnostic: it operates in the overlay's 2-D pixel space with **y
 //      increasing downward** (SVG/screen convention), so a cable **sags downward** (+y).
@@ -56,11 +56,9 @@ function refIs(ref: PortRef, device: string, port: number): boolean {
   return ref.device === device && ref.port === port;
 }
 
-/** Would adding an edge from `fromDevice` (output side) to `toDevice` (input side) create a cycle in
- *  the device graph? True iff `toDevice` can already reach `fromDevice` via existing connections
- *  (each connection is a `from.device → to.device` edge) — adding the edge would then close a loop,
- *  which the engine rejects at compile. Pure DFS reachability, so it's testable and lets the UI reject
- *  a feedback loop *before* compile instead of committing a bad patch and handling an async error. */
+/** Coarse device-graph reachability, retained for diagnostics/tests. It must not decide a connection:
+ *  a device-level loop can contain an eligible digital/acoustic engine edge, while a pure analogue
+ *  loop cannot. */
 export function wouldCreateCycle(
   fromDevice: string,
   toDevice: string,
@@ -169,11 +167,6 @@ export function evaluateConnection(
   // A device feeding its own input is a self-cycle.
   if (out.device === inp.device) {
     return { ok: false, reason: "can't patch a device to itself" };
-  }
-
-  // A longer feedback loop (the input's device can already reach the output's device).
-  if (wouldCreateCycle(out.device, inp.device, existing)) {
-    return { ok: false, reason: "would create a feedback loop" };
   }
 
   // Exact duplicate — this cable already exists.

@@ -126,6 +126,10 @@ export class SceneSession {
   // MIDI event was actually emitted and to which device. Drives the bench debug MIDI monitor.
   midiLog = $state<MidiLogEntry[]>([]);
   #midiSeq = 0;
+  // A candidate topology is never merged into `scene` until the compiler accepts this request id.
+  // One in flight prevents an acknowledgement for an obsolete base scene from committing.
+  #pendingPatch: { requestId: number; scene: Scene } | null = null;
+  #nextPatchRequestId = 1;
 
   // --- Monitor volume -----------------------------------------------------------------------------
   volume = $state(loadVolume());
@@ -184,6 +188,40 @@ export class SceneSession {
   // in a reactive Proxy, which `postMessage` cannot structured-clone (DataCloneError).
   plainPatch(): Patch {
     return $state.snapshot(this.scene.patch);
+  }
+
+  /** Ask the engine to compile a detached scene. Unlike `hotSwap`, this leaves the durable UI scene
+   *  unchanged until the worklet explicitly accepts the candidate. */
+  submitPatchCandidate(candidate: Scene): boolean {
+    const send = this.send;
+    if (!send) {
+      this.status = "engine is not ready to validate this patch";
+      return false;
+    }
+    if (this.#pendingPatch) {
+      this.status = "waiting for the previous patch change to be validated";
+      return false;
+    }
+    const requestId = this.#nextPatchRequestId++;
+    this.#pendingPatch = { requestId, scene: candidate };
+    send({ type: "loadPatch", requestId, patch: candidate.patch });
+    return true;
+  }
+
+  #patchAccepted(requestId: number): void {
+    const pending = this.#pendingPatch;
+    if (!pending || pending.requestId !== requestId) return;
+    this.#pendingPatch = null;
+    this.scene = pending.scene;
+    this.paramValues = params.seedParamValues(this.scene, this.catalog);
+    this.status = "patch accepted";
+  }
+
+  #patchRejected(requestId: number, message: string): void {
+    const pending = this.#pendingPatch;
+    if (!pending || pending.requestId !== requestId) return;
+    this.#pendingPatch = null;
+    this.status = `patch rejected: ${message}`;
   }
 
   // The current value of a device-local param (live override else descriptor default), bound to the map.
@@ -431,6 +469,8 @@ export class SceneSession {
           onDeviceDescriptors: (deviceDescriptors) => {
             this.deviceDescriptors = deviceDescriptors;
           },
+          onPatchAccepted: (requestId) => this.#patchAccepted(requestId),
+          onPatchRejected: (requestId, message) => this.#patchRejected(requestId, message),
           // DAW transport ticks: mirror per-device state for the UI and top up each playing ring.
           onTransports: (states) => {
             const map: Record<string, TransportState> = {};

@@ -19,7 +19,7 @@ export type ControlMessage =
   | { type: "param"; device: string; paramId: number; value: number }
   | { type: "noteOn"; device: string; note: number; velocity: number }
   | { type: "noteOff"; device: string; note: number }
-  | { type: "loadPatch"; patch: Patch }
+  | { type: "loadPatch"; requestId?: number; patch: Patch }
   // --- DAW transport + tracks (a `computer` device) ---
   | { type: "transport"; device: string; action: "play" | "stop" | "recordOn" | "recordOff" }
   | { type: "seek"; device: string; pos: number }
@@ -78,6 +78,9 @@ export type DeviceDescriptorMessage = {
   type: "deviceDescriptors";
   deviceDescriptors: Record<string, DeviceDescriptor>;
 };
+
+export type PatchAcceptedMessage = { type: "patchAccepted"; requestId: number };
+export type PatchRejectedMessage = { type: "patchRejected"; requestId: number; message: string };
 
 /** One DAW device's live transport state, posted ~47×/s so the UI can show the playhead + button states. */
 export type TransportState = {
@@ -150,6 +153,8 @@ export interface EngineHandlers {
   onLosses?: (losses: (number | null)[]) => void;
   /** Fired when the engine reports updated device descriptors. */
   onDeviceDescriptors?: (deviceDescriptors: Record<string, DeviceDescriptor>) => void;
+  onPatchAccepted?: (requestId: number) => void;
+  onPatchRejected?: (requestId: number, message: string) => void;
   /** Live DAW transport states (~47×/s) — playhead + rolling/recording per DAW device. Optional. */
   onTransports?: (states: TransportState[]) => void;
   /** A track began capturing: open its take file with the placeholder `header`. Optional. */
@@ -253,6 +258,11 @@ export async function startEngine(
     } else if (d?.type === "error") {
       handlers.onStatus(`worklet error: ${d.message}`);
       console.error("worklet error:", d.message, "\n", d.stack);
+    } else if (d?.type === "patchAccepted") {
+      handlers.onPatchAccepted?.((d as PatchAcceptedMessage).requestId);
+    } else if (d?.type === "patchRejected") {
+      const m = d as PatchRejectedMessage;
+      handlers.onPatchRejected?.(m.requestId, m.message);
     } else if (d?.type === "deviceDescriptors") {
       handlers.onDeviceDescriptors?.((d as DeviceDescriptorMessage).deviceDescriptors);
     }

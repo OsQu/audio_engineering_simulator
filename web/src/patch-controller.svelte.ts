@@ -121,14 +121,15 @@ export class PatchController {
     this.dragCable = patching.cancel();
   }
 
-  // Commit a hovered/clicked connection verdict into the scene, then hot-swap the engine. If the cable
-  // is a USB link to a computer, re-enumerate its channel shape from the attached interface first (so the
-  // rebuild sizes its meters/matrix to the interface).
+  // Build a hovered/clicked cable into a detached candidate. The Rust compiler decides whether a cycle
+  // is schedulable; the session commits this scene only after its acknowledgement. A USB link still
+  // re-enumerates its computer before compilation so the candidate has the correct matrix shape.
   commitCable(v: ConnectVerdict): void {
-    sceneOps.commitCable(this.#session.scene, this.#session.catalog, this.#session.cables, v);
-    if (v.ok)
-      sceneOps.enumerateComputerUsb(this.#session.scene, this.#session.catalog, v.connection);
-    this.#session.hotSwap();
+    if (!v.ok) return;
+    const candidate = $state.snapshot(this.#session.scene);
+    sceneOps.commitCable(candidate, this.#session.catalog, this.#session.cables, v);
+    sceneOps.enumerateComputerUsb(candidate, this.#session.catalog, v.connection);
+    this.#session.submitPatchCandidate(candidate);
   }
 
   // Remove a connection, then hot-swap. Unplugging a USB link from a computer re-enumerates it back to

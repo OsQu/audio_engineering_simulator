@@ -155,11 +155,16 @@ class SceneProcessor extends AudioWorkletProcessor {
                 type: "deviceDescriptors",
                 deviceDescriptors: deviceDescriptors(d.patch.devices),
               });
+              if (Number.isInteger(d.requestId)) {
+                this.port.postMessage({ type: "patchAccepted", requestId: d.requestId });
+              }
             } catch (err) {
-              this.port.postMessage({
-                type: "error",
-                message: String(err?.message || err),
-              });
+              const message = String(err?.message || err);
+              if (Number.isInteger(d.requestId)) {
+                this.port.postMessage({ type: "patchRejected", requestId: d.requestId, message });
+              } else {
+                this.port.postMessage({ type: "error", message });
+              }
             }
             break;
         }
