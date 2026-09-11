@@ -256,6 +256,7 @@
            hover-header chrome opt out via DRAG_EXCLUDE, so operating them never moves the unit. -->
       <div
         class="device"
+        data-stage-object={it.id}
         class:background={it.background}
         class:dragging={drag?.id === it.id}
         class:illegal={drag?.id === it.id && !drag.legal}

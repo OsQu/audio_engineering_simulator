@@ -1104,9 +1104,9 @@ coordinate implementation—and may reuse authored catalog/scene data without co
 - **Task 10.1.1** — ✅ Supported browser harness and deterministic app seam: Playwright/Vite configuration,
   an isolated fixture route, the engine-independent session adapter, and a passing browser smoke proving the
   real studio component tree is under test.
-- **Task 10.1.2** — Executing known-regression suite: cover rack/device hover stacking, cable hover stacking,
-  click-click versus drag-drop, release without a final move, min/max zoom targeting, and populated-rack drag;
-  each case names Story 10.5 or 10.7 and fails if it starts passing without graduation.
+- **Task 10.1.2** — ✅ Executing known-regression suite: rack/device hover stacking, cable hover stacking,
+  click-click versus drag-drop without a final move, min/max zoom targeting, and populated-rack drag all name
+  Story 10.5 or 10.7 and fail if they start passing without graduation.
 - **Task 10.1.3** — Real-worklet patch-acceptance smoke seam: run a minimal compatible patch through the
   generated worklet/WASM in an isolated browser context and semantically observe request acceptance, without
   sharing the deterministic session adapter.

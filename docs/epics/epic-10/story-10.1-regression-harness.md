@@ -90,9 +90,82 @@ Validation passed: `pnpm --dir web test:browser` (one Chromium smoke), `pnpm --d
 `pnpm --dir web test` (291 tests), and `pnpm --dir web typecheck` (zero errors; the existing two
 `FloatingWindow.svelte` accessibility warnings remain).
 
-## Task 10.1.2 — Executing known-regression suite  · planned
+## Task 10.1.2 — Executing known-regression suite  · done
 
-_(program design drafted at pickup)_
+The suite executes the existing broken behavior in a named, isolated Playwright file. Each test declares
+an owning later Story before it makes its semantic assertion with `test.fail(true, ...)`: while the bug is
+present, it reports as an expected failure; when a later migration fixes it without moving the case, the
+unexpected pass fails closed. Moving the case into the ordinary required suite is therefore an explicit
+part of the implementing Story, not a silent disappearance. This is deliberately different from a skip,
+retry, or screenshot baseline.
+
+File-tree diff:
+
+```text
+ web/
+   package.json                                add `test:browser:known` focused command
+   src/testing/browser-fixtures.ts             four named deterministic fixture records
+   test-browser/
+     support/fixture-page.ts                   stage navigation, geometry, and semantic DOM helpers
+     known-regressions.spec.ts                 expected-failing cases, each with an owner Story
+```
+
+Key types and signatures:
+
+```ts
+type BrowserFixtureId =
+  | "rack-hover"
+  | "cable-hover"
+  | "patch-gestures"
+  | "rack-drag";
+
+interface KnownRegression {
+  id: string;
+  owner: "10.5" | "10.7";
+  title: string;
+}
+
+async function openFixture(page: Page, fixture: BrowserFixtureId): Promise<void>;
+async function elementCentre(locator: Locator): Promise<{ x: number; y: number }>;
+async function topmostDeviceAt(page: Page, point: { x: number; y: number }): Promise<string | null>;
+```
+
+Test flow:
+
+```text
+known-regressions.spec.ts
+  openFixture(page, fixtureId)                 fresh Playwright context + unsaved TestSceneSession
+  test.fail(true, "Story 10.5: …")            expected failure while the known bug remains
+  drive real pointer/hover sequence
+  assert semantic browser fact
+    stack: elementFromPoint / computed physical layer, never a screenshot-only claim
+    gesture: resulting connection/banner state after actual press/move/release ordering
+    drag: mounted child's client rect follows the rack before pointer-up
+
+later Story lands a fix
+  known test unexpectedly passes              suite fails closed
+  implementer moves it to required browser spec
+```
+
+The six required cases are: rack hover leaves its mounted device topmost (Story 10.5); rear- and
+front-facing connected-device hover leave their cable layer visible (Story 10.5); click-click and
+drag-drop produce the same accepted connection (Story 10.7); release over a destination without a final
+move event still connects (Story 10.7); a near-socket press at representative minimum and maximum zoom
+does not become a device drag (Story 10.7); and a populated rack drag moves the occupant's displayed
+geometry before release (Story 10.5). The fixture adapter accepts a valid candidate synchronously only
+to isolate these view/gesture facts from the real-worklet protocol, which remains Task 10.1.3.
+
+Expected verification: `pnpm --dir web test:browser:known` reports every known case as an expected failure;
+`pnpm --dir web test:browser` reports the required smoke plus the expected-failure suite; `pnpm --dir web
+check`, `test`, and `typecheck` remain green. A temporary local change that makes one assertion pass must
+make the known suite fail, proving graduation is fail-closed; that demonstration is not committed.
+
+Validation passed: `pnpm --dir web test:browser:known` reports all six cases as expected failures;
+`pnpm --dir web test:browser` reports the required smoke plus those six expected failures; `pnpm --dir web
+test` passes 291 tests; and `pnpm --dir web check` / `typecheck` pass with the two pre-existing
+`FloatingWindow.svelte` accessibility warnings. Temporarily expecting the current rear-device hover layer
+(`6`) instead of its required layer (`1`) caused Playwright's `Expected to fail, but passed` error, proving
+the graduation mechanism fails closed; the assertion was restored before this record was written.
 
 ## Task 10.1.3 — Real-worklet patch-acceptance smoke seam  · planned
 
