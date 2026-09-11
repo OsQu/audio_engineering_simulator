@@ -1017,7 +1017,7 @@ whole front-end story (mic choice, phantom, gain staging, the pad, feedback) —
 
 ## Epic 10 — Authoritative Visibility, Location & Patch Interaction
 
-**Progress:** Story 10.1 is 🚧 in progress (planned; implementation not started). It establishes the
+**Progress:** Story 10.1 is ✅ complete. It establishes the
 deterministic browser, real-worklet, and pure-fixture seams that every later corrective Story graduates
 regressions through. Stories 10.2–10.7 remain deliberately coarse until their respective planning passes.
 
@@ -1076,7 +1076,7 @@ adapters once their consumers migrate. Each Story must leave the simulator usabl
   revisioned transaction with accepted/rejected/unknown outcomes and explicit recovery. UI placement and
   runtime state must not be overwritten by a stale reply.
 
-### Story 10.1 — Regression harness & resolver contract — 🚧 **In progress**
+### Story 10.1 — Regression harness & resolver contract — ✅ **Complete**
 
 *Goal:* establish the browser/component seam, real-worklet smoke seam, and pure fixture vocabulary that
 make the confirmed rack, cable, face, and patch-target failures reproducible before migration begins. This
@@ -1084,7 +1084,7 @@ locks the behavioral contract for the authoritative presentation model while the
 usable.
 
 *Watch out:* keep deterministic geometry and gesture fixtures independent of the real audio engine; the
-real-worklet smoke is a separate project/gate. Exercise the actual Svelte/DOM event and stacking seams rather
+real-worklet smoke has its own focused browser gate. Exercise the actual Svelte/DOM event and stacking seams rather
 than recreating them in test-only components. Do not implement `resolveView`, repair the known failures, or
 turn test expectations into a second socket-layout source in this Story. No blanket retries, permanent skips,
 or screenshot-only substitutes for semantic assertions.
@@ -1110,7 +1110,7 @@ coordinate implementation—and may reuse authored catalog/scene data without co
 - **Task 10.1.3** — ✅ Real-worklet patch-acceptance smoke seam: run a minimal compatible patch through the
   generated worklet/WASM in an isolated browser context and semantically observe request acceptance, without
   sharing the deterministic session adapter.
-- **Task 10.1.4** — Pure resolver-contract fixture matrix: provide compact, table-driven fixtures for all
+- **Task 10.1.4** — ✅ Pure resolver-contract fixture matrix: provide compact, table-driven fixtures for all
   studio walls/top, workbench support/DUT faces, free/mounted placement and rack facing, visible/hidden
   sockets, and local/local, local/remote-wall, local/remote-room, and remote/remote connections.
 

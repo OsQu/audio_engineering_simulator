@@ -17,7 +17,7 @@
   // surface so that machinery can measure jack anchors + draw cables in surface-local space.
 
   import { Camera } from "./camera.svelte";
-  import { type CableLayout, cableEndpoints, jackKey } from "./cable-view";
+  import { cableEndpoints, jackKey } from "./cable-view";
   import { draggable } from "./device-drag";
   import Cable from "./widgets/Cable.svelte";
   import CableInspector from "./widgets/CableInspector.svelte";
@@ -34,6 +34,7 @@
   import { footprint, RACK_UNIT_MM } from "./spatial";
   import type { SurfacePoint, WorldApi } from "./world-api";
   import { BENCH_DEVICE } from "./workbench-scene";
+  import { benchCableLayout, benchVisibleFaces } from "./view-resolver";
 
   interface Props {
     session: SceneSession;
@@ -49,21 +50,6 @@
     onOpen?: (id: string) => void;
   }
   let { session, desc, patch, api = $bindable(), onRemove, onOpen }: Props = $props();
-
-  // The bench's CableLayout for the shared cable-view geometry. Everything is in view, and **every jack
-  // anchors at its measured centre** (`faceAnchorable: () => true`) — including one on a device's hidden
-  // face. A hidden face still has a layout box (backface-visibility only hides paint), and under its
-  // `rotateY(180deg)` its measured centre lands at the correct *see-through* mirror position on the shown
-  // face — exactly where the "listening here" tap ring draws. So a cable to a back-face socket lands right
-  // beside its neighbours (e.g. the speaker's input next to its output tap), no interior estimate needed.
-  // Hence no `rect`, no clamp, and no tip-patch (nothing paints over the cable layer on the bench).
-  const benchLayout: CableLayout = {
-    inView: () => true,
-    faceAnchorable: () => true,
-    rect: () => null,
-    clampsEstimate: () => false,
-    frontPatchOver: () => false,
-  };
 
   // The monitored tap's measured anchor, for the "listening here" marker (the output PortRef → its jack).
   const tapAnchor = $derived.by(() => {
@@ -245,7 +231,7 @@
              so a cable to a front-shown device's hidden rear socket tucks behind its panel. -->
       <svg class="cables" width={natW} height={natH} viewBox="0 0 {natW} {natH}">
         {#each session.scene.patch.connections as c (connKey(c))}
-          {@const ends = cableEndpoints(benchLayout, patch.jackAnchors, c, worldApi)}
+            {@const ends = cableEndpoints(benchCableLayout, patch.jackAnchors, c, worldApi)}
           {#if ends}
             {@const d = cablePathData(ends.a, ends.b)}
             {@const kind = connectionKind(session.scene, session.catalog, c)}
@@ -299,12 +285,10 @@
                  — so cables plug into visible sockets on top. A dragged device floats above all (z 10). -->
           {@const zBase = !isDut && facing === "front" ? 3 : 1}
           <!-- The DUT lists both faces; a supporting device lists only its shown face (rotate to swap). -->
-          {@const faces = isDut
-            ? [
-                { flipped: false, label: "Front" },
-                { flipped: true, label: "Back" },
-              ]
-            : [{ flipped: facing === "back", label: facing === "back" ? "Back" : "Front" }]}
+          {@const faces = benchVisibleFaces(session.scene, bd.id, BENCH_DEVICE).map((face) => ({
+            flipped: face === "back",
+            label: face === "back" ? "Back" : "Front",
+          }))}
           <!-- One device: drag its body to move it on the bench (the shared `draggable` action, same as
                  the scene view). Its jacks/controls/flip opt out (DRAG_EXCLUDE); its committed offset +
                  facing live in `scene.ui.bench`. The transform is surface mm, applied inside the surface. -->

@@ -30,6 +30,7 @@
     type ViewCtx,
   } from "./projection";
   import * as cableView from "./cable-view";
+  import { sceneCableLayout } from "./view-resolver";
   import * as placement from "./placement";
   import * as sceneOps from "./scene-ops";
   import { footprint, type Room, type Wall } from "./spatial";
@@ -142,26 +143,9 @@
     };
   });
 
-  // The scene view's `CableLayout` — the injected seam cable-view's geometry asks its layout questions of,
-  // backed by the spatial projection (placements/racks/room/wall). cable-view itself is view-agnostic (the
-  // workbench bench supplies its own); this binds it to the scene. Rebuilt per call (a fresh `layout()`) so
-  // the reactive reads register as dependencies, matching the inline-ctx discipline elsewhere.
-  const sceneLayout = (): cableView.CableLayout => {
-    const ctx = layout();
-    return {
-      inView: (id) => {
-        const p = ctx.scene.ui.placements[id];
-        return p?.space === ctx.space && p.wall === ctx.wall;
-      },
-      faceAnchorable: (id, face) => face === effectiveFacing(ctx.scene, id),
-      rect: (id) => {
-        const d = deviceById(ctx.scene, id);
-        return d ? deviceRect(ctx, id, d.typeId) : null;
-      },
-      clampsEstimate: (id) => effectiveFacing(ctx.scene, id) === "back",
-      frontPatchOver: (id) => effectiveFacing(ctx.scene, id) === "front",
-    };
-  };
+  // The scene's projection-backed cable policy. Rebuilt per call so its reactive layout reads stay tied
+  // to this root, while the policy itself remains pure and contract-tested outside Svelte.
+  const sceneLayout = (): cableView.CableLayout => sceneCableLayout(layout());
 
   // Cable end anchor + view-membership helpers are pure cable-view fns, prebound here to the scene layout,
   // the measured jack anchors, and (for cableAnchor) the world api.

@@ -196,11 +196,12 @@ Key ownership and protocol:
 async function startEngine(
   patch: Patch,
   handlers: EngineHandlers,
-  initialVolume?: number,
+  initialVolume: number,
 ): Promise<EngineControl>;
 
 interface EngineControl {
-  send(message: ControlMessage): void;
+  setVolume(gain: number): void;
+  resume(): Promise<void>;
   close(): Promise<void>;                    // closes this caller's AudioContext
 }
 
@@ -246,6 +247,78 @@ smoke. `pnpm --dir web test:browser` passed its required fixture smoke, this wor
 intentional known-regression expected failures. `pnpm --dir web test` passed 291 tests; `check` passed;
 and `typecheck` found zero errors with the two existing `FloatingWindow.svelte` accessibility warnings.
 
-## Task 10.1.4 — Pure resolver-contract fixture matrix  · planned
+## Task 10.1.4 — Pure resolver-contract fixture matrix  · done
 
-_(program design drafted at pickup)_
+This final task turns the small view-resolution policies currently composed inline by the studio and
+workbench roots into one pure shared module, then protects them with a compact table-driven fixture matrix.
+It does not alter rendered behavior, CSS, or browser fixture plumbing. The purpose is to give later visibility
+and gesture Stories a durable semantic contract below the DOM, while ensuring the contract is the one the
+production roots actually consume rather than a test-only imitation.
+
+File-tree diff:
+
+```text
+web/
+  src/
+    view-resolver.ts                         pure studio/bench resolver policies extracted from view roots
+    App.svelte                               consume sceneCableLayout instead of its inline closure
+    BenchStage.svelte                        consume bench face/layout policies instead of inline constants
+  test/
+    fixtures/
+      resolver-contract.ts                   compact scenes, anchors, and expectation tables
+    view-resolver.test.ts                    table-driven contract assertions
+```
+
+Key types and signatures:
+
+```ts
+function sceneCableLayout(ctx: LayoutCtx): CableLayout;
+function benchVisibleFaces(scene: Scene, deviceId: string, dutId: string): DeviceFacing[];
+const benchCableLayout: CableLayout;
+
+interface StudioViewCase {
+  view: Wall | "top";
+  itemIds: string[];
+}
+interface SocketCase {
+  deviceId: string;
+  jackFace: DeviceFacing;
+  expected: "measured" | "estimated";
+}
+interface ConnectionCase {
+  name: "local-local" | "local-remote-wall" | "local-remote-room" | "remote-remote";
+  continuous: boolean;
+  portal: boolean;
+  label?: string;
+}
+```
+
+Fixture and assertion matrix:
+
+```text
+one two-room studio fixture
+  views: front / back / left / right / top
+  placement: free-standing + rack-mounted (rack front and rack back)
+  sockets: measured when the shown effective face matches; estimated when it is hidden
+  connections: local/local, local/other-wall, local/other-room, other-wall/other-room
+
+one flat workbench fixture
+  DUT: always exposes front + back faces
+  supporting device: exposes only its effective front or back face
+  cable layout: both measured faces anchorable; no scene-only estimate, clamp, or tip patch
+```
+
+The test tables assert pure semantic facts: placed item membership, effective face and visible face list,
+measured-versus-estimated anchors, continuous-versus-portal cable membership, and cross-view labels. They
+deliberately do not duplicate rectangle arithmetic or z-order assertions already covered in
+`projection.test.ts`, or draw screenshots. Existing tests remain; this matrix is the concise cross-product
+guard that ties their separate policies together.
+
+Expected verification: focused `pnpm --dir web test -- view-resolver`, then all web unit tests, typecheck,
+and formatting/check. The previously completed browser harness and real-worklet smoke will also be run once
+as Story-level regression coverage.
+
+Validation passed: the focused resolver matrix passes as part of the 24-file, 312-test Vitest suite;
+`check` passes; and `typecheck` reports zero errors with the two existing `FloatingWindow.svelte`
+accessibility warnings. The complete Playwright suite passes its ordinary fixture smoke and real-worklet
+smoke while retaining all six deliberate known-regression expected failures.
