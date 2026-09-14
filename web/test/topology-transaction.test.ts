@@ -93,4 +93,21 @@ describe("topology transactions", () => {
       first.state,
     );
   });
+
+  it("preserves unrelated immediate UI state while applying only the accepted topology delta", () => {
+    const ui = { placement: { x: 10 }, parameter: 0.25, topology: [] as string[] };
+    const topologyEdit = (current: typeof ui): void => {
+      current.topology.push("new cable");
+    };
+    const first = submit(
+      initialTopologyState(),
+      { label: "Connect", delta: { kind: "topology", payload: topologyEdit } },
+      0,
+    );
+    ui.placement.x = 20;
+    ui.parameter = 0.75;
+    const accepted = receive(first.state, { kind: "accepted", generation: 0, id: 1 }, 1);
+    (accepted.accepted?.request.delta.payload as (current: typeof ui) => void)(ui);
+    expect(ui).toEqual({ placement: { x: 20 }, parameter: 0.75, topology: ["new cable"] });
+  });
 });
