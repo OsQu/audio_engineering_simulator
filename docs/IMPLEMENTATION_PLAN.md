@@ -1017,9 +1017,10 @@ whole front-end story (mic choice, phantom, gain staging, the pad, feedback) —
 
 ## Epic 10 — Authoritative Visibility, Location & Patch Interaction
 
-**Progress:** Story 10.1 is ✅ complete. It establishes the
+**Progress:** Story 10.1 is ✅ complete and Story 10.2 is 🚧 in progress. Story 10.1 establishes the
 deterministic browser, real-worklet, and pure-fixture seams that every later corrective Story graduates
-regressions through. Stories 10.2–10.7 remain deliberately coarse until their respective planning passes.
+regressions through; Story 10.2 makes structural engine changes trustworthy before view migration begins.
+Stories 10.3–10.7 remain deliberately coarse until their respective planning passes.
 
 **Goal:** make one pure, deterministic presentation model authoritative for effective rack/device
 placement, presented faces, socket visibility and patchability, cable endpoints and portals, physical
@@ -1123,7 +1124,7 @@ semantic assertions; and an intentionally demonstrated unexpected pass proves th
 closed. Vitest, typecheck, format/check, and the new browser gates are green apart from the explicitly tracked
 expected failures.
 
-### Story 10.2 — Acknowledged topology transactions
+### Story 10.2 — Acknowledged topology transactions — 🚧 **In progress**
 
 *Goal:* make connect, disconnect, cable/config/device changes, and load/reload explicit acknowledged
 transactions so browser patch tests can distinguish gesture failures from engine transport failures.
@@ -1132,6 +1133,30 @@ transactions so browser patch tests can distinguish gesture failures from engine
 track engine generation separately from topology and UI revisions, preserve endpoints on busy/rejection,
 and treat a missing acknowledgement as unknown—not as rejection. Late replies must never restore stale
 placement, parameters, tracks, or UI state.
+
+*Design notes (settled at planning):* All topology-changing controls use one serialized transaction channel;
+continuous params and placement/UI edits remain immediate and are deliberately outside its topology revision.
+The durable scene does not optimistically change: cable picks retain their endpoints, while config/device
+controls show an explicit applying state until compiler acceptance applies their scoped patch delta to the
+then-current scene. This was chosen over optimistic whole-scene replacement and rollback, which can erase
+concurrent placement, parameter, track, or UI edits. `accepted` means the compiler queued the patch; a
+post-install notification re-applies runtime parameter/track state and refreshes engine-derived data. The
+request carries engine generation, request ID, base topology revision, and protocol/build version. A busy or
+rejected request is retryable; a named five-second deadline or processor failure is `unknown`, never a
+rejection, retains the proposal, disables submissions, and offers explicit recovery from the latest accepted
+patch plus current runtime parameters. Recovery invalidates the old generation, so late replies cannot mutate
+state. Protocol mismatch fails closed at readiness rather than attempting best-effort compatibility.
+
+- **Task 10.2.1** — Define a pure, clock-driven topology transaction state machine with request/reply
+  correlation, scoped deltas, generation/revision invalidation, and hand-checked timeout/recovery oracles.
+- **Task 10.2.2** — Version the worklet/UI structural protocol and emit separate compiler-accepted and
+  post-install notifications, including a protocol-mismatch readiness failure.
+- **Task 10.2.3** — Migrate `SceneSession`, patch gestures, and every config/device/load/reload producer to
+  staged serialized transactions with visible retry/recovery feedback and no unacknowledged `hotSwap` escape.
+- **Task 10.2.4** — Prove the full fake-transport matrix and real-worklet acceptance/rejection/recovery
+  behavior; browser gestures retain their pending action until a known transaction outcome.
+
+*Program design:* [`story-10.2-acknowledged-topology-transactions.md`](./epics/epic-10/story-10.2-acknowledged-topology-transactions.md)
 
 *Validate:* fake transport/clock coverage proves accepted, rejected, busy, unavailable, timeout, recovery,
 late-reply, concurrent UI-edit, and protocol-mismatch behavior; a real-worklet smoke test proves acceptance
