@@ -11,6 +11,12 @@
 import type { CableType, DeviceDescriptor } from "./catalog";
 import { clampOctave, DEFAULT_VELOCITY, noteForKey, octaveShiftFor } from "./notes";
 import type { Patch } from "./scene";
+import {
+  protocolVersionsMatch,
+  TOPOLOGY_BUILD_VERSION,
+  TOPOLOGY_PROTOCOL_VERSION,
+  type TopologyRequestMetadata,
+} from "./topology-protocol";
 
 /** The messages the worklet maps onto SceneEngine, all addressed by device id. The DAW variants
  *  (transport / track / feedPlayback) drive a `computer`'s recorder; see {@link TransportState} /
@@ -19,7 +25,7 @@ export type ControlMessage =
   | { type: "param"; device: string; paramId: number; value: number }
   | { type: "noteOn"; device: string; note: number; velocity: number }
   | { type: "noteOff"; device: string; note: number }
-  | { type: "loadPatch"; requestId?: number; patch: Patch }
+  | { type: "loadPatch"; requestId?: number; transaction?: TopologyRequestMetadata; patch: Patch }
   // --- DAW transport + tracks (a `computer` device) ---
   | { type: "transport"; device: string; action: "play" | "stop" | "recordOn" | "recordOff" }
   | { type: "seek"; device: string; pos: number }
@@ -42,6 +48,8 @@ export type ReadyMessage = {
    *  for a digital/event connection (ideal, no resistive loading). */
   losses: (number | null)[];
   deviceDescriptors: Record<string, DeviceDescriptor>;
+  topologyProtocolVersion: number;
+  topologyBuildVersion: string;
 };
 
 /** Live device meter readings, posted ~47×/s: one entry per metering device, `[deviceId, values]`
@@ -81,6 +89,24 @@ export type DeviceDescriptorMessage = {
 
 export type PatchAcceptedMessage = { type: "patchAccepted"; requestId: number };
 export type PatchRejectedMessage = { type: "patchRejected"; requestId: number; message: string };
+export type TopologyAcceptedMessage = {
+  type: "topologyAccepted";
+  transaction: TopologyRequestMetadata;
+};
+export type TopologyInstalledMessage = {
+  type: "topologyInstalled";
+  transaction: TopologyRequestMetadata;
+};
+export type TopologyRejectedMessage = {
+  type: "topologyRejected";
+  transaction: TopologyRequestMetadata;
+  message: string;
+};
+export type ProtocolMismatchMessage = {
+  type: "protocolMismatch";
+  expected: number;
+  actual: number;
+};
 
 /** One DAW device's live transport state, posted ~47×/s so the UI can show the playhead + button states. */
 export type TransportState = {
@@ -158,6 +184,11 @@ export interface EngineHandlers {
   onDeviceDescriptors?: (deviceDescriptors: Record<string, DeviceDescriptor>) => void;
   onPatchAccepted?: (requestId: number) => void;
   onPatchRejected?: (requestId: number, message: string) => void;
+  /** The compiler queued a versioned structural request; installation follows at a render boundary. */
+  onTopologyAccepted?: (transaction: TopologyRequestMetadata) => void;
+  onTopologyRejected?: (transaction: TopologyRequestMetadata, message: string) => void;
+  /** The queued structural request installed; engine-derived data has been refreshed. */
+  onTopologyInstalled?: (transaction: TopologyRequestMetadata) => void;
   /** Live DAW transport states (~47×/s) — playhead + rolling/recording per DAW device. Optional. */
   onTransports?: (states: TransportState[]) => void;
   /** A track began capturing: open its take file with the placeholder `header`. Optional. */
@@ -202,7 +233,10 @@ export async function startEngine(
   patch: Patch,
   handlers: EngineHandlers,
   initialVolume: number,
+  options: { topologyProtocolVersion?: number; topologyBuildVersion?: string } = {},
 ): Promise<EngineControl> {
+  const expectedTopologyProtocolVersion =
+    options.topologyProtocolVersion ?? TOPOLOGY_PROTOCOL_VERSION;
   // Pin the context rate to the engine's host rate (48 kHz); the browser resamples to the device.
   // Without this pin every quantum is the wrong rate ⇒ wrong pitch + drift. latencyHint
   // "interactive" = the smallest output buffer (lowest latency); the single-threaded in-worklet
@@ -226,7 +260,13 @@ export async function startEngine(
   // module and builds SceneEngine(patch) synchronously in its constructor.
   const node = new AudioWorkletNode(audio, "scene-processor", {
     outputChannelCount: [2],
-    processorOptions: { bytes, patch, soundfonts: [{ id: "tim_gm_6mb", bytes: soundfont }] },
+    processorOptions: {
+      bytes,
+      patch,
+      soundfonts: [{ id: "tim_gm_6mb", bytes: soundfont }],
+      topologyProtocolVersion: expectedTopologyProtocolVersion,
+      topologyBuildVersion: options.topologyBuildVersion ?? TOPOLOGY_BUILD_VERSION,
+    },
   });
   const send = (msg: ControlMessage): void => node.port.postMessage(msg);
 
@@ -237,6 +277,12 @@ export async function startEngine(
     const d = e.data;
     if (d?.type === "ready") {
       const ready = d as ReadyMessage;
+      if (!protocolVersionsMatch(ready.topologyProtocolVersion, expectedTopologyProtocolVersion)) {
+        handlers.onStatus(
+          `topology protocol mismatch: UI ${expectedTopologyProtocolVersion}, worklet ${ready.topologyProtocolVersion}`,
+        );
+        return;
+      }
       handlers.onStatus(latencySummary(audio, ready));
       handlers.onReady(ready, send);
     } else if (d?.type === "health") {
@@ -266,6 +312,16 @@ export async function startEngine(
     } else if (d?.type === "patchRejected") {
       const m = d as PatchRejectedMessage;
       handlers.onPatchRejected?.(m.requestId, m.message);
+    } else if (d?.type === "topologyAccepted") {
+      handlers.onTopologyAccepted?.((d as TopologyAcceptedMessage).transaction);
+    } else if (d?.type === "topologyRejected") {
+      const m = d as TopologyRejectedMessage;
+      handlers.onTopologyRejected?.(m.transaction, m.message);
+    } else if (d?.type === "topologyInstalled") {
+      handlers.onTopologyInstalled?.((d as TopologyInstalledMessage).transaction);
+    } else if (d?.type === "protocolMismatch") {
+      const m = d as ProtocolMismatchMessage;
+      handlers.onStatus(`topology protocol mismatch: UI ${m.actual}, worklet ${m.expected}`);
     } else if (d?.type === "deviceDescriptors") {
       handlers.onDeviceDescriptors?.((d as DeviceDescriptorMessage).deviceDescriptors);
     }

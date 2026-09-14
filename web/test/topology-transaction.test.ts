@@ -7,8 +7,8 @@ import {
   receive,
   recover,
   submit,
-  TRANSACTION_DEADLINE_MS,
   type TopologyProposal,
+  TRANSACTION_DEADLINE_MS,
 } from "../src/topology-transaction";
 
 const proposal: TopologyProposal = {
@@ -55,7 +55,11 @@ describe("topology transactions", () => {
     const first = submitted();
     expect(deadlineElapsed(first.state, 1_000 + TRANSACTION_DEADLINE_MS - 1)).toBe(first.state);
     const timedOut = deadlineElapsed(first.state, 1_000 + TRANSACTION_DEADLINE_MS);
-    expect(timedOut.outcome).toMatchObject({ kind: "unknown", reason: "timeout", request: first.request });
+    expect(timedOut.outcome).toMatchObject({
+      kind: "unknown",
+      reason: "timeout",
+      request: first.request,
+    });
     expect(submit(timedOut, proposal, 6_001)).toEqual({ state: timedOut });
   });
 
@@ -67,20 +71,26 @@ describe("topology transactions", () => {
     expect(receive(replacement.state, { kind: "accepted", generation: 7, id: 1 }, 6_200)).toBe(
       replacement.state,
     );
-    expect(receive(replacement.state, { kind: "accepted", generation: 8, id: 2 }, 6_200).revision).toBe(4);
+    expect(
+      receive(replacement.state, { kind: "accepted", generation: 8, id: 2 }, 6_200).revision,
+    ).toBe(4);
   });
 
   it("invalidates outstanding replies and preserves the accepted topology revision across generations", () => {
     const first = submitted();
     const invalidated = invalidateGeneration(first.state);
     expect(invalidated).toMatchObject({ generation: 8, revision: 3, outcome: { kind: "idle" } });
-    expect(receive(invalidated, { kind: "accepted", generation: 7, id: 1 }, 1_100)).toBe(invalidated);
+    expect(receive(invalidated, { kind: "accepted", generation: 7, id: 1 }, 1_100)).toBe(
+      invalidated,
+    );
   });
 
   it("turns an explicit processor failure into unknown and ignores malformed stale correlations", () => {
     const first = submitted();
     const failed = receive(first.state, { kind: "processor-failure", generation: 7, id: 1 }, 1_100);
     expect(failed.outcome).toMatchObject({ kind: "unknown", reason: "processor-failure" });
-    expect(receive(first.state, { kind: "accepted", generation: 7, id: 99 }, 1_100)).toBe(first.state);
+    expect(receive(first.state, { kind: "accepted", generation: 7, id: 99 }, 1_100)).toBe(
+      first.state,
+    );
   });
 });

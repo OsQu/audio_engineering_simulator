@@ -25,6 +25,11 @@ const READOUT_REPORT_EVERY = 8;
 // never touches disk. Transport state (playhead/rolling/recording) rides the readout cadence.
 const RECORD_DRAIN_EVERY = 4;
 
+// Kept in lockstep with src/topology-protocol.ts. This file is concatenated into a standalone
+// worklet bundle, so it cannot import the UI module at runtime.
+const TOPOLOGY_PROTOCOL_VERSION = 1;
+const TOPOLOGY_BUILD_VERSION = "topology-transactions-v1";
+
 // The per-instance device descriptors, keyed by scene device id: each device described against *its
 // own* config, so a config-driven face (the computer's usb_sends/usb_returns) reports its actual shape
 // (channels/params/readouts), not the type catalog's default. Recomputed whenever the scene builds or
@@ -49,9 +54,18 @@ class SceneProcessor extends AudioWorkletProcessor {
       const bytes = options?.processorOptions?.bytes;
       const patch = options?.processorOptions?.patch;
       const soundfonts = options?.processorOptions?.soundfonts;
+      const topologyProtocolVersion = options?.processorOptions?.topologyProtocolVersion;
       if (!bytes) throw new Error("no wasm bytes in processorOptions");
       if (!patch) throw new Error("no patch in processorOptions");
       if (!soundfonts) throw new Error("no SoundFont bundle in processorOptions");
+      if (topologyProtocolVersion !== TOPOLOGY_PROTOCOL_VERSION) {
+        this.port.postMessage({
+          type: "protocolMismatch",
+          expected: TOPOLOGY_PROTOCOL_VERSION,
+          actual: topologyProtocolVersion,
+        });
+        return;
+      }
       // `wasm_bindgen` and `SceneEngine` come from the glue concatenated ahead of this file.
       if (typeof wasm_bindgen === "undefined") {
         throw new Error("wasm_bindgen global missing — glue not concatenated ahead of processor");
@@ -88,6 +102,7 @@ class SceneProcessor extends AudioWorkletProcessor {
       this.quanta = 0; // quanta rendered, for the report throttle
       this.levelPeak = 0; // max |sample| since the last level report, for the VU meter
       this.lossesDirty = false; // re-send connection losses after a hot-swap installs the new scene
+      this.pendingPatchInstall = null;
       // Device ids of the current scene, for the DAW drain/report loop. A device is a DAW iff its
       // live `track_count > 0`, so non-DAW devices fall out naturally (no computer-typeId coupling).
       this.deviceIds = patch.devices.map((dev) => dev.id);
@@ -144,23 +159,42 @@ class SceneProcessor extends AudioWorkletProcessor {
             break;
           case "loadPatch":
             try {
+              const transaction = d.transaction;
+              if (
+                transaction?.protocolVersion !== undefined &&
+                transaction.protocolVersion !== TOPOLOGY_PROTOCOL_VERSION
+              ) {
+                this.port.postMessage({
+                  type: "protocolMismatch",
+                  expected: TOPOLOGY_PROTOCOL_VERSION,
+                  actual: transaction.protocolVersion,
+                });
+                break;
+              }
               this.engine.load_patch(d.patch); // throws on a bad patch; the live scene keeps running
               this.deviceIds = d.patch.devices.map((dev) => dev.id); // for the DAW drain/report loop
               // The new scene's connection losses go live at the next render_quantum swap; flag a
               // post-swap re-send so the page's static readouts (cable inspector / levels panel) refresh.
               this.lossesDirty = true;
-              // The new scene may have resized a config-driven face (e.g. the computer re-enumerated to
-              // an attached interface), so re-push the per-instance descriptors for the faceplates.
-              this.port.postMessage({
-                type: "deviceDescriptors",
+              // These engine-derived values become valid only after the next render-quantum install.
+              this.pendingPatchInstall = {
+                transaction,
                 deviceDescriptors: deviceDescriptors(d.patch.devices),
-              });
-              if (Number.isInteger(d.requestId)) {
+              };
+              if (transaction) {
+                this.port.postMessage({ type: "topologyAccepted", transaction });
+              } else if (Number.isInteger(d.requestId)) {
                 this.port.postMessage({ type: "patchAccepted", requestId: d.requestId });
               }
             } catch (err) {
               const message = String(err?.message || err);
-              if (Number.isInteger(d.requestId)) {
+              if (d.transaction) {
+                this.port.postMessage({
+                  type: "topologyRejected",
+                  transaction: d.transaction,
+                  message,
+                });
+              } else if (Number.isInteger(d.requestId)) {
                 this.port.postMessage({ type: "patchRejected", requestId: d.requestId, message });
               } else {
                 this.port.postMessage({ type: "error", message });
@@ -182,6 +216,8 @@ class SceneProcessor extends AudioWorkletProcessor {
         losses: this.engine.connection_losses(),
         // Per-instance device descriptors (by scene id), sized to each device's config.
         deviceDescriptors: deviceDescriptors(patch.devices),
+        topologyProtocolVersion: TOPOLOGY_PROTOCOL_VERSION,
+        topologyBuildVersion: TOPOLOGY_BUILD_VERSION,
       });
     } catch (err) {
       this.port.postMessage({
@@ -293,6 +329,19 @@ class SceneProcessor extends AudioWorkletProcessor {
     // connection losses once so the cable inspector / levels panel refresh, then clear the flag.
     if (this.lossesDirty) {
       this.port.postMessage({ type: "losses", losses: this.engine.connection_losses() });
+      if (this.pendingPatchInstall) {
+        this.port.postMessage({
+          type: "deviceDescriptors",
+          deviceDescriptors: this.pendingPatchInstall.deviceDescriptors,
+        });
+        if (this.pendingPatchInstall.transaction) {
+          this.port.postMessage({
+            type: "topologyInstalled",
+            transaction: this.pendingPatchInstall.transaction,
+          });
+        }
+        this.pendingPatchInstall = null;
+      }
       this.lossesDirty = false;
     }
 

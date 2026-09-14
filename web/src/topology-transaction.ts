@@ -2,6 +2,12 @@
 // neither a Scene nor a transport: the session supplies a scoped delta and applies an accepted delta
 // to its then-current scene in a later task.
 
+import {
+  TOPOLOGY_BUILD_VERSION,
+  TOPOLOGY_PROTOCOL_VERSION,
+  type TopologyRequestMetadata,
+} from "./topology-protocol";
+
 export type EngineGeneration = number;
 export type TopologyRevision = number;
 export type TransactionId = number;
@@ -17,7 +23,7 @@ export interface TopologyProposal {
   readonly label: string;
 }
 
-export interface TopologyRequest extends TopologyProposal {
+export interface TopologyRequest extends TopologyProposal, TopologyRequestMetadata {
   readonly generation: EngineGeneration;
   readonly id: TransactionId;
   readonly baseRevision: TopologyRevision;
@@ -40,6 +46,8 @@ export interface TopologyState {
   readonly generation: EngineGeneration;
   readonly revision: TopologyRevision;
   readonly nextId: TransactionId;
+  readonly protocolVersion: number;
+  readonly buildVersion: string;
   readonly outcome: TopologyOutcome;
   readonly accepted: AcceptedTopologyChange | null;
 }
@@ -62,8 +70,18 @@ export const TRANSACTION_DEADLINE_MS = 5_000;
 export function initialTopologyState(
   generation: EngineGeneration = 0,
   revision: TopologyRevision = 0,
+  protocolVersion: number = TOPOLOGY_PROTOCOL_VERSION,
+  buildVersion: string = TOPOLOGY_BUILD_VERSION,
 ): TopologyState {
-  return { generation, revision, nextId: 1, outcome: { kind: "idle" }, accepted: null };
+  return {
+    generation,
+    revision,
+    nextId: 1,
+    protocolVersion,
+    buildVersion,
+    outcome: { kind: "idle" },
+    accepted: null,
+  };
 }
 
 /** Start the sole in-flight topology request, if the channel is in a retryable state. */
@@ -78,6 +96,8 @@ export function submit(
     generation: state.generation,
     id: state.nextId,
     baseRevision: state.revision,
+    protocolVersion: state.protocolVersion,
+    buildVersion: state.buildVersion,
   };
   return {
     request,
