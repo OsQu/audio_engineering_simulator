@@ -37,6 +37,17 @@ import {
   type TrackUi,
 } from "./scene-store";
 import { StorageClient } from "./storage-client";
+import type { TopologyRequestMetadata } from "./topology-protocol";
+import {
+  clearAccepted,
+  deadlineElapsed,
+  initialTopologyState,
+  receive,
+  recover,
+  submit,
+  type TopologyProposal,
+  type TopologyState,
+} from "./topology-transaction";
 import { type TakeWaveform, takeWaveform } from "./waveform";
 
 // Monitor (listening) volume — a host-side output gain *outside* the simulation, persisted on its own
@@ -126,10 +137,10 @@ export class SceneSession {
   // MIDI event was actually emitted and to which device. Drives the bench debug MIDI monitor.
   midiLog = $state<MidiLogEntry[]>([]);
   #midiSeq = 0;
-  // A candidate topology is never merged into `scene` until the compiler accepts this request id.
-  // One in flight prevents an acknowledgement for an obsolete base scene from committing.
-  #pendingPatch: { requestId: number; scene: Scene } | null = null;
-  #nextPatchRequestId = 1;
+  // Structural edits compile from a detached candidate, but their scoped mutator is applied only after
+  // compiler acknowledgement. This preserves placement/param/track/UI changes made while it was pending.
+  topology = $state<TopologyState>(initialTopologyState());
+  #topologyDeadline: ReturnType<typeof setTimeout> | null = null;
 
   // --- Monitor volume -----------------------------------------------------------------------------
   volume = $state(loadVolume());
@@ -190,38 +201,106 @@ export class SceneSession {
     return $state.snapshot(this.scene.patch);
   }
 
-  /** Ask the engine to compile a detached scene. Unlike `hotSwap`, this leaves the durable UI scene
-   *  unchanged until the worklet explicitly accepts the candidate. */
-  submitPatchCandidate(candidate: Scene): boolean {
+  /** Stage one serial structural edit. `edit` is replayed against the latest scene only on acceptance. */
+  proposeTopology(label: string, edit: (scene: Scene) => void): boolean {
     const send = this.send;
     if (!send) {
       this.status = "engine is not ready to validate this patch";
       return false;
     }
-    if (this.#pendingPatch) {
-      this.status = "waiting for the previous patch change to be validated";
+    const candidate = structuredClone($state.snapshot(this.scene));
+    edit(candidate);
+    const proposal: TopologyProposal = {
+      label,
+      delta: { kind: "scene-topology", payload: edit },
+    };
+    const result = submit(this.topology, proposal, Date.now());
+    this.topology = result.state;
+    if (!result.request) {
+      this.status =
+        this.topology.outcome.kind === "unknown"
+          ? "topology outcome unknown — recover before submitting another change"
+          : "waiting for the previous topology change";
       return false;
     }
-    const requestId = this.#nextPatchRequestId++;
-    this.#pendingPatch = { requestId, scene: candidate };
-    send({ type: "loadPatch", requestId, patch: candidate.patch });
+    send({ type: "loadPatch", transaction: result.request, patch: candidate.patch });
+    this.status = `applying ${label}…`;
+    this.#armTopologyDeadline();
     return true;
   }
 
-  #patchAccepted(requestId: number): void {
-    const pending = this.#pendingPatch;
-    if (!pending || pending.requestId !== requestId) return;
-    this.#pendingPatch = null;
-    this.scene = pending.scene;
-    this.paramValues = params.seedParamValues(this.scene, this.catalog);
-    this.status = "patch accepted";
+  // Compatibility seam for the Story 10.1 browser fixture; production paths use proposeTopology.
+  submitPatchCandidate(candidate: Scene): boolean {
+    return this.proposeTopology("patch change", (scene) => Object.assign(scene, candidate));
   }
 
-  #patchRejected(requestId: number, message: string): void {
-    const pending = this.#pendingPatch;
-    if (!pending || pending.requestId !== requestId) return;
-    this.#pendingPatch = null;
-    this.status = `patch rejected: ${message}`;
+  replaceTopology(label: string, candidate: Scene): boolean {
+    return this.proposeTopology(label, (scene) => Object.assign(scene, candidate));
+  }
+
+  /** Temporary producer bridge: even legacy callers now use the acknowledged transaction channel. */
+  hotSwap(): void {
+    this.proposeTopology("rebuild patch", () => {});
+  }
+
+  #armTopologyDeadline(): void {
+    if (this.#topologyDeadline) clearTimeout(this.#topologyDeadline);
+    this.#topologyDeadline = setTimeout(() => {
+      this.topology = deadlineElapsed(this.topology, Date.now());
+      if (this.topology.outcome.kind === "unknown")
+        this.status = "topology acknowledgement timed out — recover";
+    }, 5_000);
+  }
+
+  #receiveTopology(
+    kind: "accepted" | "rejected",
+    transaction: TopologyRequestMetadata,
+    message?: string,
+  ): void {
+    this.topology = receive(
+      this.topology,
+      kind === "accepted"
+        ? { kind, generation: transaction.generation, id: transaction.id }
+        : {
+            kind,
+            generation: transaction.generation,
+            id: transaction.id,
+            message: message ?? "rejected",
+          },
+      Date.now(),
+    );
+    if (this.topology.outcome.kind !== "submitting" && this.#topologyDeadline)
+      clearTimeout(this.#topologyDeadline);
+    const accepted = this.topology.accepted;
+    if (!accepted) {
+      if (this.topology.outcome.kind === "rejected")
+        this.status = `topology rejected: ${this.topology.outcome.message}`;
+      return;
+    }
+    const edit = accepted.request.delta.payload as (scene: Scene) => void;
+    edit(this.scene);
+    this.topology = clearAccepted(this.topology);
+    this.paramValues = params.seedParamValues(this.scene, this.catalog);
+    this.status = `accepted ${accepted.request.label}; installing…`;
+  }
+
+  recoverTopology(): void {
+    const result = recover(this.topology, Date.now());
+    this.topology = result.state;
+    if (!result.request || !this.send) return;
+    // Rebuild from the latest accepted scene (therefore retaining runtime/UI edits), then replay the
+    // retained scoped proposal into that detached candidate.
+    const candidate = structuredClone($state.snapshot(this.scene));
+    (result.request.delta.payload as (scene: Scene) => void)(candidate);
+    this.send({ type: "loadPatch", transaction: result.request, patch: candidate.patch });
+    this.status = "recovering topology…";
+    this.#armTopologyDeadline();
+  }
+
+  retryTopology(): void {
+    if (this.topology.outcome.kind !== "rejected") return;
+    const { label, delta } = this.topology.outcome.request;
+    this.proposeTopology(label, delta.payload as (scene: Scene) => void);
   }
 
   // The current value of a device-local param (live override else descriptor default), bound to the map.
@@ -257,25 +336,14 @@ export class SceneSession {
   // A structural config toggle (INST/hi-Z): unlike a knob, this changes how the device is *built*, so it
   // edits the scene and rebuilds the engine (the same hot-swap repatching uses) rather than a live param.
   onConfigInput(device: string, key: string, value: number): void {
-    setSceneConfig(this.scene, device, key, value);
-    this.hotSwap();
+    this.proposeTopology(`configure ${device}`, (scene) =>
+      setSceneConfig(scene, device, key, value),
+    );
   }
 
   // A structural edit → rebuild the engine from the new patch (compile + ScheduleSlot hot-swap, in the
   // worklet, the Story 4.1 path) and re-apply param values. Edits are rare gestures, so the off-block
   // compile cost is acceptable; the live audio thread swaps at a block boundary.
-  hotSwap(): void {
-    const send = this.send;
-    if (!send) return;
-    send({ type: "loadPatch", patch: this.plainPatch() });
-    this.paramValues = params.seedParamValues(this.scene, this.catalog);
-    params.pushParams(send, this.scene, this.catalog, this.paramValues);
-    // NB: the track model is re-applied in `onLosses` (post-swap), NOT here — `loadPatch` installs the new
-    // scene at the *next* render quantum, so control messages sent now would hit the outgoing recorder and
-    // be lost when the fresh one (construction defaults) swaps in. Params survive via the patch IR; track
-    // state (arm/monitor/input/level) isn't in the patch, so it must wait for the swap.
-  }
-
   // --- DAW: transport, tracks, record/playback ----------------------------------------------------
 
   /** A DAW device's live transport state (playhead + rolling/recording), or undefined if none yet. */
@@ -369,9 +437,10 @@ export class SceneSession {
    *  model, then hot-swap (a structural rebuild) and re-apply the track state. */
   setTrackCount(device: string, count: number): void {
     const n = Math.max(1, Math.round(count));
-    setSceneConfig(this.scene, device, "track_count", n);
-    resizeTracks(this.scene, device, n, this.sendsOf(device));
-    this.hotSwap(); // applyTrackState runs inside hotSwap
+    this.proposeTopology(`resize ${device} tracks`, (scene) => {
+      setSceneConfig(scene, device, "track_count", n);
+      resizeTracks(scene, device, n, this.sendsOf(device));
+    });
   }
 
   /** Start the transport rolling and begin playing back every track that has a take. */
@@ -415,17 +484,12 @@ export class SceneSession {
       this.status = "no saved scene";
       return false;
     }
-    this.scene = loaded;
-    this.paramValues = params.seedParamValues(this.scene, this.catalog);
-    this.send?.({ type: "loadPatch", patch: this.plainPatch() }); // hot-swap the engine to the saved scene
-    this.#refreshAllWaveforms(); // track model re-applied post-swap in `onLosses` (see hotSwap)
-    this.status = "scene loaded";
+    this.replaceTopology("load scene", loaded);
     return true;
   }
 
   reload(): void {
-    this.send?.({ type: "loadPatch", patch: this.plainPatch() }); // re-apply current scene — proves glitch-free swap
-    this.status = "scene reloaded (hot-swap)";
+    this.proposeTopology("reload scene", () => {});
   }
 
   // Bring the engine up: instantiate the worklet with the current patch + monitor volume, wire the
@@ -469,8 +533,14 @@ export class SceneSession {
           onDeviceDescriptors: (deviceDescriptors) => {
             this.deviceDescriptors = deviceDescriptors;
           },
-          onPatchAccepted: (requestId) => this.#patchAccepted(requestId),
-          onPatchRejected: (requestId, message) => this.#patchRejected(requestId, message),
+          onTopologyAccepted: (transaction) => this.#receiveTopology("accepted", transaction),
+          onTopologyRejected: (transaction, message) =>
+            this.#receiveTopology("rejected", transaction, message),
+          onTopologyInstalled: () => {
+            this.applyTrackState();
+            this.#refreshAllWaveforms();
+            this.status = "topology installed";
+          },
           // DAW transport ticks: mirror per-device state for the UI and top up each playing ring.
           onTransports: (states) => {
             const map: Record<string, TransportState> = {};
