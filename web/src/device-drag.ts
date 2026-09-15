@@ -40,6 +40,8 @@ export interface MoveDraggable {
   onMove: (x: number, y: number, legal: boolean) => void;
   /** Release: the final candidate. The caller commits it (only if `legal`) and clears any preview. */
   onEnd: (x: number, y: number, legal: boolean) => void;
+  /** The pointer gesture was cancelled, so no placement may be committed. */
+  onCancel?: () => void;
   /** Override the excluded-selectors set (defaults to {@link DRAG_EXCLUDE}). */
   exclude?: string;
 }
@@ -71,12 +73,21 @@ export function draggable(node: HTMLElement, params: MoveDraggable) {
     p.onMove(c.x, c.y, c.legal);
   }
 
-  function onUp(ev: PointerEvent): void {
+  function clearPointerListeners(): void {
     node.removeEventListener("pointermove", onMove);
     node.removeEventListener("pointerup", onUp);
-    node.removeEventListener("pointercancel", onUp);
+    node.removeEventListener("pointercancel", onCancel);
+  }
+
+  function onUp(ev: PointerEvent): void {
+    clearPointerListeners();
     const c = candidate(ev);
     p.onEnd(c.x, c.y, c.legal);
+  }
+
+  function onCancel(): void {
+    clearPointerListeners();
+    p.onCancel?.();
   }
 
   function onDown(ev: PointerEvent): void {
@@ -92,7 +103,7 @@ export function draggable(node: HTMLElement, params: MoveDraggable) {
     p.onStart?.(ox, oy);
     node.addEventListener("pointermove", onMove);
     node.addEventListener("pointerup", onUp);
-    node.addEventListener("pointercancel", onUp);
+    node.addEventListener("pointercancel", onCancel);
   }
 
   node.addEventListener("pointerdown", onDown);
@@ -104,7 +115,7 @@ export function draggable(node: HTMLElement, params: MoveDraggable) {
       node.removeEventListener("pointerdown", onDown);
       node.removeEventListener("pointermove", onMove);
       node.removeEventListener("pointerup", onUp);
-      node.removeEventListener("pointercancel", onUp);
+      node.removeEventListener("pointercancel", onCancel);
     },
   };
 }

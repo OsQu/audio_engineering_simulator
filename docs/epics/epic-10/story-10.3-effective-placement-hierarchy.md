@@ -63,9 +63,48 @@ The resolver applies a preview only when it targets the queried device or its pa
 calculate drag legality or mutate/commit placement; `placement.ts` remains the command layer. Tests use the
 same candidate values both as a preview and as a committed scene edit to assert equivalent effective output.
 
-## Task 10.3.3 — Studio parent-owned previews  · planned
+## Task 10.3.3 — Studio parent-owned previews  · done
 
-_(program design drafted at pickup)_
+`App` owns a `PlacementPreview | null` and derives stage items with that overlay. `WorldView` retains only
+pointer mechanics: it reports a candidate and renders the parent-supplied resolved item rects. A normal
+release asks `App` to commit the same candidate; pointer cancellation clears the preview without calling
+the command path. This replaces the current local `{ id, x, y, legal }` drag state.
+
+Call-stack (diff):
+
+```text
+draggable pointer move
+- WorldView.localDrag = { id, x, y, legal }
++ WorldView.onPreviewCandidate(id, x, y, legal)
++   App.preview = placementPreviewAt(layout(), id, x, y)
++     placedItemsFor(layout(), preview)
+
+draggable release / cancel
++ App.onPreviewCommit(...) → placement.moveTo(...)
++ App.onPreviewCancel() → preview = null
+```
+
+Key signatures:
+
+```ts
+function placementPreviewAt(
+  ctx: LayoutCtx,
+  id: string,
+  x: number,
+  y: number,
+): PlacementPreview | null;
+
+interface WorldViewProps {
+  drag?: { id: string; legal: boolean } | null;
+  onPreviewCandidate?: (id: string, x: number, y: number, legal: boolean) => void;
+  onPreviewCommit?: (id: string, x: number, y: number) => void;
+  onPreviewCancel?: () => void;
+}
+```
+
+`placementPreviewAt` reuses the current elevation/top conversion and rack-slot selection rules but does
+not write the scene. Its output is the exact input committed on normal release. Cables continue to use
+committed geometry in this task; previewed chassis and rack descendants are the only renderer change.
 
 ## Task 10.3.4 — Workbench parent-owned previews & regression proof  · planned
 

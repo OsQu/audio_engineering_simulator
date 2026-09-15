@@ -17,6 +17,7 @@
   import { cablePathData } from "./connections";
   import type { Connection, DeviceInstance, PortRef } from "./scene";
   import { defaultScene, loadScene } from "./scene-store";
+  import type { PlacementPreview } from "./effective-placement";
   import {
     deviceById,
     deviceRect,
@@ -113,8 +114,14 @@
   const layout = (): LayoutCtx => ({ ...view(), scene, catalog: session.catalog });
 
   // Devices interleave with the single cable layer by facing: a back-shown unit sits below it (z 1), a
-  // front-shown one above (z 3). See placedItemsFor.
-  const placedItems = $derived.by((): PlacedItem[] => placedItemsFor(layout()));
+  // front-shown one above (z 3). See placedItemsFor. A drag candidate is parent state, so a rack and
+  // all of its mounted children derive together from the same transient overlay.
+  let placementPreview = $state<PlacementPreview | null>(null);
+  let studioDrag = $state<{ id: string; legal: boolean } | null>(null);
+  const committedItems = $derived.by((): PlacedItem[] => placedItemsFor(layout()));
+  const placedItems = $derived.by((): PlacedItem[] =>
+    placedItemsFor(layout(), placementPreview ?? undefined),
+  );
 
   // --- Patch cables --------------------------------------------------------------------------------
   // A stable key for a connection (its two endpoints), for the {#each} in the cable overlay.
@@ -333,11 +340,23 @@
     keyboardTarget === null ? [] : [keyboardTarget],
   );
 
-  // Thin adapters over placement.ts, handed to the world layer as the drag legality + commit hooks.
-  // Both build the layout ctx inline (so reads stay reactive) and pass the already-derived placedItems.
+  // Thin adapters over placement.ts, handed to the world layer as the drag legality + parent-owned
+  // preview hooks. The collision set stays committed while the candidate is rendered above it.
   const canPlace = (id: string, x: number, y: number): boolean =>
-    placement.canPlace(layout(), placedItems, id, x, y);
+    placement.canPlace(layout(), committedItems, id, x, y);
   const moveTo = (id: string, x: number, y: number): void => placement.moveTo(layout(), id, x, y);
+  const clearPlacementPreview = (): void => {
+    placementPreview = null;
+    studioDrag = null;
+  };
+  const previewPlacement = (id: string, x: number, y: number, legal: boolean): void => {
+    studioDrag = { id, legal };
+    placementPreview = placement.placementPreviewAt(layout(), id, x, y);
+  };
+  const commitPlacementPreview = (id: string, x: number, y: number): void => {
+    moveTo(id, x, y);
+    clearPlacementPreview();
+  };
 
   // Spaces (rooms) + cross-space moves + flip — UI-only scene furniture (no hot-swap). Thin wrappers
   // over scene-ops; addSpace returns the new id so we switch to it.
@@ -667,6 +686,10 @@
         items={placedItems}
         onMoveTo={moveTo}
         {canPlace}
+        drag={studioDrag}
+        onPreviewCandidate={previewPlacement}
+        onPreviewCommit={commitPlacementPreview}
+        onPreviewCancel={clearPlacementPreview}
         fitKey={`${currentSpace}:${currentView}`}
         gridStep={GRID_MM}
         bind:api={worldApi}
