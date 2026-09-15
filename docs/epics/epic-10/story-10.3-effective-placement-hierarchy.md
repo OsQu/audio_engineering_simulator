@@ -106,6 +106,35 @@ interface WorldViewProps {
 not write the scene. Its output is the exact input committed on normal release. Cables continue to use
 committed geometry in this task; previewed chassis and rack descendants are the only renderer change.
 
-## Task 10.3.4 — Workbench parent-owned previews & regression proof  · planned
+## Task 10.3.4 — Workbench parent-owned previews & regression proof  · done
 
-_(program design drafted at pickup)_
+`Workbench` owns `PlacementPreview | null` for its flat bench, mirroring `App`'s studio ownership. It
+derives each bench offset through `resolveEffectivePlacement(scene, catalog, id, preview)` and passes only
+the resolved offset plus drag identity into `BenchStage`. `BenchStage` retains the shared pointer action,
+but has no local `{ id, x, y }` state and never writes `scene.ui.bench`.
+
+```text
+draggable pointer move
+  BenchStage.onPreviewCandidate(id, x, y)
+    Workbench.preview = { kind: "workbench", deviceId: id, x, y }
+      BenchStage.offsetFor(id) → resolveEffectivePlacement(..., preview)
+
+pointer release / cancellation
+  BenchStage.onPreviewCommit(id, x, y) → Workbench writes ui.bench[id], then clears preview
+  BenchStage.onPreviewCancel()         → Workbench clears preview only
+```
+
+Proposed `BenchStage` prop seam:
+
+```ts
+offsetFor: (id: string) => { x: number; y: number };
+drag?: { id: string } | null;
+onPreviewCandidate?: (id: string, x: number, y: number) => void;
+onPreviewCommit?: (id: string, x: number, y: number) => void;
+onPreviewCancel?: () => void;
+```
+
+The final pure regression extends `effective-placement.test.ts`: a workbench preview resolves to the
+same effective placement as committing its `x/y` into a cloned scene, while an absent preview leaves the
+durable result unchanged. The existing shared-action cancellation path is used unchanged, so cancellation
+has no command/write callback at either stage.
