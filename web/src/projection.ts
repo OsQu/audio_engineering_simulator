@@ -8,6 +8,7 @@
 // `ctx.view`, not the four near-duplicate helpers this replaces.
 
 import { type DeviceDescriptor, descriptorFor } from "./catalog";
+import { resolveEffectivePlacement } from "./effective-placement";
 import type { DeviceFacing, Rack, Scene } from "./scene-store";
 import {
   footprint,
@@ -44,11 +45,18 @@ export const isRack = (scene: Scene, id: string): boolean => rackById(scene, id)
 // I/O). A **free-standing** unit follows its own `facing`. A device with no placement is a **workbench**
 // device: it follows its bench `facing` (the flat bench has no rooms/racks). Defaults to "front". This is
 // the single source of truth for rendering, z-order, and jack anchoring — shared by both view roots.
-export function effectiveFacing(scene: Scene, deviceId: string): DeviceFacing {
+export function effectiveFacing(
+  scene: Scene,
+  deviceId: string,
+  catalog?: DeviceDescriptor[],
+): DeviceFacing {
+  if (catalog) {
+    const effective = resolveEffectivePlacement(scene, catalog, deviceId);
+    if (effective.kind !== "unresolved") return effective.facing;
+  }
   const place = scene.ui.placements[deviceId];
   if (!place) return scene.ui.bench?.[deviceId]?.facing ?? "front";
-  if (place.rack) return rackById(scene, place.rack.id)?.facing ?? place.facing;
-  return place.facing;
+  return place.rack ? (rackById(scene, place.rack.id)?.facing ?? place.facing) : place.facing;
 }
 
 // How many U a device occupies — 0 if it isn't rackmount gear (so it never mounts in a rack).
@@ -79,26 +87,30 @@ export function rackRect(ctx: ViewCtx, rack: Rack): Rect2 {
 // mounted (its elevation width is always the panel width — a unit faces into the room on every wall — so
 // only the horizontal position is wall-dependent, hence placed inside the already-projected rack frame),
 // else its free-standing position projected onto its wall. `null` without a descriptor/placement.
-export function deviceRect(ctx: LayoutCtx, deviceId: string, typeId: string): Rect2 | null {
-  const desc = descriptorFor(ctx.catalog, typeId);
-  const place = ctx.scene.ui.placements[deviceId];
-  if (!desc || !place) return null;
-  const size = footprint(desc.formFactor);
+export function deviceRect(ctx: LayoutCtx, deviceId: string, _typeId: string): Rect2 | null {
+  const effective = resolveEffectivePlacement(ctx.scene, ctx.catalog, deviceId);
+  if (effective.kind === "unresolved" || effective.kind === "workbench") return null;
+  const size = footprint(effective.descriptor.formFactor);
   if (ctx.view === "top") {
-    return project(place.position, orientedSize(size, place.wall), "top");
+    return effective.kind === "studio-free"
+      ? project(effective.position, orientedSize(size, effective.wall), "top")
+      : null;
   }
-  if (place.rack) {
-    const rack = rackById(ctx.scene, place.rack.id);
-    if (!rack) return null;
-    const frame = rackRect(ctx, rack);
+  if (effective.kind === "studio-mounted") {
+    const frame = rackRect(ctx, effective.rack);
     return {
       x: frame.x + FRAME_MARGIN,
-      y: frame.y + FRAME_MARGIN + place.rack.uSlot * RACK_UNIT_MM,
+      y: frame.y + FRAME_MARGIN + effective.uSlot * RACK_UNIT_MM,
       width: RACK_WIDTH_MM,
       height: size.height,
     };
   }
-  return wallProjection(place.position, orientedSize(size, place.wall), place.wall, ctx.room);
+  return wallProjection(
+    effective.position,
+    orientedSize(size, effective.wall),
+    effective.wall,
+    ctx.room,
+  );
 }
 
 // The items to render, for the current view. In a **wall elevation**: rack frames (behind) then that
@@ -118,8 +130,8 @@ export function placedItemsFor(ctx: LayoutCtx): PlacedItem[] {
         .map((r): PlacedItem => ({ id: r.id, rect: rackRect(ctx, r), background: true, z: 0 })),
       ...scene.patch.devices
         .filter((d) => {
-          const p = scene.ui.placements[d.id];
-          return p?.space === space && !p.rack; // mounted gear lives inside its rack box
+          const effective = resolveEffectivePlacement(scene, ctx.catalog, d.id);
+          return effective.kind === "studio-free" && effective.space === space;
         })
         .map((d) => ({ id: d.id, rect: deviceRect(ctx, d.id, d.typeId), z: 3 }))
         .filter((it): it is PlacedItem => it.rect !== null),
@@ -131,13 +143,17 @@ export function placedItemsFor(ctx: LayoutCtx): PlacedItem[] {
       .map((r): PlacedItem => ({ id: r.id, rect: rackRect(ctx, r), background: true, z: 0 })),
     ...scene.patch.devices
       .filter((d) => {
-        const p = scene.ui.placements[d.id];
-        return p?.space === space && p.wall === ctx.wall;
+        const effective = resolveEffectivePlacement(scene, ctx.catalog, d.id);
+        return (
+          (effective.kind === "studio-free" || effective.kind === "studio-mounted") &&
+          effective.space === space &&
+          effective.wall === ctx.wall
+        );
       })
       .map((d) => ({
         id: d.id,
         rect: deviceRect(ctx, d.id, d.typeId),
-        z: effectiveFacing(scene, d.id) === "back" ? 1 : 3,
+        z: effectiveFacing(scene, d.id, ctx.catalog) === "back" ? 1 : 3,
       }))
       .filter((it): it is PlacedItem => it.rect !== null),
   ];
