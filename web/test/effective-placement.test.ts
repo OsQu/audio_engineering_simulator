@@ -57,4 +57,44 @@ describe("effective placement", () => {
       facing: "back",
     });
   });
+
+  it("applies a rack preview to every mounted child without mutating the scene", () => {
+    const preview = {
+      kind: "studio-rack" as const,
+      rackId: "rack-front",
+      space: "booth",
+      wall: "back" as const,
+      position: { x: 1200, y: 0, z: 600 },
+    };
+    const before = structuredClone(studioScene);
+    expect(resolveEffectivePlacement(studioScene, CATALOG, "mounted-front", preview)).toMatchObject(
+      {
+        kind: "studio-mounted",
+        space: "booth",
+        wall: "back",
+        rack: { position: preview.position },
+      },
+    );
+    expect(studioScene).toEqual(before);
+  });
+
+  it("resolves a candidate mount through its target rack and matches the committed result", () => {
+    const preview = {
+      kind: "studio-mount" as const,
+      deviceId: "free-front",
+      rackId: "rack-back",
+      uSlot: 2,
+    };
+    const previewed = resolveEffectivePlacement(studioScene, CATALOG, "free-front", preview);
+    const committed = structuredClone(studioScene);
+    committed.ui.placements["free-front"].rack = { id: "rack-back", uSlot: 2 };
+    expect(previewed).toEqual(resolveEffectivePlacement(committed, CATALOG, "free-front"));
+  });
+
+  it("leaves committed resolution unchanged when the preview is cancelled", () => {
+    const committed = resolveEffectivePlacement(studioScene, CATALOG, "free-front");
+    expect(resolveEffectivePlacement(studioScene, CATALOG, "free-front", undefined)).toEqual(
+      committed,
+    );
+  });
 });
