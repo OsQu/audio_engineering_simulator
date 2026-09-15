@@ -1017,10 +1017,11 @@ whole front-end story (mic choice, phantom, gain staging, the pad, feedback) —
 
 ## Epic 10 — Authoritative Visibility, Location & Patch Interaction
 
-**Progress:** Story 10.1 is ✅ complete and Story 10.2 is 🚧 in progress. Story 10.1 establishes the
-deterministic browser, real-worklet, and pure-fixture seams that every later corrective Story graduates
-regressions through; Story 10.2 makes structural engine changes trustworthy before view migration begins.
-Stories 10.3–10.7 remain deliberately coarse until their respective planning passes.
+**Progress:** Stories 10.1 and 10.2 are ✅ complete. Story 10.1 establishes the deterministic browser,
+real-worklet, and pure-fixture seams that every later corrective Story graduates regressions through; Story
+10.2 makes structural engine changes trustworthy before view migration begins. Story 10.3 now establishes
+the effective-placement and preview foundation for later presentation migration. Stories 10.4–10.7 remain
+deliberately coarse until their respective planning passes.
 
 **Goal:** make one pure, deterministic presentation model authoritative for effective rack/device
 placement, presented faces, socket visibility and patchability, cable endpoints and portals, physical
@@ -1162,14 +1163,35 @@ state. Protocol mismatch fails closed at readiness rather than attempting best-e
 late-reply, concurrent UI-edit, and protocol-mismatch behavior; a real-worklet smoke test proves acceptance
 and rejection without silently losing the user's pending action.
 
-### Story 10.3 — Effective placement hierarchy & live previews
+### Story 10.3 — Effective placement hierarchy & live previews — 🚧 **In progress**
 
 *Goal:* centralize stored-location reading, rack inheritance, U-slot positioning, view projection, and
 transient free/rack/mount previews behind one pure effective-placement path.
 
 *Watch out:* preserve the current rack frame-origin convention and scene compatibility. Preview placement
-alone does not complete renderer, cable, or hit-target following; those integrations belong to later
-Stories. Corrupt references produce unresolved diagnostics, never mixed fallback placement.
+alone does not complete cable or hit-target following; those integrations belong to later Stories. Corrupt
+references produce unresolved diagnostics, never mixed fallback placement.
+
+*Design notes (settled at planning):* A new pure effective-placement module distinguishes free studio,
+mounted studio, flat workbench, and unresolved locations. Mounted devices derive room, wall, facing, and
+U-slot geometry only from their rack; copied placement fields remain readable for save compatibility but
+are no longer effective truth. A pure preview overlays that resolution for a free device, rack, or candidate
+rack mount. `App` and `Workbench` own their transient preview state and pass it into the pure path;
+`WorldView` and `BenchStage` render/report it but do not own it. This was chosen over keeping each renderer's
+local drag state, which cannot make rack occupants share one preview. Cable endpoint and hit-target following
+remain deferred to Stories 10.6 and 10.7, respectively.
+
+- **Task 10.3.1** — Introduce pure effective-placement resolution and migrate projection, facing, view
+  membership, and rack-occupancy consumers away from copied mounted placement fields; prove valid and
+  unresolved free/mounted/workbench cases.
+- **Task 10.3.2** — Define pure free/rack/candidate-mount preview resolution, including rack-occupant
+  following, cancellation, and commit-equivalence fixture oracles.
+- **Task 10.3.3** — Move studio drag-preview ownership to `App` and route resolved preview items through
+  `WorldView`; release commits the final preview while cancellation remains mutation-free.
+- **Task 10.3.4** — Move workbench preview ownership to `Workbench`, retain its flat-placement behavior,
+  and graduate studio/workbench preview regression coverage.
+
+*Program design:* [`story-10.3-effective-placement-hierarchy.md`](./epics/epic-10/story-10.3-effective-placement-hierarchy.md)
 
 *Validate:* mounted devices always inherit effective room/wall/facing from their rack; rack previews move
 every occupant; cancel is mutation-free; commit matches the final preview; projection and placement tests
