@@ -122,9 +122,11 @@ State which Story you resolved in one line before doing anything else, so a wron
 ### 1. Resolve the target Story and its base
 
 - Resolve the Story id (arg or next not-done). State it in one line.
-- Check git state: the workflow is **one branch per Story off `main`** (`CLAUDE.md` §8). Confirm the base —
-  normally the previous Story is merged and we branch from an up-to-date `main`. If the previous Story isn't
-  merged yet, or `git status` is dirty, surface that and ask how to proceed rather than assuming.
+- Check git state and resolve the base for the new Story branch. By default, use an up-to-date `main` after
+  the previous Story is merged. When the user explicitly asks to start on the current branch or a named
+  previous Story branch, use that requested base instead: report its name and cleanliness, but do not treat
+  the unmerged relationship as a blocker or ask them to repeat authorization. If no base was specified and
+  the previous Story is unmerged, or if the worktree is dirty, surface it and ask how to proceed.
 
 ### 2. Read the inputs and reconstruct context
 
@@ -207,7 +209,8 @@ Per the task loop below: **do not commit.** The user verifies and commits both e
 
 After the plan and companion file are written and agreed:
 
-- **Create the Story branch:** `e<epic>-s<story>/<short-story-slug>` (`CLAUDE.md` §8), off the agreed base.
+- **Create the Story branch:** `e<epic>-s<story>/<short-story-slug>` (`CLAUDE.md` §8), off the resolved base
+  (which may be the current/named previous Story branch when the user explicitly requested it).
   (Branching is normal repo work, not a commit — fine to do.)
 - **Seed the harness task list:** `TaskCreate` one entry per planned Task, so the work can be executed
   one-by-one. This is the entry into the task loop.
