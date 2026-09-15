@@ -2,6 +2,7 @@
 // and cable-view.ts; this module supplies the small stage-specific answers those pure primitives need.
 
 import type { CableLayout } from "./cable-view";
+import { resolveEffectivePlacement } from "./effective-placement";
 import { deviceById, deviceRect, effectiveFacing, type LayoutCtx } from "./projection";
 import type { DeviceFacing, Scene } from "./scene-store";
 
@@ -10,16 +11,20 @@ import type { DeviceFacing, Scene } from "./scene-store";
 export function sceneCableLayout(ctx: LayoutCtx): CableLayout {
   return {
     inView: (id) => {
-      const placement = ctx.scene.ui.placements[id];
-      return placement?.space === ctx.space && placement.wall === ctx.wall;
+      const effective = resolveEffectivePlacement(ctx.scene, ctx.catalog, id);
+      return (
+        (effective.kind === "studio-free" || effective.kind === "studio-mounted") &&
+        effective.space === ctx.space &&
+        effective.wall === ctx.wall
+      );
     },
-    faceAnchorable: (id, face) => face === effectiveFacing(ctx.scene, id),
+    faceAnchorable: (id, face) => face === effectiveFacing(ctx.scene, id, ctx.catalog),
     rect: (id) => {
       const device = deviceById(ctx.scene, id);
       return device ? deviceRect(ctx, id, device.typeId) : null;
     },
-    clampsEstimate: (id) => effectiveFacing(ctx.scene, id) === "back",
-    frontPatchOver: (id) => effectiveFacing(ctx.scene, id) === "front",
+    clampsEstimate: (id) => effectiveFacing(ctx.scene, id, ctx.catalog) === "back",
+    frontPatchOver: (id) => effectiveFacing(ctx.scene, id, ctx.catalog) === "front",
   };
 }
 
