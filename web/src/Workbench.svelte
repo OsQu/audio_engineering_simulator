@@ -10,6 +10,7 @@
   import { isFocusable } from "./focus";
   import { wireKeyboardInput } from "./keyboard-input.svelte";
   import { PatchController } from "./patch-controller.svelte";
+  import { resolveEffectivePlacement, type PlacementPreview } from "./effective-placement";
   import { addBenchDevice, eventsInputDriven, removeDevice } from "./scene-ops";
   import { SceneSession } from "./session.svelte";
   import { footprint } from "./spatial";
@@ -89,6 +90,34 @@
   // seam, bound back from BenchStage so the window pointer handlers + jack measurement can use it.
   const patch = new PatchController(session);
   let benchApi = $state<WorldApi | undefined>();
+
+  // The bench stage reports pointer candidates, but this root owns the transient placement just as App
+  // owns the studio preview. Resolving offsets here keeps the renderer free of scene writes and makes a
+  // cancelled gesture indistinguishable from never having previewed at all.
+  let placementPreview = $state<PlacementPreview | null>(null);
+  let benchDrag = $state<{ id: string } | null>(null);
+  const benchOffset = (id: string): { x: number; y: number } => {
+    const effective = resolveEffectivePlacement(
+      session.scene,
+      session.catalog,
+      id,
+      placementPreview ?? undefined,
+    );
+    return effective.kind === "workbench" ? { x: effective.x, y: effective.y } : { x: 0, y: 0 };
+  };
+  const clearPlacementPreview = (): void => {
+    placementPreview = null;
+    benchDrag = null;
+  };
+  const previewPlacement = (id: string, x: number, y: number): void => {
+    benchDrag = { id };
+    placementPreview = { kind: "workbench", deviceId: id, x, y };
+  };
+  const commitPlacementPreview = (id: string, x: number, y: number): void => {
+    const bench = (session.scene.ui.bench ??= {});
+    bench[id] = { ...bench[id], x, y }; // retain the durable facing
+    clearPlacementPreview();
+  };
 
   // The DAW control seam for a benched computer's mixer surface (see App's `dawFor`) — session-backed,
   // reactive getters. Lets the device bench drive the DAW like the scene view.
@@ -325,6 +354,11 @@
       {session}
       desc={requested}
       {patch}
+      offsetFor={benchOffset}
+      drag={benchDrag}
+      onPreviewCandidate={previewPlacement}
+      onPreviewCommit={commitPlacementPreview}
+      onPreviewCancel={clearPlacementPreview}
       onRemove={removeBenchDevice}
       onOpen={(id) => (focusedDevice = id)}
       bind:api={benchApi}

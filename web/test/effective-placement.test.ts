@@ -97,4 +97,23 @@ describe("effective placement", () => {
       committed,
     );
   });
+
+  it("resolves a flat workbench preview exactly as committing its offset", () => {
+    const scene = structuredClone(studioScene);
+    scene.ui.spaces = [];
+    scene.ui.racks = [];
+    scene.ui.placements = {};
+    scene.ui.bench = { "free-front": { x: 123, y: 456, facing: "back" } };
+    const preview = { kind: "workbench" as const, deviceId: "free-front", x: 700, y: 800 };
+    const committed = structuredClone(scene);
+    committed.ui.bench = {
+      ...committed.ui.bench,
+      "free-front": { ...committed.ui.bench?.["free-front"], x: 700, y: 800 },
+    };
+
+    expect(resolveEffectivePlacement(scene, CATALOG, "free-front", preview)).toEqual(
+      resolveEffectivePlacement(committed, CATALOG, "free-front"),
+    );
+    expect(scene.ui.bench["free-front"]).toEqual({ x: 123, y: 456, facing: "back" });
+  });
 });

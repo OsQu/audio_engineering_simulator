@@ -42,6 +42,14 @@
     // The shared patching machinery (owned by the Workbench view root); the stage draws its cables +
     // measured anchors and its drag rubber-band.
     patch: PatchController;
+    /** Parent-resolved flat placement, including any transient workbench preview. */
+    offsetFor: (id: string) => { x: number; y: number };
+    /** Parent-owned active pointer identity; geometry arrives through `offsetFor`. */
+    drag?: { id: string } | null;
+    /** Pointer candidates and lifecycle are reported upward; this component never writes placement. */
+    onPreviewCandidate?: (id: string, x: number, y: number) => void;
+    onPreviewCommit?: (id: string, x: number, y: number) => void;
+    onPreviewCancel?: () => void;
     // The stage's coordinate seam, bound out to the Workbench for jack measurement + pointer routing.
     api?: WorldApi;
     // Remove a supporting device from the bench (never the DUT — the caller guards it). Hot-swaps.
@@ -49,7 +57,19 @@
     // Open a device's large focus surface (the scene view's per-device "open"). The DUT included.
     onOpen?: (id: string) => void;
   }
-  let { session, desc, patch, api = $bindable(), onRemove, onOpen }: Props = $props();
+  let {
+    session,
+    desc,
+    patch,
+    offsetFor,
+    drag = null,
+    onPreviewCandidate,
+    onPreviewCommit,
+    onPreviewCancel,
+    api = $bindable(),
+    onRemove,
+    onOpen,
+  }: Props = $props();
 
   // The monitored tap's measured anchor, for the "listening here" marker (the output PortRef → its jack).
   const tapAnchor = $derived.by(() => {
@@ -109,10 +129,9 @@
   // --- Device move + rotate (shared with the scene view) --------------------------------------------
   // Each device is a group on the flat bench; dragging its body repositions it (the `draggable` action).
   // A supporting device also rotates front↔back (`toggleBenchFacing` → `effectiveFacing`, the same facing
-  // model the scene view uses); the DUT shows both faces and never rotates. Committed offset + facing live
-  // in `scene.ui.bench` (round-trips through the bench's URL persistence); `dragging` is the live move
-  // preview. Bench placement is free — no walls/racks, overlaps allowed.
-  let dragging = $state<{ id: string; x: number; y: number } | null>(null);
+  // model the scene view uses); the DUT shows both faces and never rotates. The parent supplies both the
+  // committed-or-preview offset and active drag identity. Bench placement is free — no walls/racks,
+  // overlaps allowed.
   // A supporting device's toolbar can overhang its narrow chassis. Give diagonal pointer travel to an
   // overhanging button a short grace period instead of hiding the toolbar the instant the chassis ends.
   let openChromeId = $state<string | null>(null);
@@ -129,11 +148,6 @@
       chromeCloseTimer = undefined;
     }, 300);
   }
-  function benchOffset(id: string): { x: number; y: number } {
-    if (dragging?.id === id) return { x: dragging.x, y: dragging.y };
-    const b = session.scene.ui.bench?.[id];
-    return b ? { x: b.x, y: b.y } : { x: 0, y: 0 };
-  }
   const flipDevice = (id: string): void => toggleBenchFacing(session.scene, id);
 
   // Re-measure jack anchors when the bench layout that determines them changes: a live drag, a committed
@@ -141,7 +155,7 @@
   // so the camera needn't trigger it. Measure after paint (rAF) and again once the 0.45s rotate transition
   // settles (a just-flipped face reports its final, un-foreshortened jack positions then).
   $effect(() => {
-    void dragging;
+    void drag;
     JSON.stringify(session.scene.ui.bench ?? {});
     JSON.stringify(session.scene.patch.devices);
     void session.catalog.length;
@@ -296,22 +310,22 @@
           <div
             class="device-group"
             class:dut={isDut}
-            class:dragging={dragging?.id === bd.id}
+            class:dragging={drag?.id === bd.id}
             class:chrome-open={openChromeId === bd.id}
-            style:transform="translate({benchOffset(bd.id).x}px, {benchOffset(bd.id).y}px)"
-            style:z-index={dragging?.id === bd.id ? 10 : openChromeId === bd.id ? 6 : zBase}
+            style:transform="translate({offsetFor(bd.id).x}px, {offsetFor(bd.id).y}px)"
+            style:z-index={drag?.id === bd.id ? 10 : openChromeId === bd.id ? 6 : zBase}
             onpointerenter={() => showChrome(bd.id)}
             onpointerleave={() => hideChromeSoon(bd.id)}
             use:draggable={{
-              origin: () => benchOffset(bd.id),
+              origin: () => offsetFor(bd.id),
               scale: () => camera.zoom,
-              onStart: () => (dragging = { id: bd.id, ...benchOffset(bd.id) }),
-              onMove: (x, y) => (dragging = { id: bd.id, x, y }),
-              onEnd: (x, y) => {
-                const bench = (session.scene.ui.bench ??= {});
-                bench[bd.id] = { ...bench[bd.id], x, y }; // keep any facing
-                dragging = null;
+              onStart: () => {
+                const offset = offsetFor(bd.id);
+                onPreviewCandidate?.(bd.id, offset.x, offset.y);
               },
+              onMove: (x, y) => onPreviewCandidate?.(bd.id, x, y),
+              onEnd: (x, y) => onPreviewCommit?.(bd.id, x, y),
+              onCancel: () => onPreviewCancel?.(),
             }}
           >
             <!-- Shared hover header (same pattern as the scene view): appears above the device on hover.
