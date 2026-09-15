@@ -1,6 +1,14 @@
 import { describe, expect, it } from "vitest";
 import type { DeviceDescriptor } from "../src/catalog";
-import { canPlace, moveTo, moveToTop, rackSlotAt, wallSpawn } from "../src/placement";
+import { resolveEffectivePlacement } from "../src/effective-placement";
+import {
+  canPlace,
+  moveTo,
+  moveToTop,
+  placementPreviewAt,
+  rackSlotAt,
+  wallSpawn,
+} from "../src/placement";
 import type { LayoutCtx, PlacedItem } from "../src/projection";
 import type { Placement, Rack, Scene } from "../src/scene-store";
 import { footprint, type Room, type Wall } from "../src/spatial";
@@ -200,6 +208,67 @@ describe("moveTo — elevation drag mounts into a rack", () => {
     moveTo(ctxOf(scene, "front"), "c1", 300, 20);
     expect(scene.ui.placements.c1.rack).toEqual({ id: "r1", uSlot: 0 });
     expect(scene.ui.placements.c1.wall).toBe("front");
+  });
+});
+
+describe("placementPreviewAt — candidate/commit equivalence", () => {
+  it("resolves a rack-mount candidate exactly as its normal release commits it", () => {
+    const scene = makeScene(
+      [
+        {
+          id: "r1",
+          space: "s1",
+          wall: "front",
+          facing: "front",
+          position: { x: 100, y: 0, z: 500 },
+          slots: 8,
+        },
+      ],
+      { c1: { space: "s1", wall: "front", position: { x: 0, y: 0, z: 0 }, facing: "front" } },
+    );
+    const ctx = ctxOf(scene, "front");
+    const preview = placementPreviewAt(ctx, "c1", 300, 20);
+    const committed = structuredClone(scene);
+
+    moveTo(ctxOf(committed, "front"), "c1", 300, 20);
+
+    expect(preview).toEqual({ kind: "studio-mount", deviceId: "c1", rackId: "r1", uSlot: 0 });
+    expect(resolveEffectivePlacement(scene, CATALOG, "c1", preview ?? undefined)).toEqual(
+      resolveEffectivePlacement(committed, CATALOG, "c1"),
+    );
+  });
+
+  it("moves a rack and its mounted child together without touching the durable scene", () => {
+    const scene = makeScene(
+      [
+        {
+          id: "r1",
+          space: "s1",
+          wall: "front",
+          facing: "front",
+          position: { x: 2000, y: 0, z: 1000 },
+          slots: 8,
+        },
+      ],
+      {
+        c1: {
+          space: "s1",
+          wall: "front",
+          position: { x: 0, y: 0, z: 0 },
+          rack: { id: "r1", uSlot: 0 },
+          facing: "front",
+        },
+      },
+    );
+    const preview = placementPreviewAt(ctxOf(scene, "top"), "r1", 50, 1000);
+    const committed = structuredClone(scene);
+
+    moveTo(ctxOf(committed, "top"), "r1", 50, 1000);
+
+    expect(scene.ui.racks[0].position).toEqual({ x: 2000, y: 0, z: 1000 });
+    expect(resolveEffectivePlacement(scene, CATALOG, "c1", preview ?? undefined)).toEqual(
+      resolveEffectivePlacement(committed, CATALOG, "c1"),
+    );
   });
 });
 

@@ -40,9 +40,16 @@
     /** Optional per-item chrome in the top bar beside the drag grip (e.g. a device's flip / space /
      *  remove controls). The world layer stays ignorant of what these mean. */
     controls?: Snippet<[string]>;
-    /** Commit a move — the item's new lower-left-front position, world mm. Only called for a legal
-     *  spot; an illegal drop is ignored here and the item snaps back to its scene position. */
+    /** Commit a keyboard nudge — the item's new lower-left-front position, world mm. */
     onMoveTo: (id: string, x: number, y: number) => void;
+    /** Parent-owned drag state. Item geometry itself already arrives through `items`. */
+    drag?: { id: string; legal: boolean } | null;
+    /** Reports each pointer candidate; the parent derives the transient placement overlay. */
+    onPreviewCandidate?: (id: string, x: number, y: number, legal: boolean) => void;
+    /** A legal pointer release, for the parent to commit. */
+    onPreviewCommit?: (id: string, x: number, y: number) => void;
+    /** Pointer cancellation, for the parent to clear its overlay without committing. */
+    onPreviewCancel?: () => void;
     /** Legality predicate for live drag feedback + the commit gate: is `(x,y)` a legal spot for `id`? */
     canPlace?: (id: string, x: number, y: number) => boolean;
     /** When this changes (e.g. the shown space switches), the camera re-frames the new content. */
@@ -67,6 +74,10 @@
     item,
     controls,
     onMoveTo,
+    drag = null,
+    onPreviewCandidate,
+    onPreviewCommit,
+    onPreviewCancel,
     canPlace,
     fitKey,
     gridStep = 0,
@@ -110,11 +121,6 @@
   $effect(() => {
     api = worldApi;
   });
-
-  // Active device drag (world mm + whether the current spot is legal), or null. The drag *mechanics*
-  // live in the shared `draggable` action (device-drag.ts); this state is just the live preview the
-  // action feeds back, so `shown()` can render the item at the dragged position and flag illegal spots.
-  let drag = $state<{ id: string; x: number; y: number; legal: boolean } | null>(null);
 
   // A toolbar can be wider than the device that reveals it. Keep it open briefly after the pointer
   // leaves the chassis so a diagonal move toward an overhanging control (usually remove, at the far
@@ -176,10 +182,6 @@
     userAdjusted = true;
     camera.wheelZoom(e, viewport);
   }
-
-  // Where to render an item: its dragged preview if active, else its scene rect.
-  const shown = (it: WorldItem): { x: number; y: number } =>
-    drag?.id === it.id ? { x: drag.x, y: drag.y } : { x: it.rect.x, y: it.rect.y };
 
   // Frame all placed gear in the viewport: fit the zoom to the content bounding box (with padding) and
   // center it. Items are positioned by CSS `bottom` against the ROOM_HEIGHT-tall surface, so convert to
@@ -251,7 +253,6 @@
     {/if}
 
     {#each items as it (it.id)}
-      {@const p = shown(it)}
       <!-- The whole device body is the drag surface (grab anywhere to move); controls / jacks / the
            hover-header chrome opt out via DRAG_EXCLUDE, so operating them never moves the unit. -->
       <div
@@ -261,7 +262,7 @@
         class:dragging={drag?.id === it.id}
         class:illegal={drag?.id === it.id && !drag.legal}
         class:chrome-open={openChromeId === it.id}
-        style="left: {p.x}px; bottom: {p.y}px; width: {it.rect.width}px; height: {it.rect.height}px;
+        style="left: {it.rect.x}px; bottom: {it.rect.y}px; width: {it.rect.width}px; height: {it.rect.height}px;
                z-index: {drag?.id === it.id ? 10 : openChromeId === it.id ? 6 : (it.z ?? 2)};"
         role="button"
         tabindex="0"
@@ -277,13 +278,13 @@
           canPlace: (x, y) => legalAt(it.id, x, y),
           onStart: () => {
             userAdjusted = true;
-            drag = { id: it.id, x: it.rect.x, y: it.rect.y, legal: true };
           },
-          onMove: (x, y, legal) => (drag = { id: it.id, x, y, legal }),
+          onMove: (x, y, legal) => onPreviewCandidate?.(it.id, x, y, legal),
           onEnd: (x, y, legal) => {
-            if (legal) onMoveTo(it.id, x, y);
-            drag = null;
+            if (legal) onPreviewCommit?.(it.id, x, y);
+            else onPreviewCancel?.();
           },
+          onCancel: () => onPreviewCancel?.(),
         }}
         onkeydown={(e) => onDeviceKey(e, it)}
       >
