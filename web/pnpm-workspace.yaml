@@ -1,0 +1,5 @@
+# Dependencies whose install scripts pnpm may run; unlisted ones fail the
+# install with ERR_PNPM_IGNORED_BUILDS. esbuild's postinstall sets up its
+# native binary for Vite.
+allowBuilds:
+  esbuild: true

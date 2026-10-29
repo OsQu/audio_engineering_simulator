@@ -1,0 +1,15 @@
+# fx: each ticket gets a plain git worktree on the host. No database or
+# other servers; the only service is the Vite dev server for the browser
+# harness.
+
+[resources]
+# vite.config.ts pins 5173 (Vite moves to the next free port when it's
+# taken); start the harness on the lease's port instead:
+#   cd web && pnpm run dev --port "$VITE_PORT"
+ports = ["VITE_PORT"]
+
+[hooks]
+# Once per worktree: web deps and the wasm/worklet artifacts in web/public/,
+# which are untracked and the harness needs. The Rust toolchain isn't on the
+# broker's PATH by default, hence cargo's env.
+setup = '. "$HOME/.cargo/env" && cd web && pnpm install --frozen-lockfile && pnpm run wasm'
