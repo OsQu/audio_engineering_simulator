@@ -8,6 +8,11 @@
 #   cd web && pnpm run dev --port "$VITE_PORT"
 ports = ["VITE_PORT"]
 
+[env]
+# Each worktree starts with an empty target/; sccache (brew install sccache)
+# shares compiled dependency crates between them, setup's wasm build too.
+RUSTC_WRAPPER = "sccache"
+
 [hooks]
 # Once per worktree: web deps and the wasm/worklet artifacts in web/public/,
 # which are untracked and the harness needs. The Rust toolchain isn't on the
