@@ -1,6 +1,6 @@
 //! Assemble a runnable [`Patch`] into a compiled engine [`Schedule`].
 //!
-//! This is where the per-device chassis seam ([`instantiate`]) meets the whole scene. [`build_patch`]:
+//! This is where the per-device chassis seam ([`instantiate`](crate::instantiate)) meets the whole scene. [`build_patch`]:
 //! 1. **instantiates** each device into a fresh `Graph` (1..N nodes + internal edges), keying its
 //!    [`BuiltDevice`] map by the scene device id;
 //! 2. **remaps** each scene [`Connection`] — addressed by `(device, device-port)` — through those maps
