@@ -1019,9 +1019,10 @@ whole front-end story (mic choice, phantom, gain staging, the pad, feedback) —
 
 **Progress:** Stories 10.1 and 10.2 are ✅ complete. Story 10.1 establishes the deterministic browser,
 real-worklet, and pure-fixture seams that every later corrective Story graduates regressions through; Story
-10.2 makes structural engine changes trustworthy before view migration begins. Story 10.3 now establishes
-the effective-placement and preview foundation for later presentation migration. Stories 10.4–10.7 remain
-deliberately coarse until their respective planning passes.
+10.2 makes structural engine changes trustworthy before view migration begins. Story 10.3 establishes the
+effective-placement and preview foundation, and Story 10.4 now adds explicit presentation identity and
+camera-independent socket geometry. Stories 10.5–10.7 remain deliberately coarse until their respective
+planning passes.
 
 **Goal:** make one pure, deterministic presentation model authoritative for effective rack/device
 placement, presented faces, socket visibility and patchability, cable endpoints and portals, physical
@@ -1197,20 +1198,63 @@ remain deferred to Stories 10.6 and 10.7, respectively.
 every occupant; cancel is mutation-free; commit matches the final preview; projection and placement tests
 cover all walls, top view, workbench, invalid references, and mount/eject candidates.
 
-### Story 10.4 — Explicit faces & face-local socket geometry
+### Story 10.4 — Explicit faces & face-local socket geometry — 🚧 **In progress**
 
-*Goal:* resolve stable face instances for studio and workbench presentations and replace transformed
-world-space jack sweeps with revisioned, face-local socket geometry registration.
+*Goal:* give every studio, workbench, and focus presentation an explicit, stable identity and replace
+transformed world-space jack sweeps with revisioned face-local socket geometry. This establishes the
+authoritative face/socket input that later Stories use for physical layering, cable routing, and hit targets.
 
-*Watch out:* initial faces must render before geometry exists, hidden faces must not create a second live
-control tree, and descriptor/layout/font revisions must reject stale measurements. Flip completion is event-
-and generation-driven, including reversal, cancellation, unmount, and reduced motion; correctness must not
-depend on a fixed timer. Preserve one physical identity for duplex sockets and their endpoint aliases.
+*Watch out:* object and face layout must render before geometry exists; geometry-pending is not off-view.
+Keep the existing faceplate/control trees, including the hidden side within one chassis, rather than mounting
+a second live tree for measurement. Descriptor/config, content-layout, size, skin, and font changes must
+invalidate registrations, while camera and placement changes must not. Flip correctness is event- and
+generation-driven across reversal, cancellation, unmount, rack inheritance, and reduced motion—never a fixed
+timer. Preserve one physical identity and hit candidate for a duplex socket while retaining both endpoint
+aliases. Focus-window copies are explicitly non-patchable and cannot borrow stage geometry.
 
-*Validate:* studio/support devices expose one stable face, the workbench DUT exposes independent front and
-back instances, focus windows cannot collide with patchable identities, geometry survives camera and
-placement changes without remeasurement, and pending/stale/duplicate/configured-instance cases are covered
-by pure and focused browser tests.
+*Design notes (settled at planning):* A face-instance ID names a rendered chassis slot, not merely a device
+or `front`/`back`: studio and supporting-workbench slots stay stable through flips, the workbench DUT owns
+independent front and back slots, and every focus window owns a distinct non-patchable slot. The resolved
+face's selected side changes only when a transition settles. This was chosen over `device + face` keys, which
+collide across simultaneous workbench and focus copies. Flip state carries a monotonically increasing
+per-object generation; completion or cancellation applies only to the still-current generation, so a late
+event cannot settle a reversal or replacement. Transitioning device/rack faces temporarily suppress ordinary,
+portal, and held physical leads while retaining the held pick's logical source/banner. This minimal policy
+belongs here because face state decides whether an endpoint is presentable; unified endpoint routing remains
+Story 10.6. Geometry is cached per `(face instance, side)` in natural face-local millimetres and registered
+against an opaque descriptor/layout revision plus a measurement generation. Empty, stale, duplicate, and
+unmounted registrations have explicit outcomes. This was chosen over transformed `getBoundingClientRect()`
+sweeps and timeout remeasurement, which couple physical truth to camera/placement/animation state. A physical
+socket owns one canonical ID and a list of endpoint aliases; a duplex connector therefore registers once,
+not once per direction. DOM measurement remains an adapter to existing authored layouts—not a second set of
+hand-maintained socket coordinates.
+
+- **Task 10.4.1** — Define the pure face-presentation model: stable studio/workbench/focus instance IDs,
+  resolved face states, and generation-guarded begin/finish/cancel/unmount transition oracles, including rack
+  inheritance, top-view absence, reversal, and reduced motion.
+- **Task 10.4.2** — Integrate resolved faces and lifecycle events into studio, workbench, chassis, and focus
+  rendering; suppress all current physical lead variants during transitions while retaining logical picks,
+  with no timer-dependent completion.
+- **Task 10.4.3** — Define the pure revisioned socket-geometry index: face-local dimensions and socket
+  centres/radii, canonical physical socket IDs, endpoint aliases, pending/current/stale registration, and
+  unregister semantics.
+- **Task 10.4.4** — Replace global transformed jack sweeps with per-face DOM registration and projection;
+  invalidate for descriptor/config/layout/size/skin/font changes while proving camera, placement, and rack
+  movement reuse unchanged local geometry.
+- **Task 10.4.5** — Complete the focused browser matrix for zoom, both flip directions, rapid reversal and
+  cancellation, workbench DUT duplicates, focus isolation, duplex directions, and differently configured
+  same-type instances; remove the legacy anchor policies and fixed settle timers owned by this Story.
+
+*Program design:* [`story-10.4-explicit-faces-socket-geometry.md`](./epics/epic-10/story-10.4-explicit-faces-socket-geometry.md)
+
+*Validate:* studio and supporting-workbench devices expose one stable presentation slot, the workbench DUT
+exposes independently addressed front and back slots, and focus windows cannot collide with patchable stage
+identities. Initial faces render with explicit geometry-pending sockets; current registrations survive camera
+and placement changes without remeasurement; stale, duplicate, unmounted, descriptor-changed, and
+differently configured instances resolve deterministically. Flip completion, cancellation, reversal,
+unmount, rack inheritance, and reduced motion are generation/event driven; affected physical leads remain
+suppressed until settlement while a held logical pick survives. Pure tests, focused browser tests, Vitest,
+typecheck, and format/check are green with no fixed flip-settle timeout required for correctness.
 
 ### Story 10.5 — Resolved presentation, stable layers & rack assemblies
 
