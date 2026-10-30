@@ -21,7 +21,7 @@
     <span>{text}</span>
     <select
       aria-label={text}
-      value={value}
+      {value}
       onchange={(event) => handle.setConfig(key, Number(event.currentTarget.value))}
     >
       {#each desc.options ?? [] as option (option.value)}

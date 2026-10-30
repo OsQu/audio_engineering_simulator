@@ -7,14 +7,7 @@
   import { TOPOLOGY_BUILD_VERSION, TOPOLOGY_PROTOCOL_VERSION } from "../topology-protocol";
 
   type WorkletSmokeState =
-    | "idle"
-    | "starting"
-    | "ready"
-    | "accepted"
-    | "installed"
-    | "rejected"
-    | "mismatch"
-    | "error";
+    "idle" | "starting" | "ready" | "accepted" | "installed" | "rejected" | "mismatch" | "error";
 
   const request = {
     generation: 41,
@@ -101,7 +94,9 @@
 </script>
 
 <main data-testid="worklet-smoke">
-  <output data-testid="worklet-state" data-state={smokeState} data-events={events.join(",")}>{smokeState}</output>
+  <output data-testid="worklet-state" data-state={smokeState} data-events={events.join(",")}
+    >{smokeState}</output
+  >
   {#if detail}
     <output data-testid="worklet-detail">{detail}</output>
   {/if}

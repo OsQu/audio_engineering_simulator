@@ -35,6 +35,22 @@
   import type { SurfacePoint, WorldApi } from "./world-api";
   import { BENCH_DEVICE } from "./workbench-scene";
   import { benchCableLayout, benchVisibleFaces } from "./view-resolver";
+  import { tick, untrack } from "svelte";
+  import { awaitFlip } from "./face-lifecycle";
+  import {
+    beginFlip,
+    cancelFlip,
+    createPresentationState,
+    finishFlip,
+    unmountPresentation,
+  } from "./presentation-state";
+  import {
+    faceInstanceId,
+    physicalLeadsSuppressed,
+    type ResolvedFace,
+    resolveFaces,
+    transitionOwner,
+  } from "./view-resolution";
 
   interface Props {
     session: SceneSession;
@@ -148,7 +164,62 @@
       chromeCloseTimer = undefined;
     }, 300);
   }
-  const flipDevice = (id: string): void => toggleBenchFacing(session.scene, id);
+  // --- Presented faces (Story 10.4) ---------------------------------------------------------------
+  // The bench's flip state, as in the studio (App): the durable facing changes at once, the resolved face
+  // stays settled + non-patchable with its leads hidden until the generation's transition reports back.
+  // The DUT's front/back slots never flip; only a supporting device's single slot does.
+  let presentation = $state.raw(createPresentationState());
+  const benchFaces = $derived.by((): Map<string, ResolvedFace> => {
+    const faces = resolveFaces({
+      kind: "workbench",
+      scene: session.scene,
+      catalog: session.catalog,
+      presentation,
+      dutId: BENCH_DEVICE,
+    });
+    return new Map(faces.map((face) => [face.id, face]));
+  });
+  const benchFace = (id: string, isDut: boolean, back: boolean): ResolvedFace | undefined =>
+    benchFaces.get(
+      faceInstanceId(
+        { kind: "workbench", role: isDut ? (back ? "dut-back" : "dut-front") : "support" },
+        id,
+      ),
+    );
+
+  async function flipDevice(id: string): Promise<void> {
+    toggleBenchFacing(session.scene, id);
+    const started = beginFlip(presentation, id, effectiveFacing(session.scene, id));
+    presentation = started.state;
+    await tick(); // the flipper now carries the new facing, so its transition has started
+    awaitFlip(
+      surface ?? document,
+      id,
+      started.generation,
+      (generation) => {
+        presentation = finishFlip(presentation, id, generation);
+        requestAnimationFrame(() => patch.measure(worldApi));
+      },
+      (generation) => {
+        presentation = cancelFlip(presentation, id, generation);
+      },
+    );
+  }
+
+  // A removed device's in-flight flip is invalidated, so its torn-down DOM can't settle anything.
+  $effect(() => {
+    const present = new Set(devices.map((d) => d.id));
+    const flips = untrack(() => presentation.flips);
+    for (const owner of Object.keys(flips)) {
+      if (!present.has(owner)) presentation = unmountPresentation(presentation, owner);
+    }
+  });
+
+  // Whether a lead touching this device is drawn: not while it is mid-flip.
+  const leadsShown = (id: string): boolean =>
+    !physicalLeadsSuppressed(session.scene, presentation, id);
+  const connShown = (c: Connection): boolean =>
+    leadsShown(c.from.device) && leadsShown(c.to.device);
 
   // Re-measure jack anchors when the bench layout that determines them changes: a live drag, a committed
   // move/facing (`ui.bench`), the device set, or the catalog. Surface-local coords are pan/zoom-invariant,
@@ -244,7 +315,7 @@
              jack). The cable layer sits at z 2; device groups interleave around it by facing (see zBase),
              so a cable to a front-shown device's hidden rear socket tucks behind its panel. -->
       <svg class="cables" width={natW} height={natH} viewBox="0 0 {natW} {natH}">
-        {#each session.scene.patch.connections as c (connKey(c))}
+        {#each session.scene.patch.connections.filter(connShown) as c (connKey(c))}
           {@const ends = cableEndpoints(benchCableLayout, patch.jackAnchors, c, worldApi)}
           {#if ends}
             {@const d = cablePathData(ends.a, ends.b)}
@@ -265,7 +336,7 @@
           {/if}
         {/each}
 
-        {#if patch.dragCable}
+        {#if patch.dragCable && leadsShown(patch.dragCable.source.device)}
           <!-- The drag rubber-band from the source jack to the cursor, coloured legal/illegal on hover. -->
           <Cable
             drag
@@ -398,6 +469,10 @@
                       class:show-back={isDut && face.flipped}
                       style:width="{lay.size.width}px"
                       style:height="{lay.size.height}px"
+                      data-face-instance={benchFace(bd.id, isDut, face.flipped)?.id}
+                      data-face-state={benchFace(bd.id, isDut, face.flipped)?.state}
+                      data-interaction={benchFace(bd.id, isDut, face.flipped)?.interaction}
+                      data-flip-owner={transitionOwner(session.scene, bd.id)}
                     >
                       <Faceplate {...faceProps(bd.id, bd.desc, face.flipped)} />
                     </div>

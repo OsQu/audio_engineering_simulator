@@ -13,14 +13,16 @@ in the companion file, then `ask_human` (blocking) for sign-off.
 | Task | Status |
 | --- | --- |
 | 10.4.1 pure face-presentation model | done (WIP commit 04efdea) |
-| 10.4.2 face lifecycle integration | design drafted, awaiting review |
+| 10.4.2 face lifecycle integration | in progress |
 | 10.4.3 revisioned socket-geometry model | planned |
 | 10.4.4 face-local DOM registration & projection | planned |
 | 10.4.5 browser matrix & legacy cleanup | planned |
 
 ## Decisions
+- 2026-10-30 Oskari approved the 10.4.2 design and authorised proceeding through 10.4.3–10.4.5 without
+  per-task review (I-131). Designs are still written into the companion file before each task.
 - Flip completion via WAAPI `CSSTransition.finished` per generation — immune to reversal event ordering.
 - Face slots are `display: contents` wrappers with data attributes — no prop threading through 9 faceplates.
 
 ## Open questions
-- Oskari's sign-off on the 10.4.2 design.
+- none

@@ -10,7 +10,7 @@
 import type { JackAnchor } from "./cable-view";
 import type { CableType } from "./catalog";
 import type { ConnectVerdict } from "./connections";
-import { measureJacks as measureJacksDom } from "./jack-anchors";
+import { measureJacks as measureJacksDom, patchableJackKey } from "./jack-anchors";
 import type { JackHit, PatchState } from "./patching";
 import * as patching from "./patching";
 import type { Connection } from "./scene";
@@ -68,9 +68,7 @@ export class PatchController {
       this.#cableDown = { x: e.clientX, y: e.clientY, moved: false };
       return;
     }
-    const hit = this.#jackHitOf(
-      (e.target as HTMLElement | null)?.closest<HTMLElement>("[data-jack]")?.dataset.jack,
-    );
+    const hit = this.#jackHitOf(patchableJackKey(e.target as Element | null));
     if (!hit?.anchor) return; // only a measured jack can start a drag
     e.preventDefault();
     this.#cableDown = { x: e.clientX, y: e.clientY, moved: false };
@@ -88,10 +86,7 @@ export class PatchController {
     }
     const cursor = worldApi.clientToSurface(e.clientX, e.clientY);
     const srcAnchor = this.jackAnchors[patching.jackKeyOf(this.dragCable.source)] ?? null;
-    const hit = this.#jackHitOf(
-      document.elementFromPoint(e.clientX, e.clientY)?.closest<HTMLElement>("[data-jack]")?.dataset
-        .jack,
-    );
+    const hit = this.#jackHitOf(patchableJackKey(document.elementFromPoint(e.clientX, e.clientY)));
     this.dragCable = patching.pointerMove(
       this.dragCable,
       hit,
@@ -106,10 +101,7 @@ export class PatchController {
     // The pending second-click needs the jack under the release point; drag-release uses the last verdict.
     const hit =
       this.dragCable.mode === "pending" && !this.#cableDown.moved
-        ? this.#jackHitOf(
-            document.elementFromPoint(e.clientX, e.clientY)?.closest<HTMLElement>("[data-jack]")
-              ?.dataset.jack,
-          )
+        ? this.#jackHitOf(patchableJackKey(document.elementFromPoint(e.clientX, e.clientY)))
         : null;
     const res = patching.pointerUp(this.dragCable, hit, !this.#cableDown.moved, this.#patchDeps());
     if (res.commit) this.commitCable(res.commit);
