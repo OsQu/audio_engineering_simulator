@@ -15,3 +15,9 @@
   the local branch and keep the local docs, because the remote's three doc deltas were stale against the code.
 - The force-push was blocked by the agent permission classifier, so the human must run it. Downstream
   e10-s2..s4 branches based on the old SHAs will need rebasing.
+
+## 2026-10-30 — handover to human
+- State: all gates green; 3 local commits on top of the 10.1 work (5676c88, d5fd0a6, 160b068). Nothing pushed.
+- Remaining: the human force-pushes with
+  `git push --force-with-lease=e10-s1/regression-harness:00afcb0 -u origin e10-s1/regression-harness`,
+  then runs `fx mv AES-64 finished`. Downstream e10-s2..s4 branches need rebasing onto the new SHAs.
