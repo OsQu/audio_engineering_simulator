@@ -47,3 +47,8 @@
   isolation with a focusable fixture, duplex, differently configured instances) + legacy cleanup.
 - Known pre-existing: known-regressions "populated rack drag" passes unexpectedly (Story 10.3 fixed it) —
   recorded as project learning I-132.
+
+## 2026-10-30 21:13 fx (broker, lane: factory)
+
+- **Did:** The factory run was interrupted for a takeover by oskari before it wrote a worklog entry; its uncommitted changes are in the WIP commit that follows.
+- **Next:** oskari continues interactively.
