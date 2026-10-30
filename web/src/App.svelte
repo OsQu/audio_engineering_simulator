@@ -554,9 +554,12 @@
               .join(" · ")}</span
           >
           {#if session.topology.outcome.kind === "rejected"}
-            <button type="button" onclick={() => session.retryTopology()}>Retry topology change</button>
+            <button type="button" onclick={() => session.retryTopology()}
+              >Retry topology change</button
+            >
           {:else if session.topology.outcome.kind === "unknown"}
-            <button type="button" onclick={() => session.recoverTopology()}>Recover topology</button>
+            <button type="button" onclick={() => session.recoverTopology()}>Recover topology</button
+            >
           {/if}
         </div>
       </details>

@@ -1017,9 +1017,9 @@ whole front-end story (mic choice, phantom, gain staging, the pad, feedback) —
 
 ## Epic 10 — Authoritative Visibility, Location & Patch Interaction
 
-**Progress:** Story 10.1 is ✅ complete and Story 10.2 is 🚧 in progress. Story 10.1 establishes the
-deterministic browser, real-worklet, and pure-fixture seams that every later corrective Story graduates
-regressions through; Story 10.2 makes structural engine changes trustworthy before view migration begins.
+**Progress:** Stories 10.1 and 10.2 are ✅ complete. Story 10.1 establishes the deterministic browser,
+real-worklet, and pure-fixture seams that every later corrective Story graduates regressions through; Story
+10.2 makes structural engine changes trustworthy before view migration begins.
 Stories 10.3–10.7 remain deliberately coarse until their respective planning passes.
 
 **Goal:** make one pure, deterministic presentation model authoritative for effective rack/device
@@ -1124,7 +1124,7 @@ semantic assertions; and an intentionally demonstrated unexpected pass proves th
 closed. Vitest, typecheck, format/check, and the new browser gates are green apart from the explicitly tracked
 expected failures.
 
-### Story 10.2 — Acknowledged topology transactions — 🚧 **In progress**
+### Story 10.2 — Acknowledged topology transactions — ✅ **Complete**
 
 *Goal:* make connect, disconnect, cable/config/device changes, and load/reload explicit acknowledged
 transactions so browser patch tests can distinguish gesture failures from engine transport failures.
@@ -1147,13 +1147,13 @@ rejection, retains the proposal, disables submissions, and offers explicit recov
 patch plus current runtime parameters. Recovery invalidates the old generation, so late replies cannot mutate
 state. Protocol mismatch fails closed at readiness rather than attempting best-effort compatibility.
 
-- **Task 10.2.1** — Define a pure, clock-driven topology transaction state machine with request/reply
+- **Task 10.2.1** — ✅ Define a pure, clock-driven topology transaction state machine with request/reply
   correlation, scoped deltas, generation/revision invalidation, and hand-checked timeout/recovery oracles.
-- **Task 10.2.2** — Version the worklet/UI structural protocol and emit separate compiler-accepted and
+- **Task 10.2.2** — ✅ Version the worklet/UI structural protocol and emit separate compiler-accepted and
   post-install notifications, including a protocol-mismatch readiness failure.
-- **Task 10.2.3** — Migrate `SceneSession`, patch gestures, and every config/device/load/reload producer to
+- **Task 10.2.3** — ✅ Migrate `SceneSession`, patch gestures, and every config/device/load/reload producer to
   staged serialized transactions with visible retry/recovery feedback and no unacknowledged `hotSwap` escape.
-- **Task 10.2.4** — Prove the full fake-transport matrix and real-worklet acceptance/rejection/recovery
+- **Task 10.2.4** — ✅ Prove the full fake-transport matrix and real-worklet acceptance/rejection/recovery
   behavior; browser gestures retain their pending action until a known transaction outcome.
 
 *Program design:* [`story-10.2-acknowledged-topology-transactions.md`](./epics/epic-10/story-10.2-acknowledged-topology-transactions.md)
@@ -1161,6 +1161,10 @@ state. Protocol mismatch fails closed at readiness rather than attempting best-e
 *Validate:* fake transport/clock coverage proves accepted, rejected, busy, unavailable, timeout, recovery,
 late-reply, concurrent UI-edit, and protocol-mismatch behavior; a real-worklet smoke test proves acceptance
 and rejection without silently losing the user's pending action.
+
+*Delivered:* gates green (Vitest, typecheck, Biome, real-worklet Playwright). The worklet compiles
+synchronously, so it never emits `busy`/`unavailable`; those outcomes are proven only at the pure level. See
+the companion file's residual notes.
 
 ### Story 10.3 — Effective placement hierarchy & live previews
 
