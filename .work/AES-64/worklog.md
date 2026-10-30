@@ -9,3 +9,9 @@
   overridable with `--strictPort` (5676c88). `pnpm run format` also reformatted BenchStage.svelte
   (kept; file is in the branch diff) and two untouched widgets (reverted; out of scope).
 - Next: human reviews/merges the stacked e10 branches.
+
+## 2026-10-30 — push
+- Normal push was rejected because origin had the pre-rebase SHAs. Asked the human (I-125, I-126): force-push
+  the local branch and keep the local docs, because the remote's three doc deltas were stale against the code.
+- The force-push was blocked by the agent permission classifier, so the human must run it. Downstream
+  e10-s2..s4 branches based on the old SHAs will need rebasing.

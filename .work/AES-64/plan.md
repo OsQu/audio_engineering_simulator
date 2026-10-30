@@ -16,5 +16,9 @@ executable regression proof. Program design: `docs/epics/epic-10/story-10.1-regr
   worktrees/agents don't collide; `reuseExistingServer: false` stays.
 - Known regressions use `test.fail` (fail-closed on unexpected pass), not skip/retry.
 
+- Remote branch held a pre-rebase copy (8d53888..00afcb0, on old main without fx.toml). Human chose
+  (I-125/I-126) to force-push the local branch rebased on main and keep the local docs: the remote's
+  doc wording (`send(ControlMessage)`, "separate project", matrix "z-order") didn't match the code.
+
 ## Open questions
 - None blocking. Stacked branches e10-s2..s4 build on this; merge order s1 → s4.
