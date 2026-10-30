@@ -10,22 +10,41 @@
 import type { JackAnchor } from "./cable-view";
 import type { CableType } from "./catalog";
 import type { ConnectVerdict } from "./connections";
-import { measureJacks as measureJacksDom, patchableJackKey } from "./jack-anchors";
+import type { GeometryRegistrar } from "./face-geometry";
+import { patchableJackKey } from "./jack-anchors";
 import type { JackHit, PatchState } from "./patching";
 import * as patching from "./patching";
 import type { Connection } from "./scene";
 import * as sceneOps from "./scene-ops";
+import {
+  createSocketGeometryIndex,
+  type FaceGeometry,
+  type GeometrySlot,
+  type ProjectedSlot,
+  projectAnchors,
+  type RegisterOutcome,
+  registerGeometry,
+  requestGeometry,
+  unregisterGeometry,
+} from "./socket-geometry";
 import type { SceneSession } from "./session.svelte";
 import type { WorldApi } from "./world-api";
 
-export class PatchController {
+export class PatchController implements GeometryRegistrar {
   #session: SceneSession;
 
-  // Measured jack-connector centres in surface space, keyed "device:direction:port" (from each jack's
-  // `data-jack` attribute), each tagged with the chassis face it sits on. Populated by `measure` after
-  // layout; lets a cable anchor at the real socket when its jack is on the shown face, falling back to a
-  // chassis-centre estimate otherwise.
-  jackAnchors = $state<Record<string, JackAnchor>>({});
+  // Face-local socket geometry (Story 10.4), registered per (face instance, side) by each face slot's
+  // `faceGeometry` action at its current revision. Camera and placement never touch it.
+  geometry = $state.raw(createSocketGeometryIndex());
+  // The view root's current projection of its registered slots onto the stage surface (frames + which
+  // side faces the operator). Pure inputs; moving a device or the camera only changes this.
+  #slots = $state.raw<() => readonly ProjectedSlot[]>(() => []);
+
+  // Socket centres in surface space, keyed "device:direction:port" (every endpoint alias of each socket),
+  // each tagged with the side it sits on — the contract cable routing and patching consume. Derived from
+  // the geometry index × the projected slots; lets a cable anchor at the real socket when its side is
+  // shown, falling back to a chassis-centre estimate otherwise.
+  jackAnchors = $derived<Record<string, JackAnchor>>(projectAnchors(this.geometry, this.#slots()));
 
   // An in-progress patch from a source jack: the source end + its anchor, the moving free end (surface
   // coords), and — when hovering a candidate jack — the verdict so we can colour the cable + commit.
@@ -40,10 +59,24 @@ export class PatchController {
     this.#session = session;
   }
 
-  // Re-measure jack anchors into surface space (the DOM work lives in jack-anchors.ts). The view root's
-  // `$effect` schedules this on layout changes; the controller just owns the resulting store.
-  measure(worldApi: WorldApi | undefined): void {
-    if (worldApi) this.jackAnchors = measureJacksDom(worldApi);
+  /** Bind the view root's slot projection (read reactively by `jackAnchors`). */
+  project(slots: () => readonly ProjectedSlot[]): void {
+    this.#slots = slots;
+  }
+
+  // GeometryRegistrar — the face slots' `faceGeometry` action drives these.
+  request(slot: GeometrySlot, revision: string): number | null {
+    const req = requestGeometry(this.geometry, slot, revision);
+    if (req.index !== this.geometry) this.geometry = req.index;
+    return req.measure ? req.generation : null;
+  }
+  register(slot: GeometrySlot, generation: number, geometry: FaceGeometry): RegisterOutcome {
+    const res = registerGeometry(this.geometry, slot, generation, geometry);
+    this.geometry = res.index;
+    return res.outcome;
+  }
+  unregister(slot: GeometrySlot): void {
+    this.geometry = unregisterGeometry(this.geometry, slot);
   }
 
   // Resolve a `data-jack` key into the JackHit the pure transitions need (endpoint + measured anchor),

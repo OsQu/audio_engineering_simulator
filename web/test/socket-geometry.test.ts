@@ -3,6 +3,7 @@ import {
   createSocketGeometryIndex,
   type FaceGeometry,
   geometryRevision,
+  projectAnchors,
   projectSocket,
   registerGeometry,
   requestGeometry,
@@ -144,5 +145,28 @@ describe("socket projection", () => {
   it("depends only on the frame, so camera and placement moves need no remeasurement", () => {
     const at = (x: number) => projectSocket(g, socket, { x, y: 0, width: 200, height: 50 }, true);
     expect(at(1000).x - at(0).x).toBe(1000);
+  });
+});
+
+describe("anchor projection", () => {
+  it("emits every alias of a current socket at its projected centre, tagged with the side", () => {
+    const req = requestGeometry(createSocketGeometryIndex(), BACK, "r1");
+    const duplex = jack("pc:output:1", 50, ["pc:output:1", "pc:input:1"]);
+    const { index } = registerGeometry(req.index, BACK, req.generation, geometry([duplex]));
+    const frame = { x: 0, y: 0, width: 200, height: 50 };
+
+    const anchors = projectAnchors(index, [{ slot: BACK, frame, presented: true }]);
+    expect(anchors).toEqual({
+      "pc:output:1": { x: 50, y: 20, face: "back" },
+      "pc:input:1": { x: 50, y: 20, face: "back" },
+    });
+  });
+
+  it("omits pending and off-view slots", () => {
+    const req = requestGeometry(createSocketGeometryIndex(), FRONT, "r1");
+    const frame = { x: 0, y: 0, width: 200, height: 50 };
+    expect(projectAnchors(req.index, [{ slot: FRONT, frame, presented: true }])).toEqual({});
+    const { index } = registerGeometry(req.index, FRONT, req.generation, geometry([jack("j", 1)]));
+    expect(projectAnchors(index, [{ slot: FRONT, frame: null, presented: true }])).toEqual({});
   });
 });
