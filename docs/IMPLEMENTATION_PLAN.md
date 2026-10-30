@@ -1019,8 +1019,9 @@ whole front-end story (mic choice, phantom, gain staging, the pad, feedback) —
 
 **Progress:** Stories 10.1 and 10.2 are ✅ complete. Story 10.1 establishes the deterministic browser,
 real-worklet, and pure-fixture seams that every later corrective Story graduates regressions through; Story
-10.2 makes structural engine changes trustworthy before view migration begins. Story 10.3 now establishes
-the effective-placement and preview foundation for later presentation migration. Stories 10.4–10.7 remain
+10.2 makes structural engine changes trustworthy before view migration begins. Story 10.3 is ✅ complete:
+it establishes the effective-placement and preview foundation for later presentation migration, and its
+App-owned rack preview graduated the populated-rack-drag known regression into the required browser suite. Stories 10.4–10.7 remain
 deliberately coarse until their respective planning passes.
 
 **Goal:** make one pure, deterministic presentation model authoritative for effective rack/device
@@ -1167,7 +1168,7 @@ and rejection without silently losing the user's pending action.
 synchronously, so it never emits `busy`/`unavailable`; those outcomes are proven only at the pure level. See
 the companion file's residual notes.
 
-### Story 10.3 — Effective placement hierarchy & live previews — 🚧 **In progress**
+### Story 10.3 — Effective placement hierarchy & live previews — ✅ **Complete**
 
 *Goal:* centralize stored-location reading, rack inheritance, U-slot positioning, view projection, and
 transient free/rack/mount previews behind one pure effective-placement path.
@@ -1185,14 +1186,14 @@ rack mount. `App` and `Workbench` own their transient preview state and pass it 
 local drag state, which cannot make rack occupants share one preview. Cable endpoint and hit-target following
 remain deferred to Stories 10.6 and 10.7, respectively.
 
-- **Task 10.3.1** — Introduce pure effective-placement resolution and migrate projection, facing, view
+- **Task 10.3.1** — ✅ Introduce pure effective-placement resolution and migrate projection, facing, view
   membership, and rack-occupancy consumers away from copied mounted placement fields; prove valid and
   unresolved free/mounted/workbench cases.
-- **Task 10.3.2** — Define pure free/rack/candidate-mount preview resolution, including rack-occupant
+- **Task 10.3.2** — ✅ Define pure free/rack/candidate-mount preview resolution, including rack-occupant
   following, cancellation, and commit-equivalence fixture oracles.
-- **Task 10.3.3** — Move studio drag-preview ownership to `App` and route resolved preview items through
+- **Task 10.3.3** — ✅ Move studio drag-preview ownership to `App` and route resolved preview items through
   `WorldView`; release commits the final preview while cancellation remains mutation-free.
-- **Task 10.3.4** — Move workbench preview ownership to `Workbench`, retain its flat-placement behavior,
+- **Task 10.3.4** — ✅ Move workbench preview ownership to `Workbench`, retain its flat-placement behavior,
   and graduate studio/workbench preview regression coverage.
 
 *Program design:* [`story-10.3-effective-placement-hierarchy.md`](./epics/epic-10/story-10.3-effective-placement-hierarchy.md)
@@ -1200,6 +1201,13 @@ remain deferred to Stories 10.6 and 10.7, respectively.
 *Validate:* mounted devices always inherit effective room/wall/facing from their rack; rack previews move
 every occupant; cancel is mutation-free; commit matches the final preview; projection and placement tests
 cover all walls, top view, workbench, invalid references, and mount/eject candidates.
+
+*Delivered:* `effective-placement.ts` is the one pure resolver (free/mounted/workbench/unresolved plus a
+`PlacementPreview` overlay); `placementPreviewAt` produces the exact candidate a normal release commits.
+`App` and `Workbench` own preview state; `WorldView`/`BenchStage` only report and render it. The
+Story 10.1 known regression "populated rack drag moves the occupant before release" now passes and was
+graduated to `web/test-browser/placement-preview.spec.ts`; the remaining known regressions stay owned by
+10.5/10.7.
 
 ### Story 10.4 — Explicit faces & face-local socket geometry
 

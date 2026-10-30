@@ -238,6 +238,41 @@ describe("placementPreviewAt — candidate/commit equivalence", () => {
     );
   });
 
+  it("resolves an eject candidate off a rack exactly as its normal release commits it", () => {
+    const scene = makeScene(
+      [
+        {
+          id: "r1",
+          space: "s1",
+          wall: "front",
+          facing: "front",
+          position: { x: 100, y: 0, z: 500 },
+          slots: 8,
+        },
+      ],
+      {
+        c1: {
+          space: "s1",
+          wall: "front",
+          position: { x: 0, y: 0, z: 0 },
+          rack: { id: "r1", uSlot: 0 },
+          facing: "front",
+        },
+      },
+    );
+    // x=2000 is well right of the rack frame, so no slot is hit: the candidate is a free placement.
+    const preview = placementPreviewAt(ctxOf(scene, "front"), "c1", 2000, 20);
+    const committed = structuredClone(scene);
+
+    moveTo(ctxOf(committed, "front"), "c1", 2000, 20);
+
+    expect(preview?.kind).toBe("studio-free");
+    expect(scene.ui.placements.c1.rack).toEqual({ id: "r1", uSlot: 0 });
+    expect(resolveEffectivePlacement(scene, CATALOG, "c1", preview ?? undefined)).toEqual(
+      resolveEffectivePlacement(committed, CATALOG, "c1"),
+    );
+  });
+
   it("moves a rack and its mounted child together without touching the durable scene", () => {
     const scene = makeScene(
       [
