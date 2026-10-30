@@ -262,7 +262,8 @@
         class:dragging={drag?.id === it.id}
         class:illegal={drag?.id === it.id && !drag.legal}
         class:chrome-open={openChromeId === it.id}
-        style="left: {it.rect.x}px; bottom: {it.rect.y}px; width: {it.rect.width}px; height: {it.rect.height}px;
+        style="left: {it.rect.x}px; bottom: {it.rect.y}px; width: {it.rect.width}px; height: {it
+          .rect.height}px;
                z-index: {drag?.id === it.id ? 10 : openChromeId === it.id ? 6 : (it.z ?? 2)};"
         role="button"
         tabindex="0"
