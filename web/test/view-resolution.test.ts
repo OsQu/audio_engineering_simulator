@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { beginFlip, createPresentationState } from "../src/presentation-state";
-import { physicalLeadsSuppressed, resolveFaces } from "../src/view-resolution";
+import { physicalLeadsSuppressed, resolveFaces, transitionOwner } from "../src/view-resolution";
 import { benchScene, CATALOG, studioScene } from "./fixtures/resolver-contract";
 
 describe("face presentation resolution", () => {
@@ -52,6 +52,8 @@ describe("face presentation resolution", () => {
     });
     expect(physicalLeadsSuppressed(studioScene, started.state, "mounted-front")).toBe(true);
     expect(physicalLeadsSuppressed(studioScene, started.state, "free-front")).toBe(false);
+    expect(transitionOwner(studioScene, "mounted-front")).toBe("rack-front");
+    expect(transitionOwner(studioScene, "free-front")).toBe("free-front");
   });
 
   it("gives the DUT independent faces and a support device one stable slot across facing changes", () => {

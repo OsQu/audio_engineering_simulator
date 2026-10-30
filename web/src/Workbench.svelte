@@ -5,6 +5,7 @@
   // requested typeId against that catalog — hot-swapping to the bench scene (the device-under-test plus a
   // fixed supporting cast: synth source + DA + speaker, unwired) or falling back to the catalog index.
   // Audio resumes on the first interaction; the user patches source→DUT→monitor by hand (Story 6.3).
+  import { faceInstanceId } from "./view-resolution";
   import { type DawUi, focusUi, hasFocusSurface } from "./device-ui";
   import { wireMidi } from "./engine";
   import { isFocusable } from "./focus";
@@ -460,7 +461,13 @@
               daw={dawFor(f.device.id)}
             />
           {/snippet}
-          <div class="focus-body">
+          <!-- The focus copy is its own non-patchable face instance (its jacks share the bench's keys). -->
+          <div
+            class="focus-body"
+            data-face-instance={faceInstanceId({ kind: "focus", windowId: "bench" }, f.device.id)}
+            data-face-state="presented"
+            data-interaction="disabled"
+          >
             {#if hasFocusSurface(f.device.typeId)}
               {@render focusFace()}
             {:else}

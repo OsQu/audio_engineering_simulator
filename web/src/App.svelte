@@ -41,6 +41,23 @@
   import Vu from "./widgets/Vu.svelte";
   import WorldView from "./widgets/WorldView.svelte";
   import type { WorldApi } from "./world-api";
+  import { tick, untrack } from "svelte";
+  import { awaitFlip } from "./face-lifecycle";
+  import {
+    beginFlip,
+    cancelFlip,
+    createPresentationState,
+    finishFlip,
+    unmountPresentation,
+  } from "./presentation-state";
+  import type { DeviceFacing } from "./scene-store";
+  import {
+    faceInstanceId,
+    physicalLeadsSuppressed,
+    type ResolvedFace,
+    resolveFaces,
+    transitionOwner,
+  } from "./view-resolution";
 
   interface Props {
     /** An explicit composition seam for browser fixtures. Normal navigation supplies nothing. */
@@ -122,6 +139,58 @@
   const placedItems = $derived.by((): PlacedItem[] =>
     placedItemsFor(layout(), placementPreview ?? undefined),
   );
+
+  // --- Presented faces (Story 10.4) -----------------------------------------------------------------
+  // The studio's flip state: pure, generation-guarded (presentation-state.ts). A flip writes the durable
+  // facing at once — the chassis animates toward it — and the resolved face stays on its settled side,
+  // non-patchable, with every physical lead touching it suppressed, until the generation's CSS
+  // transition reports back through `awaitFlip`. No timer decides completion.
+  let presentation = $state.raw(createPresentationState());
+  const studioFaces = $derived.by((): Map<string, ResolvedFace> => {
+    const faces = resolveFaces({
+      kind: "studio",
+      scene,
+      catalog: session.catalog,
+      presentation,
+      space: currentSpace,
+      view: currentView,
+      preview: placementPreview ?? undefined,
+    });
+    return new Map(faces.map((face) => [face.objectId, face]));
+  });
+
+  async function startFlip(owner: string, to: DeviceFacing): Promise<void> {
+    const started = beginFlip(presentation, owner, to);
+    presentation = started.state;
+    await tick(); // the flipper now carries the new facing, so its transition has started
+    awaitFlip(
+      worldApi?.measureRoot() ?? document,
+      owner,
+      started.generation,
+      (generation) => {
+        presentation = finishFlip(presentation, owner, generation);
+        requestAnimationFrame(measureJacks); // the settled face reports its final jack positions
+      },
+      (generation) => {
+        presentation = cancelFlip(presentation, owner, generation);
+      },
+    );
+  }
+
+  // A flip owner that is no longer presented (another wall/space, top view, removed) unmounts: its
+  // in-flight generation is invalidated so a late event from the torn-down DOM can't settle anything.
+  $effect(() => {
+    const presented = new Set(currentView === "top" ? [] : placedItems.map((it) => it.id));
+    const flips = untrack(() => presentation.flips);
+    for (const owner of Object.keys(flips)) {
+      if (!presented.has(owner)) presentation = unmountPresentation(presentation, owner);
+    }
+  });
+
+  // Whether a lead touching this device is drawn: not while it (or its rack) is mid-flip.
+  const leadsShown = (id: string): boolean => !physicalLeadsSuppressed(scene, presentation, id);
+  const connShown = (c: Connection): boolean =>
+    leadsShown(c.from.device) && leadsShown(c.to.device);
 
   // --- Patch cables --------------------------------------------------------------------------------
   // A stable key for a connection (its two endpoints), for the {#each} in the cable overlay.
@@ -367,8 +436,16 @@
     sceneOps.moveDeviceToSpace(scene, id, spaceId);
   const moveRackToSpace = (id: string, spaceId: string): void =>
     sceneOps.moveRackToSpace(scene, id, spaceId);
-  const toggleFlip = (id: string): void => sceneOps.toggleFlip(scene, id);
-  const toggleRackFlip = (id: string): void => sceneOps.toggleRackFlip(scene, id);
+  function toggleFlip(id: string): void {
+    sceneOps.toggleFlip(scene, id);
+    const facing = scene.ui.placements[id]?.facing;
+    if (facing) void startFlip(id, facing);
+  }
+  function toggleRackFlip(id: string): void {
+    sceneOps.toggleRackFlip(scene, id);
+    const facing = rackById(scene, id)?.facing;
+    if (facing) void startFlip(id, facing);
+  }
   const unmount = (id: string): void => sceneOps.unmount(scene, id);
 
   // The param/config lanes (paramValue/onParamInput, configValue/onConfigInput) and hotSwap live on the
@@ -701,7 +778,7 @@
           <!-- Every cable with both ends in this view, drawn once as a continuous lead. The devices' z
                (set in placedItems by whether a cable ends on their shown face) decides which panels each
                cable passes in front of vs behind. -->
-          {#each scene.patch.connections.filter(bothInView) as c (connKey(c))}
+          {#each scene.patch.connections.filter(bothInView).filter(connShown) as c (connKey(c))}
             {@render oneCable(c, api)}
           {/each}
         {/snippet}
@@ -750,7 +827,7 @@
                the panel above the z-2 cable layer), redraw the lead clipped to that device's chassis rect,
                so the panel-hidden stretch paints back over the panel. Drawn before the portals/rubber-band
                so those stay on top. -->
-          {#each scene.patch.connections.filter(bothInView) as c (connKey(c))}
+          {#each scene.patch.connections.filter(bothInView).filter(connShown) as c (connKey(c))}
             {#if tipPatchEnd(c.from, "output")}
               {@render tipPatch(c, c.from, "output", api)}
             {/if}
@@ -759,10 +836,11 @@
             {/if}
           {/each}
           <!-- On top of everything: cross-view portal stubs and the drag rubber-band while patching. -->
-          {#each scene.patch.connections.filter(oneInView) as c (connKey(c))}
+          {#each scene.patch.connections.filter(oneInView).filter(connShown) as c (connKey(c))}
             {@render onePortal(c, api)}
           {/each}
-          {#if dragCable}
+          <!-- A held lead hides while its source flips; the pick itself (and its banner) survives. -->
+          {#if dragCable && leadsShown(dragCable.source.device)}
             {#if dragCable.mode === "drag" || inView(dragCable.source.device)}
               <!-- Source visible: draw the rubber-band from its jack to the cursor. -->
               <Cable
@@ -919,24 +997,36 @@
             {@const device = deviceById(scene, itemId)}
             {@const desc = device ? session.descriptorOf(device.id) : undefined}
             {@const place = scene.ui.placements[itemId]}
-            {#if device && desc && place}
-              <!-- The device's registered faceplate (its own component, or the generic Panel). -->
+            {@const face = studioFaces.get(itemId)}
+            {#if device && desc && place && face}
+              <!-- The device's registered faceplate (its own component, or the generic Panel), inside its
+                   presented face slot: the stable instance id, settled/transitioning state, patchability,
+                   and the flip owner (its rack when mounted) the lifecycle adapter waits on. -->
               {@const Faceplate = deviceUi(device.typeId)}
-              <Faceplate
-                device={device.id}
-                typeId={device.typeId}
-                name={desc.name}
-                params={desc.params}
-                ports={desc.ports}
-                readouts={desc.readouts}
-                configs={desc.configs}
-                flipped={effectiveFacing(scene, device.id) === "back"}
-                valueFor={(id) => session.paramValue(device.id, desc, id)}
-                readingFor={(id) => session.readingFor(device.id, id)}
-                onParam={(p, v) => session.onParamInput(device.id, p, v)}
-                configFor={(k) => session.configValue(device.id, desc, k)}
-                onConfig={(k, v) => session.onConfigInput(device.id, k, v)}
-              />
+              <div
+                class="face-slot"
+                data-face-instance={face.id}
+                data-face-state={face.state}
+                data-face-side={face.face}
+                data-interaction={face.interaction}
+                data-flip-owner={transitionOwner(scene, device.id)}
+              >
+                <Faceplate
+                  device={device.id}
+                  typeId={device.typeId}
+                  name={desc.name}
+                  params={desc.params}
+                  ports={desc.ports}
+                  readouts={desc.readouts}
+                  configs={desc.configs}
+                  flipped={effectiveFacing(scene, device.id) === "back"}
+                  valueFor={(id) => session.paramValue(device.id, desc, id)}
+                  readingFor={(id) => session.readingFor(device.id, id)}
+                  onParam={(p, v) => session.onParamInput(device.id, p, v)}
+                  configFor={(k) => session.configValue(device.id, desc, k)}
+                  onConfig={(k, v) => session.onConfigInput(device.id, k, v)}
+                />
+              </div>
             {/if}
           {/if}
         {/snippet}
@@ -1031,7 +1121,16 @@
             onActivate={() => activateWindow(win.id)}
             onClose={() => closeWindow(win.id)}
           >
-            {@render deviceSurface(r.device, r.desc)}
+            <!-- A focus copy is its own non-patchable face instance: its jacks share the stage's keys
+                 but can never start or land a cable. -->
+            <div
+              class="face-slot"
+              data-face-instance={faceInstanceId({ kind: "focus", windowId: win.id }, r.device.id)}
+              data-face-state="presented"
+              data-interaction="disabled"
+            >
+              {@render deviceSurface(r.device, r.desc)}
+            </div>
           </FloatingWindow>
         {/if}
       {/each}
@@ -1336,6 +1435,12 @@
     cursor: pointer;
     outline: none;
   }
+  /* A face slot only carries presentation identity + state for the lifecycle/patch adapters; it must not
+     add a box between the world item (or focus window) and the chassis that fills it. */
+  .face-slot {
+    display: contents;
+  }
+
   /* The settled patch lead + the drag rubber-band are the shared <Cable> component (widgets/Cable.svelte),
      so the scene view and the workbench bench render one recipe. Portals + the pending floating end below
      are scene-view-only and keep the local `.cable` base. */

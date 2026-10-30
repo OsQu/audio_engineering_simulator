@@ -40,7 +40,7 @@
 
   <!-- Flip card: both faces share one grid cell, so the flipper sizes to the taller face — no manual
        height sync. preserve-3d + per-face backface-visibility hides whichever face is turned away. -->
-  <div class="flipper" class:flipped>
+  <div class="flipper" class:flipped data-flipper>
     <div class="face front" data-face="front" aria-hidden={flipped}>{@render front()}</div>
     <div class="face back" data-face="back" aria-hidden={!flipped}>{@render back()}</div>
   </div>
@@ -101,6 +101,13 @@
   }
   .flipper.flipped {
     transform: rotateY(180deg);
+  }
+  /* Reduced motion snaps the flip; the face lifecycle (face-lifecycle.ts) then finds no running
+     transition and settles the flip synchronously instead of waiting on an event that never comes. */
+  @media (prefers-reduced-motion: reduce) {
+    .flipper {
+      transition: none;
+    }
   }
   .face {
     grid-area: 1 / 1;

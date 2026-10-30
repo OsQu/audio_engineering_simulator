@@ -91,7 +91,7 @@ Resolution rules:
 - both `from` and `to` sides are transitioning until the current generation settles, and any physical lead
   touching the device or an occupant of a transitioning rack is suppressed by resolved presentation policy.
 
-## Task 10.4.2 — Face lifecycle integration  · design drafted (awaiting review)
+## Task 10.4.2 — Face lifecycle integration  · done
 
 Wire the 10.4.1 model into the three view roots without threading new props through every faceplate
 widget. Each root owns one `PresentationState`; the DOM reports flip completion through the Web Animations
@@ -111,7 +111,7 @@ web/src/
                             lead suppression, focus-window slots, measure on settle
   BenchStage.svelte         workbench resolveFaces, dut-front/dut-back/support slots, support flip wiring,
                             lead suppression
-  Workbench.svelte          owns the bench PresentationState (passed to BenchStage), focus-window slots
+  Workbench.svelte          focus-window slot (BenchStage owns the bench PresentationState: only it flips)
 web/test-browser/
   face-lifecycle.spec.ts    flip settle, rapid reversal, reduced motion, focus jacks not patchable
 ```
@@ -162,6 +162,11 @@ Decisions:
 - Focus slots are `interaction="disabled"`: they still operate controls, but their jacks can no longer start
   or complete a patch with the stage anchor of the same key (a latent collision today).
 - DUT front/back slots never transition (the DUT shows both sides and never flips).
+
+As built: the studio face slot also carries `data-face-side` (the resolved settled side) for tests; the
+generation settles once *all* of an owner's visible transitions finish (a rack animates every occupant)
+and cancels only if none did. The focus-window patch-gate is unit-free DOM; its browser proof lands with
+the 10.4.5 matrix (the fixtures have no focusable device yet).
 
 ## Task 10.4.3 — Revisioned socket-geometry model  · planned
 

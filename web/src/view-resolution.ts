@@ -56,14 +56,18 @@ export function faceInstanceId(stage: PresentationStage, objectId: string): Face
   return `workbench:${stage.role}:${object}`;
 }
 
+/** The object whose flip a face animates with: its rack when mounted, else the object itself. */
+export function transitionOwner(scene: Scene, objectId: string): string {
+  return scene.ui.placements[objectId]?.rack?.id ?? objectId;
+}
+
 /** A mounted device inherits its parent's transition exactly as it inherits its effective facing. */
 export function transitionForObject(
   scene: Scene,
   presentation: PresentationState,
   objectId: string,
 ): FlipTransition | undefined {
-  const rackId = scene.ui.placements[objectId]?.rack?.id;
-  return presentation.flips[rackId ?? objectId];
+  return presentation.flips[transitionOwner(scene, objectId)];
 }
 
 /** Current Story-10.4 policy: no physical lead is drawn while its object or parent rack flips. */
