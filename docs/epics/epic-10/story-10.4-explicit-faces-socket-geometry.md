@@ -168,13 +168,75 @@ generation settles once *all* of an owner's visible transitions finish (a rack a
 and cancels only if none did. The focus-window patch-gate is unit-free DOM; its browser proof lands with
 the 10.4.5 matrix (the fixtures have no focusable device yet).
 
-## Task 10.4.3 — Revisioned socket-geometry model  · planned
+## Task 10.4.3 — Revisioned socket-geometry model  · done
 
-_(program design drafted at pickup)_
+A pure index of where each physical socket sits on a presented side, in that side's natural millimetres,
+keyed by `(FaceInstanceId, DeviceFacing)`. No DOM, camera, placement, or time.
 
-## Task 10.4.4 — Face-local DOM registration and projection  · planned
+File-tree diff:
 
-_(program design drafted at pickup)_
+```text
+web/src/socket-geometry.ts     index, revision/generation guard, lookup, projection
+web/test/socket-geometry.test.ts
+```
+
+Key shapes:
+
+```ts
+interface SocketShape { id: string; aliases: readonly string[]; x: number; y: number; r: number }
+interface FaceGeometry { width: number; height: number; sockets: readonly SocketShape[] }
+interface GeometrySlot { face: FaceInstanceId; side: DeviceFacing }
+type GeometryEntry =
+  | { status: "pending"; revision: string; generation: number }
+  | { status: "current"; revision: string; generation: number; geometry: FaceGeometry };
+type RegisterOutcome = "current" | "stale" | "unmounted" | "empty" | "duplicate";
+
+function requestGeometry(index, slot, revision): { index; generation; measure: boolean };
+function registerGeometry(index, slot, generation, geometry): { index; outcome: RegisterOutcome };
+function unregisterGeometry(index, slot): SocketGeometryIndex;
+function socketFor(index, slot, endpoint): { status: "current"; socket; geometry } | { status: "pending" } | { status: "absent" };
+function projectSocket(geometry, socket, frame: SurfaceFrame, presented: boolean): { x: number; y: number };
+const geometryRevision: (parts: readonly (string | number | boolean)[]) => string;
+```
+
+Rules:
+
+- an unchanged revision returns the same index object (a current registration survives untouched); a new or
+  changed revision goes `pending` under a fresh generation from one index-wide monotonic counter, so a
+  re-mounted slot never reuses a token held by an obsolete measurement;
+- `registerGeometry` applies only the slot's current generation (`stale` otherwise), answers `unmounted`
+  for an unregistered slot, and rejects a zero-size frame (`empty`) or any endpoint key named twice
+  (`duplicate`), leaving the slot pending rather than overwriting good geometry;
+- a duplex connector is one `SocketShape` whose `aliases` list both endpoint keys;
+- `projectSocket` maps face-local mm into a surface frame; a see-through side (the hidden half of a flip
+  card) mirrors about the face width, matching how rotateY(180deg) places it.
+
+## Task 10.4.4 — Face-local DOM registration and projection  · in progress
+
+Replace the global `[data-jack]` sweep (rect of every jack through `clientToSurface`, rAF + 480/120 ms
+timers) with a per-face registration adapter and a pure projection that produces the same
+`Record<jackKey, JackAnchor>` contract `cable-view` already consumes — so cable routing and patching are
+unchanged in shape.
+
+File-tree diff:
+
+```text
+web/src/face-geometry.ts        NEW  DOM adapter: measureFace(frame, side, presented) → FaceGeometry
+                                     (rect deltas ÷ frame rect × frame layout size: camera-invariant;
+                                     hidden side un-mirrored); fontRevision()
+web/src/socket-projection.ts    NEW  projectAnchors(index, slots, frameOf) → Record<jackKey, JackAnchor>
+web/src/patch-controller.svelte.ts   owns the SocketGeometryIndex + frames; jackAnchors becomes $derived
+                                     projection; register(slot, element, revision) / unregister(slot)
+web/src/jack-anchors.ts         sweep removed (patchableJackKey stays)
+web/src/App.svelte              studio frame = cable-view deviceSurfaceRect (pure); register per face slot
+web/src/BenchStage.svelte       bench frame = measured home origin (registration) + offsetFor (pure)
+web/src/Workbench.svelte        timer-driven measure effect removed
+```
+
+Revision per slot: `[typeId, ports, configs values, footprint, skin finish, layout box w×h, font revision]`.
+Camera, placement, rack moves, and bench offsets are not inputs; they move the *frame* only, so geometry is
+reused and projection follows immediately. Measurement runs only when a slot is `presented` (not mid-flip),
+after layout (rAF), and again when `document.fonts` finishes loading (a revision bump, not a timer).
 
 ## Task 10.4.5 — Browser matrix and legacy cleanup  · planned
 
