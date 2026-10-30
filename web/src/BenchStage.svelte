@@ -231,7 +231,7 @@
              so a cable to a front-shown device's hidden rear socket tucks behind its panel. -->
       <svg class="cables" width={natW} height={natH} viewBox="0 0 {natW} {natH}">
         {#each session.scene.patch.connections as c (connKey(c))}
-            {@const ends = cableEndpoints(benchCableLayout, patch.jackAnchors, c, worldApi)}
+          {@const ends = cableEndpoints(benchCableLayout, patch.jackAnchors, c, worldApi)}
           {#if ends}
             {@const d = cablePathData(ends.a, ends.b)}
             {@const kind = connectionKind(session.scene, session.catalog, c)}
