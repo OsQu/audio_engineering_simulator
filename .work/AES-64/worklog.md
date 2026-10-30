@@ -21,3 +21,9 @@
 - Remaining: the human force-pushes with
   `git push --force-with-lease=e10-s1/regression-harness:00afcb0 -u origin e10-s1/regression-harness`,
   then runs `fx mv AES-64 finished`. Downstream e10-s2..s4 branches need rebasing onto the new SHAs.
+
+## 2026-10-30 — done
+- The human force-pushed (00afcb0 → 83dbe63). The branch is on origin, rebased onto main.
+- Result: Story 10.1 harness complete. Web checks green: browser tests 8 passed (6 of them expected failures),
+  Biome clean, typecheck 0 errors, Vitest 312 passed. PR draft is in `.work/AES-64/pr.md`.
+- Follow-up for whoever picks up e10-s2..s4: rebase them onto the new e10-s1 with `git rebase --onto`.
