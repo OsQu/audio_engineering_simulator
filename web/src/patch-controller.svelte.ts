@@ -1,11 +1,11 @@
 // The patch controller: the pointer/drag interaction machinery for patching cables, factored beside the
 // SceneSession so a second view root (the 6.2 workbench) drives the identical glue instead of
 // re-implementing the pointer bookkeeping. A thin reactive shell — all decision logic stays in the pure,
-// node-tested modules (patching.ts transitions, scene-ops.ts edits, jack-anchors.ts measurement); this
-// class holds the in-flight drag state + the measured anchor store and adapts DOM pointer events to the
-// pure transitions. Bound to a SceneSession, whose scene/catalog/cables it reads and whose engine it
-// hot-swaps after each committing edit. The layout-dependent *measurement trigger* stays view-side (an
-// `$effect` with the scene-view dep list); the controller just exposes `measure(worldApi)` + the store.
+// node-tested modules (patching.ts transitions, scene-ops.ts edits, socket-geometry.ts registration and
+// projection); this class holds the in-flight drag state + the socket-geometry index and adapts DOM
+// pointer events to the pure transitions. Bound to a SceneSession, whose scene/catalog/cables it reads and
+// whose engine it hot-swaps after each committing edit. Each face slot registers its own geometry through
+// the `GeometryRegistrar` methods; the view root binds the projection (`project`) of its slots' frames.
 
 import type { JackAnchor } from "./cable-view";
 import type { CableType } from "./catalog";
@@ -16,6 +16,7 @@ import type { JackHit, PatchState } from "./patching";
 import * as patching from "./patching";
 import type { Connection } from "./scene";
 import * as sceneOps from "./scene-ops";
+import type { SceneSession } from "./session.svelte";
 import {
   createSocketGeometryIndex,
   type FaceGeometry,
@@ -27,7 +28,6 @@ import {
   requestGeometry,
   unregisterGeometry,
 } from "./socket-geometry";
-import type { SceneSession } from "./session.svelte";
 import type { WorldApi } from "./world-api";
 
 export class PatchController implements GeometryRegistrar {

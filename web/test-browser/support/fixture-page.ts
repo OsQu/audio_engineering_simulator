@@ -9,10 +9,7 @@ export const jack = (page: Page, key: string): Locator => page.locator(`[data-ja
 export async function openFixture(page: Page, fixture: BrowserFixtureId): Promise<void> {
   await page.goto(`/__test__/studio/${fixture}`);
   await expect(page.getByTestId("browser-fixture")).toHaveAttribute("data-fixture", fixture);
-  // App's current DOM-anchor adapter measures after paint and repeats after the 450 ms face-flip
-  // transition. These regressions deliberately exercise that existing adapter rather than an empty
-  // pre-measurement state; Story 10.4 replaces this timeout-dependent seam.
-  await page.waitForTimeout(550);
+  await geometrySettled(page);
 }
 
 export async function elementCentre(locator: Locator): Promise<{ x: number; y: number }> {
@@ -35,4 +32,10 @@ export async function topmostDeviceAt(
 
 export async function renderedLayer(locator: Locator): Promise<string> {
   return locator.evaluate((element) => getComputedStyle(element).zIndex);
+}
+
+/** Every stage face slot has registered current socket geometry (Story 10.4) — an event, not a timer. */
+export async function geometrySettled(page: Page): Promise<void> {
+  await expect(page.locator('[data-geometry="pending"]')).toHaveCount(0);
+  await expect(page.locator("[data-geometry]").first()).toBeAttached();
 }

@@ -12,13 +12,11 @@
 // config, skin, the frame's layout size (ResizeObserver — layout boxes ignore transforms), or fonts
 // finishing loading.
 
+import type { DeviceDescriptor } from "./catalog";
+import type { DeviceInstance } from "./scene";
 import type { DeviceFacing } from "./scene-store";
-import type {
-  FaceGeometry,
-  GeometrySlot,
-  RegisterOutcome,
-  SocketShape,
-} from "./socket-geometry";
+import { skinFor } from "./skin";
+import type { FaceGeometry, GeometrySlot, RegisterOutcome, SocketShape } from "./socket-geometry";
 import { geometryRevision } from "./socket-geometry";
 
 /** Measure one side of a slot frame. `presented` is the side currently turned toward the operator. */
@@ -128,7 +126,11 @@ export function faceGeometry(node: HTMLElement, initial: FaceGeometryParams) {
         ),
       );
       // `empty`/`duplicate` leave the slot pending; the next resize or revision retries.
-      if (outcomes.every((outcome) => outcome === "current")) node.dataset.geometry = "current";
+      if (outcomes.every((outcome) => outcome === "current")) {
+        node.dataset.geometry = "current";
+        // Observable proof of *when* this slot last measured (tests assert camera/placement don't).
+        node.dataset.geometryGeneration = String(Math.max(...due.map((d) => d.generation)));
+      }
     });
   };
 
@@ -150,3 +152,15 @@ export function faceGeometry(node: HTMLElement, initial: FaceGeometryParams) {
     },
   };
 }
+
+/** The non-DOM revision inputs that can move a socket within a face: its type, its (per-instance) ports,
+ *  its structural config, and its skin. Param values are deliberately absent — a knob never moves a jack. */
+export const geometryContent = (
+  device: DeviceInstance,
+  desc: DeviceDescriptor,
+): (string | number | boolean)[] => [
+  device.typeId,
+  JSON.stringify(desc.ports),
+  JSON.stringify(device.config ?? []),
+  skinFor(device.typeId).finish,
+];
