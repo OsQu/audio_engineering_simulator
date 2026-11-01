@@ -1,6 +1,6 @@
 // Cable-rendering geometry + view membership: which cable ends are in the shown view, where each end
 // anchors on the surface, and the portal-chip placement for a cross-view end. Pure given a `CableLayout`
-// (the injected view-layout seam), the DOM-measured jack anchors, and the world api, so the estimate math
+// (the injected view-layout seam), the projected socket anchors, and the world api, so the estimate math
 // (the chassis-edge fallback ratios, the default portal stub) is testable with a fake layout + api.
 //
 // The geometry is **view-agnostic**: it asks a `CableLayout` the few layout questions it needs, so both
@@ -44,10 +44,11 @@ export interface CableLayout {
 // the chassis silhouette. See `deviceSurfaceRect`.
 export type SurfaceRect = { x: number; y: number; width: number; height: number };
 
-// A measured jack anchor: its surface-local centre plus which face (front/back) of the chassis it sits
-// on. Keeping `x`/`y` at the top level (not nested) makes this structurally a `Pt`, so a jack anchor can
-// be used wherever a `Pt` is expected. `face` lets the renderer tell a jack on the *shown* face (anchor
-// precisely) from one on the hidden face (its measured centre is mirrored under rotateY(180deg)).
+// A socket anchor: its surface-local centre plus which face (front/back) of the chassis it sits on —
+// projected from face-local geometry (socket-geometry.ts `projectAnchors`). Keeping `x`/`y` at the top
+// level (not nested) makes this structurally a `Pt`, so a jack anchor can be used wherever a `Pt` is
+// expected. `face` lets the renderer tell a jack on the *shown* face (anchor precisely) from one on the
+// hidden face (projected mirrored, as rotateY(180deg) places it).
 export type JackAnchor = Pt & { face: DeviceFacing };
 
 // A jack's measurement key, "device:direction:port" (matches each jack's `data-jack` attribute).

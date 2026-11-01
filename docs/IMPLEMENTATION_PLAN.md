@@ -1210,7 +1210,7 @@ Story 10.1 known regression "populated rack drag moves the occupant before relea
 graduated to `web/test-browser/placement-preview.spec.ts`; the remaining known regressions stay owned by
 10.5/10.7.
 
-### Story 10.4 — Explicit faces & face-local socket geometry — 🚧 **In progress**
+### Story 10.4 — Explicit faces & face-local socket geometry — 🚧 **In progress** (all Tasks done; Validate gate awaiting review)
 
 *Goal:* give every studio, workbench, and focus presentation an explicit, stable identity and replace
 transformed world-space jack sweeps with revisioned face-local socket geometry. This establishes the

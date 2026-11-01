@@ -64,3 +64,15 @@
   `cable-hover`'s pre-wired connections for lead assertions. The bench scene is DUT-only by design.
 - Gates: vitest 355 ✓, typecheck/biome ✓, Playwright 14 ✓ + the pre-existing rack-drag unexpected pass.
 - Next: 10.4.5 matrix + legacy cleanup.
+
+## 2026-11-01 — Task 10.4.5 done; Story 10.4 complete pending review
+- Browser matrix added (rack inheritance, mid-flip view switch, DUT slots, focus isolation); the focus test
+  was mutation-checked (it fails with the `patchableJackKey` gate removed). First attempt was vacuous: the
+  synth's jacks are on its back face, which a focus copy never shows, so the press is now dispatched onto the
+  copy's jack element.
+- Legacy cleanup: `measureRoot` → `stageRoot`, stale "measured jack anchor" comments rewritten.
+- Final gates: vitest 355 ✓, typecheck ✓ (2 pre-existing FloatingWindow a11y warnings), biome ✓, Playwright
+  18 ✓ + 1 pre-existing unexpected pass (known-regressions "populated rack drag" — Story 10.3 fixed it;
+  I-132). No Rust changes on this branch, so the cargo gates are unaffected.
+- Story 10.4 Validate gate: met, except duplex + differently-configured instances are pure-test-only
+  (no fixture device for them in the browser). Left the Story marked 🚧 for Oskari to sign off.

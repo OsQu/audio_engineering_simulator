@@ -34,7 +34,7 @@ export function benchVisibleFaces(scene: Scene, deviceId: string, dutId: string)
   return deviceId === dutId ? ["front", "back"] : [effectiveFacing(scene, deviceId)];
 }
 
-/** The workbench has no rooms or occluding spatial chassis: every measured jack is usable directly. */
+/** The workbench has no rooms or occluding spatial chassis: every registered socket is usable directly. */
 export const benchCableLayout: CableLayout = {
   inView: () => true,
   faceAnchorable: () => true,

@@ -78,7 +78,7 @@
   const scene = $derived(session.scene);
 
   // The patch controller: the pointer/drag patching glue (drag + click-to-pick + cross-view pending,
-  // the measured jack-anchor store, commit/disconnect/setCableType). App delegates its window pointer
+  // the projected socket-anchor store, commit/disconnect/setCableType). App delegates its window pointer
   // handlers to it; the Story-6.2 workbench will drive the identical machinery.
   // svelte-ignore state_referenced_locally
   const patch = new PatchController(session);
@@ -165,7 +165,7 @@
     presentation = started.state;
     await tick(); // the flipper now carries the new facing, so its transition has started
     awaitFlip(
-      worldApi?.measureRoot() ?? document,
+      worldApi?.stageRoot() ?? document,
       owner,
       started.generation,
       (generation) => {
@@ -218,7 +218,7 @@
   const sceneLayout = (): cableView.CableLayout => sceneCableLayout(layout());
 
   // Cable end anchor + view-membership helpers are pure cable-view fns, prebound here to the scene layout,
-  // the measured jack anchors, and (for cableAnchor) the world api.
+  // the projected socket anchors, and (for cableAnchor) the world api.
   const cableAnchor = (
     ref: PortRef,
     direction: "input" | "output",

@@ -245,6 +245,27 @@ the measurement frame; focus slots stay `display: contents`. Each slot reflects 
 fixtures wait on instead of the old 550 ms sleep and which the zoom/placement tests assert is unchanged.
 `PatchController.jackAnchors` is now `$derived` from `geometry × project(slots)`; `measure()` is gone.
 
-## Task 10.4.5 — Browser matrix and legacy cleanup  · planned
+## Task 10.4.5 — Browser matrix and legacy cleanup  · done
 
-_(program design drafted at pickup)_
+Browser matrix (`web/test-browser/face-lifecycle.spec.ts`, `socket-geometry.spec.ts`):
+
+| Case | Test |
+| --- | --- |
+| back→front flip, leads suppressed until settle | `a flip suppresses its leads until its transition settles` |
+| front→back flip, reduced motion settles synchronously | `reduced motion settles a flip without waiting for an animation` |
+| rapid reversal | `a rapid reversal settles on the latest generation only` |
+| rack inheritance | `a rack flip transitions its mounted occupant and settles it to the rack's side` |
+| cancellation / unmount mid-flip | `leaving the wall mid-flip invalidates it; returning shows the settled durable side` |
+| workbench DUT duplicate slots | `the workbench DUT exposes independent front and back slots` |
+| focus isolation | `a focus-window copy cannot start a patch from its duplicate jack` (mutation-checked: fails without the `patchableJackKey` gate) |
+| zoom + placement reuse geometry (studio) | `zoom and placement re-project registered geometry without remeasuring` |
+| zoom reuses geometry (workbench) | `the workbench projects its DUT sockets through zoom without remeasuring` |
+
+Duplex aliases and differently configured same-type instances are covered by the pure
+`socket-geometry.test.ts` oracles: the browser fixtures have no duplex device, and they never start the
+engine, so a second configured instance can't be built there.
+
+Legacy removed: the global `measureJacks` DOM sweep, every rAF + 480/120 ms measure timer (studio, bench,
+workbench), the flip-settle remeasure, and the fixtures' 550 ms sleep (now `geometrySettled`).
+`WorldApi.measureRoot` became `stageRoot` (it now only scopes the flip lifecycle's stage queries), and
+comments that described "measured jack anchors" now describe projected socket anchors.

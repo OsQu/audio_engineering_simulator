@@ -102,7 +102,7 @@ export class PatchController implements GeometryRegistrar {
       return;
     }
     const hit = this.#jackHitOf(patchableJackKey(e.target as Element | null));
-    if (!hit?.anchor) return; // only a measured jack can start a drag
+    if (!hit?.anchor) return; // only a jack with current geometry can start a drag
     e.preventDefault();
     this.#cableDown = { x: e.clientX, y: e.clientY, moved: false };
     this.dragCable = patching.pointerDown(this.dragCable, hit).state;
