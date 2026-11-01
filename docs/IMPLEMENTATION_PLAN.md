@@ -1021,8 +1021,8 @@ whole front-end story (mic choice, phantom, gain staging, the pad, feedback) —
 real-worklet, and pure-fixture seams that every later corrective Story graduates regressions through; Story
 10.2 makes structural engine changes trustworthy before view migration begins. Story 10.3 establishes the
 effective-placement and preview foundation, and Story 10.4 now adds explicit presentation identity and
-camera-independent socket geometry. Stories 10.5–10.7 remain deliberately coarse until their respective
-planning passes.
+camera-independent socket geometry. Story 10.5 is planned (resolver-owned paint layers, interaction
+overlay, U3 ejection); Stories 10.6–10.7 remain deliberately coarse until their respective planning passes.
 
 **Goal:** make one pure, deterministic presentation model authoritative for effective rack/device
 placement, presented faces, socket visibility and patchability, cable endpoints and portals, physical
@@ -1256,7 +1256,7 @@ unmount, rack inheritance, and reduced motion are generation/event driven; affec
 suppressed until settlement while a held logical pick survives. Pure tests, focused browser tests, Vitest,
 typecheck, and format/check are green with no fixed flip-settle timeout required for correctness.
 
-### Story 10.5 — Resolved presentation, stable layers & rack assemblies
+### Story 10.5 — Resolved presentation, stable layers & rack assemblies — 🚧 **In progress** (design approved)
 
 *Goal:* have studio and workbench render resolved objects/faces using deterministic physical layers,
 silhouettes, and rack parentage, with controls in an object-ID-keyed interaction overlay.
@@ -1264,6 +1264,33 @@ silhouettes, and rack parentage, with controls in an object-ID-keyed interaction
 *Watch out:* rack transforms must move the frame and occupants as one assembly without trapping children in
 a DOM stacking context. Preview must not reorder objects. Apply U3 atomically by computing every ejected
 free placement before mutating the scene, with deterministic nearest-position tie-breaking.
+
+*Design notes (settled at planning):* A pure resolver emits each object's semantic paint
+layer, total order `(layer, scene order, id)`, rack parent, and opaque silhouette. Hover, focus, toolbar
+grace, and drag are not resolver inputs, so they cannot reorder anything. The renderer maps each layer to a
+fixed z band and paints in resolved order; the `drag ? 10 : chrome ? 6` overrides in `WorldView` and
+`BenchStage` are deleted. We rejected deleting only the overrides and keeping numeric `z`, because 10.6's
+mask sets need named layers and an explicit order. A rack is always `furniture`, beneath its occupants.
+Racks and occupants stay DOM siblings, so no stacking context traps the children; parentage is data, and
+10.3's shared preview already moves the assembly. A device's layer follows its *settled* resolved face, so a
+flip never reorders mid-animation. Toolbars and drag/legality outlines move out of the chassis into a
+per-stage interaction overlay keyed by object ID. U3 is a pure planner that computes every free placement
+before any write: the nearest `GRID_MM` lattice point to the effective slot position, tie-broken by y then
+x, inside the room bounds of the rack's wall, and allocating occupants in slot order. It sets
+`space`/`wall`/`facing` from the rack and leaves the scene untouched on failure. Today's `unmount`/`removeRack`
+keep a stale stored position and the device's own facing; that is a bug fixed here.
+
+- **Task 10.5.1** — Pure `ResolvedObject`s: paint layers, total order, rack parentage, silhouettes for
+  studio and workbench; exhaustive semantic tests, including the preview-does-not-reorder and
+  rack-below-occupants invariants.
+- **Task 10.5.2** — Studio renders the resolved order with fixed layer bands and an object-ID-keyed
+  interaction overlay (toolbars, assembly drag/legality outline); graduate the three hover regressions and
+  remove the stale rack-drag known-failure marker.
+- **Task 10.5.3** — Workbench adopts the same resolved layers and interaction overlay.
+- **Task 10.5.4** — U3 atomic ejection for eject and rack removal: hand-calc nearest-position oracles,
+  multi-occupant allocation, failure atomicity, and preserved effective room/wall/facing.
+
+*Program design:* [`story-10.5-resolved-presentation-stable-layers.md`](./epics/epic-10/story-10.5-resolved-presentation-stable-layers.md)
 
 *Validate:* hover, focus, toolbar grace, and drag cannot change physical occlusion; racks stay behind their
 occupants; stationary occupant controls/sockets remain usable; assembly previews are coherent; rack removal
