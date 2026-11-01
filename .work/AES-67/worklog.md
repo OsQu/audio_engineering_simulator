@@ -76,3 +76,19 @@
   I-132). No Rust changes on this branch, so the cargo gates are unaffected.
 - Story 10.4 Validate gate: met, except duplex + differently-configured instances are pure-test-only
   (no fixture device for them in the browser). Left the Story marked 🚧 for Oskari to sign off.
+
+## 2026-11-01 — fix: every structural edit threw DataCloneError (inherited from e10-s2)
+- Symptom (Oskari): `+ Add` in the studio → `DataCloneError: … (candidate) => sceneOps.addDevice(…) could
+  not be cloned` from `engine.ts send`.
+- Cause: `topology-transaction.submit` spreads the proposal into the request, so `request.delta.payload`
+  is the edit closure; `SceneSession.proposeTopology` (and the retry path) posted that request as
+  `transaction`. It type-checked because `TopologyRequest` is a structural superset of
+  `TopologyRequestMetadata`. Introduced by e06a557 on e10-s2 — add, remove, connect, disconnect, cable type,
+  and workbench edits all failed in the real worklet.
+- Why nothing caught it: the studio fixtures override `proposeTopology`, and the worklet smoke test posts a
+  hand-built metadata-only request — nothing exercised session → port.
+- Fix: `wireTransaction` (topology-protocol.ts) picks exactly the wire fields, applied once at the transport
+  boundary in `engine.ts` `send`, so no caller can leak a closure.
+- Tests: unit regression in topology-protocol.test.ts; new `studio-topology.spec.ts` adds gear through the
+  real worklet (mutation-checked: fails with the fix reverted).
+- Gates: vitest 356 ✓, typecheck/biome ✓, Playwright 19 ✓ + the pre-existing rack-drag unexpected pass.

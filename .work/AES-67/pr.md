@@ -43,6 +43,14 @@ global transformed `[data-jack]` sweep and its timers.
 - **10.4.5, browser matrix and cleanup.** The fixtures now wait on `[data-geometry]` instead of sleeping
   550 ms. `WorldApi.measureRoot` is renamed to `stageRoot`.
 
+## Also fixes an inherited bug (from e10-s2)
+
+Every structural edit (add/remove gear, connect, disconnect, cable type, workbench edits) threw
+`DataCloneError` in the real worklet. `SceneSession` posted the full `TopologyRequest`, whose
+`delta.payload` is the edit closure. `engine.ts` `send` now strips `loadPatch` transactions to their wire
+metadata (`wireTransaction`). A new `studio-topology.spec.ts` drives the real session → worklet path,
+which no test covered before. It's mutation-checked: it fails with the fix reverted.
+
 ## Review closely
 
 - `web/src/face-lifecycle.ts`: ties each generation to its own transitions; a rack waits until all of its
@@ -66,6 +74,7 @@ global transformed `[data-jack]` sweep and its timers.
   Story 10.3 fixed it but nobody removed its known-failure marker (project learning I-132).
 - Duplex sockets and differently configured instances of the same type are covered by pure tests only. No
   fixture device exercises them in the browser.
+- `studio-topology.spec.ts` (1 test) passes against the real worklet.
 - No Rust changes.
 
 Program design: `docs/epics/epic-10/story-10.4-explicit-faces-socket-geometry.md`.
