@@ -1,8 +1,9 @@
 import { type DeviceDescriptor, descriptorFor } from "./catalog";
 import { type PlacementPreview, resolveEffectivePlacement } from "./effective-placement";
 import type { FlipTransition, PresentationState } from "./presentation-state";
+import { effectiveFacing, type LayoutCtx, placedItemsFor } from "./projection";
 import type { DeviceFacing, Scene } from "./scene-store";
-import type { Wall } from "./spatial";
+import type { Rect2, Wall } from "./spatial";
 
 export type FaceInstanceId = string;
 
@@ -173,4 +174,153 @@ export function resolveFaces(input: FaceResolutionInput): ResolvedFace[] {
   if (input.kind === "studio") return resolveStudioFaces(input);
   if (input.kind === "workbench") return resolveWorkbenchFaces(input);
   return resolveFocusFace(input);
+}
+
+// --- Resolved objects & physical paint order (Story 10.5) ---------------------------------------------
+// Every rendered chassis (rack frame or device) gets a semantic layer and a position in one total order.
+// Hover, keyboard focus, toolbar grace, and dragging are deliberately *not* inputs: interaction can never
+// change physical occlusion. Controls live in a separate interaction overlay keyed by object ID.
+
+/** Semantic physical layers, bottom → top. Renderers map each to a fixed CSS/SVG band. */
+export type PaintLayer =
+  | "furniture"
+  | "rear-object"
+  | "cable"
+  | "front-object"
+  | "cable-foreground"
+  | "interaction";
+
+/** The layers a physical object can occupy (cables and interaction chrome are not objects). */
+export type ObjectLayer = Extract<PaintLayer, "furniture" | "rear-object" | "front-object">;
+
+export const PAINT_LAYERS: readonly PaintLayer[] = [
+  "furniture",
+  "rear-object",
+  "cable",
+  "front-object",
+  "cable-foreground",
+  "interaction",
+];
+
+/** The outer chassis corner radius (mm), matching the renderer's `.content` clip. */
+export const CHASSIS_RADIUS_MM = 6;
+
+export interface ResolvedObject {
+  readonly id: string;
+  readonly kind: "rack" | "device";
+  /** The effective rack this device is mounted in (including a candidate-mount preview), else null. */
+  readonly parentId: string | null;
+  readonly layer: ObjectLayer;
+  /** Position in the total order `(layer, scene index, id)`; a later object covers an earlier one. */
+  readonly order: number;
+  /** World mm (y-up, `y` = bottom edge). Null where layout is not pure (the bench's DOM flow). */
+  readonly rect: Rect2 | null;
+}
+
+/** An opaque chassis outline; Story 10.6 consumes these for cable mask sets. */
+export interface Silhouette {
+  readonly objectId: string;
+  readonly rect: Rect2;
+  readonly radius: number;
+}
+
+type UnorderedObject = Omit<ResolvedObject, "order"> & { readonly sceneIndex: number };
+
+const layerRank = (layer: PaintLayer): number => PAINT_LAYERS.indexOf(layer);
+const sideLayer = (side: DeviceFacing): ObjectLayer =>
+  side === "back" ? "rear-object" : "front-object";
+
+/** Total physical order: layer, then stable scene order, then ID. Never interaction or preview state. */
+function ordered(objects: UnorderedObject[]): ResolvedObject[] {
+  return [...objects]
+    .sort(
+      (a, b) =>
+        layerRank(a.layer) - layerRank(b.layer) ||
+        a.sceneIndex - b.sceneIndex ||
+        (a.id < b.id ? -1 : a.id > b.id ? 1 : 0),
+    )
+    .map(({ sceneIndex: _sceneIndex, ...object }, order) => ({ ...object, order }));
+}
+
+export interface StudioObjectInput {
+  readonly ctx: LayoutCtx;
+  /** Resolved studio faces by object ID: a device's layer follows its *settled* side. */
+  readonly faces: ReadonlyMap<string, ResolvedFace>;
+  readonly preview?: PlacementPreview;
+}
+
+/** The studio's physical objects for the current view, already sorted by paint order. */
+export function resolveStudioObjects(input: StudioObjectInput): ResolvedObject[] {
+  const { ctx, faces, preview } = input;
+  const rackIndex = new Map(ctx.scene.ui.racks.map((rack, index) => [rack.id, index]));
+  const deviceIndex = new Map(ctx.scene.patch.devices.map((device, index) => [device.id, index]));
+  return ordered(
+    placedItemsFor(ctx, preview).flatMap((item): UnorderedObject[] => {
+      const rackAt = rackIndex.get(item.id);
+      if (rackAt !== undefined) {
+        return [
+          {
+            id: item.id,
+            kind: "rack",
+            parentId: null,
+            layer: "furniture",
+            rect: item.rect,
+            sceneIndex: rackAt,
+          },
+        ];
+      }
+      const deviceAt = deviceIndex.get(item.id);
+      if (deviceAt === undefined) return [];
+      const effective = resolveEffectivePlacement(ctx.scene, ctx.catalog, item.id, preview);
+      if (effective.kind !== "studio-free" && effective.kind !== "studio-mounted") return [];
+      // Top view presents no faces; free footprints sit above rack footprints.
+      const side = ctx.view === "top" ? "front" : (faces.get(item.id)?.face ?? effective.facing);
+      return [
+        {
+          id: item.id,
+          kind: "device",
+          parentId: effective.kind === "studio-mounted" ? effective.rack.id : null,
+          layer: sideLayer(side),
+          rect: item.rect,
+          sceneIndex: deviceAt,
+        },
+      ];
+    }),
+  );
+}
+
+export interface BenchObjectInput {
+  readonly scene: Scene;
+  readonly dutId: string;
+  /** Resolved workbench faces; a support device's layer follows its settled `support` slot side. */
+  readonly faces: readonly ResolvedFace[];
+}
+
+/** The workbench's physical objects. The DUT presents both faces, so it is always a front object. */
+export function resolveBenchObjects(input: BenchObjectInput): ResolvedObject[] {
+  const support = new Map(
+    input.faces
+      .filter((face) => face.stage.kind === "workbench" && face.stage.role === "support")
+      .map((face) => [face.objectId, face.face]),
+  );
+  return ordered(
+    input.scene.patch.devices.map(
+      (device, sceneIndex): UnorderedObject => ({
+        id: device.id,
+        kind: "device",
+        parentId: null,
+        layer:
+          device.id === input.dutId
+            ? "front-object"
+            : sideLayer(support.get(device.id) ?? effectiveFacing(input.scene, device.id)),
+        rect: null,
+        sceneIndex,
+      }),
+    ),
+  );
+}
+
+/** The opaque outline of an object with a pure rect (racks included: their frames are opaque too). */
+export function silhouetteOf(object: ResolvedObject): Silhouette | null {
+  return object.rect ? { objectId: object.id, rect: object.rect, radius: CHASSIS_RADIUS_MM } : null;
 }
