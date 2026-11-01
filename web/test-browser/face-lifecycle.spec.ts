@@ -1,5 +1,5 @@
 import { expect, type Page, test } from "@playwright/test";
-import { openFixture, stageObject } from "./support/fixture-page";
+import { objectChrome, openFixture, stageObject } from "./support/fixture-page";
 
 // Story 10.4: a flip is settled by its own CSS transition's generation, never by a timer. While it runs
 // the face keeps its settled side, is non-patchable, and every lead touching it is suppressed.
@@ -9,7 +9,7 @@ const leads = (page: Page) => page.locator("path.cable-core");
 
 async function flip(page: Page, id: string, label: "front" | "back"): Promise<void> {
   await stageObject(page, id).hover();
-  await stageObject(page, id).getByRole("button", { name: label, exact: true }).click();
+  await objectChrome(page, id).getByRole("button", { name: label, exact: true }).click();
 }
 
 test("a flip suppresses its leads until its transition settles", async ({ page }) => {
@@ -31,7 +31,9 @@ test("a rapid reversal settles on the latest generation only", async ({ page }) 
   await openFixture(page, "cable-hover");
 
   await flip(page, "rear-source", "front");
-  await stageObject(page, "rear-source").getByRole("button", { name: "back", exact: true }).click();
+  await objectChrome(page, "rear-source")
+    .getByRole("button", { name: "back", exact: true })
+    .click();
 
   await expect(faceSlot(page, "rear-source")).toHaveAttribute("data-face-state", "presented");
   await expect(faceSlot(page, "rear-source")).toHaveAttribute("data-face-side", "back");

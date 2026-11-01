@@ -4,6 +4,10 @@ import type { BrowserFixtureId } from "../../src/testing/browser-fixtures";
 export const stageObject = (page: Page, id: string): Locator =>
   page.locator(`[data-stage-object="${id}"]`);
 
+/** An object's toolbar in the interaction layer (Story 10.5): keyed by object ID, not nested in it. */
+export const objectChrome = (page: Page, id: string): Locator =>
+  page.locator(`[data-chrome-for="${id}"]`);
+
 export const jack = (page: Page, key: string): Locator => page.locator(`[data-jack="${key}"]`);
 
 export async function openFixture(page: Page, fixture: BrowserFixtureId): Promise<void> {

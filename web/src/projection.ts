@@ -32,8 +32,9 @@ export type ViewCtx = { space: string; view: Wall | "top"; wall: Wall | null; ro
 /** The layout inputs every rect/placement computation needs. */
 export type LayoutCtx = ViewCtx & { scene: Scene; catalog: DeviceDescriptor[] };
 
-/** One item to render on the stage: its id, its rect in the current view, and its z-order. */
-export type PlacedItem = { id: string; rect: Rect2; background?: boolean; z: number };
+/** One item on the stage: its id and its rect in the current view. Paint layer/order are resolved
+ *  separately (`resolveStudioObjects`, view-resolution.ts). */
+export type PlacedItem = { id: string; rect: Rect2; background?: boolean };
 
 export const deviceById = (scene: Scene, id: string) =>
   scene.patch.devices.find((d) => d.id === id);
@@ -122,12 +123,9 @@ export function deviceRect(
   );
 }
 
-// The items to render, for the current view. In a **wall elevation**: rack frames (behind) then that
-// wall's devices (on top), with `z` interleaving them with the cable layer (z 2) so a continuous cable
-// occludes right: a **back-shown** device sits *below* the cables (z 1) so a lead reaches its rear
-// sockets, a **front-shown** one *above* (z 3) so cables tuck behind its panel. A cable plugged into a
-// visible front socket is occluded near the plug; the renderer redraws a short lead-tip above the panel
-// (see `tipPatchEnd`) so the plug still reads as seated. In the **top-down plan**: the whole room's
+// The items in the current view, with their rects. In a **wall elevation**: rack frames then that wall's
+// devices. Their physical paint layer/order is resolved separately (`resolveStudioObjects`): rack frames
+// behind, back-shown devices below the cable pass, front-shown ones above it. In the **top-down plan**: the whole room's
 // racks + free-standing gear as floor footprints (mounted gear is hidden inside its rack; cables aren't
 // drawn — no visible jacks from above).
 export function placedItemsFor(ctx: LayoutCtx, preview?: PlacementPreview): PlacedItem[] {
@@ -147,7 +145,6 @@ export function placedItemsFor(ctx: LayoutCtx, preview?: PlacementPreview): Plac
             id: r.id,
             rect: rackRect(ctx, r, preview),
             background: true,
-            z: 0,
           }),
         ),
       ...scene.patch.devices
@@ -155,7 +152,7 @@ export function placedItemsFor(ctx: LayoutCtx, preview?: PlacementPreview): Plac
           const effective = resolveEffectivePlacement(scene, ctx.catalog, d.id, preview);
           return effective.kind === "studio-free" && effective.space === space;
         })
-        .map((d) => ({ id: d.id, rect: deviceRect(ctx, d.id, d.typeId, preview), z: 3 }))
+        .map((d) => ({ id: d.id, rect: deviceRect(ctx, d.id, d.typeId, preview) }))
         .filter((it): it is PlacedItem => it.rect !== null),
     ];
   }
@@ -168,9 +165,7 @@ export function placedItemsFor(ctx: LayoutCtx, preview?: PlacementPreview): Plac
             : r;
         return effective.space === space && effective.wall === ctx.wall;
       })
-      .map(
-        (r): PlacedItem => ({ id: r.id, rect: rackRect(ctx, r, preview), background: true, z: 0 }),
-      ),
+      .map((r): PlacedItem => ({ id: r.id, rect: rackRect(ctx, r, preview), background: true })),
     ...scene.patch.devices
       .filter((d) => {
         const effective = resolveEffectivePlacement(scene, ctx.catalog, d.id, preview);
@@ -180,18 +175,7 @@ export function placedItemsFor(ctx: LayoutCtx, preview?: PlacementPreview): Plac
           effective.wall === ctx.wall
         );
       })
-      .map((d) => {
-        const effective = resolveEffectivePlacement(scene, ctx.catalog, d.id, preview);
-        return {
-          id: d.id,
-          rect: deviceRect(ctx, d.id, d.typeId, preview),
-          z:
-            (effective.kind === "studio-free" || effective.kind === "studio-mounted") &&
-            effective.facing === "back"
-              ? 1
-              : 3,
-        };
-      })
+      .map((d) => ({ id: d.id, rect: deviceRect(ctx, d.id, d.typeId, preview) }))
       .filter((it): it is PlacedItem => it.rect !== null),
   ];
 }

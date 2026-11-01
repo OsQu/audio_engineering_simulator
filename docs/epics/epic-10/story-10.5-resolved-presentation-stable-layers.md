@@ -110,7 +110,7 @@ Rejected alternative: keep the numeric `z` on `PlacedItem` and only delete the o
 symptom, but the order would stay implicit and the layers would have no names for 10.6's mask sets to refer
 to.
 
-## Task 10.5.2 — Studio renders resolved order + interaction overlay  · planned (design drafted)
+## Task 10.5.2 — Studio renders resolved order + interaction overlay  · done
 
 Call-stack (diff):
 
@@ -167,6 +167,14 @@ interface WorldItem { id: string; rect: Rect2; layer: ObjectLayer }  // `backgro
     `topmostDeviceAt(occupant centre)` is the occupant;
   - the occupant's toolbar buttons are `elementFromPoint`-topmost at their own centres;
   - while the rack is hovered, the occupant's control centre still resolves inside the occupant.
+
+*As built:*
+- `App` maps `ResolvedObject`s to `WorldItem { id, rect, layer }`, and `WorldView.rect` stays non-null.
+- The toolbar anchor is `role="toolbar"`, `tabindex="-1"`.
+- `fixture-page.ts` gains `objectChrome(page, id)`. `face-lifecycle.spec.ts` now finds flip buttons
+  through it.
+- The stable-layers spec is mutation-checked: reinstating the `chrome ? 6` override fails all four layer
+  cases.
 
 ## Task 10.5.3 — Workbench renders resolved order + interaction overlay  · planned
 

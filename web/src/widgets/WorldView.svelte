@@ -11,12 +11,18 @@
   //
   // Interaction is split so it never conflicts: **panning** lives on a `.backdrop` *sibling* of the
   // devices (a device press can't bubble to a sibling, so operating a control never pans), and
-  // **dragging** lives on the whole device body — a pointerdown that doesn't land on a control, jack,
-  // or the hover-header chrome (see DRAG_EXCLUDE) grabs the unit, so turning a knob never moves it.
+  // **dragging** lives on the whole device body — a pointerdown that doesn't land on a control or jack
+  // (see DRAG_EXCLUDE) grabs the unit, so turning a knob never moves it.
+  //
+  // Physical order (Story 10.5) is resolver-owned: `items` arrive in their total paint order and each
+  // carries a semantic layer mapped to one fixed z band. Hover, focus, toolbar grace and dragging never
+  // touch a chassis' z. Toolbars and the drag/legality outline live in a separate **interaction layer**
+  // keyed by object ID, so revealing them can't raise (or trap) a chassis.
   import type { Snippet } from "svelte";
   import { Camera } from "../camera.svelte";
   import { draggable } from "../device-drag";
   import { type Rect2, snapToGrid } from "../spatial";
+  import type { ObjectLayer, PaintLayer } from "../view-resolution";
   import type { SurfacePoint, WorldApi } from "../world-api";
   import DeviceChrome from "./DeviceChrome.svelte";
 
@@ -24,13 +30,8 @@
     id: string;
     /** Front-elevation rect in world millimetres (`y` = bottom edge). */
     rect: Rect2;
-    /** Background furniture (e.g. a rack frame). A styling hook; stacking is set via `z`. */
-    background?: boolean;
-    /** Stacking order (CSS z-index). The parent sets it per item to interleave items with the single
-     *  cable layer (z 2): a **back-shown** device sits *below* the cables (z 1) so a lead reaches its
-     *  rear sockets, a **front-shown** one *above* (z 3) so cables tuck behind its panel. A rack frame
-     *  sits at the bottom. Defaults to 2. */
-    z?: number;
+    /** The resolved semantic paint layer. Items arrive already sorted in total paint order. */
+    layer: ObjectLayer;
   }
 
   interface Props {
@@ -61,9 +62,9 @@
      *  cables). Handed a {@link WorldApi} so the parent can place things without touching the transform.
      *  The world layer stays ignorant of what this is — the standing WebGL escape hatch. */
     overlay?: Snippet<[WorldApi]>;
-    /** Like `overlay`, but drawn at the CABLE layer (z 2) — between back-facing and front-facing device
-     *  panels — e.g. the patch cables. Each item's `z` decides whether it sits in front of or behind
-     *  these, so a single continuous cable is occluded correctly per device. Same coordinate space. */
+    /** Like `overlay`, but drawn at the CABLE layer — between rear-object and front-object panels —
+     *  e.g. the patch cables. Each item's layer decides whether it sits in front of or behind these, so
+     *  a single continuous cable is occluded correctly per device. Same coordinate space. */
     cables?: Snippet<[WorldApi]>;
     /** Bound out to the parent so it can convert coordinates outside the overlay snippet (e.g. to
      *  DOM-measure jack positions into surface space). `undefined` until the surface mounts. */
@@ -96,6 +97,16 @@
   // cursor-anchored wheel zoom, and drag-to-pan; this component keeps only the world↔surface mapping + fit.
   const camera = new Camera({ zoom: 0.6, minZoom: 0.2, maxZoom: 3 });
 
+  // One fixed z band per semantic layer. Nothing else may set a chassis' z.
+  const LAYER_Z: Record<PaintLayer, number> = {
+    furniture: 0,
+    "rear-object": 1,
+    cable: 2,
+    "front-object": 3,
+    "cable-foreground": 5,
+    interaction: 8,
+  };
+
   // The viewport element (measured for fit-to-content) and whether the user has taken over the camera.
   let viewport = $state<HTMLDivElement>();
   // The transformed surface element — its client rect is the origin for client↔surface conversion.
@@ -124,8 +135,8 @@
 
   // A toolbar can be wider than the device that reveals it. Keep it open briefly after the pointer
   // leaves the chassis so a diagonal move toward an overhanging control (usually remove, at the far
-  // right) can reach the toolbar. Entering the toolbar re-enters the device subtree and cancels this
-  // close. The active device is also lifted above cables and sibling devices so every control can be hit.
+  // right) can reach the toolbar. The toolbar lives in the interaction layer, not inside the chassis, so
+  // its own enter/focus cancels the close. Nothing here changes physical stacking.
   let openChromeId = $state<string | null>(null);
   let chromeCloseTimer: ReturnType<typeof setTimeout> | undefined;
   function showChrome(id: string): void {
@@ -253,23 +264,23 @@
     {/if}
 
     {#each items as it (it.id)}
-      <!-- The whole device body is the drag surface (grab anywhere to move); controls / jacks / the
-           hover-header chrome opt out via DRAG_EXCLUDE, so operating them never moves the unit. -->
+      <!-- The whole device body is the drag surface (grab anywhere to move); controls / jacks opt out via
+           DRAG_EXCLUDE, so operating them never moves the unit. Its z is its layer's band — always. -->
       <div
         class="device"
         data-stage-object={it.id}
-        class:background={it.background}
+        data-paint-layer={it.layer}
+        class:background={it.layer === "furniture"}
         class:dragging={drag?.id === it.id}
-        class:illegal={drag?.id === it.id && !drag.legal}
-        class:chrome-open={openChromeId === it.id}
         style="left: {it.rect.x}px; bottom: {it.rect.y}px; width: {it.rect.width}px; height: {it
-          .rect.height}px;
-               z-index: {drag?.id === it.id ? 10 : openChromeId === it.id ? 6 : (it.z ?? 2)};"
+          .rect.height}px; z-index: {LAYER_Z[it.layer]};"
         role="button"
         tabindex="0"
         aria-label="{it.id} — drag to move"
         onpointerenter={() => showChrome(it.id)}
         onpointerleave={() => hideChromeSoon(it.id)}
+        onfocusin={() => showChrome(it.id)}
+        onfocusout={() => hideChromeSoon(it.id)}
         use:draggable={{
           origin: () => ({ x: it.rect.x, y: it.rect.y }),
           scale: () => camera.zoom,
@@ -290,14 +301,47 @@
         onkeydown={(e) => onDeviceKey(e, it)}
       >
         <div class="content">{@render item(it.id)}</div>
-        {#if controls}
-          <!-- Chrome (open / flip / space / remove) in the shared hover header, revealed on device hover
-               (or keyboard focus within) — the reveal trigger is the CSS below. Its buttons/selects opt
-               out of the body drag in onDevicePointerDown. -->
-          <DeviceChrome>{@render controls(it.id)}</DeviceChrome>
-        {/if}
       </div>
     {/each}
+
+    <!-- Interaction layer: never physical. Per-object toolbars (keyed by object ID, positioned from the
+         resolved rect) and the drag/legality outline. The layer itself is transparent to pointers; only
+         the toolbar controls take hits. A rack's outline is its frame, which bounds its occupants, so the
+         feedback follows the whole assembly without covering it. -->
+    <div class="interaction" style="z-index: {LAYER_Z.interaction};">
+      {#each items as it (it.id)}
+        {#if drag?.id === it.id}
+          <div
+            class="drag-outline"
+            data-drag-outline={it.id}
+            class:illegal={!drag.legal}
+            style="left: {it.rect.x}px; bottom: {it.rect.y}px; width: {it.rect.width}px; height: {it
+              .rect.height}px;"
+          ></div>
+        {/if}
+      {/each}
+      {#if controls}
+        {#each items as it (it.id)}
+          <!-- The anchor box spans the chassis' top edge; DeviceChrome sits flush above it. -->
+          <div
+            class="object-chrome"
+            data-chrome-for={it.id}
+            role="toolbar"
+            tabindex="-1"
+            aria-label="{it.id} controls"
+            class:open={openChromeId === it.id}
+            style="left: {it.rect.x}px; bottom: {it.rect.y + it.rect.height}px; width: {it.rect
+              .width}px;"
+            onpointerenter={() => showChrome(it.id)}
+            onpointerleave={() => hideChromeSoon(it.id)}
+            onfocusin={() => showChrome(it.id)}
+            onfocusout={() => hideChromeSoon(it.id)}
+          >
+            <DeviceChrome>{@render controls(it.id)}</DeviceChrome>
+          </div>
+        {/each}
+      {/if}
+    </div>
 
     {#if overlay}
       <!-- Overlay in surface-local space (SVG y-down), on top of the gear. pointer-events:none so it
@@ -371,30 +415,46 @@
        must not be clipped. The rounded-corner clip lives on `.content` instead. */
     box-shadow: 0 2px 6px rgba(0, 0, 0, 0.4);
     border-radius: 6px;
-    /* z-index is set inline per item (WorldItem.z) so panels interleave with the cable layer by facing;
-       a dragged item is lifted above everything. */
+    /* z-index is set inline from the item's resolved layer band (LAYER_Z) — never from interaction. */
     cursor: grab; /* the body is the drag surface; controls override with their own cursor */
   }
   .device.dragging {
-    box-shadow: 0 6px 18px rgba(0, 0, 0, 0.55);
     cursor: grabbing;
   }
-  .device.illegal {
-    outline: 2px solid #d9534f;
+  /* The interaction layer spans the surface but never takes pointer hits itself. */
+  .interaction {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+  }
+  .drag-outline {
+    position: absolute;
+    border-radius: 6px;
+    box-shadow: 0 6px 18px rgba(0, 0, 0, 0.55);
+    outline: 2px dashed rgba(255, 255, 255, 0.35);
     outline-offset: 1px;
+  }
+  .drag-outline.illegal {
+    outline: 2px solid #d9534f;
+  }
+  /* A zero-height anchor on the chassis' top edge; DeviceChrome positions itself above it. */
+  .object-chrome {
+    position: absolute;
+    height: 0;
   }
   .device:focus-visible {
     outline: 2px solid var(--ae-signal-mic-lit);
     outline-offset: 1px;
   }
-  /* Reveal the shared hover header (DeviceChrome) when the device is hovered or focused within — the bar's
-     appearance + hidden default live in that component; this is just the per-view reveal trigger. The
-     device escapes the chassis clip because overflow:hidden lives on `.content`, not `.device`. */
-  .device:hover :global(.device-chrome),
-  .device.chrome-open :global(.device-chrome),
-  .device:focus-within :global(.device-chrome) {
+  /* Reveal the shared header (DeviceChrome) while its object is open (hovered/focused, plus the grace
+     period). The bar stays transparent to pointers so its hit box is only its controls. */
+  .object-chrome.open :global(.device-chrome),
+  .object-chrome:focus-within :global(.device-chrome) {
     opacity: 1;
     transform: none;
+  }
+  .object-chrome.open :global(.device-chrome > *),
+  .object-chrome:focus-within :global(.device-chrome > *) {
     pointer-events: auto;
   }
   .content {
