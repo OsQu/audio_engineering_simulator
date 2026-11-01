@@ -53,3 +53,8 @@
   `cargo docs` FAILS on a pre-existing unresolved `[instantiate]` link in crates/devices — no crate changes on
   this branch since 1854ff8; proposed as a separate ticket.
 - Next: Oskari reviews the Story Validate gate.
+
+## 2026-11-01 — resumed: Oskari asked to solve merge conflicts and continue
+- The e10 stack was squashed onto `e10-s1/regression-harness` (ef0a0ad). My branch still sat on the old
+  e10-s4 commit 1854ff8. Plan: `git rebase --onto origin/e10-s1/regression-harness 1854ff8` (replay only
+  the 4 AES-68 commits), resolve conflicts, re-run the gates.
