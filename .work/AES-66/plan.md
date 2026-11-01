@@ -10,7 +10,8 @@ free/rack/mount/workbench previews owned by App and Workbench. Program design li
 - 10.3.2 pure preview resolution — done (0ff67f7)
 - 10.3.3 App-owned studio previews — done (a8f7a57)
 - 10.3.4 Workbench-owned previews — done (890dd5f)
-- Story Validate gate + close-out — done (this session, b8268bc)
+- Story Validate gate + close-out — done (f046c2d after rebase)
+- Rebase onto `origin/e10-s1/regression-harness` (Story 10.2 merged there, e10-s2 deleted) — done; force-push pending human approval
 
 ## Decisions
 - Added eject-candidate and all-walls inheritance oracles: the only Validate items without an explicit test.
@@ -20,5 +21,4 @@ free/rack/mount/workbench previews owned by App and Workbench. Program design li
 - Committed Prettier output for Svelte files left unformatted by earlier work, as a separate commit.
 
 ## Open questions
-- None blocking. Story 10.2's heading in IMPLEMENTATION_PLAN still says "In progress" while Epic progress
-  says complete — left untouched (not this ticket's scope).
+- None.

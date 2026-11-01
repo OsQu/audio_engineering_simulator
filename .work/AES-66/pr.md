@@ -24,4 +24,5 @@ AES-66: Story 10.3 — Effective placement hierarchy & live previews
 
 ## Verification
 Vitest 335 passed · Biome clean · svelte-check 0 errors · Playwright 10 passed (5 tracked expected
-failures owned by 10.5/10.7). Web-only change; no Rust touched.
+failures owned by 10.5/10.7). Web-only change; no Rust touched. Based on `e10-s1/regression-harness`, which now contains
+Story 10.2 (AES-65).

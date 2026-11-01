@@ -1021,8 +1021,8 @@ whole front-end story (mic choice, phantom, gain staging, the pad, feedback) —
 real-worklet, and pure-fixture seams that every later corrective Story graduates regressions through; Story
 10.2 makes structural engine changes trustworthy before view migration begins. Story 10.3 is ✅ complete:
 it establishes the effective-placement and preview foundation for later presentation migration, and its
-App-owned rack preview graduated the populated-rack-drag known regression into the required browser suite. Stories 10.4–10.7 remain
-deliberately coarse until their respective planning passes.
+App-owned rack preview graduated the populated-rack-drag known regression into the required browser suite.
+Stories 10.4–10.7 remain deliberately coarse until their respective planning passes.
 
 **Goal:** make one pure, deterministic presentation model authoritative for effective rack/device
 placement, presented faces, socket visibility and patchability, cable endpoints and portals, physical
