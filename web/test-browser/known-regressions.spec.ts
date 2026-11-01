@@ -1,16 +1,9 @@
 import { expect, test } from "@playwright/test";
-import {
-  elementCentre,
-  jack,
-  openFixture,
-  renderedLayer,
-  stageObject,
-  topmostDeviceAt,
-} from "./support/fixture-page";
+import { elementCentre, jack, openFixture, stageObject } from "./support/fixture-page";
 
 interface KnownRegression {
   id: string;
-  owner: "10.5" | "10.7";
+  owner: "10.7";
   title: string;
 }
 
@@ -38,54 +31,6 @@ async function releaseWithoutFinalMove(
     point,
   );
 }
-
-test("rack hover leaves a mounted device topmost", async ({ page }) => {
-  expectKnownFailure({
-    id: "rack-hover-occludes-occupant",
-    owner: "10.5",
-    title: "hover chrome must not raise a rack over its mounted occupant",
-  });
-  await openFixture(page, "rack-hover");
-
-  const rack = stageObject(page, "fixture-rack");
-  const occupant = stageObject(page, "fixture-compressor");
-  const rackBox = await rack.boundingBox();
-  const occupantCentre = await elementCentre(occupant);
-  if (!rackBox) throw new Error("fixture rack did not render");
-  await page.mouse.move(rackBox.x + 2, rackBox.y + 2);
-
-  await expect.poll(() => topmostDeviceAt(page, occupantCentre)).toBe("fixture-compressor");
-});
-
-test("rear device hover preserves its cable layer", async ({ page }) => {
-  expectKnownFailure({
-    id: "rear-device-hover-reorders-cables",
-    owner: "10.5",
-    title: "hover chrome must not raise a rear chassis above its cable layer",
-  });
-  await openFixture(page, "cable-hover");
-
-  const rear = stageObject(page, "rear-source");
-  await rear.hover();
-  const rearLayer = await renderedLayer(rear);
-
-  expect(rearLayer).toBe("1");
-});
-
-test("front device hover preserves its cable layer", async ({ page }) => {
-  expectKnownFailure({
-    id: "front-device-hover-reorders-cables",
-    owner: "10.5",
-    title: "hover chrome must not raise a front chassis above its foreground cable layer",
-  });
-  await openFixture(page, "cable-hover");
-
-  const front = stageObject(page, "front-source");
-  await front.hover();
-  const frontLayer = await renderedLayer(front);
-
-  expect(frontLayer).toBe("3");
-});
 
 test("click-click and drag release at the current target produce the same connection", async ({
   page,
@@ -138,27 +83,4 @@ test("near sockets do not become device drags at minimum and maximum zoom", asyn
 
     expect(objectAfter).toEqual(objectBefore);
   }
-});
-
-test("populated rack drag moves the occupant before release", async ({ page }) => {
-  expectKnownFailure({
-    id: "rack-preview-leaves-occupant-behind",
-    owner: "10.5",
-    title: "a rack preview must translate every mounted occupant before commit",
-  });
-  await openFixture(page, "rack-drag");
-
-  const rack = stageObject(page, "fixture-rack");
-  const occupant = stageObject(page, "fixture-compressor");
-  const rackBox = await rack.boundingBox();
-  const before = await occupant.boundingBox();
-  if (!rackBox || !before) throw new Error("rack-drag fixture did not render");
-
-  await page.mouse.move(rackBox.x + 2, rackBox.y + 2);
-  await page.mouse.down();
-  await page.mouse.move(rackBox.x + 160, rackBox.y + 40);
-  const during = await occupant.boundingBox();
-  await page.mouse.up();
-
-  expect(during?.x).toBeGreaterThan(before.x + 100);
 });

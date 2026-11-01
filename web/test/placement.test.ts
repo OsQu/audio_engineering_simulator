@@ -111,9 +111,7 @@ describe("canPlace", () => {
     d1: { space: "s1", wall: "front", position: { x: 0, y: 0, z: 0 }, facing: "front" },
   });
   // A single other item on the front wall occupying x ∈ [250, 450], y ∈ [0, 100].
-  const others: PlacedItem[] = [
-    { id: "other", rect: { x: 250, y: 0, width: 200, height: 100 }, z: 3 },
-  ];
+  const others: PlacedItem[] = [{ id: "other", rect: { x: 250, y: 0, width: 200, height: 100 } }];
 
   it("elevation: rejects a free-standing spot overlapping another item", () => {
     // candidate at (300,0) is 200×100 → overlaps [250,450]

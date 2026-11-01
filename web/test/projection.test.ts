@@ -240,15 +240,13 @@ describe("placedItemsFor", () => {
     d2: { space: "s1", wall: "back", position: { x: 900, y: 0, z: 200 }, facing: "front" },
   });
 
-  it("elevation: filters to the current wall, racks behind (z 0), z by facing", () => {
+  it("elevation: filters to the current wall, racks as background", () => {
     const items = placedItemsFor(layout(scene, "front"));
     const ids = items.map((i) => i.id);
     // rack r1 (front) + mounted c1 + free d1 (front). d2 is on the back wall → excluded.
     expect(ids.sort()).toEqual(["c1", "d1", "r1"]);
-    expect(items.find((i) => i.id === "r1")).toMatchObject({ background: true, z: 0 });
-    // d1 faces "back" ⇒ z 1 (behind the cable layer); c1 faces "front" ⇒ z 3.
-    expect(items.find((i) => i.id === "d1")?.z).toBe(1);
-    expect(items.find((i) => i.id === "c1")?.z).toBe(3);
+    expect(items.find((i) => i.id === "r1")).toMatchObject({ background: true });
+    // Paint layers by facing are resolved separately (object-resolution.test.ts).
   });
 
   it("elevation: switching wall shows only that wall's items", () => {
@@ -262,22 +260,7 @@ describe("placedItemsFor", () => {
     // rack r1 (background) + free d1, d2 (any wall). Mounted c1 lives inside its rack box → hidden.
     expect(ids.sort()).toEqual(["d1", "d2", "r1"]);
     const items = placedItemsFor(layout(scene, "top"));
-    expect(items.find((i) => i.id === "r1")).toMatchObject({ background: true, z: 0 });
-    expect(items.find((i) => i.id === "d1")?.z).toBe(3);
-  });
-
-  it("elevation: a flipped rack sends its mounted gear to the back z-order", () => {
-    // Same scene but the rack is turned around: its mounted c1 now shows its back ⇒ z 1, not 3.
-    const flipped = makeScene([{ ...rack("r1", "front"), facing: "back" }], {
-      c1: {
-        space: "s1",
-        wall: "front",
-        position: { x: 0, y: 0, z: 0 },
-        rack: { id: "r1", uSlot: 0 },
-        facing: "front",
-      },
-    });
-    expect(placedItemsFor(layout(flipped, "front")).find((i) => i.id === "c1")?.z).toBe(1);
+    expect(items.find((i) => i.id === "r1")).toMatchObject({ background: true });
   });
 });
 

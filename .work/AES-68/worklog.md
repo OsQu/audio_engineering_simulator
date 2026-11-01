@@ -16,3 +16,14 @@
   reverse) to avoid a projection↔view-resolution import cycle.
 - Gates: vitest 366 ✓, typecheck ✓ (2 pre-existing warnings), biome ✓. Not committed (CLAUDE.md §2).
 - Next: 10.5.2 studio overlay — draft its program design first.
+
+## 2026-11-01 — Task 10.5.2 done (studio stable layers + interaction overlay)
+- Oskari (mid-turn): work the whole story, commit each task. Committed 10.5.1 as 2c7da61.
+- WorldView: items in resolved order, z = fixed band per layer (`data-paint-layer`); drag/chrome z
+  overrides deleted. New `.interaction` layer: per-object toolbars (`data-chrome-for`) + drag outline
+  (`data-drag-outline`). Toolbar reveal is state (enter/focus on chassis or toolbar, shared 300 ms grace).
+- PlacedItem.z removed; projection tests trimmed (layer coverage lives in object-resolution.test.ts).
+- Graduated rack-hover, rear/front hover, populated-rack-drag into required `stable-layers.spec.ts`
+  (6 tests), mutation-checked. face-lifecycle spec now finds flip buttons via `objectChrome`.
+- Gates: vitest 365 ✓, typecheck ✓, biome ✓, Playwright 22 ✓ (+2 expected 10.7 failures).
+- Next: 10.5.3 workbench.
