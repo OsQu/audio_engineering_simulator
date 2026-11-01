@@ -1,6 +1,6 @@
 AES-67: Story 10.4 — Explicit faces & face-local socket geometry
 
-Stacked on `e10-s3/effective-placement-hierarchy`. Every studio, workbench, and focus face now has an
+Stacked on `e10-s1/regression-harness` (which now carries Stories 10.2 and 10.3). Every studio, workbench, and focus face now has an
 explicit, stable identity. Cable anchors come from per-face socket geometry with revisions, replacing the
 global transformed `[data-jack]` sweep and its timers.
 
@@ -65,13 +65,11 @@ which no test covered before. It's mutation-checked: it fails with the fix rever
 
 ## Tests
 
-- Vitest: 355 pass, including the new `socket-geometry.test.ts` and the extended `view-resolution.test.ts`.
+- Vitest: 358 pass, including the new `socket-geometry.test.ts` and the extended `view-resolution.test.ts`.
   typecheck and Biome pass.
 - Playwright: `face-lifecycle.spec.ts` (7 tests) and `socket-geometry.spec.ts` (2 tests) pass. The
   focus-isolation test was mutation-checked: it fails with the gate removed.
-- **Known red, not from this branch:** `known-regressions.spec.ts` "populated rack drag moves the occupant
-  before release" reports *Expected to fail, but passed*. It does the same on the base commit, because
-  Story 10.3 fixed it but nobody removed its known-failure marker (project learning I-132).
+- Full browser suite is green: 20 pass, and the remaining known regressions stay marked as expected failures, owned by 10.5/10.7.
 - Duplex sockets and differently configured instances of the same type are covered by pure tests only. No
   fixture device exercises them in the browser.
 - `studio-topology.spec.ts` (1 test) passes against the real worklet.

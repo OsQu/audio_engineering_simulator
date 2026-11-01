@@ -92,3 +92,12 @@
 - Tests: unit regression in topology-protocol.test.ts; new `studio-topology.spec.ts` adds gear through the
   real worklet (mutation-checked: fails with the fix reverted).
 - Gates: vitest 356 ✓, typecheck/biome ✓, Playwright 19 ✓ + the pre-existing rack-drag unexpected pass.
+
+## 2026-11-01 — rebased onto origin/e10-s1/regression-harness
+- Stories 10.2/10.3 were rewritten onto e10-s1 (AES-65/AES-66, new hashes), so this branch's old copies
+  conflicted. Replayed only AES-67's commits (`git rebase --onto origin/e10-s1/regression-harness 890dd5f`).
+- Conflicts: `docs/IMPLEMENTATION_PLAN.md` prose only (epic Progress paragraph; Story 10.3 *Delivered* vs
+  the 10.4 heading) — kept both sides. Code auto-merged.
+- Upstream still had the DataCloneError bug, so the fix stays. Upstream graduated the rack-drag regression,
+  so the browser suite is now fully green.
+- Gates after rebase: vitest 358 ✓, typecheck/biome ✓, Playwright 20 ✓ (no failures).
