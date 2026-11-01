@@ -139,7 +139,7 @@
   const worldApi: WorldApi = {
     worldToSurface,
     clientToSurface,
-    measureRoot: () => surface ?? null,
+    stageRoot: () => surface ?? null,
   };
   $effect(() => {
     api = worldApi;
@@ -332,7 +332,7 @@
       bind:clientHeight={natH}
       style:transform={camera.transform}
     >
-      <!-- Patch cables, drawn in surface-local coords (the same space the measured jack anchors live in)
+      <!-- Patch cables, drawn in surface-local coords (the same space the projected socket anchors live in)
              via the shared cable-view geometry. `pointer-events:none` so jack presses pass through to the
              faceplates; only each cable's hit-path takes clicks (disabled mid-drag so a release lands on a
              jack). The cable layer sits at z 2; device groups interleave around it by facing (see zBase),
@@ -589,7 +589,7 @@
     background-position: -1px -1px;
   }
   /* The cables overlay covers the surface in its own (unscaled, surface-local) coordinate space — the
-     same space the measured jack anchors live in. Transparent to pointers except each cable's hit-path. */
+     same space the projected socket anchors live in. Transparent to pointers except each cable's hit-path. */
   .cables {
     position: absolute;
     top: 0;

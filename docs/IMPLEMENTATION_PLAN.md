@@ -1198,7 +1198,7 @@ remain deferred to Stories 10.6 and 10.7, respectively.
 every occupant; cancel is mutation-free; commit matches the final preview; projection and placement tests
 cover all walls, top view, workbench, invalid references, and mount/eject candidates.
 
-### Story 10.4 — Explicit faces & face-local socket geometry — 🚧 **In progress**
+### Story 10.4 — Explicit faces & face-local socket geometry — 🚧 **In progress** (all Tasks done; Validate gate awaiting review)
 
 *Goal:* give every studio, workbench, and focus presentation an explicit, stable identity and replace
 transformed world-space jack sweeps with revisioned face-local socket geometry. This establishes the

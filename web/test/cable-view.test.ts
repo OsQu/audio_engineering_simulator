@@ -42,7 +42,7 @@ const CATALOG = [DESK];
 const idApi = {
   worldToSurface: (x: number, y: number) => ({ x, y }),
   clientToSurface: (x: number, y: number) => ({ x, y }),
-  measureRoot: () => null,
+  stageRoot: () => null,
 };
 
 const place = (space: string, wall: Wall, facing: "front" | "back" = "front"): Placement => ({

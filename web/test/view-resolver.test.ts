@@ -17,7 +17,7 @@ import {
 const identityApi = {
   worldToSurface: (x: number, y: number) => ({ x, y }),
   clientToSurface: (x: number, y: number) => ({ x, y }),
-  measureRoot: () => null,
+  stageRoot: () => null,
 };
 
 describe("view resolver contract matrix", () => {

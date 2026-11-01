@@ -115,7 +115,7 @@
   const worldApi: WorldApi = {
     worldToSurface,
     clientToSurface,
-    measureRoot: () => surface ?? null,
+    stageRoot: () => surface ?? null,
   };
   // Expose the converters to the parent (for jack measurement outside the overlay snippet).
   $effect(() => {
