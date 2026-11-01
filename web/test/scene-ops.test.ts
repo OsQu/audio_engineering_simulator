@@ -422,7 +422,7 @@ describe("addBenchDevice", () => {
 });
 
 describe("removeRack", () => {
-  it("un-mounts its gear (keeping positions) and drops the rack", () => {
+  it("ejects its gear under U3 (not to a stale stored position) and drops the rack", () => {
     const mounted = place("s1", "front", { id: "r1", uSlot: 3 });
     mounted.position = { x: 111, y: 0, z: 222 };
     const scene = makeScene({
@@ -439,10 +439,12 @@ describe("removeRack", () => {
         },
       ],
     });
-    removeRack(scene, "r1");
+    expect(removeRack(scene, [AMP], "r1").ok).toBe(true);
     expect(scene.ui.racks).toHaveLength(0);
     expect(scene.ui.placements.d1.rack).toBeUndefined(); // un-mounted
-    expect(scene.ui.placements.d1.position).toEqual({ x: 111, y: 0, z: 222 }); // position kept
+    // Effective slot rect: x = 0 + FRAME_MARGIN 14, y = 14 + 3·44.45 = 147.35. The removed frame is no
+    // obstacle, so the nearest 50 mm lattice point is (0, 150); depth z comes from the rack (0).
+    expect(scene.ui.placements.d1.position).toEqual({ x: 0, y: 150, z: 0 });
   });
 });
 
@@ -499,19 +501,40 @@ describe("space + flip furniture", () => {
     expect(scene.ui.racks[0].facing).toBe("front");
   });
 
-  it("unmount ejects a mounted device to free-standing, keeping its position", () => {
+  it("unmount ejects a mounted device beside its retained rack, taking the rack's facing", () => {
     const mounted = place("s1", "front", { id: "r1", uSlot: 0 });
     mounted.position = { x: 111, y: 0, z: 222 };
-    const scene = makeScene({ placements: { d1: mounted } });
-    unmount(scene, "d1");
+    const scene = makeScene({
+      devices: [{ id: "d1", typeId: "amp" }],
+      placements: { d1: mounted },
+      racks: [
+        {
+          id: "r1",
+          space: "s1",
+          wall: "front",
+          facing: "back",
+          position: { x: 0, y: 0, z: 0 },
+          slots: 8,
+        },
+      ],
+    });
+    expect(unmount(scene, [AMP], "d1").ok).toBe(true);
     expect(scene.ui.placements.d1.rack).toBeUndefined();
-    expect(scene.ui.placements.d1.position).toEqual({ x: 111, y: 0, z: 222 });
+    // Origin (14, 14); the retained frame [0, 510.6] × [0, 383.6] blocks. Above it: (0, 400), d² = 14² +
+    // 386² = 149 192; right of it: (550, 0), d² = 536² + 14² = 287 492 ⇒ above wins.
+    expect(scene.ui.placements.d1).toEqual({
+      space: "s1",
+      wall: "front",
+      facing: "back",
+      position: { x: 0, y: 400, z: 0 },
+    });
   });
 
   it("unmount is a no-op for already free-standing gear", () => {
     const scene = makeScene({ placements: { d1: place("s1", "front") } });
-    unmount(scene, "d1");
-    expect(scene.ui.placements.d1.rack).toBeUndefined();
+    const before = structuredClone(scene);
+    expect(unmount(scene, [AMP], "d1")).toMatchObject({ ok: false, reason: "not-mounted" });
+    expect(scene).toEqual(before);
   });
 });
 

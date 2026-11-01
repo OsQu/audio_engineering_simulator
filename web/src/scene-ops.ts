@@ -13,6 +13,7 @@ import {
   type PortKind,
 } from "./catalog";
 import { type ConnectVerdict, cableSpec } from "./connections";
+import { type EjectionPlan, eject } from "./ejection";
 import { wallSpawn } from "./placement";
 import { deviceById, FRAME_MARGIN, type LayoutCtx, type PlacedItem, rackById } from "./projection";
 import type { Connection, DeviceInstance } from "./scene";
@@ -353,12 +354,11 @@ export function toggleWatch(scene: Scene, item: BenchWatch): void {
   else list.push({ device: item.device, kind: item.kind, id: item.id });
 }
 
-// Eject a device from its rack, leaving it free-standing at the position it already carried (so it can
-// then be flipped on its own). No-op for gear that isn't racked. UI-only.
-export function unmount(scene: Scene, id: string): void {
-  const place = scene.ui.placements[id];
-  if (!place?.rack) return;
-  place.rack = undefined;
+// Eject a device from its rack (approved policy U3, see ejection.ts): it stands free at the nearest legal
+// spot to where it visibly was, keeping the rack's room/wall/facing, so it can then be flipped on its own.
+// All-or-nothing: on failure (not racked, no free space) the scene is untouched. UI-only.
+export function unmount(scene: Scene, catalog: DeviceDescriptor[], id: string): EjectionPlan {
+  return eject(scene, catalog, { kind: "device", deviceId: id });
 }
 
 // Add gear from the catalog: a new instance placed free-standing on the wall in view (just past the
@@ -423,12 +423,8 @@ export function addRack(ctx: LayoutCtx, placedItems: PlacedItem[]): void {
   });
 }
 
-// Remove a rack — UI furniture, so no hot-swap. Un-mounts its gear, leaving each unit free-standing at
-// the position it already had.
-export function removeRack(scene: Scene, id: string): void {
-  for (const d of scene.patch.devices) {
-    const place = scene.ui.placements[d.id];
-    if (place?.rack?.id === id) place.rack = undefined; // un-mount; keep its free position
-  }
-  scene.ui.racks = scene.ui.racks.filter((r) => r.id !== id);
+// Remove a rack — UI furniture, so no hot-swap. Its occupants are ejected first under U3 (each to the
+// nearest legal free spot, in slot order); if any cannot be placed, nothing changes and the rack stays.
+export function removeRack(scene: Scene, catalog: DeviceDescriptor[], id: string): EjectionPlan {
+  return eject(scene, catalog, { kind: "rack", rackId: id });
 }

@@ -658,7 +658,10 @@
   .viewport {
     position: relative;
     height: 80vh;
-    overflow: hidden;
+    /* clip, not hidden: a hidden box is still programmatically scrollable (focus() or scrollIntoView
+       on an off-screen toolbar/control would scroll it), which silently shifts the camera surface out
+       from under the pointer. The camera transform is the only way this view moves. */
+    overflow: clip;
     touch-action: none;
     border: 1px solid var(--ae-line-panel);
     border-radius: var(--ae-radius-control);
@@ -798,14 +801,13 @@
     text-transform: uppercase;
   }
   /* Reveal the shared header (DeviceChrome) while its device is open (hovered/focused, plus the grace
-     period). The bar stays transparent to pointers so its hit box is only its controls. */
+     period). The revealed bar is a solid hit target: a gap between its controls must not fall through to
+     the chassis beneath (e.g. a rack frame), which would hand the open toolbar to that object. A closed
+     bar takes no hits. */
   .object-chrome.open :global(.device-chrome),
   .object-chrome:focus-within :global(.device-chrome) {
     opacity: 1;
     transform: none;
-  }
-  .object-chrome.open :global(.device-chrome > *),
-  .object-chrome:focus-within :global(.device-chrome > *) {
     pointer-events: auto;
   }
   /* Rotate a supporting device front↔back — a chip in the hover header. */

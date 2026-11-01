@@ -36,3 +36,20 @@
 - face-lifecycle `flip` helper waits for the toolbar to be open (one 30 s flake before; 6/6 green after).
 - Gates: vitest 365 ✓, typecheck ✓, biome ✓, Playwright 23 ✓ (+2 expected 10.7 failures).
 - Next: 10.5.4 U3 ejection.
+
+## 2026-11-01 — Task 10.5.4 done (U3) + browser-suite hardening; Story 10.5 complete pending review
+- `ejection.ts`: pure planEjection (rack-wall elevation, GRID_MM lattice, d² then y then x, obstacles incl.
+  allocated, slot order) + applyEjection; `eject` all-or-nothing. scene-ops unmount/removeRack take the
+  catalog and return the plan; App reports failures to the status line and disables eject/remove-rack
+  mid-flip. 8 hand-calc oracles; scene-ops tests that asserted the stale position rewritten;
+  `ejection.spec.ts` asserts resolved world rects (camera refit made pixel comparisons meaningless).
+- Hardening found real bugs (stress-running ×8 surfaced 30 s hover hangs):
+  1. revealed toolbar bar must be a hit target (gaps fell through to the rack → rack took the hover);
+  2. DeviceChrome reveal slides down, not up (mid-reveal overlap swallowed drag presses);
+  3. stage viewports `overflow: clip` — `hidden` is programmatically scrollable; the failure screenshot
+     showed a scrolled viewport (scrollIntoView/focus moved the surface under the pointer).
+  Plus `cameraSettled` in openFixture. 3 × 128 stress runs green after.
+- Gates: vitest 373 ✓, typecheck ✓, biome ✓, Playwright 25 ✓ (+2 expected 10.7), cargo fmt/lint/test(534)/wasm ✓.
+  `cargo docs` FAILS on a pre-existing unresolved `[instantiate]` link in crates/devices — no crate changes on
+  this branch since 1854ff8; proposed as a separate ticket.
+- Next: Oskari reviews the Story Validate gate.

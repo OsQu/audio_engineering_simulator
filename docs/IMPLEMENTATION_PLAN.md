@@ -1256,7 +1256,7 @@ unmount, rack inheritance, and reduced motion are generation/event driven; affec
 suppressed until settlement while a held logical pick survives. Pure tests, focused browser tests, Vitest,
 typecheck, and format/check are green with no fixed flip-settle timeout required for correctness.
 
-### Story 10.5 — Resolved presentation, stable layers & rack assemblies — 🚧 **In progress** (design approved)
+### Story 10.5 — Resolved presentation, stable layers & rack assemblies — 🚧 **In progress** (all Tasks done; Validate gate awaiting review)
 
 *Goal:* have studio and workbench render resolved objects/faces using deterministic physical layers,
 silhouettes, and rack parentage, with controls in an object-ID-keyed interaction overlay.
@@ -1280,21 +1280,24 @@ x, inside the room bounds of the rack's wall, and allocating occupants in slot o
 `space`/`wall`/`facing` from the rack and leaves the scene untouched on failure. Today's `unmount`/`removeRack`
 keep a stale stored position and the device's own facing; that is a bug fixed here.
 
-- **Task 10.5.1** — Pure `ResolvedObject`s: paint layers, total order, rack parentage, silhouettes for
+- **Task 10.5.1** — ✅ Pure `ResolvedObject`s: paint layers, total order, rack parentage, silhouettes for
   studio and workbench; exhaustive semantic tests, including the preview-does-not-reorder and
   rack-below-occupants invariants.
-- **Task 10.5.2** — Studio renders the resolved order with fixed layer bands and an object-ID-keyed
+- **Task 10.5.2** — ✅ Studio renders the resolved order with fixed layer bands and an object-ID-keyed
   interaction overlay (toolbars, assembly drag/legality outline); graduate the three hover regressions and
   remove the stale rack-drag known-failure marker.
-- **Task 10.5.3** — Workbench adopts the same resolved layers and interaction overlay.
-- **Task 10.5.4** — U3 atomic ejection for eject and rack removal: hand-calc nearest-position oracles,
+- **Task 10.5.3** — ✅ Workbench adopts the same resolved layers and interaction overlay.
+- **Task 10.5.4** — ✅ U3 atomic ejection for eject and rack removal: hand-calc nearest-position oracles,
   multi-occupant allocation, failure atomicity, and preserved effective room/wall/facing.
 
 *Program design:* [`story-10.5-resolved-presentation-stable-layers.md`](./epics/epic-10/story-10.5-resolved-presentation-stable-layers.md)
 
 *Validate:* hover, focus, toolbar grace, and drag cannot change physical occlusion; racks stay behind their
 occupants; stationary occupant controls/sockets remain usable; assembly previews are coherent; rack removal
-and ejection either produce explicit legal free placements or leave the scene untouched.
+and ejection either produce explicit legal free placements or leave the scene untouched. ✅ met (awaiting Oskari's
+sign-off): `stable-layers.spec.ts` covers hover/grace/focus/drag occlusion, the rack below its occupant, toolbar
+hit-testing, and the workbench; `ejection.test.ts` and `ejection.spec.ts` cover U3. The known-regression list
+now holds only Story 10.7's two cases.
 
 ### Story 10.6 — Unified cable, portal & held-lead presentation
 

@@ -196,7 +196,7 @@ interface WorldItem { id: string; rect: Rect2; layer: ObjectLayer }  // `backgro
   the toolbar to report open before clicking. A single 30 s flake was seen before that; six full runs were
   green after.
 
-## Task 10.5.4 — U3 atomic ejection  · planned
+## Task 10.5.4 — U3 atomic ejection  · done
 
 A pure planner computes **every** ejected free placement before anything is written. The command then
 either applies all of them or none.
@@ -241,3 +241,42 @@ Search (view-independent, so removing a rack from the top view uses the rack's w
   `elevationToWorld(rack.position, size, wall, room, x, y)`, so the depth coordinate sits flush with the
   rack. The device is no longer mounted.
 - If any occupant has no candidate, `ok: false` and the scene is untouched.
+
+*As built:*
+- `ejection.ts` exports `planEjection`, `applyEjection`, and `eject`, which plans and then applies
+  all-or-nothing. `sceneOps.unmount(scene, catalog, id)` and `removeRack(scene, catalog, id)` return the
+  `EjectionPlan`.
+- `App` reports a failure on the status line (`eject <id> failed: no free space`). It disables eject and
+  remove-rack while the rack is flipping, because an ejected unit's transition owner would otherwise change
+  mid-flip.
+- An empty rack is removed without consulting the room. Occupants are ordered by `(uSlot, id)`.
+- Oracles (`ejection.test.ts`, 8 cases):
+  - slot-order multi-occupant allocation;
+  - the y-then-x tie-break;
+  - free gear and other racks' occupants as obstacles;
+  - side-wall world mapping;
+  - single-eject failure atomicity and multi-occupant failure atomicity;
+  - empty rack;
+  - not-mounted and missing-rack.
+- The `scene-ops.test.ts` eject and remove-rack cases were rewritten. They used to assert the stale
+  position, which U3 deliberately drops.
+- Browser (`ejection.spec.ts`): eject lands at the resolved world rect `left: 900px; bottom: 400px`, above
+  the retained frame. Rack removal leaves the occupant at `(900, 100)`. These assert world mm, not pixels,
+  because the camera may refit.
+
+## Cross-cutting fixes found while hardening the browser suite
+
+- **The revealed toolbar bar is a solid hit target**, not just its controls. With a pass-through bar, a gap
+  between two buttons exposed the chassis beneath (an occupant's toolbar sits over its rack frame). Entering
+  that chassis handed the open toolbar to the rack, so the pointer could never reach the occupant's buttons.
+  Playwright caught this as an intermittent hover deadlock. A closed bar still takes no hits.
+- **The DeviceChrome reveal slides down into place** (`translateY(-6px)` → 0). It used to slide up from
+  `+6px`, so for 120 ms a revealed bar overlapped the chassis' top strip, and a quick press there hit the
+  toolbar instead of starting a drag.
+- **The stage viewports use `overflow: clip`, not `hidden`.** A hidden box can still be scrolled
+  programmatically, by `focus()` or `scrollIntoView` on a toolbar or control. That silently moved the
+  camera surface out from under the pointer, and boundary events then handed hover to whatever slid
+  beneath. This was found from a failure screenshot showing a scrolled viewport. The camera transform is
+  now the only way a stage moves.
+- `openFixture` also waits for the auto-fit camera to settle (`cameraSettled`).
+- Stress: `stable-layers` + `face-lifecycle` + `ejection` × 8 repeats, three runs, 384/384 green.
