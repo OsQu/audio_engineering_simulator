@@ -21,7 +21,13 @@
   const faceVars = "--legend: 2.8px; --jack: 10px; --jack-font: 3.3px; --jack-gap: 1.2px";
 </script>
 
-<Chassis {handle} flipped={props.flipped} finish={skin.finish} accent={skin.accent} name={props.name}>
+<Chassis
+  {handle}
+  flipped={props.flipped}
+  finish={skin.finish}
+  accent={skin.accent}
+  name={props.name}
+>
   {#snippet front()}
     <Row fill align="center" justify="around" gap={4} style={faceVars}>
       <Col gap={1} align="center">

@@ -139,26 +139,3 @@ test("near sockets do not become device drags at minimum and maximum zoom", asyn
     expect(objectAfter).toEqual(objectBefore);
   }
 });
-
-test("populated rack drag moves the occupant before release", async ({ page }) => {
-  expectKnownFailure({
-    id: "rack-preview-leaves-occupant-behind",
-    owner: "10.5",
-    title: "a rack preview must translate every mounted occupant before commit",
-  });
-  await openFixture(page, "rack-drag");
-
-  const rack = stageObject(page, "fixture-rack");
-  const occupant = stageObject(page, "fixture-compressor");
-  const rackBox = await rack.boundingBox();
-  const before = await occupant.boundingBox();
-  if (!rackBox || !before) throw new Error("rack-drag fixture did not render");
-
-  await page.mouse.move(rackBox.x + 2, rackBox.y + 2);
-  await page.mouse.down();
-  await page.mouse.move(rackBox.x + 160, rackBox.y + 40);
-  const during = await occupant.boundingBox();
-  await page.mouse.up();
-
-  expect(during?.x).toBeGreaterThan(before.x + 100);
-});

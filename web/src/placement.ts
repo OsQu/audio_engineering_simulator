@@ -8,6 +8,7 @@
 // UI-only furniture, so it never does).
 
 import { descriptorFor } from "./catalog";
+import type { PlacementPreview } from "./effective-placement";
 import {
   deviceById,
   deviceUnits,
@@ -103,6 +104,71 @@ export function canPlace(
   const size = footprint(desc.formFactor);
   const candidate: Rect2 = { x, y, width: size.width, height: size.height };
   return !placedItems.some((it) => it.id !== id && rectsOverlap(candidate, it.rect));
+}
+
+// Convert a legal (or merely visible) drag candidate into the same transient placement that a normal
+// release will commit. This is deliberately pure: App owns it while dragging, then calls moveTo only
+// after an ordinary pointer release.
+export function placementPreviewAt(
+  ctx: LayoutCtx,
+  id: string,
+  x: number,
+  y: number,
+): PlacementPreview | null {
+  const rack = rackById(ctx.scene, id);
+  if (ctx.view === "top") {
+    if (rack) {
+      const position = { x, y: rack.position.y, z: y };
+      const size = orientedSize(rackFrameSize(rack), rack.wall);
+      return {
+        kind: "studio-rack",
+        rackId: rack.id,
+        space: rack.space,
+        wall: nearestWall({ x: x + size.width / 2, z: y + size.depth / 2 }, ctx.room),
+        position,
+      };
+    }
+    const device = deviceById(ctx.scene, id);
+    const place = ctx.scene.ui.placements[id];
+    if (!device || !place) return null;
+    const desc = descriptorFor(ctx.catalog, device.typeId);
+    const size = orientedSize(
+      desc ? footprint(desc.formFactor) : { width: 0, height: 0, depth: 0 },
+      place.wall,
+    );
+    return {
+      kind: "studio-free",
+      deviceId: id,
+      space: place.space,
+      wall: nearestWall({ x: x + size.width / 2, z: y + size.depth / 2 }, ctx.room),
+      position: { x, y: place.position.y, z: y },
+    };
+  }
+  if (!ctx.wall) return null;
+  if (rack) {
+    return {
+      kind: "studio-rack",
+      rackId: rack.id,
+      space: rack.space,
+      wall: rack.wall,
+      position: elevationToWorld(rack.position, rackFrameSize(rack), rack.wall, ctx.room, x, y),
+    };
+  }
+  const device = deviceById(ctx.scene, id);
+  const place = ctx.scene.ui.placements[id];
+  if (!device || !place) return null;
+  const units = deviceUnits(ctx.catalog, device.typeId);
+  const hit = units > 0 ? rackSlotAt(ctx, id, x, y, units) : null;
+  if (hit) return { kind: "studio-mount", deviceId: id, rackId: hit.rackId, uSlot: hit.slot };
+  const desc = descriptorFor(ctx.catalog, device.typeId);
+  const size = desc ? footprint(desc.formFactor) : { width: 0, height: 0, depth: 0 };
+  return {
+    kind: "studio-free",
+    deviceId: id,
+    space: place.space,
+    wall: place.wall,
+    position: elevationToWorld(place.position, size, place.wall, ctx.room, x, y),
+  };
 }
 
 // Commit a drag (only ever called for a legal spot). Routes by view: the top-down plan repositions on
