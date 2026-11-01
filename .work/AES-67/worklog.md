@@ -52,3 +52,15 @@
 
 - **Did:** The factory run was interrupted for a takeover by oskari before it wrote a worklog entry; its uncommitted changes are in the WIP commit that follows.
 - **Next:** oskari continues interactively.
+
+## 2026-11-01 — Task 10.4.4 done (resumed after takeover; no source changes from the takeover)
+- Migrated App (studio frame = pure `deviceSurfaceRect`), BenchStage (frame = registered home + offsetFor),
+  Workbench (timer effect removed); `measureJacks` sweep deleted; all rAF/480/120 ms measure timers gone.
+- Fixture wait is now `geometrySettled` (no `[data-geometry="pending"]`) instead of a 550 ms sleep.
+- New browser spec `socket-geometry.spec.ts`: studio lead stays on its sockets through wheel zoom and a
+  body drag with an unchanged `data-geometry-generation`; workbench tap marker = DUT output socket through
+  zoom, generations unchanged.
+- Learned: fixtures never start the engine, so a patch can't commit there (topology needs acceptance) — use
+  `cable-hover`'s pre-wired connections for lead assertions. The bench scene is DUT-only by design.
+- Gates: vitest 355 ✓, typecheck/biome ✓, Playwright 14 ✓ + the pre-existing rack-drag unexpected pass.
+- Next: 10.4.5 matrix + legacy cleanup.

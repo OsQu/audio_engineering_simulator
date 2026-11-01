@@ -37,6 +37,9 @@
   import { benchCableLayout, benchVisibleFaces } from "./view-resolver";
   import { tick, untrack } from "svelte";
   import { awaitFlip } from "./face-lifecycle";
+  import { faceGeometry, geometryContent } from "./face-geometry";
+  import { geometryKey } from "./socket-geometry";
+  import type { DeviceFacing } from "./scene-store";
   import {
     beginFlip,
     cancelFlip,
@@ -198,7 +201,6 @@
       started.generation,
       (generation) => {
         presentation = finishFlip(presentation, id, generation);
-        requestAnimationFrame(() => patch.measure(worldApi));
       },
       (generation) => {
         presentation = cancelFlip(presentation, id, generation);
@@ -221,23 +223,6 @@
   const connShown = (c: Connection): boolean =>
     leadsShown(c.from.device) && leadsShown(c.to.device);
 
-  // Re-measure jack anchors when the bench layout that determines them changes: a live drag, a committed
-  // move/facing (`ui.bench`), the device set, or the catalog. Surface-local coords are pan/zoom-invariant,
-  // so the camera needn't trigger it. Measure after paint (rAF) and again once the 0.45s rotate transition
-  // settles (a just-flipped face reports its final, un-foreshortened jack positions then).
-  $effect(() => {
-    void drag;
-    JSON.stringify(session.scene.ui.bench ?? {});
-    JSON.stringify(session.scene.patch.devices);
-    void session.catalog.length;
-    const raf = requestAnimationFrame(() => patch.measure(worldApi));
-    const settle = setTimeout(() => patch.measure(worldApi), 480);
-    return () => {
-      cancelAnimationFrame(raf);
-      clearTimeout(settle);
-    };
-  });
-
   // The devices to render: the scene's instances (the DUT + the fixed supporting cast) resolved against
   // the live catalog, in scene order (source → DUT → DA → speaker), each paired with its descriptor. The
   // stage renders whatever the scene holds — so a URL-restored scene (Story 6.3) needs no special-casing.
@@ -249,6 +234,44 @@
         return found ? { id: d.id, desc: found } : null;
       })
       .filter((x): x is BenchDevice => x !== null),
+  );
+
+  // Socket anchors are projected from face-local geometry, which each face slot registers at its own
+  // revision (face-geometry.ts). The bench stack's layout isn't pure, so a slot also registers its
+  // un-offset home origin; its frame is then home + the parent-resolved offset — a drag, a committed move,
+  // or the camera only re-project, never re-measure. The stack order is a revision input (it reflows).
+  const stackOrder = $derived(devices.map((d) => d.id).join(","));
+  const benchSlots = (id: string, isDut: boolean, back: boolean) => {
+    const slot = benchFace(id, isDut, back);
+    const sides: DeviceFacing[] = isDut ? [back ? "back" : "front"] : ["front", "back"];
+    return { slot, sides, presented: isDut ? sides[0] : effectiveFacing(session.scene, id) };
+  };
+  const homeOf =
+    (id: string) =>
+    (box: DOMRect): { x: number; y: number } => {
+      const at = worldApi.clientToSurface(box.left, box.top);
+      const offset = offsetFor(id);
+      return { x: at.x - offset.x, y: at.y - offset.y };
+    };
+  // svelte-ignore state_referenced_locally
+  patch.project(() =>
+    devices.flatMap((bd) => {
+      const isDut = bd.id === BENCH_DEVICE;
+      return benchVisibleFaces(session.scene, bd.id, BENCH_DEVICE).flatMap((face) => {
+        const { slot, sides, presented } = benchSlots(bd.id, isDut, face === "back");
+        if (!slot) return [];
+        const offset = offsetFor(bd.id);
+        return sides.map((side) => {
+          const key = { face: slot.id, side };
+          const entry = patch.geometry.entries[geometryKey(key)];
+          const g = entry?.status === "current" ? entry.geometry : undefined;
+          const frame = g?.home
+            ? { x: g.home.x + offset.x, y: g.home.y + offset.y, width: g.width, height: g.height }
+            : null;
+          return { slot: key, frame, presented: side === presented };
+        });
+      });
+    }),
   );
 
   // Per-device layout: real footprint (world mm) + rack-unit count (0 if not rackmount).
@@ -469,6 +492,24 @@
                       class:show-back={isDut && face.flipped}
                       style:width="{lay.size.width}px"
                       style:height="{lay.size.height}px"
+                      use:faceGeometry={{
+                        registrar: patch,
+                        face: benchFace(bd.id, isDut, face.flipped)?.id ?? "",
+                        sides: benchSlots(bd.id, isDut, face.flipped).sides,
+                        presented: benchSlots(bd.id, isDut, face.flipped).presented,
+                        settled: benchFace(bd.id, isDut, face.flipped)?.state === "presented",
+                        content: [
+                          ...geometryContent(
+                            session.scene.patch.devices.find((d) => d.id === bd.id) ?? {
+                              id: bd.id,
+                              typeId: bd.desc.typeId,
+                            },
+                            bd.desc,
+                          ),
+                          stackOrder,
+                        ],
+                        homeOf: homeOf(bd.id),
+                      }}
                       data-face-instance={benchFace(bd.id, isDut, face.flipped)?.id}
                       data-face-state={benchFace(bd.id, isDut, face.flipped)?.state}
                       data-interaction={benchFace(bd.id, isDut, face.flipped)?.interaction}

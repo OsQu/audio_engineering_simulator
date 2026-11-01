@@ -43,6 +43,7 @@
   import type { WorldApi } from "./world-api";
   import { tick, untrack } from "svelte";
   import { awaitFlip } from "./face-lifecycle";
+  import { faceGeometry, geometryContent } from "./face-geometry";
   import {
     beginFlip,
     cancelFlip,
@@ -169,7 +170,6 @@
       started.generation,
       (generation) => {
         presentation = finishFlip(presentation, owner, generation);
-        requestAnimationFrame(measureJacks); // the settled face reports its final jack positions
       },
       (generation) => {
         presentation = cancelFlip(presentation, owner, generation);
@@ -196,27 +196,21 @@
   // A stable key for a connection (its two endpoints), for the {#each} in the cable overlay.
   const connKey = sceneOps.connKey;
 
-  // Re-measure jack anchors (the store lives on the patch controller). This layout-dependent trigger
-  // stays view-side: re-measure when layout-affecting state changes (placement / flip / space / catalog
-  // / api ready). Pan/zoom needn't trigger it — surface-local coords are invariant. Measure after paint,
-  // and again once the 0.45s flip transition has settled (so a just-flipped back reports its final jack
-  // positions).
-  const measureJacks = (): void => patch.measure(worldApi);
-  $effect(() => {
-    void session.ready;
-    void currentSpace;
-    void currentView;
-    void session.catalog.length;
-    void worldApi;
-    JSON.stringify(scene.ui.placements);
-    JSON.stringify(scene.ui.racks); // a rack flip changes which jacks (front/back) are shown
-    JSON.stringify(scene.patch.connections);
-    const raf = requestAnimationFrame(measureJacks);
-    const settle = setTimeout(measureJacks, 480);
-    return () => {
-      cancelAnimationFrame(raf);
-      clearTimeout(settle);
-    };
+  // Socket anchors are projected from face-local geometry (each face slot registers its own, at its own
+  // revision — see face-geometry.ts) into the projection's chassis rect. A camera move, a placement or
+  // rack move, or a settled flip changes only this projection; nothing is re-measured.
+  patch.project(() => {
+    const api = worldApi;
+    if (!api) return [];
+    return [...studioFaces.values()].flatMap((face) => {
+      const frame = cableView.deviceSurfaceRect(sceneLayout(), face.objectId, api);
+      const shown = effectiveFacing(scene, face.objectId);
+      return (["front", "back"] as const).map((side) => ({
+        slot: { face: face.id, side },
+        frame,
+        presented: side === shown,
+      }));
+    });
   });
 
   // The scene's projection-backed cable policy. Rebuilt per call so its reactive layout reads stay tied
@@ -1004,7 +998,15 @@
                    and the flip owner (its rack when mounted) the lifecycle adapter waits on. -->
               {@const Faceplate = deviceUi(device.typeId)}
               <div
-                class="face-slot"
+                class="face-slot frame"
+                use:faceGeometry={{
+                  registrar: patch,
+                  face: face.id,
+                  sides: ["front", "back"],
+                  presented: effectiveFacing(scene, device.id),
+                  settled: face.state === "presented",
+                  content: geometryContent(device, desc),
+                }}
                 data-face-instance={face.id}
                 data-face-state={face.state}
                 data-face-side={face.face}
@@ -1439,6 +1441,12 @@
      add a box between the world item (or focus window) and the chassis that fills it. */
   .face-slot {
     display: contents;
+  }
+  /* A stage slot is the frame its socket geometry is measured against: exactly the chassis box. */
+  .face-slot.frame {
+    display: block;
+    width: 100%;
+    height: 100%;
   }
 
   /* The settled patch lead + the drag rubber-band are the shared <Cable> component (widgets/Cable.svelte),

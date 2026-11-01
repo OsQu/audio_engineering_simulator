@@ -15,8 +15,8 @@ in the companion file, then `ask_human` (blocking) for sign-off.
 | 10.4.1 pure face-presentation model | done (WIP commit 04efdea) |
 | 10.4.2 face lifecycle integration | done (f6d115a) |
 | 10.4.3 revisioned socket-geometry model | done (a779db8) |
-| 10.4.4 face-local DOM registration & projection | in progress (WIP, not green — see worklog) |
-| 10.4.5 browser matrix & legacy cleanup | planned |
+| 10.4.4 face-local DOM registration & projection | done |
+| 10.4.5 browser matrix & legacy cleanup | in progress |
 
 ## Decisions
 - 2026-10-30 Oskari approved the 10.4.2 design and authorised proceeding through 10.4.3–10.4.5 without

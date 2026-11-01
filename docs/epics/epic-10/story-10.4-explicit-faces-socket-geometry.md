@@ -211,7 +211,7 @@ Rules:
 - `projectSocket` maps face-local mm into a surface frame; a see-through side (the hidden half of a flip
   card) mirrors about the face width, matching how rotateY(180deg) places it.
 
-## Task 10.4.4 — Face-local DOM registration and projection  · in progress
+## Task 10.4.4 — Face-local DOM registration and projection  · done
 
 Replace the global `[data-jack]` sweep (rect of every jack through `clientToSurface`, rAF + 480/120 ms
 timers) with a per-face registration adapter and a pure projection that produces the same
@@ -223,8 +223,9 @@ File-tree diff:
 ```text
 web/src/face-geometry.ts        NEW  DOM adapter: measureFace(frame, side, presented) → FaceGeometry
                                      (rect deltas ÷ frame rect × frame layout size: camera-invariant;
-                                     hidden side un-mirrored); fontRevision()
-web/src/socket-projection.ts    NEW  projectAnchors(index, slots, frameOf) → Record<jackKey, JackAnchor>
+                                     hidden side un-mirrored), the `faceGeometry` action, geometryContent
+web/src/socket-geometry.ts      + projectAnchors(index, slots) → Record<jackKey, JackAnchor>,
+                                     + optional FaceGeometry.home (bench un-offset origin)
 web/src/patch-controller.svelte.ts   owns the SocketGeometryIndex + frames; jackAnchors becomes $derived
                                      projection; register(slot, element, revision) / unregister(slot)
 web/src/jack-anchors.ts         sweep removed (patchableJackKey stays)
@@ -237,6 +238,12 @@ Revision per slot: `[typeId, ports, configs values, footprint, skin finish, layo
 Camera, placement, rack moves, and bench offsets are not inputs; they move the *frame* only, so geometry is
 reused and projection follows immediately. Measurement runs only when a slot is `presented` (not mid-flip),
 after layout (rAF), and again when `document.fonts` finishes loading (a revision bump, not a timer).
+
+As built: the studio slot became a real box (`.face-slot.frame`, 100% × 100% of the chassis item) so it is
+the measurement frame; focus slots stay `display: contents`. Each slot reflects `data-geometry`
+(`pending`/`current`) and `data-geometry-generation` (the last accepted measurement), which the browser
+fixtures wait on instead of the old 550 ms sleep and which the zoom/placement tests assert is unchanged.
+`PatchController.jackAnchors` is now `$derived` from `geometry × project(slots)`; `measure()` is gone.
 
 ## Task 10.4.5 — Browser matrix and legacy cleanup  · planned
 
