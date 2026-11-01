@@ -24,4 +24,13 @@ export class TestSceneSession extends SceneSession {
     this.status = "fixture patch accepted";
     return true;
   }
+
+  override proposeTopology(label: string, edit: (scene: Scene) => void): boolean {
+    const accepted = structuredClone(this.scene);
+    edit(accepted);
+    this.submissions.push(accepted);
+    this.scene = accepted;
+    this.status = `fixture topology accepted: ${label}`;
+    return true;
+  }
 }

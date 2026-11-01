@@ -67,8 +67,7 @@
     const scene =
       urlDut === requested.typeId ? initialUrlScene : benchScene(requested, session.catalog);
     if (!scene) return;
-    session.scene = scene;
-    session.hotSwap();
+    session.replaceTopology("load workbench scene", scene);
     benchedFor = requested.typeId;
   });
 
@@ -170,8 +169,9 @@
   function setTap(key: string): void {
     const tap = analogOutputs.find((o) => o.key === key);
     if (!tap) return;
-    session.scene.patch.output = { device: tap.device, port: tap.port };
-    session.hotSwap();
+    session.proposeTopology("change monitored output", (scene) => {
+      scene.patch.output = { device: tap.device, port: tap.port };
+    });
   }
 
   // --- Bench gear (add / remove) --------------------------------------------------------------------
@@ -179,14 +179,12 @@
   // instance to the stack; remove drops it (never the DUT — the bench is about it — and `removeDevice`
   // itself guards the monitored tap). Both change the runnable patch, so both hot-swap.
   function addDevice(typeId: string): void {
-    addBenchDevice(session.scene, typeId);
-    session.hotSwap();
+    session.proposeTopology(`add ${typeId}`, (scene) => addBenchDevice(scene, typeId));
   }
   function removeBenchDevice(id: string): void {
     if (id === BENCH_DEVICE) return;
     if (focusedDevice === id) focusedDevice = null;
-    removeDevice(session.scene, id);
-    session.hotSwap();
+    session.proposeTopology(`remove ${id}`, (scene) => removeDevice(scene, id));
   }
   // Close the containing <details> menu after a chip click (so it doesn't linger open over the stage).
   function closeMenu(e: Event): void {

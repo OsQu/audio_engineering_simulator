@@ -383,13 +383,14 @@
   // Add gear (rebuilds the engine) / a rack (UI furniture, no rebuild); remove either. Thin wrappers
   // over scene-ops — addDevice/removeDevice hot-swap, the rack ops don't (per the plan's table).
   function addDevice(typeId: string): void {
-    sceneOps.addDevice(layout(), placedItems, typeId);
-    session.hotSwap();
+    const ctx = layout();
+    session.proposeTopology(`add ${typeId}`, (candidate) =>
+      sceneOps.addDevice({ ...ctx, scene: candidate }, placedItems, typeId),
+    );
   }
   function removeDevice(id: string): void {
     closeWindow(id);
-    sceneOps.removeDevice(scene, id);
-    session.hotSwap();
+    session.proposeTopology(`remove ${id}`, (candidate) => sceneOps.removeDevice(candidate, id));
   }
   const addRack = (): void => sceneOps.addRack(layout(), placedItems);
   const removeRack = (id: string): void => sceneOps.removeRack(scene, id);
@@ -552,6 +553,14 @@
               .filter(Boolean)
               .join(" · ")}</span
           >
+          {#if session.topology.outcome.kind === "rejected"}
+            <button type="button" onclick={() => session.retryTopology()}
+              >Retry topology change</button
+            >
+          {:else if session.topology.outcome.kind === "unknown"}
+            <button type="button" onclick={() => session.recoverTopology()}>Recover topology</button
+            >
+          {/if}
         </div>
       </details>
     {/if}

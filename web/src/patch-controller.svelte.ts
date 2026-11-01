@@ -121,29 +121,34 @@ export class PatchController {
     this.dragCable = patching.cancel();
   }
 
-  // Build a hovered/clicked cable into a detached candidate. The Rust compiler decides whether a cycle
-  // is schedulable; the session commits this scene only after its acknowledgement. A USB link still
-  // re-enumerates its computer before compilation so the candidate has the correct matrix shape.
+  // The Rust compiler decides whether a cable is schedulable; its edit is applied only after acceptance.
   commitCable(v: ConnectVerdict): void {
     if (!v.ok) return;
-    const candidate = $state.snapshot(this.#session.scene);
-    sceneOps.commitCable(candidate, this.#session.catalog, this.#session.cables, v);
-    sceneOps.enumerateComputerUsb(candidate, this.#session.catalog, v.connection);
-    this.#session.submitPatchCandidate(candidate);
+    this.#session.proposeTopology("connect cable", (scene) => {
+      sceneOps.commitCable(scene, this.#session.catalog, this.#session.cables, v);
+      sceneOps.enumerateComputerUsb(scene, this.#session.catalog, v.connection);
+    });
   }
 
   // Remove a connection, then hot-swap. Unplugging a USB link from a computer re-enumerates it back to
   // its built-in 2×2. The view wraps this to also clear its cable-inspector selection.
   disconnect(c: Connection): void {
-    sceneOps.disconnect(this.#session.scene, c);
-    sceneOps.enumerateComputerUsb(this.#session.scene, this.#session.catalog, c);
-    this.#session.hotSwap();
+    const key = sceneOps.connKey(c);
+    this.#session.proposeTopology("disconnect cable", (scene) => {
+      const connection = scene.patch.connections.find((x) => sceneOps.connKey(x) === key);
+      if (!connection) return;
+      sceneOps.disconnect(scene, connection);
+      sceneOps.enumerateComputerUsb(scene, this.#session.catalog, connection);
+    });
   }
 
   // Set (or clear, `""` ⇒ ideal wire) the cable type on a connection, then hot-swap — the cable's R·C is
   // baked into the edge at compile, so changing it rebuilds the engine.
   setCableType(c: Connection, typeId: string): void {
-    sceneOps.setCableType(this.#session.scene, this.#session.cables, c, typeId);
-    this.#session.hotSwap();
+    const key = sceneOps.connKey(c);
+    this.#session.proposeTopology("change cable type", (scene) => {
+      const connection = scene.patch.connections.find((x) => sceneOps.connKey(x) === key);
+      if (connection) sceneOps.setCableType(scene, this.#session.cables, connection, typeId);
+    });
   }
 }
