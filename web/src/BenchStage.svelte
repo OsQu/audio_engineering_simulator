@@ -35,6 +35,25 @@
   import type { SurfacePoint, WorldApi } from "./world-api";
   import { BENCH_DEVICE } from "./workbench-scene";
   import { benchCableLayout, benchVisibleFaces } from "./view-resolver";
+  import { tick, untrack } from "svelte";
+  import { awaitFlip } from "./face-lifecycle";
+  import { faceGeometry, geometryContent } from "./face-geometry";
+  import { geometryKey } from "./socket-geometry";
+  import type { DeviceFacing } from "./scene-store";
+  import {
+    beginFlip,
+    cancelFlip,
+    createPresentationState,
+    finishFlip,
+    unmountPresentation,
+  } from "./presentation-state";
+  import {
+    faceInstanceId,
+    physicalLeadsSuppressed,
+    type ResolvedFace,
+    resolveFaces,
+    transitionOwner,
+  } from "./view-resolution";
 
   interface Props {
     session: SceneSession;
@@ -120,7 +139,7 @@
   const worldApi: WorldApi = {
     worldToSurface,
     clientToSurface,
-    measureRoot: () => surface ?? null,
+    stageRoot: () => surface ?? null,
   };
   $effect(() => {
     api = worldApi;
@@ -148,24 +167,61 @@
       chromeCloseTimer = undefined;
     }, 300);
   }
-  const flipDevice = (id: string): void => toggleBenchFacing(session.scene, id);
-
-  // Re-measure jack anchors when the bench layout that determines them changes: a live drag, a committed
-  // move/facing (`ui.bench`), the device set, or the catalog. Surface-local coords are pan/zoom-invariant,
-  // so the camera needn't trigger it. Measure after paint (rAF) and again once the 0.45s rotate transition
-  // settles (a just-flipped face reports its final, un-foreshortened jack positions then).
-  $effect(() => {
-    void drag;
-    JSON.stringify(session.scene.ui.bench ?? {});
-    JSON.stringify(session.scene.patch.devices);
-    void session.catalog.length;
-    const raf = requestAnimationFrame(() => patch.measure(worldApi));
-    const settle = setTimeout(() => patch.measure(worldApi), 480);
-    return () => {
-      cancelAnimationFrame(raf);
-      clearTimeout(settle);
-    };
+  // --- Presented faces (Story 10.4) ---------------------------------------------------------------
+  // The bench's flip state, as in the studio (App): the durable facing changes at once, the resolved face
+  // stays settled + non-patchable with its leads hidden until the generation's transition reports back.
+  // The DUT's front/back slots never flip; only a supporting device's single slot does.
+  let presentation = $state.raw(createPresentationState());
+  const benchFaces = $derived.by((): Map<string, ResolvedFace> => {
+    const faces = resolveFaces({
+      kind: "workbench",
+      scene: session.scene,
+      catalog: session.catalog,
+      presentation,
+      dutId: BENCH_DEVICE,
+    });
+    return new Map(faces.map((face) => [face.id, face]));
   });
+  const benchFace = (id: string, isDut: boolean, back: boolean): ResolvedFace | undefined =>
+    benchFaces.get(
+      faceInstanceId(
+        { kind: "workbench", role: isDut ? (back ? "dut-back" : "dut-front") : "support" },
+        id,
+      ),
+    );
+
+  async function flipDevice(id: string): Promise<void> {
+    toggleBenchFacing(session.scene, id);
+    const started = beginFlip(presentation, id, effectiveFacing(session.scene, id));
+    presentation = started.state;
+    await tick(); // the flipper now carries the new facing, so its transition has started
+    awaitFlip(
+      surface ?? document,
+      id,
+      started.generation,
+      (generation) => {
+        presentation = finishFlip(presentation, id, generation);
+      },
+      (generation) => {
+        presentation = cancelFlip(presentation, id, generation);
+      },
+    );
+  }
+
+  // A removed device's in-flight flip is invalidated, so its torn-down DOM can't settle anything.
+  $effect(() => {
+    const present = new Set(devices.map((d) => d.id));
+    const flips = untrack(() => presentation.flips);
+    for (const owner of Object.keys(flips)) {
+      if (!present.has(owner)) presentation = unmountPresentation(presentation, owner);
+    }
+  });
+
+  // Whether a lead touching this device is drawn: not while it is mid-flip.
+  const leadsShown = (id: string): boolean =>
+    !physicalLeadsSuppressed(session.scene, presentation, id);
+  const connShown = (c: Connection): boolean =>
+    leadsShown(c.from.device) && leadsShown(c.to.device);
 
   // The devices to render: the scene's instances (the DUT + the fixed supporting cast) resolved against
   // the live catalog, in scene order (source → DUT → DA → speaker), each paired with its descriptor. The
@@ -178,6 +234,44 @@
         return found ? { id: d.id, desc: found } : null;
       })
       .filter((x): x is BenchDevice => x !== null),
+  );
+
+  // Socket anchors are projected from face-local geometry, which each face slot registers at its own
+  // revision (face-geometry.ts). The bench stack's layout isn't pure, so a slot also registers its
+  // un-offset home origin; its frame is then home + the parent-resolved offset — a drag, a committed move,
+  // or the camera only re-project, never re-measure. The stack order is a revision input (it reflows).
+  const stackOrder = $derived(devices.map((d) => d.id).join(","));
+  const benchSlots = (id: string, isDut: boolean, back: boolean) => {
+    const slot = benchFace(id, isDut, back);
+    const sides: DeviceFacing[] = isDut ? [back ? "back" : "front"] : ["front", "back"];
+    return { slot, sides, presented: isDut ? sides[0] : effectiveFacing(session.scene, id) };
+  };
+  const homeOf =
+    (id: string) =>
+    (box: DOMRect): { x: number; y: number } => {
+      const at = worldApi.clientToSurface(box.left, box.top);
+      const offset = offsetFor(id);
+      return { x: at.x - offset.x, y: at.y - offset.y };
+    };
+  // svelte-ignore state_referenced_locally
+  patch.project(() =>
+    devices.flatMap((bd) => {
+      const isDut = bd.id === BENCH_DEVICE;
+      return benchVisibleFaces(session.scene, bd.id, BENCH_DEVICE).flatMap((face) => {
+        const { slot, sides, presented } = benchSlots(bd.id, isDut, face === "back");
+        if (!slot) return [];
+        const offset = offsetFor(bd.id);
+        return sides.map((side) => {
+          const key = { face: slot.id, side };
+          const entry = patch.geometry.entries[geometryKey(key)];
+          const g = entry?.status === "current" ? entry.geometry : undefined;
+          const frame = g?.home
+            ? { x: g.home.x + offset.x, y: g.home.y + offset.y, width: g.width, height: g.height }
+            : null;
+          return { slot: key, frame, presented: side === presented };
+        });
+      });
+    }),
   );
 
   // Per-device layout: real footprint (world mm) + rack-unit count (0 if not rackmount).
@@ -238,13 +332,13 @@
       bind:clientHeight={natH}
       style:transform={camera.transform}
     >
-      <!-- Patch cables, drawn in surface-local coords (the same space the measured jack anchors live in)
+      <!-- Patch cables, drawn in surface-local coords (the same space the projected socket anchors live in)
              via the shared cable-view geometry. `pointer-events:none` so jack presses pass through to the
              faceplates; only each cable's hit-path takes clicks (disabled mid-drag so a release lands on a
              jack). The cable layer sits at z 2; device groups interleave around it by facing (see zBase),
              so a cable to a front-shown device's hidden rear socket tucks behind its panel. -->
       <svg class="cables" width={natW} height={natH} viewBox="0 0 {natW} {natH}">
-        {#each session.scene.patch.connections as c (connKey(c))}
+        {#each session.scene.patch.connections.filter(connShown) as c (connKey(c))}
           {@const ends = cableEndpoints(benchCableLayout, patch.jackAnchors, c, worldApi)}
           {#if ends}
             {@const d = cablePathData(ends.a, ends.b)}
@@ -265,7 +359,7 @@
           {/if}
         {/each}
 
-        {#if patch.dragCable}
+        {#if patch.dragCable && leadsShown(patch.dragCable.source.device)}
           <!-- The drag rubber-band from the source jack to the cursor, coloured legal/illegal on hover. -->
           <Cable
             drag
@@ -398,6 +492,28 @@
                       class:show-back={isDut && face.flipped}
                       style:width="{lay.size.width}px"
                       style:height="{lay.size.height}px"
+                      use:faceGeometry={{
+                        registrar: patch,
+                        face: benchFace(bd.id, isDut, face.flipped)?.id ?? "",
+                        sides: benchSlots(bd.id, isDut, face.flipped).sides,
+                        presented: benchSlots(bd.id, isDut, face.flipped).presented,
+                        settled: benchFace(bd.id, isDut, face.flipped)?.state === "presented",
+                        content: [
+                          ...geometryContent(
+                            session.scene.patch.devices.find((d) => d.id === bd.id) ?? {
+                              id: bd.id,
+                              typeId: bd.desc.typeId,
+                            },
+                            bd.desc,
+                          ),
+                          stackOrder,
+                        ],
+                        homeOf: homeOf(bd.id),
+                      }}
+                      data-face-instance={benchFace(bd.id, isDut, face.flipped)?.id}
+                      data-face-state={benchFace(bd.id, isDut, face.flipped)?.state}
+                      data-interaction={benchFace(bd.id, isDut, face.flipped)?.interaction}
+                      data-flip-owner={transitionOwner(session.scene, bd.id)}
                     >
                       <Faceplate {...faceProps(bd.id, bd.desc, face.flipped)} />
                     </div>
@@ -473,7 +589,7 @@
     background-position: -1px -1px;
   }
   /* The cables overlay covers the surface in its own (unscaled, surface-local) coordinate space — the
-     same space the measured jack anchors live in. Transparent to pointers except each cable's hit-path. */
+     same space the projected socket anchors live in. Transparent to pointers except each cable's hit-path. */
   .cables {
     position: absolute;
     top: 0;

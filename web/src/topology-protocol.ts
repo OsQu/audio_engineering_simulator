@@ -13,5 +13,16 @@ export interface TopologyRequestMetadata {
   readonly buildVersion: string;
 }
 
+/** Exactly the wire fields of a request. A UI-side `TopologyRequest` also carries its proposal — whose
+ *  delta payload is the edit *closure* — and is a structural superset of this type, so it type-checks as
+ *  metadata but cannot be structured-cloned across the MessagePort (DataCloneError). */
+export const wireTransaction = (request: TopologyRequestMetadata): TopologyRequestMetadata => ({
+  generation: request.generation,
+  id: request.id,
+  baseRevision: request.baseRevision,
+  protocolVersion: request.protocolVersion,
+  buildVersion: request.buildVersion,
+});
+
 export const protocolVersionsMatch = (actual: number, expected: number): boolean =>
   actual === expected;

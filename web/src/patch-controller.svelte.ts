@@ -1,31 +1,50 @@
 // The patch controller: the pointer/drag interaction machinery for patching cables, factored beside the
 // SceneSession so a second view root (the 6.2 workbench) drives the identical glue instead of
 // re-implementing the pointer bookkeeping. A thin reactive shell — all decision logic stays in the pure,
-// node-tested modules (patching.ts transitions, scene-ops.ts edits, jack-anchors.ts measurement); this
-// class holds the in-flight drag state + the measured anchor store and adapts DOM pointer events to the
-// pure transitions. Bound to a SceneSession, whose scene/catalog/cables it reads and whose engine it
-// hot-swaps after each committing edit. The layout-dependent *measurement trigger* stays view-side (an
-// `$effect` with the scene-view dep list); the controller just exposes `measure(worldApi)` + the store.
+// node-tested modules (patching.ts transitions, scene-ops.ts edits, socket-geometry.ts registration and
+// projection); this class holds the in-flight drag state + the socket-geometry index and adapts DOM
+// pointer events to the pure transitions. Bound to a SceneSession, whose scene/catalog/cables it reads and
+// whose engine it hot-swaps after each committing edit. Each face slot registers its own geometry through
+// the `GeometryRegistrar` methods; the view root binds the projection (`project`) of its slots' frames.
 
 import type { JackAnchor } from "./cable-view";
 import type { CableType } from "./catalog";
 import type { ConnectVerdict } from "./connections";
-import { measureJacks as measureJacksDom } from "./jack-anchors";
+import type { GeometryRegistrar } from "./face-geometry";
+import { patchableJackKey } from "./jack-anchors";
 import type { JackHit, PatchState } from "./patching";
 import * as patching from "./patching";
 import type { Connection } from "./scene";
 import * as sceneOps from "./scene-ops";
 import type { SceneSession } from "./session.svelte";
+import {
+  createSocketGeometryIndex,
+  type FaceGeometry,
+  type GeometrySlot,
+  type ProjectedSlot,
+  projectAnchors,
+  type RegisterOutcome,
+  registerGeometry,
+  requestGeometry,
+  unregisterGeometry,
+} from "./socket-geometry";
 import type { WorldApi } from "./world-api";
 
-export class PatchController {
+export class PatchController implements GeometryRegistrar {
   #session: SceneSession;
 
-  // Measured jack-connector centres in surface space, keyed "device:direction:port" (from each jack's
-  // `data-jack` attribute), each tagged with the chassis face it sits on. Populated by `measure` after
-  // layout; lets a cable anchor at the real socket when its jack is on the shown face, falling back to a
-  // chassis-centre estimate otherwise.
-  jackAnchors = $state<Record<string, JackAnchor>>({});
+  // Face-local socket geometry (Story 10.4), registered per (face instance, side) by each face slot's
+  // `faceGeometry` action at its current revision. Camera and placement never touch it.
+  geometry = $state.raw(createSocketGeometryIndex());
+  // The view root's current projection of its registered slots onto the stage surface (frames + which
+  // side faces the operator). Pure inputs; moving a device or the camera only changes this.
+  #slots = $state.raw<() => readonly ProjectedSlot[]>(() => []);
+
+  // Socket centres in surface space, keyed "device:direction:port" (every endpoint alias of each socket),
+  // each tagged with the side it sits on — the contract cable routing and patching consume. Derived from
+  // the geometry index × the projected slots; lets a cable anchor at the real socket when its side is
+  // shown, falling back to a chassis-centre estimate otherwise.
+  jackAnchors = $derived<Record<string, JackAnchor>>(projectAnchors(this.geometry, this.#slots()));
 
   // An in-progress patch from a source jack: the source end + its anchor, the moving free end (surface
   // coords), and — when hovering a candidate jack — the verdict so we can colour the cable + commit.
@@ -40,10 +59,24 @@ export class PatchController {
     this.#session = session;
   }
 
-  // Re-measure jack anchors into surface space (the DOM work lives in jack-anchors.ts). The view root's
-  // `$effect` schedules this on layout changes; the controller just owns the resulting store.
-  measure(worldApi: WorldApi | undefined): void {
-    if (worldApi) this.jackAnchors = measureJacksDom(worldApi);
+  /** Bind the view root's slot projection (read reactively by `jackAnchors`). */
+  project(slots: () => readonly ProjectedSlot[]): void {
+    this.#slots = slots;
+  }
+
+  // GeometryRegistrar — the face slots' `faceGeometry` action drives these.
+  request(slot: GeometrySlot, revision: string): number | null {
+    const req = requestGeometry(this.geometry, slot, revision);
+    if (req.index !== this.geometry) this.geometry = req.index;
+    return req.measure ? req.generation : null;
+  }
+  register(slot: GeometrySlot, generation: number, geometry: FaceGeometry): RegisterOutcome {
+    const res = registerGeometry(this.geometry, slot, generation, geometry);
+    this.geometry = res.index;
+    return res.outcome;
+  }
+  unregister(slot: GeometrySlot): void {
+    this.geometry = unregisterGeometry(this.geometry, slot);
   }
 
   // Resolve a `data-jack` key into the JackHit the pure transitions need (endpoint + measured anchor),
@@ -68,10 +101,8 @@ export class PatchController {
       this.#cableDown = { x: e.clientX, y: e.clientY, moved: false };
       return;
     }
-    const hit = this.#jackHitOf(
-      (e.target as HTMLElement | null)?.closest<HTMLElement>("[data-jack]")?.dataset.jack,
-    );
-    if (!hit?.anchor) return; // only a measured jack can start a drag
+    const hit = this.#jackHitOf(patchableJackKey(e.target as Element | null));
+    if (!hit?.anchor) return; // only a jack with current geometry can start a drag
     e.preventDefault();
     this.#cableDown = { x: e.clientX, y: e.clientY, moved: false };
     this.dragCable = patching.pointerDown(this.dragCable, hit).state;
@@ -88,10 +119,7 @@ export class PatchController {
     }
     const cursor = worldApi.clientToSurface(e.clientX, e.clientY);
     const srcAnchor = this.jackAnchors[patching.jackKeyOf(this.dragCable.source)] ?? null;
-    const hit = this.#jackHitOf(
-      document.elementFromPoint(e.clientX, e.clientY)?.closest<HTMLElement>("[data-jack]")?.dataset
-        .jack,
-    );
+    const hit = this.#jackHitOf(patchableJackKey(document.elementFromPoint(e.clientX, e.clientY)));
     this.dragCable = patching.pointerMove(
       this.dragCable,
       hit,
@@ -106,10 +134,7 @@ export class PatchController {
     // The pending second-click needs the jack under the release point; drag-release uses the last verdict.
     const hit =
       this.dragCable.mode === "pending" && !this.#cableDown.moved
-        ? this.#jackHitOf(
-            document.elementFromPoint(e.clientX, e.clientY)?.closest<HTMLElement>("[data-jack]")
-              ?.dataset.jack,
-          )
+        ? this.#jackHitOf(patchableJackKey(document.elementFromPoint(e.clientX, e.clientY)))
         : null;
     const res = patching.pointerUp(this.dragCable, hit, !this.#cableDown.moved, this.#patchDeps());
     if (res.commit) this.commitCable(res.commit);

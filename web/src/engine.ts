@@ -16,6 +16,7 @@ import {
   TOPOLOGY_BUILD_VERSION,
   TOPOLOGY_PROTOCOL_VERSION,
   type TopologyRequestMetadata,
+  wireTransaction,
 } from "./topology-protocol";
 
 /** The messages the worklet maps onto SceneEngine, all addressed by device id. The DAW variants
@@ -268,7 +269,14 @@ export async function startEngine(
       topologyBuildVersion: options.topologyBuildVersion ?? TOPOLOGY_BUILD_VERSION,
     },
   });
-  const send = (msg: ControlMessage): void => node.port.postMessage(msg);
+  // The transport boundary owns the wire shape: a loadPatch carries only its transaction's metadata,
+  // however much the caller's request object holds (see `wireTransaction`).
+  const send = (msg: ControlMessage): void =>
+    node.port.postMessage(
+      msg.type === "loadPatch" && msg.transaction
+        ? { ...msg, transaction: wireTransaction(msg.transaction) }
+        : msg,
+    );
 
   node.onprocessorerror = () => {
     handlers.onStatus("processor error — the worklet crashed (see console)");

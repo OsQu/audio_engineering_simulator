@@ -5,6 +5,7 @@
   // requested typeId against that catalog — hot-swapping to the bench scene (the device-under-test plus a
   // fixed supporting cast: synth source + DA + speaker, unwired) or falling back to the catalog index.
   // Audio resumes on the first interaction; the user patches source→DUT→monitor by hand (Story 6.3).
+  import { faceInstanceId } from "./view-resolution";
   import { type DawUi, focusUi, hasFocusSurface } from "./device-ui";
   import { wireMidi } from "./engine";
   import { isFocusable } from "./focus";
@@ -141,23 +142,6 @@
     setTrackMonitoring: (t, on) => session.setTrackMonitoring(device, t, on),
     setTrackLevel: (t, v) => session.setTrackLevel(device, t, v),
     setTrackCount: (n) => session.setTrackCount(device, n),
-  });
-
-  // Re-measure jack anchors when the layout that determines them changes (engine ready, the api mounting,
-  // the scene's devices/connections, the catalog). Pan/zoom needn't trigger it — surface-local coords are
-  // invariant. Measure after paint (rAF) and again shortly after (fonts/layout settle).
-  $effect(() => {
-    void session.ready;
-    void benchApi;
-    void session.catalog.length;
-    JSON.stringify(session.scene.patch.devices);
-    JSON.stringify(session.scene.patch.connections);
-    const raf = requestAnimationFrame(() => patch.measure(benchApi));
-    const settle = setTimeout(() => patch.measure(benchApi), 120);
-    return () => {
-      cancelAnimationFrame(raf);
-      clearTimeout(settle);
-    };
   });
 
   // Patching feels **identical to the scene view** — the same PatchController flow, so both click-to-pick
@@ -460,7 +444,13 @@
               daw={dawFor(f.device.id)}
             />
           {/snippet}
-          <div class="focus-body">
+          <!-- The focus copy is its own non-patchable face instance (its jacks share the bench's keys). -->
+          <div
+            class="focus-body"
+            data-face-instance={faceInstanceId({ kind: "focus", windowId: "bench" }, f.device.id)}
+            data-face-state="presented"
+            data-interaction="disabled"
+          >
             {#if hasFocusSurface(f.device.typeId)}
               {@render focusFace()}
             {:else}

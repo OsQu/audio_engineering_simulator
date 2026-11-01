@@ -16,10 +16,11 @@ export interface SurfacePoint {
  *  - `worldToSurface`: the stage's world units → surface-local. WorldView maps world mm (x right, y **up**
  *    from the floor) → surface-local (y **down** from top); the bench's world ≡ surface mm (identity).
  *  - `clientToSurface`: a viewport client point (e.g. a measured DOM rect) → surface-local.
- *  - `measureRoot`: the transformed surface element, the root to scope a jack DOM sweep to (so a duplicate
- *    faceplate rendered *outside* the surface can't clobber real anchors). `null` until the surface mounts. */
+ *  - `stageRoot`: the transformed surface element — the root that scopes stage-only DOM queries (the flip
+ *    lifecycle's transitions), so a duplicate faceplate *outside* the surface (a focus window) is never
+ *    mistaken for a stage face. `null` until the surface mounts. */
 export interface WorldApi {
   worldToSurface: (worldX: number, worldY: number) => SurfacePoint;
   clientToSurface: (clientX: number, clientY: number) => SurfacePoint;
-  measureRoot: () => HTMLElement | null;
+  stageRoot: () => HTMLElement | null;
 }
