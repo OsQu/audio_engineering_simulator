@@ -161,7 +161,7 @@ describe("studio paint order", () => {
 });
 
 describe("workbench paint order", () => {
-  it("keeps the DUT in front and a support device on its settled side", () => {
+  it("keeps the both-faced DUT below the cable pass and a support device on its settled side", () => {
     const faces = resolveFaces({
       kind: "workbench",
       scene: benchScene,
@@ -171,9 +171,10 @@ describe("workbench paint order", () => {
     });
     const objects = resolveBenchObjects({ scene: benchScene, dutId: "dut", faces });
 
+    // rear-object: dut (scene 0), support-back (scene 2); front-object: support-front.
     expect(summary(objects)).toEqual([
-      { id: "support-back", layer: "rear-object", order: 0, parentId: null },
-      { id: "dut", layer: "front-object", order: 1, parentId: null },
+      { id: "dut", layer: "rear-object", order: 0, parentId: null },
+      { id: "support-back", layer: "rear-object", order: 1, parentId: null },
       { id: "support-front", layer: "front-object", order: 2, parentId: null },
     ]);
     expect(objects.every((o) => o.rect === null && silhouetteOf(o) === null)).toBe(true);

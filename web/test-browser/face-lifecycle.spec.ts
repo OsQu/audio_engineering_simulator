@@ -9,6 +9,7 @@ const leads = (page: Page) => page.locator("path.cable-core");
 
 async function flip(page: Page, id: string, label: "front" | "back"): Promise<void> {
   await stageObject(page, id).hover();
+  await expect(objectChrome(page, id)).toHaveClass(/open/);
   await objectChrome(page, id).getByRole("button", { name: label, exact: true }).click();
 }
 

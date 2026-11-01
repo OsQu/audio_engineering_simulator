@@ -127,3 +127,28 @@ test("an occupant's toolbar controls are hittable above the rack and its neighbo
   // The open toolbar did not raise its chassis.
   expect(await paintLayer(occupant)).toBe("front-object");
 });
+
+test("the workbench toolbar lives in the interaction layer without raising the DUT", async ({
+  page,
+}) => {
+  await page.goto("/devices/synth_voice");
+  await expect(page.locator('[data-geometry="current"]').first()).toBeAttached({ timeout: 15000 });
+
+  const dut = stageObject(page, "dev");
+  const before = await renderedLayer(dut);
+  expect(await paintLayer(dut)).toBe("rear-object"); // both faces shown: below the cable pass
+  await page.locator('[data-face-instance="workbench:dut-front:dev"]').hover();
+  const toolbar = page.locator('[data-chrome-for="dev"]');
+  await expect(toolbar).toHaveClass(/open/);
+
+  const open = toolbar.getByRole("button", { name: /^open / });
+  const openBox = await open.boundingBox();
+  const dutBox = await dut.boundingBox();
+  if (!openBox || !dutBox) throw new Error("bench toolbar or DUT did not render");
+  // Anchored flush above the device group's top edge, at its home + offset.
+  expect(openBox.y + openBox.height).toBeLessThanOrEqual(dutBox.y + 1);
+  expect(Math.abs(openBox.x - dutBox.x)).toBeLessThan(20);
+  await open.hover();
+  expect(await topmostChromeAt(page, await elementCentre(open))).toBe("dev");
+  expect(await renderedLayer(dut)).toBe(before);
+});
