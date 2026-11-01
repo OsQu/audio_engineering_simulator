@@ -70,3 +70,8 @@
 - Push: the rebase rewrote already-pushed history, so it needs a force push
   (`git push --force-with-lease origin aes-68-story-10-5-resolved-presentation-stable`). The auto-mode
   classifier denied that; left for Oskari to run.
+
+## 2026-11-01 — parked: waiting on I-164 (force-push)
+- Waiting for Oskari to force-push the rebased branch (or allow me to):
+  `git push --force-with-lease -u origin aes-68-story-10-5-resolved-presentation-stable`. After that:
+  `fx mv AES-68 finished`. All work and gates are done; nothing else is pending.
