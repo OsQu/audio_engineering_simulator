@@ -58,3 +58,15 @@
 - The e10 stack was squashed onto `e10-s1/regression-harness` (ef0a0ad). My branch still sat on the old
   e10-s4 commit 1854ff8. Plan: `git rebase --onto origin/e10-s1/regression-harness 1854ff8` (replay only
   the 4 AES-68 commits), resolve conflicts, re-run the gates.
+
+## 2026-11-01 — rebased onto e10-s1/regression-harness; conflicts resolved
+- `git rebase --onto origin/e10-s1/regression-harness 1854ff8`. The only textual conflict was the Epic 10
+  Progress line in IMPLEMENTATION_PLAN.md: kept the base's "10.3 ✅ complete" wording and added the 10.5 status.
+- Semantic overlap: the base already graduated "populated rack drag" into placement-preview.spec.ts, so I
+  removed my duplicate from stable-layers.spec.ts. The base's new "eject candidate" oracle is about dragging a
+  unit off its rack, not U3 — no conflict.
+- Gates: vitest 375 ✓, typecheck ✓, biome ✓, Playwright 25 ✓ (+2 expected 10.7), stress ×6 96/96 ✓,
+  cargo fmt/lint/test(534)/wasm ✓; cargo docs still fails on the pre-existing `[instantiate]` link (AES-82).
+- Push: the rebase rewrote already-pushed history, so it needs a force push
+  (`git push --force-with-lease origin aes-68-story-10-5-resolved-presentation-stable`). The auto-mode
+  classifier denied that; left for Oskari to run.

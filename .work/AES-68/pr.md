@@ -1,6 +1,6 @@
 AES-68: Story 10.5 — Resolved presentation, stable layers & rack assemblies
 
-Stacked on `e10-s4/explicit-faces-socket-geometry`. Physical stacking is now resolver-owned. Hover, keyboard
+Stacked on `e10-s1/regression-harness` (rebased from the old e10-s4 stack after the squash). Physical stacking is now resolver-owned. Hover, keyboard
 focus, toolbar grace and drag can no longer change which chassis covers which. Toolbars live in a separate
 interaction layer keyed by object ID. Eject and rack removal follow the approved policy U3 and are
 all-or-nothing.
@@ -58,13 +58,15 @@ all-or-nothing.
 
 ## Tests
 
-- Vitest: 373 pass. New: `object-resolution.test.ts` (10) and `ejection.test.ts` (8 hand-calc oracles).
+- Vitest: 375 pass. New: `object-resolution.test.ts` (10) and `ejection.test.ts` (8 hand-calc oracles).
   The `scene-ops`/`projection` tests were updated.
-- Playwright: 25 pass, plus the 2 expected failures owned by Story 10.7. New: `stable-layers.spec.ts` (7)
-  and `ejection.spec.ts` (2). The rack-hover, rear/front cable-hover and populated-rack-drag regressions
-  graduated from known-regressions into required tests. The layer specs are mutation-checked: putting the
+- Playwright: 25 pass, plus the 2 expected failures owned by Story 10.7. New: `stable-layers.spec.ts` (6)
+  and `ejection.spec.ts` (2). The rack-hover and rear/front cable-hover regressions graduated from
+  known-regressions into required tests. The populated-rack-drag case already graduated in Story 10.3's
+  `placement-preview.spec.ts`, so my duplicate was dropped in the rebase. The layer specs are mutation-checked: putting the
   z overrides back fails them.
 - Stress: three runs of stable-layers, face-lifecycle and ejection with `--repeat-each=8`, 384/384 green.
+  After the rebase, a run that also includes placement-preview with `--repeat-each=6`: 96/96.
 - Rust: no crate changes. fmt, lint, test (534), and wasm are green. **`cargo docs` fails on the base
   already** (unresolved `[instantiate]` link in crates/devices); proposed as AES-82.
 
