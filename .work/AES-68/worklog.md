@@ -27,3 +27,12 @@
   (6 tests), mutation-checked. face-lifecycle spec now finds flip buttons via `objectChrome`.
 - Gates: vitest 365 ✓, typecheck ✓, biome ✓, Playwright 22 ✓ (+2 expected 10.7 failures).
 - Next: 10.5.3 workbench.
+
+## 2026-11-01 — Task 10.5.3 done (workbench stable layers + interaction overlay)
+- BenchStage: z from resolved layer, toolbars/drag outline in `.interaction` at group home (offset* via
+  `benchHome` action) + offset. Viewport pan now ignores `.interaction` presses (else the open click was
+  swallowed by pointer capture — caught by face-lifecycle focus test).
+- Corrected 10.5.1: the DUT is rear-object (both faces ⇒ sockets visible ⇒ below cable pass).
+- face-lifecycle `flip` helper waits for the toolbar to be open (one 30 s flake before; 6/6 green after).
+- Gates: vitest 365 ✓, typecheck ✓, biome ✓, Playwright 23 ✓ (+2 expected 10.7 failures).
+- Next: 10.5.4 U3 ejection.

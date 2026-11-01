@@ -22,7 +22,7 @@
   import { Camera } from "../camera.svelte";
   import { draggable } from "../device-drag";
   import { type Rect2, snapToGrid } from "../spatial";
-  import type { ObjectLayer, PaintLayer } from "../view-resolution";
+  import { LAYER_Z, type ObjectLayer } from "../view-resolution";
   import type { SurfacePoint, WorldApi } from "../world-api";
   import DeviceChrome from "./DeviceChrome.svelte";
 
@@ -96,16 +96,6 @@
   // The shared pan/zoom camera (device-drag's twin: it moves the whole view). Owns the surface transform,
   // cursor-anchored wheel zoom, and drag-to-pan; this component keeps only the world↔surface mapping + fit.
   const camera = new Camera({ zoom: 0.6, minZoom: 0.2, maxZoom: 3 });
-
-  // One fixed z band per semantic layer. Nothing else may set a chassis' z.
-  const LAYER_Z: Record<PaintLayer, number> = {
-    furniture: 0,
-    "rear-object": 1,
-    cable: 2,
-    "front-object": 3,
-    "cable-foreground": 5,
-    interaction: 8,
-  };
 
   // The viewport element (measured for fit-to-content) and whether the user has taken over the camera.
   let viewport = $state<HTMLDivElement>();

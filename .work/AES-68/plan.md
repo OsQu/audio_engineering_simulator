@@ -15,7 +15,7 @@ product commits (only `.work/` + docs per factory flow, after review).
 | --- | --- | --- |
 | 10.5.1 | Pure ResolvedObject: layers, total order, parentage, silhouettes | done |
 | 10.5.2 | Studio: resolved order + z bands + interaction overlay; graduate hover regressions | done |
-| 10.5.3 | Workbench: same | planned |
+| 10.5.3 | Workbench: same | done |
 | 10.5.4 | U3 atomic ejection planner | planned (design drafted) |
 
 ## Decisions (approved by Oskari, I-151, 2026-11-01)

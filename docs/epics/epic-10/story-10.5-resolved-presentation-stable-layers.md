@@ -176,10 +176,25 @@ interface WorldItem { id: string; rect: Rect2; layer: ObjectLayer }  // `backgro
 - The stable-layers spec is mutation-checked: reinstating the `chrome ? 6` override fails all four layer
   cases.
 
-## Task 10.5.3 — Workbench renders resolved order + interaction overlay  · planned
+## Task 10.5.3 — Workbench renders resolved order + interaction overlay  · done
 
-_(program design drafted at pickup)_ The same contract applied to `BenchStage`. Its toolbars are positioned
-from the registered home origin + offset frame, the same frame 10.4.4 already projects anchors from.
+- `BenchStage` sets each `.device-group` z from `LAYER_Z[resolveBenchObjects(...).layer]`, plus
+  `data-paint-layer` and `data-stage-object`. The `drag ? 10 : chrome ? 6 : zBase` override is gone. The DOM
+  order is the scene order, which is the resolved order within a layer.
+- **Correction to 10.5.1:** the DUT is `rear-object`, not `front-object`. It shows both faces, so every
+  socket is visible and cables must paint over it, exactly as today's `zBase` 1 did.
+- `LAYER_Z` moved into `view-resolution.ts`, the one renderer mapping both stages share.
+- Toolbars and the drag outline are in a bench `.interaction` layer. They sit at the group's home + offset.
+  The home comes from a small `benchHome` action that reads `offsetLeft/Top/Width/Height`. Those are layout
+  offsets, unaffected by the drag transform or the camera, and are re-read by a `ResizeObserver` on the
+  group and the stack. This is the same home + offset model 10.4.4 uses for socket frames. A pure rect would
+  need the bench's flow layout to be pure, and it isn't.
+- The bench viewport's pan handler ignores presses inside `.interaction`. Without that, a toolbar press
+  started a camera pan and swallowed the click.
+- Browser: `stable-layers.spec.ts` gains a workbench case (DUT layer and z unchanged on hover; toolbar
+  anchored above the group; `open` is topmost), mutation-checked. The face-lifecycle `flip` helper waits for
+  the toolbar to report open before clicking. A single 30 s flake was seen before that; six full runs were
+  green after.
 
 ## Task 10.5.4 — U3 atomic ejection  · planned
 

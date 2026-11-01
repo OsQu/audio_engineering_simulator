@@ -49,8 +49,11 @@
   } from "./presentation-state";
   import {
     faceInstanceId,
+    LAYER_Z,
     physicalLeadsSuppressed,
     type ResolvedFace,
+    type ResolvedObject,
+    resolveBenchObjects,
     resolveFaces,
     transitionOwner,
   } from "./view-resolution";
@@ -123,7 +126,8 @@
   // Drag empty space (not a device body/jack/control) to pan. A device-group press is left to its own
   // move gesture (and jacks/controls to theirs); anything else grabs the camera.
   function onViewportPointerDown(e: PointerEvent): void {
-    if ((e.target as HTMLElement | null)?.closest(".device-group, .cables")) return;
+    // Device groups, cables, and the interaction layer (toolbars) own their own presses.
+    if ((e.target as HTMLElement | null)?.closest(".device-group, .cables, .interaction")) return;
     camera.startPan(e);
   }
 
@@ -153,6 +157,8 @@
   // overlaps allowed.
   // A supporting device's toolbar can overhang its narrow chassis. Give diagonal pointer travel to an
   // overhanging button a short grace period instead of hiding the toolbar the instant the chassis ends.
+  // The toolbar lives in the interaction layer (Story 10.5), so its own enter/focus cancels the close;
+  // nothing here changes physical stacking.
   let openChromeId = $state<string | null>(null);
   let chromeCloseTimer: ReturnType<typeof setTimeout> | undefined;
   function showChrome(id: string): void {
@@ -216,6 +222,71 @@
       if (!present.has(owner)) presentation = unmountPresentation(presentation, owner);
     }
   });
+
+  // --- Physical objects & interaction layer (Story 10.5) ---------------------------------------------
+  // Each device group's paint layer is resolver-owned (resolveBenchObjects): the both-faced DUT and a
+  // back-shown support device sit below the cable pass, a front-shown support device above it. The DOM
+  // order is the scene order, which is the resolved order within a layer. Hover/focus/drag never touch it.
+  const benchObjects = $derived.by(
+    (): Map<string, ResolvedObject> =>
+      new Map(
+        resolveBenchObjects({
+          scene: session.scene,
+          dutId: BENCH_DEVICE,
+          faces: [...benchFaces.values()],
+        }).map((object) => [object.id, object]),
+      ),
+  );
+  const layerZ = (id: string): number => LAYER_Z[benchObjects.get(id)?.layer ?? "rear-object"];
+
+  // A group's untransformed home box in surface px. The bench stack is a DOM flow layout (not pure), so
+  // this small adapter reads `offset*` (layout offsets, unaffected by the drag transform or the camera)
+  // relative to the surface; toolbars and the drag outline sit at home + the parent-resolved offset.
+  type GroupBox = { x: number; y: number; width: number; height: number };
+  let groupHomes = $state<Record<string, GroupBox>>({});
+  function benchHome(node: HTMLElement, id: string) {
+    let current = id;
+    const measure = (): void => {
+      const box = {
+        x: node.offsetLeft,
+        y: node.offsetTop,
+        width: node.offsetWidth,
+        height: node.offsetHeight,
+      };
+      const prev = groupHomes[current];
+      if (
+        !prev ||
+        prev.x !== box.x ||
+        prev.y !== box.y ||
+        prev.width !== box.width ||
+        prev.height !== box.height
+      ) {
+        groupHomes = { ...groupHomes, [current]: box };
+      }
+    };
+    // The stack reflows when any sibling resizes, so observe it as well as the group itself.
+    const observer = new ResizeObserver(measure);
+    observer.observe(node);
+    if (node.parentElement) observer.observe(node.parentElement);
+    measure();
+    return {
+      update(next: string) {
+        current = next;
+        measure();
+      },
+      destroy() {
+        observer.disconnect();
+        const { [current]: _gone, ...rest } = groupHomes;
+        groupHomes = rest;
+      },
+    };
+  }
+  const groupFrame = (id: string): GroupBox | null => {
+    const home = groupHomes[id];
+    if (!home) return null;
+    const offset = offsetFor(id);
+    return { ...home, x: home.x + offset.x, y: home.y + offset.y };
+  };
 
   // Whether a lead touching this device is drawn: not while it is mid-flip.
   const leadsShown = (id: string): boolean =>
@@ -335,8 +406,8 @@
       <!-- Patch cables, drawn in surface-local coords (the same space the projected socket anchors live in)
              via the shared cable-view geometry. `pointer-events:none` so jack presses pass through to the
              faceplates; only each cable's hit-path takes clicks (disabled mid-drag so a release lands on a
-             jack). The cable layer sits at z 2; device groups interleave around it by facing (see zBase),
-             so a cable to a front-shown device's hidden rear socket tucks behind its panel. -->
+             jack). The cable layer is LAYER_Z.cable; device groups sit in their resolved layer's band around
+             it, so a cable to a front-shown device's hidden rear socket tucks behind its panel. -->
       <svg class="cables" width={natW} height={natH} viewBox="0 0 {natW} {natH}">
         {#each session.scene.patch.connections.filter(connShown) as c (connKey(c))}
           {@const ends = cableEndpoints(benchCableLayout, patch.jackAnchors, c, worldApi)}
@@ -385,13 +456,6 @@
           {@const lay = layoutOf(bd.desc)}
           {@const Faceplate = deviceUi(bd.desc.typeId)}
           {@const ruled = isDut && lay.rackUnits > 0}
-          {@const facing = effectiveFacing(session.scene, bd.id)}
-          <!-- z-interleave with the cable layer (z 2), mirroring the scene view. A **front-shown
-                 supporting** device sits ABOVE the cables (z 3): its sockets are on the hidden back face,
-                 so a cable to one tucks behind its panel. Everything else sits BELOW (z 1) — the DUT
-                 (both faces shown ⇒ every socket visible) and a back-shown device (rear sockets visible)
-                 — so cables plug into visible sockets on top. A dragged device floats above all (z 10). -->
-          {@const zBase = !isDut && facing === "front" ? 3 : 1}
           <!-- The DUT lists both faces; a supporting device lists only its shown face (rotate to swap). -->
           {@const faces = benchVisibleFaces(session.scene, bd.id, BENCH_DEVICE).map((face) => ({
             flipped: face === "back",
@@ -405,11 +469,15 @@
             class="device-group"
             class:dut={isDut}
             class:dragging={drag?.id === bd.id}
-            class:chrome-open={openChromeId === bd.id}
+            data-stage-object={bd.id}
+            data-paint-layer={benchObjects.get(bd.id)?.layer}
             style:transform="translate({offsetFor(bd.id).x}px, {offsetFor(bd.id).y}px)"
-            style:z-index={drag?.id === bd.id ? 10 : openChromeId === bd.id ? 6 : zBase}
+            style:z-index={layerZ(bd.id)}
+            use:benchHome={bd.id}
             onpointerenter={() => showChrome(bd.id)}
             onpointerleave={() => hideChromeSoon(bd.id)}
+            onfocusin={() => showChrome(bd.id)}
+            onfocusout={() => hideChromeSoon(bd.id)}
             use:draggable={{
               origin: () => offsetFor(bd.id),
               scale: () => camera.zoom,
@@ -422,45 +490,6 @@
               onCancel: () => onPreviewCancel?.(),
             }}
           >
-            <!-- Shared hover header (same pattern as the scene view): appears above the device on hover.
-                   Every focusable device gets an "open" chip (its large focus surface) — including the
-                   DUT, mirroring the scene view's per-device open (no special global button). A
-                   supporting device also rotates front↔back and can be removed; the DUT shows both
-                   faces at once, so it only opens — it never flips or is removed. -->
-            {#if isFocusable(bd.desc) || !isDut}
-              <DeviceChrome>
-                {#if onOpen && isFocusable(bd.desc)}
-                  <button
-                    type="button"
-                    class="flip-btn open-btn"
-                    aria-label="open {bd.desc.name}"
-                    onclick={() => onOpen?.(bd.id)}
-                  >
-                    ⛶ open
-                  </button>
-                {/if}
-                {#if !isDut}
-                  <button
-                    type="button"
-                    class="flip-btn"
-                    aria-label="rotate {bd.desc.name}"
-                    onclick={() => flipDevice(bd.id)}
-                  >
-                    ⟲ {facing === "back" ? "front" : "back"}
-                  </button>
-                  {#if onRemove}
-                    <button
-                      type="button"
-                      class="flip-btn remove-btn"
-                      aria-label="remove {bd.desc.name}"
-                      onclick={() => onRemove?.(bd.id)}
-                    >
-                      ✕ remove
-                    </button>
-                  {/if}
-                {/if}
-              </DeviceChrome>
-            {/if}
             {#if isDut}<span class="dev-name muted">{bd.desc.name}</span>{/if}
             <!-- Keyed by index (stable per device) so a supporting device's single face-card persists
                    across a flip — the `flipped` prop changes and the 0.45s rotate transition plays,
@@ -522,6 +551,76 @@
               {/each}
             </div>
           </div>
+        {/each}
+      </div>
+
+      <!-- Interaction layer: never physical. Per-device toolbars keyed by object ID at the group's home +
+           offset, plus the drag outline. Transparent to pointers except the toolbar controls. -->
+      <div class="interaction" style:z-index={LAYER_Z.interaction}>
+        {#each devices as bd (bd.id)}
+          {@const isDut = bd.id === BENCH_DEVICE}
+          {@const facing = effectiveFacing(session.scene, bd.id)}
+          {@const frame = groupFrame(bd.id)}
+          {#if frame && drag?.id === bd.id}
+            <div
+              class="drag-outline"
+              data-drag-outline={bd.id}
+              style:left="{frame.x}px"
+              style:top="{frame.y}px"
+              style:width="{frame.width}px"
+              style:height="{frame.height}px"
+            ></div>
+          {/if}
+          {#if frame && (isFocusable(bd.desc) || !isDut)}
+            <div
+              class="object-chrome"
+              data-chrome-for={bd.id}
+              role="toolbar"
+              tabindex="-1"
+              aria-label="{bd.id} controls"
+              class:open={openChromeId === bd.id}
+              style:left="{frame.x}px"
+              style:top="{frame.y}px"
+              style:width="{frame.width}px"
+              onpointerenter={() => showChrome(bd.id)}
+              onpointerleave={() => hideChromeSoon(bd.id)}
+              onfocusin={() => showChrome(bd.id)}
+              onfocusout={() => hideChromeSoon(bd.id)}
+            >
+              <DeviceChrome>
+                {#if onOpen && isFocusable(bd.desc)}
+                  <button
+                    type="button"
+                    class="flip-btn open-btn"
+                    aria-label="open {bd.desc.name}"
+                    onclick={() => onOpen?.(bd.id)}
+                  >
+                    ⛶ open
+                  </button>
+                {/if}
+                {#if !isDut}
+                  <button
+                    type="button"
+                    class="flip-btn"
+                    aria-label="rotate {bd.desc.name}"
+                    onclick={() => flipDevice(bd.id)}
+                  >
+                    ⟲ {facing === "back" ? "front" : "back"}
+                  </button>
+                  {#if onRemove}
+                    <button
+                      type="button"
+                      class="flip-btn remove-btn"
+                      aria-label="remove {bd.desc.name}"
+                      onclick={() => onRemove?.(bd.id)}
+                    >
+                      ✕ remove
+                    </button>
+                  {/if}
+                {/if}
+              </DeviceChrome>
+            </div>
+          {/if}
         {/each}
       </div>
     </div>
@@ -596,7 +695,7 @@
     left: 0;
     overflow: visible;
     pointer-events: none;
-    z-index: 2; /* device groups interleave around this by facing (zBase): front-shown above, else below */
+    z-index: 2; /* LAYER_Z.cable: device groups sit in their resolved layer band around this */
   }
   /* Wide invisible click target over the thin cable (the visual lead is the shared <Cable>). `tabindex=-1`
      keeps it out of the tab order, so suppressing the click-focus outline (a huge rectangle around the
@@ -643,7 +742,25 @@
   }
   .device-group.dragging {
     cursor: grabbing;
-    /* z-index is set inline (per-device by facing; 10 while dragging) so it interleaves with the cables. */
+    /* z-index is the resolved layer's band (LAYER_Z), set inline — dragging never raises it. */
+  }
+  /* The interaction layer spans the surface's padding box (the `offset*` origin) and takes no hits. */
+  .interaction {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+  }
+  .drag-outline {
+    position: absolute;
+    border-radius: 6px;
+    box-shadow: 0 6px 18px rgba(0, 0, 0, 0.55);
+    outline: 2px dashed rgba(255, 255, 255, 0.35);
+    outline-offset: 1px;
+  }
+  /* A zero-height anchor on the group's top edge; DeviceChrome positions itself above it. */
+  .object-chrome {
+    position: absolute;
+    height: 0;
   }
   .dev-name {
     letter-spacing: var(--ae-legend-spacing, 0.05em);
@@ -680,13 +797,15 @@
     letter-spacing: var(--ae-legend-spacing, 0.05em);
     text-transform: uppercase;
   }
-  /* Reveal the shared hover header (DeviceChrome) when the device group is hovered / focused within — the
-     bar's appearance + hidden default live in that component; this is just the per-view reveal trigger. */
-  .device-group:hover :global(.device-chrome),
-  .device-group.chrome-open :global(.device-chrome),
-  .device-group:focus-within :global(.device-chrome) {
+  /* Reveal the shared header (DeviceChrome) while its device is open (hovered/focused, plus the grace
+     period). The bar stays transparent to pointers so its hit box is only its controls. */
+  .object-chrome.open :global(.device-chrome),
+  .object-chrome:focus-within :global(.device-chrome) {
     opacity: 1;
     transform: none;
+  }
+  .object-chrome.open :global(.device-chrome > *),
+  .object-chrome:focus-within :global(.device-chrome > *) {
     pointer-events: auto;
   }
   /* Rotate a supporting device front↔back — a chip in the hover header. */

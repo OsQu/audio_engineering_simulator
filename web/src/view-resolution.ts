@@ -202,6 +202,17 @@ export const PAINT_LAYERS: readonly PaintLayer[] = [
   "interaction",
 ];
 
+/** The renderer mapping both stages share: one fixed CSS z band per semantic layer. Nothing else
+ *  (hover, focus, toolbar grace, drag) may set a chassis' z. */
+export const LAYER_Z: Readonly<Record<PaintLayer, number>> = {
+  furniture: 0,
+  "rear-object": 1,
+  cable: 2,
+  "front-object": 3,
+  "cable-foreground": 5,
+  interaction: 8,
+};
+
 /** The outer chassis corner radius (mm), matching the renderer's `.content` clip. */
 export const CHASSIS_RADIUS_MM = 6;
 
@@ -296,7 +307,9 @@ export interface BenchObjectInput {
   readonly faces: readonly ResolvedFace[];
 }
 
-/** The workbench's physical objects. The DUT presents both faces, so it is always a front object. */
+/** The workbench's physical objects. The DUT presents both faces, so every one of its sockets is visible
+ *  and it sits below the main cable pass (`rear-object`), as a back-shown device does; a front-shown
+ *  support device covers the pass (its sockets are on the hidden back). */
 export function resolveBenchObjects(input: BenchObjectInput): ResolvedObject[] {
   const support = new Map(
     input.faces
@@ -311,7 +324,7 @@ export function resolveBenchObjects(input: BenchObjectInput): ResolvedObject[] {
         parentId: null,
         layer:
           device.id === input.dutId
-            ? "front-object"
+            ? "rear-object"
             : sideLayer(support.get(device.id) ?? effectiveFacing(input.scene, device.id)),
         rect: null,
         sceneIndex,
