@@ -142,12 +142,18 @@ test("the workbench toolbar lives in the interaction layer without raising the D
   await expect(toolbar).toHaveClass(/open/);
 
   const open = toolbar.getByRole("button", { name: /^open / });
-  const openBox = await open.boundingBox();
   const dutBox = await dut.boundingBox();
-  if (!openBox || !dutBox) throw new Error("bench toolbar or DUT did not render");
-  // Anchored flush above the device group's top edge, at its home + offset.
-  expect(openBox.y + openBox.height).toBeLessThanOrEqual(dutBox.y + 1);
-  expect(Math.abs(openBox.x - dutBox.x)).toBeLessThan(20);
+  if (!dutBox) throw new Error("bench DUT did not render");
+  // Anchored flush above the device group's top edge, at its home + offset (polled: the bar slides in
+  // over its 120 ms reveal transition).
+  await expect
+    .poll(async () => {
+      const box = await open.boundingBox();
+      return box ? box.y + box.height : Infinity;
+    })
+    .toBeLessThanOrEqual(dutBox.y + 1);
+  const openBox = await open.boundingBox();
+  expect(Math.abs((openBox?.x ?? Infinity) - dutBox.x)).toBeLessThan(20);
   await open.hover();
   expect(await topmostChromeAt(page, await elementCentre(open))).toBe("dev");
   expect(await renderedLayer(dut)).toBe(before);

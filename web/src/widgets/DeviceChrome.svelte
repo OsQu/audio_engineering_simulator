@@ -35,9 +35,11 @@
     border: 1px solid var(--ae-line-panel);
     border-radius: var(--ae-radius-control) var(--ae-radius-control) 0 0;
     box-shadow: 0 -4px 12px rgba(0, 0, 0, 0.4);
-    /* Hidden until the host reveals it (see the header comment); the host's rule wins on specificity. */
+    /* Hidden until the host reveals it (see the header comment); the host's rule wins on specificity.
+       It slides *down* into place, so mid-reveal it never overlaps the chassis top it sits on — a press
+       there must reach the chassis (drag), not a half-revealed toolbar. */
     opacity: 0;
-    transform: translateY(6px);
+    transform: translateY(-6px);
     pointer-events: none;
     transition:
       opacity 0.12s ease,

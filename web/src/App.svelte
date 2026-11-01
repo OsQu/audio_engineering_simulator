@@ -59,8 +59,10 @@
     type ResolvedObject,
     resolveFaces,
     resolveStudioObjects,
+    transitionForObject,
     transitionOwner,
   } from "./view-resolution";
+  import type { EjectionPlan } from "./ejection";
 
   interface Props {
     /** An explicit composition seam for browser fixtures. Normal navigation supplies nothing. */
@@ -457,7 +459,15 @@
     const facing = rackById(scene, id)?.facing;
     if (facing) void startFlip(id, facing);
   }
-  const unmount = (id: string): void => sceneOps.unmount(scene, id);
+  // U3 ejection (Story 10.5): all-or-nothing; a failure leaves the scene untouched and is reported on the
+  // status line. Disabled while the rack is flipping (an ejected unit would change transition owner mid-flip).
+  const reportEjection = (what: string, plan: EjectionPlan): void => {
+    if (!plan.ok) session.status = `${what} failed: ${plan.reason.replaceAll("-", " ")}`;
+  };
+  const flipping = (id: string): boolean =>
+    transitionForObject(scene, presentation, id) !== undefined;
+  const unmount = (id: string): void =>
+    reportEjection(`eject ${id}`, sceneOps.unmount(scene, session.catalog, id));
 
   // The param/config lanes (paramValue/onParamInput, configValue/onConfigInput) and hotSwap live on the
   // session now — App just calls session.* from the faceplate props and the scene-editing wrappers.
@@ -500,7 +510,8 @@
     session.proposeTopology(`remove ${id}`, (candidate) => sceneOps.removeDevice(candidate, id));
   }
   const addRack = (): void => sceneOps.addRack(layout(), placedItems);
-  const removeRack = (id: string): void => sceneOps.removeRack(scene, id);
+  const removeRack = (id: string): void =>
+    reportEjection(`remove ${id}`, sceneOps.removeRack(scene, session.catalog, id));
 
   // The start button: bring the engine up (session-owned lifecycle, incl. param seeding), request Web
   // MIDI, then resume the AudioContext — the button click *is* the user gesture, so audio flows
@@ -906,6 +917,7 @@
                 type="button"
                 class="chip remove"
                 aria-label="remove rack"
+                disabled={flipping(itemId)}
                 onclick={() => removeRack(itemId)}
               >
                 ✕
@@ -940,6 +952,7 @@
                     type="button"
                     class="chip"
                     aria-label="eject from rack"
+                    disabled={flipping(itemId)}
                     onclick={() => unmount(itemId)}
                   >
                     eject
