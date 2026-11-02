@@ -56,9 +56,13 @@
     faceInstanceId,
     physicalLeadsSuppressed,
     type ResolvedFace,
+    type ResolvedObject,
     resolveFaces,
+    resolveStudioObjects,
+    transitionForObject,
     transitionOwner,
   } from "./view-resolution";
+  import type { EjectionPlan } from "./ejection";
 
   interface Props {
     /** An explicit composition seam for browser fixtures. Normal navigation supplies nothing. */
@@ -131,9 +135,9 @@
   const view = (): ViewCtx => ({ space: currentSpace, view: currentView, wall: currentWall, room });
   const layout = (): LayoutCtx => ({ ...view(), scene, catalog: session.catalog });
 
-  // Devices interleave with the single cable layer by facing: a back-shown unit sits below it (z 1), a
-  // front-shown one above (z 3). See placedItemsFor. A drag candidate is parent state, so a rack and
-  // all of its mounted children derive together from the same transient overlay.
+  // A drag candidate is parent state, so a rack and all of its mounted children derive together from the
+  // same transient overlay. `placedItems` is the preview-aware rect set (spawn positions); the committed
+  // set is the drag-legality collision set. Paint order comes from `studioObjects` below.
   let placementPreview = $state<PlacementPreview | null>(null);
   let studioDrag = $state<{ id: string; legal: boolean } | null>(null);
   const committedItems = $derived.by((): PlacedItem[] => placedItemsFor(layout()));
@@ -159,6 +163,21 @@
     });
     return new Map(faces.map((face) => [face.objectId, face]));
   });
+
+  // --- Physical objects & paint order (Story 10.5) --------------------------------------------------
+  // Resolver-owned: each object's semantic layer (rack frames = furniture; a device by its settled
+  // face, a mounted one by its rack's), rack parentage, and the total order WorldView paints in. Hover,
+  // focus, toolbar grace, and drag are not inputs, so they cannot reorder anything.
+  const studioObjects = $derived.by((): ResolvedObject[] =>
+    resolveStudioObjects({
+      ctx: layout(),
+      faces: studioFaces,
+      preview: placementPreview ?? undefined,
+    }),
+  );
+  const studioItems = $derived(
+    studioObjects.flatMap(({ id, rect, layer }) => (rect ? [{ id, rect, layer }] : [])),
+  );
 
   async function startFlip(owner: string, to: DeviceFacing): Promise<void> {
     const started = beginFlip(presentation, owner, to);
@@ -239,8 +258,8 @@
   const deviceSurfaceRect = (id: string, api: WorldApi): cableView.SurfaceRect | null =>
     cableView.deviceSurfaceRect(sceneLayout(), id, api);
 
-  // Cable occlusion is handled by z-order, not by the cable: a single continuous lead is drawn in the
-  // cable layer (z 2), and each device sits above or below it (see placedItems' `z`) — a back-shown unit
+  // Cable occlusion is handled by paint layers, not by the cable: a single continuous lead is drawn in the
+  // cable layer, and each device sits above or below it (its resolved `layer`) — a back-shown unit
   // *below* (a lead reaches its rear sockets), a front-shown one *above* (cables tuck behind its panel).
   // A cable plugged into a *visible front socket* is then occluded by the panel above it; tipPatchEnd flags
   // those ends so the overlay redraws the lead clipped to the chassis rect (see the tipPatch snippet), so
@@ -440,7 +459,15 @@
     const facing = rackById(scene, id)?.facing;
     if (facing) void startFlip(id, facing);
   }
-  const unmount = (id: string): void => sceneOps.unmount(scene, id);
+  // U3 ejection (Story 10.5): all-or-nothing; a failure leaves the scene untouched and is reported on the
+  // status line. Disabled while the rack is flipping (an ejected unit would change transition owner mid-flip).
+  const reportEjection = (what: string, plan: EjectionPlan): void => {
+    if (!plan.ok) session.status = `${what} failed: ${plan.reason.replaceAll("-", " ")}`;
+  };
+  const flipping = (id: string): boolean =>
+    transitionForObject(scene, presentation, id) !== undefined;
+  const unmount = (id: string): void =>
+    reportEjection(`eject ${id}`, sceneOps.unmount(scene, session.catalog, id));
 
   // The param/config lanes (paramValue/onParamInput, configValue/onConfigInput) and hotSwap live on the
   // session now — App just calls session.* from the faceplate props and the scene-editing wrappers.
@@ -483,7 +510,8 @@
     session.proposeTopology(`remove ${id}`, (candidate) => sceneOps.removeDevice(candidate, id));
   }
   const addRack = (): void => sceneOps.addRack(layout(), placedItems);
-  const removeRack = (id: string): void => sceneOps.removeRack(scene, id);
+  const removeRack = (id: string): void =>
+    reportEjection(`remove ${id}`, sceneOps.removeRack(scene, session.catalog, id));
 
   // The start button: bring the engine up (session-owned lifecycle, incl. param seeding), request Web
   // MIDI, then resume the AudioContext — the button click *is* the user gesture, so audio flows
@@ -757,7 +785,7 @@
       {/snippet}
 
       <WorldView
-        items={placedItems}
+        items={studioItems}
         onMoveTo={moveTo}
         {canPlace}
         drag={studioDrag}
@@ -769,9 +797,9 @@
         bind:api={worldApi}
       >
         {#snippet cables(api)}
-          <!-- Every cable with both ends in this view, drawn once as a continuous lead. The devices' z
-               (set in placedItems by whether a cable ends on their shown face) decides which panels each
-               cable passes in front of vs behind. -->
+          <!-- Every cable with both ends in this view, drawn once as a continuous lead. Each object's
+               resolved paint layer (rear-object below, front-object above this pass) decides which panels
+               each cable passes in front of vs behind. -->
           {#each scene.patch.connections.filter(bothInView).filter(connShown) as c (connKey(c))}
             {@render oneCable(c, api)}
           {/each}
@@ -889,6 +917,7 @@
                 type="button"
                 class="chip remove"
                 aria-label="remove rack"
+                disabled={flipping(itemId)}
                 onclick={() => removeRack(itemId)}
               >
                 ✕
@@ -923,6 +952,7 @@
                     type="button"
                     class="chip"
                     aria-label="eject from rack"
+                    disabled={flipping(itemId)}
                     onclick={() => unmount(itemId)}
                   >
                     eject

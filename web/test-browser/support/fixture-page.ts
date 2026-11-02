@@ -4,12 +4,38 @@ import type { BrowserFixtureId } from "../../src/testing/browser-fixtures";
 export const stageObject = (page: Page, id: string): Locator =>
   page.locator(`[data-stage-object="${id}"]`);
 
+/** An object's toolbar in the interaction layer (Story 10.5): keyed by object ID, not nested in it. */
+export const objectChrome = (page: Page, id: string): Locator =>
+  page.locator(`[data-chrome-for="${id}"]`);
+
 export const jack = (page: Page, key: string): Locator => page.locator(`[data-jack="${key}"]`);
 
 export async function openFixture(page: Page, fixture: BrowserFixtureId): Promise<void> {
   await page.goto(`/__test__/studio/${fixture}`);
   await expect(page.getByTestId("browser-fixture")).toHaveAttribute("data-fixture", fixture);
   await geometrySettled(page);
+  await cameraSettled(page);
+}
+
+/** The auto-fit camera has stopped moving: a late refit would slide gear out from under a stationary
+ *  pointer, firing boundary events that re-target hover (and the open toolbar) mid-test. */
+export async function cameraSettled(page: Page): Promise<void> {
+  const transform = () =>
+    page.evaluate(
+      () => (document.querySelector(".surface") as HTMLElement | null)?.style.transform,
+    );
+  let previous = await transform();
+  await expect
+    .poll(
+      async () => {
+        const current = await transform();
+        const stable = current === previous;
+        previous = current;
+        return stable;
+      },
+      { intervals: [100] },
+    )
+    .toBe(true);
 }
 
 export async function elementCentre(locator: Locator): Promise<{ x: number; y: number }> {
