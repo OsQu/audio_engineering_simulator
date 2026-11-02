@@ -14,7 +14,7 @@ implementation** → tasks one by one, gates green, commit per task (factory flo
 | Task | What | Status |
 | --- | --- | --- |
 | 10.7.1 | Pure `patch-targets.ts`: resolveSocketTargets + pickSocketTarget | done |
-| 10.7.2 | Pure classifyPress, pointer-session reducer, patching release re-resolution | planned |
+| 10.7.2 | Pure classifyPress, pointer-session reducer, patching release re-resolution | done |
 | 10.7.3 | Studio arbiter + adapters; rejection reason UI; graduate known regressions | planned |
 | 10.7.4 | Workbench arbiter, blockers, Story browser/manual matrix | planned |
 

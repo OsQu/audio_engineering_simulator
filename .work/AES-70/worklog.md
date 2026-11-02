@@ -29,3 +29,12 @@
 - Choice: an owner with no silhouette (bench DUT) gets order −1, i.e. anything above it occludes; the
   bench stack doesn't overlap so this is moot today but physically right.
 - Next: 10.7.2 (classifyPress, pointer-session reducer, patching release re-resolution).
+
+## 2026-11-02 — Task 10.7.2 done
+- `gesture-ownership.ts` (classifyPress), `pointer-session.ts` (pure `step` + `beginPointerSession`
+  driver), `patching.ts` release re-resolution, illegal → pending + `rejection`, `pointerCancel`,
+  `aliasFor`. 419 web tests, check + typecheck green.
+- Deviations from the draft (recorded in the companion file): no `pending` press fact (a pending pick
+  only owns socket presses, so panning while a pick is pending still works); JackHit kept + `aliases`;
+  session listens on window for move/up/cancel (the known regression dispatches pointerup on window).
+- Next: 10.7.3 studio arbiter + adapters.

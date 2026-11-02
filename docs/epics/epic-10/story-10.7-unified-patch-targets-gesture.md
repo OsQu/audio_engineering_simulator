@@ -179,66 +179,68 @@ The tests are hand-calculated, table-driven matrices:
   - pointers outside the viewport and inside a blocker miss.
 - **Invariant:** the result is the same for the same input, and only presented sockets ever appear.
 
-## Task 10.7.2 — Pure gesture classification, pointer session & release re-resolution  · building
+## Task 10.7.2 — Pure gesture classification, pointer session & release re-resolution  · done
 
 File-tree diff:
 
 ```text
 web/src/
-+ gesture-ownership.ts    classifyPress (pure priority), PressFacts
-+ pointer-session.ts      the primary-pointer lifecycle as a pure reducer + a thin DOM driver
-  patching.ts             pointerUp re-resolves on release; illegal drag release → pending + reason;
-                          JackHit → SocketHit (endpoint from the picked target's alias)
++ gesture-ownership.ts    classifyPress (pure priority), PressFacts, Ownership
++ pointer-session.ts      primary-pointer lifecycle: pure `step` reducer + `beginPointerSession` DOM driver
+  patching.ts             pointerUp re-resolves on release; illegal release → pending + `rejection`;
+                          pointerCancel; aliasFor; JackHit gains `aliases`
 web/test/
 + gesture-ownership.test.ts, pointer-session.test.ts; patching.test.ts updated
 ```
 
-Key types & signatures:
+Key types & signatures (as landed):
 
 ```ts
 export type Ownership =
   | { kind: "control" }
-  | { kind: "socket"; pick: SocketPick }     // pick may be "none" when a pick is pending
+  | { kind: "socket"; pick: Extract<SocketPick, { kind: "exact" | "near" }> }
   | { kind: "cable"; key: string }
   | { kind: "device"; objectId: string }
   | { kind: "pan" };
-
-/** DOM facts the adapter reads synchronously from the press; no DOM in here. */
-export interface PressFacts {
-  readonly inControl: boolean;      // target.closest(CONTROL_SELECTOR) or a blocker
-  readonly socket: SocketPick;
-  readonly pending: boolean;
-  readonly cableKey: string | null;
-  readonly objectId: string | null;
-}
+export interface PressFacts { inControl: boolean; socket: SocketPick; cableKey: string | null; objectId: string | null }
 export function classifyPress(f: PressFacts): Ownership
 
-// pointer-session (pure part)
-type SessionState = { kind: "idle" } | {
-  kind: "active"; owner: Ownership; pointerId: number; start: Pt; moved: boolean; threshold: number;
-};
-type SessionInput =
-  | { kind: "down"; pointerId: number; button: number; isPrimary: boolean; pointerType: string; at: Pt }
-  | { kind: "move" | "up"; pointerId: number; at: Pt }
-  | { kind: "cancel"; pointerId: number | null };   // pointercancel / lostcapture / blur / unmount
-type SessionEffect = "begin" | "move" | "release" | "cancel" | "ignore";
-export function step(s: SessionState, i: SessionInput, owner?: Ownership): [SessionState, SessionEffect]
+// pointer-session
+export const MOVE_THRESHOLD_PX = { mouse: 4, pen: 4, touch: 8 };
+export function step(s: SessionState, i: SessionInput): { state; effect: "begin"|"move"|"release"|"cancel"|"ignore"; moved }
+export function beginPointerSession(root: Element, down: PointerEvent, h: SessionHandlers): PointerSession | null
+export const sessionActive: (root: Element) => boolean
 
 // patching.ts
-export type SocketHit = { target: SocketTarget; endpoint: Endpoint };
-export function pointerUp(state, hit: SocketHit | null, clickNotDrag: boolean, deps): PatchResult
-// drag mode: legal hit → commit; illegal hit → pending + rejection; click → pending; miss after drag → null
-// pending mode: unchanged rules, but the illegal case now records `rejection`
-export type PatchState = { …; rejection: string | null } | null;
+export type JackHit = { key: string; endpoint: Endpoint; anchor: Pt | null; aliases?: string[] };
+export type PatchState = { …; rejection: { key: string; reason: string } | null } | null;
+export function pointerUp(state, hit: JackHit | null /* picked at release */, clickNotDrag, deps): PatchResult
+export function pointerCancel(state): PatchState   // drag → null; pending survives
+export function aliasFor(aliases, source): string | undefined  // duplex: the complementary direction
 ```
+
+Deviations from the drafted shape (small, recorded as assumptions):
+
+- **No `pending` press fact.** A pending pick owns only presses that pick a socket. Presses elsewhere fall
+  through to cable, device or pan, and a pan during a pending pick keeps working as it does today. A click
+  on empty space or a non-jack never ended a pending pick anyway, so the patch controller doesn't need to
+  see those presses.
+- **`JackHit` is kept, not renamed to `SocketHit`.** It gains `aliases`, so a click on any alias of the
+  source's duplex socket counts as "the source". `aliasFor` chooses which alias a picked target stands for.
+- **The session reads move/up/cancel on `window`.** Captured events bubble there, so a release outside
+  the stage still ends the session. A release with no final move ends it too: the known regression
+  dispatches `pointerup` on `window`. Lost capture is read on the root.
+- **Pending + drag released over nothing keeps the pick.** Pending + drag released on a socket resolves
+  like a click on that socket.
 
 The tests are table-driven:
 
-- the classification priority, including a socket inside a device body beating the device, and a socket
-  beating a cable over its centre (the 10.6 observation);
-- the session reducer: foreign pointer ignored, non-primary button ignored, threshold, release vs cancel,
-  ignore-after-release;
-- `pointerUp` equivalence: the same target gives the same verdict for drag and click, and needs no move.
+- the classification priority, including a socket beating the device body and its own cable;
+- the session reducer: other pointers ignored, non-primary button ignored, the 4/8 px threshold, release
+  vs cancel, and a lost-capture cancel ignored after a release;
+- `pointerUp` equivalence: drag+drop and click+click give the same commit and state for legal and illegal
+  targets, and need no final move;
+- the rejection lifecycle and duplex source aliases.
 
 ## Task 10.7.3 — Studio arbiter & adapters  · planned
 _(program design drafted at pickup)_

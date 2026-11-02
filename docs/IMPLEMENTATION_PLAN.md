@@ -1408,7 +1408,7 @@ capture/blur/unmount distinct from commit.
 
 - **Task 10.7.1** — ✅ Pure socket targets & picker (`patch-targets.ts`). Covered by hand-calc eligibility,
   exposure, exact/nearest/tie and zoom matrices.
-- **Task 10.7.2** — Pure press classification, the pointer-session reducer, and `patching.pointerUp`
+- **Task 10.7.2** — ✅ Pure press classification, the pointer-session reducer, and `patching.pointerUp`
   release re-resolution with illegal → pending.
 - **Task 10.7.3** — Studio arbiter and adapters (patch, device move, pan, cable select). The rejection
   reason is shown, and both known regressions graduate.

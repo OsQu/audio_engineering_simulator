@@ -2,11 +2,13 @@ import { describe, expect, it } from "vitest";
 import type { DeviceDescriptor } from "../src/catalog";
 import type { Endpoint } from "../src/connections";
 import {
+  aliasFor,
   cancel,
   endpointFromJackKey,
   type JackHit,
   jackKeyOf,
   type PatchState,
+  pointerCancel,
   pointerDown,
   pointerMove,
   pointerUp,
@@ -146,21 +148,66 @@ describe("pointerMove", () => {
   });
 });
 
+const otherOut: Endpoint = {
+  device: "s2",
+  port: 0,
+  direction: "output",
+  domain: "analog",
+  channels: 1,
+  connector: "quarterInch",
+};
+// Another device's output jack — output→output is illegal.
+const outHit: JackHit = { key: jackKeyOf(otherOut), endpoint: otherOut, anchor: { x: 5, y: 5 } };
+
 describe("pointerUp — drag mode", () => {
   it("commits when released over a legal jack", () => {
     const over = pointerMove(started(), sinkHit, { x: 50, y: 50 }, deps);
-    const res = pointerUp(over, null, false, deps); // moved (a real drag)
+    const res = pointerUp(over, sinkHit, false, deps); // moved (a real drag)
     expect(res.state).toBeNull();
     expect(res.commit?.ok).toBe(true);
+  });
+  it("resolves the release target, not the last move's verdict (no final move needed)", () => {
+    // Last move was over empty space; the release lands on the sink → commit.
+    const moved = pointerMove(started(), null, { x: 50, y: 50 }, deps);
+    expect(pointerUp(moved, sinkHit, false, deps).commit?.ok).toBe(true);
+    // Last move was over the legal sink; the release lands on nothing → no stale commit.
+    const stale = pointerMove(started(), sinkHit, { x: 50, y: 50 }, deps);
+    const res = pointerUp(stale, null, false, deps);
+    expect(res.commit).toBeUndefined();
+    expect(res.state).toBeNull();
   });
   it("promotes a click (no move) to a pending pick", () => {
     const res = pointerUp(started(), null, true, deps);
     expect(res.commit).toBeUndefined();
     expect(res.state).toMatchObject({ source: OUT, mode: "pending", over: false, verdict: null });
   });
+  it("promotes a click on the source itself to a pending pick", () => {
+    expect(pointerUp(started(), srcHit, true, deps).state?.mode).toBe("pending");
+  });
   it("cancels a real drag released over nothing", () => {
     const moved = pointerMove(started(), null, { x: 50, y: 50 }, deps);
     expect(pointerUp(moved, null, false, deps).state).toBeNull();
+  });
+  it("turns a drag released on an illegal jack into a pending pick with the reason", () => {
+    const res = pointerUp(started(), outHit, false, deps);
+    expect(res.commit).toBeUndefined();
+    expect(res.state).toMatchObject({
+      mode: "pending",
+      rejection: { key: "s2:output:0", reason: "connect an output to an input" },
+    });
+  });
+});
+
+describe("pointerUp — click + click and drag + drop agree", () => {
+  const pending = (): PatchState => pointerUp(started(), null, true, deps).state;
+  it.each([
+    ["legal", sinkHit],
+    ["illegal", outHit],
+  ] as const)("returns the same verdict for a %s target", (_name, hit) => {
+    const drag = pointerUp(started(), hit, false, deps);
+    const click = pointerUp(pending(), hit, true, deps);
+    expect(drag.commit).toEqual(click.commit);
+    expect(drag.state).toEqual(click.state);
   });
 });
 
@@ -172,7 +219,10 @@ describe("pointerUp — pending mode", () => {
     expect(res.state).toBeNull();
     expect(res.commit?.ok).toBe(true);
   });
-  it("keeps the pending pick through a pan (press-and-drag)", () => {
+  it("completes on a press-and-drag released onto a legal jack", () => {
+    expect(pointerUp(pending(), sinkHit, false, deps).commit?.ok).toBe(true);
+  });
+  it("keeps the pending pick through a drag released over nothing", () => {
     const p = pending();
     expect(pointerUp(p, null, false, deps).state).toBe(p); // unchanged
   });
@@ -185,30 +235,51 @@ describe("pointerUp — pending mode", () => {
   it("cancels on a click back on the source jack", () => {
     expect(pointerUp(pending(), srcHit, true, deps)).toEqual({ state: null });
   });
-  it("keeps the pick (no commit) on a click over an illegal jack", () => {
-    // Another device's output jack — output→output is illegal, so the pick stays for another try.
-    const otherOut: Endpoint = {
-      device: "s2",
-      port: 0,
-      direction: "output",
-      domain: "analog",
-      channels: 1,
-      connector: "quarterInch",
+  it("treats any alias of the source's duplex socket as the source", () => {
+    const duplexAlias: JackHit = {
+      ...sinkHit,
+      key: "s1:input:0",
+      aliases: ["s1:output:0", "s1:input:0"],
     };
-    const outHit: JackHit = {
-      key: jackKeyOf(otherOut),
-      endpoint: otherOut,
-      anchor: { x: 5, y: 5 },
-    };
-    const p = pending();
-    const res = pointerUp(p, outHit, true, deps);
-    expect(res.state).toBe(p);
+    expect(pointerUp(pending(), duplexAlias, true, deps)).toEqual({ state: null });
+  });
+  it("keeps the pick with the reason on a click over an illegal jack", () => {
+    const res = pointerUp(pending(), outHit, true, deps);
     expect(res.commit).toBeUndefined();
+    expect(res.state).toMatchObject({
+      mode: "pending",
+      source: OUT,
+      rejection: { key: "s2:output:0", reason: "connect an output to an input" },
+    });
   });
 });
 
-describe("cancel", () => {
-  it("drops any in-progress patch", () => {
+describe("rejection feedback", () => {
+  it("survives while the pointer stays on the rejected socket, clears when it leaves", () => {
+    const rejected = pointerUp(started(), outHit, false, deps).state;
+    expect(pointerMove(rejected, outHit, { x: 5, y: 5 }, deps)?.rejection?.key).toBe("s2:output:0");
+    expect(pointerMove(rejected, null, { x: 50, y: 50 }, deps)?.rejection).toBeNull();
+    expect(pointerMove(rejected, sinkHit, { x: 50, y: 50 }, deps)?.rejection).toBeNull();
+  });
+});
+
+describe("aliasFor", () => {
+  it("picks the duplex alias complementing the held source, else the canonical one", () => {
+    const aliases = ["u:output:0", "u:input:0"];
+    expect(aliasFor(aliases, OUT)).toBe("u:input:0");
+    expect(aliasFor(aliases, IN)).toBe("u:output:0");
+    expect(aliasFor(aliases, null)).toBe("u:output:0");
+    expect(aliasFor(["x:input:2"], OUT)).toBe("x:input:2");
+  });
+});
+
+describe("pointerCancel / cancel", () => {
+  it("drops a held drag but keeps a pending pick (cancel is never a commit)", () => {
+    expect(pointerCancel(started())).toBeNull();
+    const p = pointerUp(started(), null, true, deps).state;
+    expect(pointerCancel(p)).toBe(p);
+  });
+  it("cancel drops any in-progress patch", () => {
     expect(cancel()).toBeNull();
   });
 });
