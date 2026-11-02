@@ -70,3 +70,18 @@
   error; the learning (cable-resolution pipeline + 10.7 connected-jack hit-path note) is recorded here and
   in pr.md instead.
 - Result: Story 10.6 all Tasks done; Validate gate met pending Oskari's review; branch pushed.
+
+## 2026-11-02 — Resume: merge origin/e10-s1/regression-harness (ship conflict)
+- Human: branch conflicts with origin/e10-s1 (AES-67/68 were rebased + squashed there). Merging it in.
+- Conflicts: upstream carries the rebased + squashed AES-67/68 (and 10.2/10.3 completion docs), so most
+  conflicts were the same content arriving twice. Resolved per file by which side actually changed it
+  relative to our old base ed42be0 (the pre-rebase 10.5 tip):
+  - ours (10.6 work; upstream delta 0): App.svelte, BenchStage.svelte, cable-view.ts,
+    patch-controller.svelte.ts, view-resolver.ts, test/cable-view.test.ts, test/view-resolver.test.ts.
+  - theirs (our delta 0): story-10.3 companion, test-browser/stable-layers.spec.ts,
+    test/effective-placement.test.ts, test/placement.test.ts.
+  - both: IMPLEMENTATION_PLAN.md — took upstream (10.2/10.3 ✅ + Delivered blocks) and re-applied our
+    ed42be0..HEAD delta (Story 10.6 block); the Epic Progress paragraph merged by hand (upstream's 10.3
+    completion wording + our 10.5/10.6 status).
+- Gates after merge: vitest 370 ✓, typecheck ✓, biome ✓, Playwright 32 ✓ (+2 expected 10.7),
+  cargo fmt/lint/test(534)/wasm ✓ (cargo docs: pre-existing `[instantiate]` link, unchanged).
