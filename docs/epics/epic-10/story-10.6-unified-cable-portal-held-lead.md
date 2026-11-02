@@ -158,23 +158,47 @@ Invariant tests, alongside the oracles:
   endpoint chassis, and the same three cases as portals;
 - identical input gives identical output.
 
-## Task 10.6.2 — Studio cables & portals render from resolved connections  · planned
-_(program design drafted at pickup)_
+## Task 10.6.2 — Studio cables & portals render from resolved connections  · done
 
-Expected shape:
+File-tree diff:
 
-- `App` builds the `CableResolutionInput` from `studioObjects`, which is already preview-aware, so leads
-  follow drag previews.
-- `patch.project` frames use the same preview-aware rects.
-- The `cables` snippet renders `main` passes. The overlay renders `foreground` passes plus the portal
-  chips, moved into the interaction overlay.
-- Each pass's include/exclude becomes SVG `clip-path`s. Exclusions use one evenodd "everything minus this
-  silhouette" clip per silhouette, nested on `<g>`s. That intersects them correctly when silhouettes
-  overlap, and `clip-path` (unlike `mask`) also clips hit testing. Each hit path therefore sits inside its
-  pass's clip groups.
-- Delete `cableAnchor`, `cableEndpoints`, `clampEnd`, `segmentRectExit`, `tipPatchEnd`,
-  `CableLayout.clampsEstimate` / `frontPatchOver` / `faceAnchorable`, and `sceneCableLayout`.
-- Browser specs cover the pure matrix's visual contract.
+```text
+web/src/
+  view-resolver.ts          - sceneCableLayout   + worldRectToSurface, studioCableInput
+  cable-resolution.ts       + roundedRectPath, insideClipId/outsideClipId, passClipIds
+  cable-view.ts             - bothInView, oneInView, portalOffset, cableAnchor, tipPatchEnd
+  App.svelte                cableInput / studioSlots / resolvedCables; cablePass + portalChip snippets
+  widgets/SilhouetteClips.svelte  + per-svg inside/outside clip defs (outside = evenodd complement)
+  widgets/CablePass.svelte        + nests a pass's clip chain as <g clip-path> (recursive snippet)
+  testing/browser-fixtures.ts     + "cable-portal" fixture
+web/test-browser/
++ cable-presentation.spec.ts  socket meet, edge exit + clip chain, portals, drag-preview following
+```
+
+Call-stack (diff):
+
+```text
+  App (derived)
+-   sceneLayout() → cableEndpoints / cableAnchor / tipPatchEnd (committed rects, estimates)
++   studioCableInput({ctx, faces, objects (preview-aware), presentation, geometry, preview})
++   resolveConnections(input, connections, portals) → drawnCables
+  WorldView cables snippet (LAYER_Z.cable)
++   SilhouetteClips prefix="main"; for each drawn cable: CablePass(main) { Cable | portal stub; hit path }
+  WorldView overlay snippet (z 5)
+-   tipPatch (owner rect clip) + onePortal (whole stub + chip)
++   SilhouetteClips prefix="fg"; CablePass(foreground) { Cable }; then portal chips
+  patch.project
+-   frames from committed deviceSurfaceRect, presented = durable facing
++   studioSlots: frames from preview-aware resolved objects, presented = settled face side
+```
+
+Notes:
+
+- Foreground passes carry no hit path. The main pass owns selection, as before, so a lead redrawn over a
+  front panel can't steal presses meant for that panel's sockets.
+- Portal chips paint last in the overlay SVG. They stay in surface coords for the existing drag math, and
+  sit above all physical content.
+- The bench still uses `cableEndpoints` and `benchCableLayout` until 10.6.3.
 
 ## Task 10.6.3 — Workbench hidden-face exits & listening badge (U2)  · planned
 _(program design drafted at pickup)_

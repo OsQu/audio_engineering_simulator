@@ -251,6 +251,20 @@ export function silhouetteContains(s: SurfaceSilhouette, p: SurfacePoint): boole
   return (p.x - cx) ** 2 + (p.y - cy) ** 2 <= r * r;
 }
 
+/** A rounded rect as SVG path data (clockwise), the outline `silhouetteContains` tests. */
+export function roundedRectPath(s: SurfaceSilhouette): string {
+  const { x, y, width, height } = s.rect;
+  const r = Math.max(0, Math.min(s.radius, width / 2, height / 2));
+  const right = x + width;
+  const bottom = y + height;
+  return (
+    `M ${x + r} ${y} H ${right - r} A ${r} ${r} 0 0 1 ${right} ${y + r} ` +
+    `V ${bottom - r} A ${r} ${r} 0 0 1 ${right - r} ${bottom} ` +
+    `H ${x + r} A ${r} ${r} 0 0 1 ${x} ${bottom - r} ` +
+    `V ${y + r} A ${r} ${r} 0 0 1 ${x + r} ${y} Z`
+  );
+}
+
 /** The visibility predicate the renderer's clip-paths implement: a pass paints (and takes hits) at `p`
  *  iff `p` is inside its include silhouette (if any) and outside every excluded one. */
 export function passVisibleAt(
@@ -266,6 +280,24 @@ export function passVisibleAt(
     const s = silhouettes.get(id);
     return !s || !silhouetteContains(s, p);
   });
+}
+
+/** SVG ids for a silhouette's inside / outside clips under a per-svg `prefix`. */
+const safeId = (id: string): string =>
+  id.replace(/[^a-zA-Z0-9_-]/g, (ch) => `_${ch.charCodeAt(0)}`);
+export const insideClipId = (prefix: string, objectId: string): string =>
+  `${prefix}-in-${safeId(objectId)}`;
+export const outsideClipId = (prefix: string, objectId: string): string =>
+  `${prefix}-out-${safeId(objectId)}`;
+
+/** The clip chain a renderer nests (outermost first) to paint a pass: inside its include silhouette,
+ *  outside every excluded one. Nesting intersects them, so overlapping exclusions stay excluded, and
+ *  `clip-path` (unlike `mask`) also clips hit testing. */
+export function passClipIds(pass: CablePass, prefix: string): string[] {
+  return [
+    ...(pass.kind === "foreground" ? [insideClipId(prefix, pass.include)] : []),
+    ...pass.exclude.map((id) => outsideClipId(prefix, id)),
+  ];
 }
 
 // --- Connections ---------------------------------------------------------------------------------------

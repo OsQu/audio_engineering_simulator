@@ -1,30 +1,89 @@
 // Pure view-policy resolvers shared by the studio and workbench roots. Geometry remains in projection.ts
 // and cable-view.ts; this module supplies the small stage-specific answers those pure primitives need.
 
-import type { CableLayout } from "./cable-view";
-import { resolveEffectivePlacement } from "./effective-placement";
-import { deviceById, deviceRect, effectiveFacing, type LayoutCtx } from "./projection";
+import type { CableResolutionInput, SurfacePoint, SurfaceSilhouette } from "./cable-resolution";
+import type { CableLayout, SurfaceRect } from "./cable-view";
+import { type PlacementPreview, resolveEffectivePlacement } from "./effective-placement";
+import type { PresentationState } from "./presentation-state";
+import { effectiveFacing, type LayoutCtx } from "./projection";
 import type { DeviceFacing, Scene } from "./scene-store";
+import type { ProjectedSlot, SocketGeometryIndex } from "./socket-geometry";
+import type { Rect2 } from "./spatial";
+import {
+  physicalLeadsSuppressed,
+  type ResolvedFace,
+  type ResolvedObject,
+  silhouetteOf,
+} from "./view-resolution";
 
-/** The studio's projection-backed cable policy: only the shown wall is measurable, and a device's
- * effective (rack-aware) face determines cable z behavior. */
-export function sceneCableLayout(ctx: LayoutCtx): CableLayout {
+/** A world rect (mm, y-up, `y` = bottom edge) as a surface rect (y-down, top-left origin). */
+export function worldRectToSurface(
+  rect: Rect2,
+  worldToSurface: (x: number, y: number) => SurfacePoint,
+): SurfaceRect {
+  const a = worldToSurface(rect.x, rect.y);
+  const b = worldToSurface(rect.x + rect.width, rect.y + rect.height);
   return {
-    inView: (id) => {
-      const effective = resolveEffectivePlacement(ctx.scene, ctx.catalog, id);
-      return (
-        (effective.kind === "studio-free" || effective.kind === "studio-mounted") &&
-        effective.space === ctx.space &&
-        effective.wall === ctx.wall
-      );
+    x: Math.min(a.x, b.x),
+    y: Math.min(a.y, b.y),
+    width: Math.abs(b.x - a.x),
+    height: Math.abs(b.y - a.y),
+  };
+}
+
+export interface StudioCableInputArgs {
+  readonly ctx: LayoutCtx;
+  /** Resolved studio faces by object ID — exactly the devices presented in this view. */
+  readonly faces: ReadonlyMap<string, ResolvedFace>;
+  /** Resolved objects (preview-aware rects, total order). */
+  readonly objects: readonly ResolvedObject[];
+  readonly presentation: PresentationState;
+  readonly geometry: SocketGeometryIndex;
+  readonly preview?: PlacementPreview;
+  readonly worldToSurface: (x: number, y: number) => SurfacePoint;
+}
+
+/** The studio's cable-resolution input. Every frame and silhouette comes from the preview-aware resolved
+ *  objects, so leads follow drags; a face's presented side is its *settled* side (a mid-flip face is
+ *  suppressed anyway). Local = presented in this view; top view presents no faces, so draws no leads. */
+export function studioCableInput(args: StudioCableInputArgs): CableResolutionInput {
+  const { ctx, faces, objects, presentation, geometry, preview, worldToSurface } = args;
+  const silhouettes = new Map<string, SurfaceSilhouette>();
+  for (const object of objects) {
+    const outline = silhouetteOf(object);
+    if (!outline) continue;
+    silhouettes.set(object.id, {
+      objectId: object.id,
+      rect: worldRectToSurface(outline.rect, worldToSurface),
+      radius: outline.radius,
+      order: object.order,
+      layer: object.layer,
+    });
+  }
+  const slots = new Map<string, ProjectedSlot[]>();
+  for (const face of faces.values()) {
+    const frame = silhouettes.get(face.objectId)?.rect ?? null;
+    slots.set(
+      face.objectId,
+      (["front", "back"] as const).map((side) => ({
+        slot: { face: face.id, side },
+        frame,
+        presented: side === face.face,
+      })),
+    );
+  }
+  return {
+    silhouettes,
+    slots,
+    geometry,
+    membership: (id) => {
+      if (faces.has(id)) return "local";
+      const effective = resolveEffectivePlacement(ctx.scene, ctx.catalog, id, preview);
+      return effective.kind === "studio-free" || effective.kind === "studio-mounted"
+        ? "off-view"
+        : "unresolved";
     },
-    faceAnchorable: (id, face) => face === effectiveFacing(ctx.scene, id, ctx.catalog),
-    rect: (id) => {
-      const device = deviceById(ctx.scene, id);
-      return device ? deviceRect(ctx, id, device.typeId) : null;
-    },
-    clampsEstimate: (id) => effectiveFacing(ctx.scene, id, ctx.catalog) === "back",
-    frontPatchOver: (id) => effectiveFacing(ctx.scene, id, ctx.catalog) === "front",
+    suppressed: (id) => physicalLeadsSuppressed(ctx.scene, presentation, id),
   };
 }
 

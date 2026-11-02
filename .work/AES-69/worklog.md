@@ -29,3 +29,17 @@
 - 21 tests (hand-calc exits, mask matrix, portal invariance, held lead follows device). Nothing consumes it yet.
 - Gates: vitest 394 ✓, typecheck ✓, biome ✓.
 - Next: 10.6.2 studio rendering.
+
+## 2026-11-02 — Task 10.6.2 done (studio cables + portals from resolved connections)
+- App composes `studioCableInput` (view-resolver.ts) from preview-aware resolved objects; patch.project
+  uses the same frames + settled face side. Main passes in the cable band, foreground passes + portal chips
+  in the overlay; clip chains via SilhouetteClips/CablePass (nested <g clip-path>, evenodd complements).
+  Deleted sceneCableLayout, tipPatch, cableAnchor, bothInView/oneInView, portalOffset (+ their tests);
+  contract matrix (socketCases/connectionCases) now runs through the resolver; +preview-following test.
+- New browser spec cable-presentation.spec.ts (4) + "cable-portal" fixture.
+- Learned: the generic Out jack sits near mid-height, so top/bottom exit is a near tie that measurement
+  rounding at different camera fits can flip — browser test asserts "on an edge", pure tests own tie order.
+- Assumption I-2xx: portal chips stay in the overlay SVG (not the HTML interaction div); foreground passes
+  have no hit path.
+- Gates: vitest ✓, typecheck ✓, biome ✓, Playwright 29 ✓ (+2 expected 10.7).
+- Next: 10.6.3 workbench U2.

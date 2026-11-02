@@ -58,13 +58,6 @@ export const jackKey = (device: string, direction: "input" | "output", port: num
 // How far a portal stub extends from its jack by default, in surface mm.
 export const PORTAL_LEN = 180;
 
-// A cable with both ends in view draws as a full lead; exactly one end here → a portal stub toward the
-// other view; neither → not shown. The engine sees a plain mono connection either way (UI-only).
-export const bothInView = (layout: CableLayout, c: Connection): boolean =>
-  layout.inView(c.from.device) && layout.inView(c.to.device);
-export const oneInView = (layout: CableLayout, c: Connection): boolean =>
-  layout.inView(c.from.device) !== layout.inView(c.to.device);
-
 export const spaceName = (scene: Scene, id: string): string =>
   scene.ui.spaces.find((s) => s.id === id)?.name ?? id;
 
@@ -86,18 +79,6 @@ export function otherEndLabel(
 // own wall/room, so they move independently).
 export const portalKey = (c: Connection, fromIn: boolean): string =>
   `${connKey(c)}|${fromIn ? "from" : "to"}`;
-
-// A portal's offset from its jack anchor: the operator's dragged value, else the default stub placement
-// (out toward the signal-flow direction, dropped a little below the jack).
-export function portalOffset(
-  scene: Scene,
-  c: Connection,
-  fromIn: boolean,
-): { dx: number; dy: number } {
-  return (
-    scene.ui.portals?.[portalKey(c, fromIn)] ?? { dx: fromIn ? PORTAL_LEN : -PORTAL_LEN, dy: 36 }
-  );
-}
 
 // A resolved cable end: its surface point plus whether it came from the interior *estimate* (as opposed
 // to a precise measured socket). The `estimate` flag is what the back-shown clamp keys on — an estimate
@@ -136,16 +117,6 @@ function resolveAnchor(
   const wx = rect.x + rect.width * (direction === "output" ? 0.62 : 0.38);
   const wy = rect.y + rect.height * 0.45;
   return { pt: api.worldToSurface(wx, wy), estimate: true };
-}
-
-export function cableAnchor(
-  layout: CableLayout,
-  jackAnchors: Record<string, JackAnchor>,
-  ref: PortRef,
-  direction: "input" | "output",
-  api: WorldApi,
-): Pt | null {
-  return resolveAnchor(layout, jackAnchors, ref, direction, api)?.pt ?? null;
 }
 
 // A device's chassis rect in surface coords: `layout.rect` gives world mm (y-up), so convert both corners
@@ -240,27 +211,4 @@ export function cableEndpoints(
     a: clampEnd(layout, c.from.device, from, to.pt, api),
     b: clampEnd(layout, c.to.device, to, from.pt, api),
   };
-}
-
-// Does this cable end need a "chassis patch" — the lead redrawn *above* the panels? A front-shown device
-// renders above the single cable layer, so a cable plugged into a socket on its visible front face is
-// occluded by the panel (which paints over the plug and the stretch of lead that crosses the chassis).
-// When true, the renderer redraws the cable's full path in the overlay layer above the gear, clipped to
-// this device's chassis rect, so the portion the panel hides paints over it — a lead that reads as
-// plugged into the front socket and hanging across the front of the chassis, continuous to the edge.
-//
-// Only fires for an end whose jack is *measured on the shown front face* (a precise anchor to clip around)
-// of a *front-shown* device (the only ones that sit above the cables). A back-shown device already sits
-// below the cables, and an unmeasured or hidden-face end anchors to an estimate — neither has a visible
-// front socket to patch over.
-export function tipPatchEnd(
-  layout: CableLayout,
-  jackAnchors: Record<string, JackAnchor>,
-  ref: PortRef,
-  direction: "input" | "output",
-): boolean {
-  if (!layout.inView(ref.device) || !layout.frontPatchOver(ref.device)) return false;
-  const jack = jackAnchors[jackKey(ref.device, direction, ref.port)];
-  // Only a jack measured on the front face — the face that paints over the cable (`frontPatchOver`).
-  return jack !== undefined && jack.face === "front";
 }

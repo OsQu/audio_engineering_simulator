@@ -4,7 +4,12 @@
 import type { CableType, DeviceDescriptor, PortDescriptor } from "../catalog";
 import type { Placement, Scene } from "../scene-store";
 
-export type BrowserFixtureId = "rack-hover" | "cable-hover" | "patch-gestures" | "rack-drag";
+export type BrowserFixtureId =
+  | "rack-hover"
+  | "cable-hover"
+  | "cable-portal"
+  | "patch-gestures"
+  | "rack-drag";
 
 export interface BrowserFixture {
   id: BrowserFixtureId;
@@ -55,9 +60,13 @@ const fixtureSink: DeviceDescriptor = {
   configs: [],
 };
 
-const free = (x: number, facing: "front" | "back" = "front"): Placement => ({
+const free = (
+  x: number,
+  facing: "front" | "back" = "front",
+  wall: "front" | "back" = "front",
+): Placement => ({
   space: "fixture-room",
-  wall: "front",
+  wall,
   position: { x, y: 0, z: 2600 },
   facing,
 });
@@ -140,6 +149,32 @@ const cableHover: BrowserFixture = {
   ),
 };
 
+// Story 10.6: two portals from the front wall to sinks on the back wall — one from a visible rear socket
+// (back-shown source), one from a hidden-face socket (front-shown source; generic jacks are on the back).
+const cablePortal: BrowserFixture = {
+  id: "cable-portal",
+  catalog: [fixtureSource, fixtureSink],
+  cables: [],
+  scene: scene(
+    [
+      { id: "rear-source", typeId: "fixture_source" },
+      { id: "front-source", typeId: "fixture_source" },
+      { id: "far-sink-a", typeId: "fixture_sink" },
+      { id: "far-sink-b", typeId: "fixture_sink" },
+    ],
+    {
+      "rear-source": free(600, "back"),
+      "front-source": free(2100, "front"),
+      "far-sink-a": free(600, "front", "back"),
+      "far-sink-b": free(1600, "front", "back"),
+    },
+    [
+      { from: { device: "rear-source", port: 0 }, to: { device: "far-sink-a", port: 0 } },
+      { from: { device: "front-source", port: 0 }, to: { device: "far-sink-b", port: 0 } },
+    ],
+  ),
+};
+
 const patchGestures: BrowserFixture = {
   id: "patch-gestures",
   catalog: [fixtureSource, fixtureSink],
@@ -159,6 +194,7 @@ const patchGestures: BrowserFixture = {
 const fixtures: Readonly<Record<BrowserFixtureId, BrowserFixture>> = {
   "rack-hover": rackHover,
   "cable-hover": cableHover,
+  "cable-portal": cablePortal,
   "patch-gestures": patchGestures,
   "rack-drag": rackDrag,
 };

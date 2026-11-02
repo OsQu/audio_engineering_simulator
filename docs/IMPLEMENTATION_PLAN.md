@@ -1342,7 +1342,7 @@ presentation in camera-independent surface coordinates. Its inputs are the resol
   main/foreground mask sets, portal chip placement, the pass-visibility predicate; hand-calc exit oracles
   and invariants (local end invariant under remote membership change, no pass visible inside an excluded
   silhouette).
-- **Task 10.6.2** — Studio full cables and portals render from resolved connections with resolver-supplied
+- **Task 10.6.2** — ✅ Studio full cables and portals render from resolved connections with resolver-supplied
   clips on paint and hit paths; leads follow placement previews; delete the estimate/clamp/tip-patch path.
 - **Task 10.6.3** — Workbench adopts the same exits and masks (U2) and the labeled listening badge; delete
   `benchCableLayout`.
