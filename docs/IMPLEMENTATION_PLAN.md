@@ -1023,7 +1023,7 @@ real-worklet, and pure-fixture seams that every later corrective Story graduates
 effective-placement and preview foundation, and Story 10.4 now adds explicit presentation identity and
 camera-independent socket geometry. Story 10.5 delivers resolver-owned paint layers, the interaction
 overlay and U3 ejection. Story 10.6 delivers unified cable/portal/held-lead endpoints and mask passes (awaiting review);
-Story 10.7 remains deliberately coarse until its planning pass.
+Story 10.7 (unified patch targets & gesture lifecycle) is planned and its design is awaiting review.
 
 **Goal:** make one pure, deterministic presentation model authoritative for effective rack/device
 placement, presented faces, socket visibility and patchability, cable endpoints and portals, physical
@@ -1368,7 +1368,7 @@ follow device/rack movement, view changes, and settled flips without retaining s
   - held leads across a view switch and a flip.
 - The old estimate, clamp and tip-patch path and `CableLayout` are deleted.
 
-### Story 10.7 — Unified patch targets & gesture lifecycle
+### Story 10.7 — Unified patch targets & gesture lifecycle — 🚧 **In progress** (design awaiting review)
 
 *Goal:* derive patchable hit targets from resolved sockets and give controls, sockets, visible cables,
 device movement, and backdrop panning one capture-phase ownership and pointer lifecycle across both stages.
@@ -1377,6 +1377,45 @@ device movement, and backdrop panning one capture-phase ownership and pointer li
 blockers. Exact physical hit wins, then nearest eligible centre, paint order, and stable ID; do not skip an
 illegal nearest socket for a farther legal one. Re-resolve and revalidate on release, and keep cancel/lost
 capture/blur/unmount distinct from commit.
+
+*Design notes (proposed at planning, awaiting review):*
+
+- **Targets come from the cable-resolution input.** A socket is a target only if all of these hold:
+  - its owner is local and unsuppressed, and its face is presented;
+  - its geometry is current;
+  - its centre is exposed: no silhouette ordered above the owner contains it.
+
+  One physical socket gives one target that carries every alias. Hidden, transitioning, pending,
+  off-view, top-view and focus-window sockets therefore cannot be targets.
+- **Picking happens in client pixels after the camera**, with tolerances of 8 px (mouse/pen) and 12 px
+  (touch), or the rendered radius if larger.
+  - The viewport and the blockers clip both the pointer and the target centres.
+  - A pointer inside a silhouette ordered above the owner misses that socket. This is the
+    partial-exposure clip.
+  - The picker ignores legality; the nearest socket's verdict is reported.
+- **One capture-phase arbiter per stage, with direct dispatch.** The arbiter classifies each press as
+  control/chrome, socket, cable, device or pan, in that order, then calls the owning adapter.
+  - The independent `pointerdown` starts in `draggable`, the backdrop, `svelte:window` and the cable
+    `onclick` are deleted.
+  - Rejected: an ownership marker read by each adapter, which keeps competing listeners alive.
+- **One shared pointer session.** It provides the pointer-ID and primary-button guards and the move
+  threshold. Release is distinct from cancel, which covers cancel, lost capture, blur and unmount.
+  Ownership is cleared before capture is released.
+- **Release always re-resolves.** A drag released on an illegal socket becomes a pending pick that keeps
+  its reason visible, the same as click-click. A cancelled patch drag drops its lead, while a pending pick
+  survives other gestures and view navigation.
+- **Focus windows stay non-patchable** and block geometric search.
+
+- **Task 10.7.1** — Pure socket targets & picker (`patch-targets.ts`). Covered by hand-calc eligibility,
+  exposure, exact/nearest/tie and zoom matrices.
+- **Task 10.7.2** — Pure press classification, the pointer-session reducer, and `patching.pointerUp`
+  release re-resolution with illegal → pending.
+- **Task 10.7.3** — Studio arbiter and adapters (patch, device move, pan, cable select). The rejection
+  reason is shown, and both known regressions graduate.
+- **Task 10.7.4** — Workbench arbiter, focus-window/toolbar blockers, and the Story browser and manual
+  matrix.
+
+*Program design:* [`story-10.7-unified-patch-targets-gesture.md`](./epics/epic-10/story-10.7-unified-patch-targets-gesture.md)
 
 *Validate:* click-click and drag-drop return the same verdict without requiring a final move event; behavior
 is stable at minimum/default/maximum zoom; hidden, transitioning, occluded, off-view, and focus-window
