@@ -125,35 +125,35 @@ export const socketCases: {
   view: Wall;
   device: string;
   face: DeviceFacing;
-  expected: "measured" | "estimated";
+  expected: "socket" | "exit";
 }[] = [
   {
     name: "shown free front",
     view: "front",
     device: "free-front",
     face: "front",
-    expected: "measured",
+    expected: "socket",
   },
   {
     name: "hidden free back",
     view: "front",
     device: "free-front",
     face: "back",
-    expected: "estimated",
+    expected: "exit",
   },
   {
     name: "shown rack-controlled back",
     view: "back",
     device: "mounted-back",
     face: "back",
-    expected: "measured",
+    expected: "socket",
   },
   {
     name: "hidden rack-controlled front",
     view: "back",
     device: "mounted-back",
     face: "front",
-    expected: "estimated",
+    expected: "exit",
   },
 ];
 

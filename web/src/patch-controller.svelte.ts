@@ -46,7 +46,7 @@ export class PatchController implements GeometryRegistrar {
   // shown, falling back to a chassis-centre estimate otherwise.
   jackAnchors = $derived<Record<string, JackAnchor>>(projectAnchors(this.geometry, this.#slots()));
 
-  // An in-progress patch from a source jack: the source end + its anchor, the moving free end (surface
+  // An in-progress patch from a source jack: the logical source end, the moving free end (surface
   // coords), and — when hovering a candidate jack — the verdict so we can colour the cable + commit.
   // `mode` is "drag" while the pointer is held (same-view patching), or "pending" after a *click* — a
   // held cable that survives a wall/room switch, so you can complete a **cross-view** patch by clicking
@@ -118,15 +118,8 @@ export class PatchController implements GeometryRegistrar {
       }
     }
     const cursor = worldApi.clientToSurface(e.clientX, e.clientY);
-    const srcAnchor = this.jackAnchors[patching.jackKeyOf(this.dragCable.source)] ?? null;
     const hit = this.#jackHitOf(patchableJackKey(document.elementFromPoint(e.clientX, e.clientY)));
-    this.dragCable = patching.pointerMove(
-      this.dragCable,
-      hit,
-      cursor,
-      srcAnchor,
-      this.#patchDeps(),
-    );
+    this.dragCable = patching.pointerMove(this.dragCable, hit, cursor, this.#patchDeps());
   }
 
   pointerUp(e: PointerEvent): void {

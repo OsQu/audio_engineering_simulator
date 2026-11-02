@@ -110,7 +110,6 @@ describe("pointerDown", () => {
     const st = pointerDown(null, srcHit).state;
     expect(st).toMatchObject({
       source: OUT,
-      srcPoint: { x: 10, y: 10 },
       free: { x: 10, y: 10 },
       mode: "drag",
     });
@@ -127,32 +126,29 @@ describe("pointerDown", () => {
 
 describe("pointerMove", () => {
   it("follows the cursor over empty space (not over a jack)", () => {
-    const st = pointerMove(started(), null, { x: 50, y: 50 }, null, deps);
+    const st = pointerMove(started(), null, { x: 50, y: 50 }, deps);
     expect(st).toMatchObject({ free: { x: 50, y: 50 }, over: false, legal: false, verdict: null });
   });
   it("snaps to a legal target jack and marks it legal", () => {
-    const st = pointerMove(started(), sinkHit, { x: 50, y: 50 }, null, deps);
+    const st = pointerMove(started(), sinkHit, { x: 50, y: 50 }, deps);
     expect(st?.over).toBe(true);
     expect(st?.legal).toBe(true);
     expect(st?.free).toEqual({ x: 90, y: 90 }); // snapped to the jack anchor, not the cursor
   });
   it("ignores a hover over the source's own jack", () => {
-    const st = pointerMove(started(), srcHit, { x: 50, y: 50 }, null, deps);
+    const st = pointerMove(started(), srcHit, { x: 50, y: 50 }, deps);
     expect(st).toMatchObject({ over: false, free: { x: 50, y: 50 } });
   });
-  it("uses the live source anchor when the source is back in view", () => {
-    const st = pointerMove(started(), null, { x: 50, y: 50 }, { x: 12, y: 13 }, deps);
-    expect(st?.srcPoint).toEqual({ x: 12, y: 13 });
-  });
-  it("keeps the pick-time source point when the source is off-view (null anchor)", () => {
-    const st = pointerMove(started(), null, { x: 50, y: 50 }, null, deps);
-    expect(st?.srcPoint).toEqual({ x: 10, y: 10 });
+  it("never caches a source anchor (the held lead re-resolves its logical source)", () => {
+    const st = pointerMove(started(), null, { x: 50, y: 50 }, deps);
+    expect(st && "srcPoint" in st).toBe(false);
+    expect(st?.source).toEqual(OUT);
   });
 });
 
 describe("pointerUp — drag mode", () => {
   it("commits when released over a legal jack", () => {
-    const over = pointerMove(started(), sinkHit, { x: 50, y: 50 }, null, deps);
+    const over = pointerMove(started(), sinkHit, { x: 50, y: 50 }, deps);
     const res = pointerUp(over, null, false, deps); // moved (a real drag)
     expect(res.state).toBeNull();
     expect(res.commit?.ok).toBe(true);
@@ -163,7 +159,7 @@ describe("pointerUp — drag mode", () => {
     expect(res.state).toMatchObject({ source: OUT, mode: "pending", over: false, verdict: null });
   });
   it("cancels a real drag released over nothing", () => {
-    const moved = pointerMove(started(), null, { x: 50, y: 50 }, null, deps);
+    const moved = pointerMove(started(), null, { x: 50, y: 50 }, deps);
     expect(pointerUp(moved, null, false, deps).state).toBeNull();
   });
 });

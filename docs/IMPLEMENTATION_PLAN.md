@@ -1022,9 +1022,10 @@ real-worklet, and pure-fixture seams that every later corrective Story graduates
 10.2 makes structural engine changes trustworthy before view migration begins. Story 10.3 is ✅ complete:
 it establishes the effective-placement and preview foundation for later presentation migration, and its
 App-owned rack preview graduated the populated-rack-drag known regression into the required browser suite.
-Story 10.4 now adds explicit presentation identity and camera-independent socket geometry. Story 10.5 is
-planned (resolver-owned paint layers, interaction overlay, U3 ejection); Stories 10.6–10.7 remain
-deliberately coarse until their respective planning passes.
+Story 10.4 now adds explicit presentation identity and camera-independent socket geometry. Story 10.5
+delivers resolver-owned paint layers, the interaction overlay and U3 ejection. Story 10.6 delivers unified
+cable/portal/held-lead endpoints and mask passes (awaiting review); Story 10.7 remains deliberately coarse
+until its planning pass.
 
 **Goal:** make one pure, deterministic presentation model authoritative for effective rack/device
 placement, presented faces, socket visibility and patchability, cable endpoints and portals, physical
@@ -1312,7 +1313,7 @@ sign-off): `stable-layers.spec.ts` covers hover/grace/focus/drag occlusion, the 
 hit-testing, and the workbench; `ejection.test.ts` and `ejection.spec.ts` cover U3. The known-regression list
 now holds only Story 10.7's two cases.
 
-### Story 10.6 — Unified cable, portal & held-lead presentation
+### Story 10.6 — Unified cable, portal & held-lead presentation — 🚧 **In progress** (all Tasks done; Validate gate awaiting review)
 
 *Goal:* derive ordinary cables, portal stubs/chips, and held leads from resolved socket presentation so all
 three share endpoint identity, hidden-face exits, preview following, transitions, and occlusion masks.
@@ -1322,9 +1323,63 @@ interior estimates or incidental CSS z-index. Main and foreground passes share p
 supplied mask sets; invisible segments must not remain selectable. Persisted portal offsets apply only after
 the local physical endpoint resolves.
 
+*Design notes (settled at planning):* One pure module, `cable-resolution.ts`, resolves every cable-like
+presentation in camera-independent surface coordinates. Its inputs are the resolved objects/silhouettes
+(already preview-aware since 10.3/10.5), faces, socket geometry and view membership.
+
+- **Endpoint states.** Each endpoint resolves to an explicit state: `socket`, `exit`, `off-view`,
+  `suppressed`, `pending`, or `unresolved`. A full cable needs both ends local, a portal exactly one, and
+  any other mix draws nothing (with a reason). This replaces the 38 %/62 % interior estimate, the
+  straight-segment clamp and the `CableLayout` z-workaround callbacks. Those coupled routing to CSS bands,
+  and their sagging curve could re-enter the chassis.
+- **Hidden-face exits.** A hidden-face end exits at the owner silhouette edge nearest the socket's
+  see-through position, with ties broken bottom, right, left, top. A short straight lead runs outward
+  before the sag. The edge never depends on the other endpoint, so a portal or remote move cannot swap
+  sides.
+- **Pass masks.** The resolver emits each pass's silhouette sets:
+  - main pass: excludes hidden-face owners;
+  - front-socket foreground pass: includes the owner, excludes devices ordered above it.
+
+  The renderer turns each set into nested SVG `clip-path`s, not masks, because clip-path also clips hit
+  testing. Invisible segments are therefore unselectable.
+- **Portals.** A portal stub uses exactly those passes. Its chip sits at the local physical end plus the
+  persisted offset, and lives in the interaction overlay. Old offsets saved against the estimate shift
+  slightly on load, which is accepted; the schema is unchanged.
+- **Workbench (U2).** The workbench uses the same exits instead of mirrored see-through attachments, and
+  a labeled listening badge instead of a marker on a hidden socket.
+- **Held leads.** A held lead drops its cached `srcPoint` and re-resolves its source each frame. It is
+  "in hand" (I-163): it paints above objects, masked only by a hidden-face source owner. We rejected a
+  fully physical held lead because it would vanish behind the very panel being aimed at.
+
+- **Task 10.6.1** — ✅ Pure endpoint & connection resolution: endpoint states, nearest-edge exits, paths,
+  main/foreground mask sets, portal chip placement, the pass-visibility predicate; hand-calc exit oracles
+  and invariants (local end invariant under remote membership change, no pass visible inside an excluded
+  silhouette).
+- **Task 10.6.2** — ✅ Studio full cables and portals render from resolved connections with resolver-supplied
+  clips on paint and hit paths; leads follow placement previews; delete the estimate/clamp/tip-patch path.
+- **Task 10.6.3** — ✅ Workbench adopts the same exits and masks (U2) and the labeled listening badge; delete
+  `benchCableLayout`.
+- **Task 10.6.4** — ✅ Held leads resolve from a logical source on the shared pipeline (follow device/rack
+  previews, view changes, settled flips); finish legacy removal; Story browser matrix.
+
+*Program design:* [`story-10.6-unified-cable-portal-held-lead.md`](./epics/epic-10/story-10.6-unified-cable-portal-held-lead.md)
+
 *Validate:* visible leads meet their sockets; hidden-face leads exit and remain masked through the owner;
 front/rear overlaps and remote-view changes are deterministic; portals obey ordinary cable rules; held leads
 follow device/rack movement, view changes, and settled flips without retaining stale absolute anchors.
+
+✅ met (awaiting Oskari's sign-off):
+- `cable-resolution.test.ts` covers hand-calc exits and tie order, the mask-pass matrix (front over front,
+  front over rear, overlap), portal local-end invariance, determinism, and held re-resolution.
+- `view-resolver.test.ts` runs the contract matrix and preview following through the resolver.
+- `cable-presentation.spec.ts` covers:
+  - visible leads meeting their sockets;
+  - hidden-face edge exits and clip chains;
+  - portals;
+  - drag-preview following;
+  - the workbench listening badge;
+  - held leads across a view switch and a flip.
+- The old estimate, clamp and tip-patch path and `CableLayout` are deleted.
 
 ### Story 10.7 — Unified patch targets & gesture lifecycle
 

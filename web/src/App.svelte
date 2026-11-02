@@ -14,8 +14,7 @@
   import { wireKeyboardInput } from "./keyboard-input.svelte";
   import { SceneSession } from "./session.svelte";
   import { PatchController } from "./patch-controller.svelte";
-  import { cablePathData } from "./connections";
-  import type { Connection, DeviceInstance, PortRef } from "./scene";
+  import type { Connection, DeviceInstance } from "./scene";
   import { defaultScene, loadScene } from "./scene-store";
   import type { PlacementPreview } from "./effective-placement";
   import {
@@ -31,7 +30,17 @@
     type ViewCtx,
   } from "./projection";
   import * as cableView from "./cable-view";
-  import { sceneCableLayout } from "./view-resolver";
+  import { studioCableInput, worldRectToSurface } from "./view-resolver";
+  import {
+    type CablePass as CablePassData,
+    type CableResolutionInput,
+    type ResolvedConnection,
+    resolveConnections,
+    resolveHeldCable,
+  } from "./cable-resolution";
+  import type { ProjectedSlot } from "./socket-geometry";
+  import CablePass from "./widgets/CablePass.svelte";
+  import SilhouetteClips from "./widgets/SilhouetteClips.svelte";
   import * as placement from "./placement";
   import * as sceneOps from "./scene-ops";
   import { footprint, type Room, type Wall } from "./spatial";
@@ -54,7 +63,6 @@
   import type { DeviceFacing } from "./scene-store";
   import {
     faceInstanceId,
-    physicalLeadsSuppressed,
     type ResolvedFace,
     type ResolvedObject,
     resolveFaces,
@@ -206,79 +214,69 @@
     }
   });
 
-  // Whether a lead touching this device is drawn: not while it (or its rack) is mid-flip.
-  const leadsShown = (id: string): boolean => !physicalLeadsSuppressed(scene, presentation, id);
-  const connShown = (c: Connection): boolean =>
-    leadsShown(c.from.device) && leadsShown(c.to.device);
-
-  // --- Patch cables --------------------------------------------------------------------------------
+  // --- Patch cables (Story 10.6) --------------------------------------------------------------------
   // A stable key for a connection (its two endpoints), for the {#each} in the cable overlay.
   const connKey = sceneOps.connKey;
 
-  // Socket anchors are projected from face-local geometry (each face slot registers its own, at its own
-  // revision — see face-geometry.ts) into the projection's chassis rect. A camera move, a placement or
-  // rack move, or a settled flip changes only this projection; nothing is re-measured.
-  patch.project(() => {
+  // The one cable-resolution input every cable-like presentation shares: preview-aware chassis
+  // silhouettes and slot frames (leads follow a drag), settled faces, the face-local geometry index,
+  // view membership, and U1 suppression. Pure (view-resolver.ts `studioCableInput`).
+  const cableInput = $derived.by((): CableResolutionInput | null => {
     const api = worldApi;
-    if (!api) return [];
-    return [...studioFaces.values()].flatMap((face) => {
-      const frame = cableView.deviceSurfaceRect(sceneLayout(), face.objectId, api);
-      const shown = effectiveFacing(scene, face.objectId);
-      return (["front", "back"] as const).map((side) => ({
-        slot: { face: face.id, side },
-        frame,
-        presented: side === shown,
-      }));
+    if (!api) return null;
+    return studioCableInput({
+      ctx: layout(),
+      faces: studioFaces,
+      objects: studioObjects,
+      presentation,
+      geometry: patch.geometry,
+      preview: placementPreview ?? undefined,
+      worldToSurface: api.worldToSurface,
     });
   });
 
-  // The scene's projection-backed cable policy. Rebuilt per call so its reactive layout reads stay tied
-  // to this root, while the policy itself remains pure and contract-tested outside Svelte.
-  const sceneLayout = (): cableView.CableLayout => sceneCableLayout(layout());
+  // Socket anchors for patching are projected from the same slot frames (preview-aware, settled side).
+  // A camera move, a placement or rack move, or a settled flip changes only this projection.
+  const studioSlots = $derived.by((): ProjectedSlot[] => {
+    const api = worldApi;
+    if (!api) return [];
+    const objects = new Map(studioObjects.map((o) => [o.id, o]));
+    return [...studioFaces.values()].flatMap((face) => {
+      const rect = objects.get(face.objectId)?.rect;
+      const frame = rect ? worldRectToSurface(rect, api.worldToSurface) : null;
+      return (["front", "back"] as const).map((side) => ({
+        slot: { face: face.id, side },
+        frame,
+        presented: side === face.face,
+      }));
+    });
+  });
+  patch.project(() => studioSlots);
 
-  // Cable end anchor + view-membership helpers are pure cable-view fns, prebound here to the scene layout,
-  // the projected socket anchors, and (for cableAnchor) the world api.
-  const cableAnchor = (
-    ref: PortRef,
-    direction: "input" | "output",
-    api: WorldApi,
-  ): { x: number; y: number } | null =>
-    cableView.cableAnchor(sceneLayout(), patch.jackAnchors, ref, direction, api);
+  // Every connection resolved once: full cable, portal, or nothing (with a reason).
+  const resolvedCables = $derived(
+    cableInput
+      ? resolveConnections(cableInput, scene.patch.connections, scene.ui.portals ?? {})
+      : [],
+  );
+  const drawnCables = $derived(
+    resolvedCables.filter(
+      (r): r is Exclude<ResolvedConnection, { kind: "none" }> => r.kind !== "none",
+    ),
+  );
 
-  // Both of a cable's ends resolved to surface points (with the back-shown chassis clamp applied) — the
-  // single geometry source shared by the z-2 lead and its overlay chassis patch, so the two copies trace
-  // the exact same path. `null` when either end is off-view (that connection draws as a portal instead).
-  const cableEnds = (
-    c: Connection,
-    api: WorldApi,
-  ): { a: { x: number; y: number }; b: { x: number; y: number } } | null =>
-    cableView.cableEndpoints(sceneLayout(), patch.jackAnchors, c, api);
-
-  // A device's chassis rect in surface coords — the clip region for a front-plugged lead's overlay patch.
-  const deviceSurfaceRect = (id: string, api: WorldApi): cableView.SurfaceRect | null =>
-    cableView.deviceSurfaceRect(sceneLayout(), id, api);
-
-  // Cable occlusion is handled by paint layers, not by the cable: a single continuous lead is drawn in the
-  // cable layer, and each device sits above or below it (its resolved `layer`) — a back-shown unit
-  // *below* (a lead reaches its rear sockets), a front-shown one *above* (cables tuck behind its panel).
-  // A cable plugged into a *visible front socket* is then occluded by the panel above it; tipPatchEnd flags
-  // those ends so the overlay redraws the lead clipped to the chassis rect (see the tipPatch snippet), so
-  // the portion the panel hides paints back over it. A back-shown device's hidden-face estimate is clamped
-  // to its chassis edge inside cableEnds, so a lead to a now-hidden socket stops at the silhouette rather
-  // than dangling mid-panel.
-
-  // Whether a cable end plugs into a visible front socket that the panel occludes (→ draw a chassis patch).
-  const tipPatchEnd = (ref: PortRef, direction: "input" | "output"): boolean =>
-    cableView.tipPatchEnd(sceneLayout(), patch.jackAnchors, ref, direction);
-
-  const inView = (id: string): boolean => sceneLayout().inView(id);
-  const bothInView = (c: Connection): boolean => cableView.bothInView(sceneLayout(), c);
-  const oneInView = (c: Connection): boolean => cableView.oneInView(sceneLayout(), c);
+  // The held lead, re-resolved from its logical source (never a cached anchor).
+  const heldCable = $derived(
+    dragCable && cableInput
+      ? resolveHeldCable(cableInput, {
+          source: dragCable.source,
+          direction: dragCable.source.direction,
+          pointer: dragCable.free,
+        })
+      : null,
+  );
   const otherEndLabel = (id: string): string =>
     cableView.otherEndLabel(scene, currentSpace, WALL_LABELS, id);
-  const portalKey = cableView.portalKey;
-  const portalOffset = (c: Connection, fromIn: boolean): { dx: number; dy: number } =>
-    cableView.portalOffset(scene, c, fromIn);
 
   // Dragging a portal chip: its key + the (fixed) jack anchor it hangs off + the world converters. The
   // offset is recomputed live as cursor − anchor and stored in the scene, so it persists on save.
@@ -686,102 +684,70 @@
 
   {#if session.ready}
     <div class="stage">
-      <!-- One patch cable: three stacked strokes for depth (dark drop-shadow, signal-coloured core, thin
-           lit highlight — colour from the connector kind), plus a wide transparent hit-path for
-           click-to-disconnect (its pointer events go off during a drag so `elementFromPoint` can see the
-           jack beneath). Drawn once, in the single cable layer; the devices' `z` handle the occlusion. -->
-      {#snippet oneCable(c: Connection, api: WorldApi)}
-        {@const ends = cableEnds(c, api)}
-        {#if ends}
-          {@const d = cablePathData(ends.a, ends.b)}
-          {@const kind = connectionKind(c)}
-          <Cable {d} {kind} selected={connKey(c) === selectedCableKey} />
-          <path
-            class="cable-hit"
-            {d}
-            role="button"
-            tabindex="-1"
-            aria-label={`select cable ${connKey(c)}`}
-            style:pointer-events={dragCable ? "none" : "stroke"}
-            onclick={() => (selectedCableKey = connKey(c))}
-            onkeydown={(e) => {
-              if (e.key === "Enter" || e.key === " ") selectedCableKey = connKey(c);
-            }}
-          ></path>
-        {/if}
+      <!-- Story 10.6: every drawn connection (full cable or portal stub) is resolved once by
+           cable-resolution.ts — its path and its mask passes. The main pass sits in the cable band (rear
+           objects below, front objects above) clipped away from hidden-face owners; a front socket's
+           foreground pass redraws the lead inside its owner, minus everything ordered above it. The hit
+           path lives inside the main pass's clips, so a segment that isn't painted can't be selected. -->
+      {#snippet cablePass(
+        r: Exclude<ResolvedConnection, { kind: "none" }>,
+        pass: CablePassData,
+        prefix: string,
+      )}
+        <CablePass {pass} {prefix}>
+          {#if r.kind === "full"}
+            <Cable
+              d={r.path.d}
+              kind={connectionKind(r.connection)}
+              selected={r.key === selectedCableKey}
+            />
+          {:else}
+            <path class="cable portal" class:selected={r.key === selectedCableKey} d={r.path.d} />
+          {/if}
+          {#if pass.kind === "main"}
+            <path
+              class="cable-hit"
+              d={r.path.d}
+              role="button"
+              tabindex="-1"
+              aria-label={`select cable ${r.key}`}
+              data-cable={r.key}
+              style:pointer-events={dragCable ? "none" : "stroke"}
+              onclick={() => (selectedCableKey = r.key)}
+              onkeydown={(e) => {
+                if (e.key === "Enter" || e.key === " ") selectedCableKey = r.key;
+              }}
+            ></path>
+          {/if}
+        </CablePass>
       {/snippet}
 
-      <!-- A chassis patch: the same cable, redrawn in the overlay (z 5, above the panels) but clipped to
-           the socket's device rect, so the stretch the front panel occludes (plug + the lead across the
-           chassis) paints back over it, continuous to the panel edge (the rest stays in the z-2 cable
-           layer). Reuses oneCable's exact resolved endpoints + colours so patch and cable coincide; no
-           hit-path (the z-2 lead owns click-to-select). The clip id derives from the connection key + end,
-           sanitised to a valid, unique SVG id. -->
-      {#snippet tipPatch(c: Connection, ref: PortRef, direction: "input" | "output", api: WorldApi)}
-        {@const ends = cableEnds(c, api)}
-        {@const rect = deviceSurfaceRect(ref.device, api)}
-        {#if ends && rect}
-          {@const d = cablePathData(ends.a, ends.b)}
-          {@const kind = connectionKind(c)}
-          {@const clipId = `tip-${connKey(c).replace(/[^a-zA-Z0-9]/g, "-")}-${direction}`}
-          <clipPath id={clipId} clipPathUnits="userSpaceOnUse">
-            <rect x={rect.x} y={rect.y} width={rect.width} height={rect.height} />
-          </clipPath>
-          <g clip-path={`url(#${clipId})`}>
-            <Cable {d} {kind} selected={connKey(c) === selectedCableKey} />
-          </g>
-        {/if}
-      {/snippet}
-
-      <!-- A cross-view connection: only one end is in this view (other wall or other room), so instead of
-           a continuous cable we draw a short stub from that end to a labelled portal chip pointing at
-           where the other end lives (the snakes MVP). The engine still sees a plain mono connection. -->
-      {#snippet onePortal(c: Connection, api: WorldApi)}
-        {@const fromIn = inView(c.from.device)}
-        {@const ref = fromIn ? c.from : c.to}
-        {@const dir = fromIn ? "output" : "input"}
-        {@const otherLabel = otherEndLabel(fromIn ? c.to.device : c.from.device)}
-        {@const a = cableAnchor(ref, dir, api)}
-        {#if a}
-          {@const off = portalOffset(c, fromIn)}
-          {@const p = { x: a.x + off.dx, y: a.y + off.dy }}
-          {@const d = cablePathData(a, p)}
-          <path
-            class="cable-hit"
-            {d}
-            role="button"
-            tabindex="-1"
-            aria-label={`select cable ${connKey(c)}`}
-            style:pointer-events={dragCable ? "none" : "stroke"}
-            onclick={() => (selectedCableKey = connKey(c))}
-            onkeydown={(e) => {
-              if (e.key === "Enter" || e.key === " ") selectedCableKey = connKey(c);
-            }}
-          ></path>
-          <path class="cable portal" class:selected={connKey(c) === selectedCableKey} {d} />
-          <!-- The dot is a drag handle: drag it to move the portal chip out of the way (offset persists). -->
-          <circle
-            class="portal-dot"
-            cx={p.x}
-            cy={p.y}
-            r="16"
-            role="button"
-            tabindex="-1"
-            aria-label={`move portal ${connKey(c)}`}
-            onpointerdown={(e) => startPortalDrag(e, portalKey(c, fromIn), a, api)}
-            onpointermove={onPortalDragMove}
-            onpointerup={onPortalDragEnd}
-          ></circle>
-          <text
-            class="portal-label"
-            x={fromIn ? p.x + 26 : p.x - 26}
-            y={p.y}
-            text-anchor={fromIn ? "start" : "end"}
-            dominant-baseline="middle"
-          >
-            {fromIn ? `→ ${otherLabel}` : `${otherLabel} →`}
-          </text>
-        {/if}
+      <!-- A portal's chip: a drag handle at the local physical end + its persisted offset, labelled with
+           where the other end lives. Interaction UI, so it paints above all physical content. -->
+      {#snippet portalChip(r: Extract<ResolvedConnection, { kind: "portal" }>, api: WorldApi)}
+        {@const otherLabel = otherEndLabel(r.remote)}
+        <circle
+          class="portal-dot"
+          cx={r.chip.x}
+          cy={r.chip.y}
+          r="16"
+          role="button"
+          tabindex="-1"
+          aria-label={`move portal ${r.key}`}
+          data-portal={r.portalKey}
+          onpointerdown={(e) => startPortalDrag(e, r.portalKey, r.base, api)}
+          onpointermove={onPortalDragMove}
+          onpointerup={onPortalDragEnd}
+        ></circle>
+        <text
+          class="portal-label"
+          x={r.fromLocal ? r.chip.x + 26 : r.chip.x - 26}
+          y={r.chip.y}
+          text-anchor={r.fromLocal ? "start" : "end"}
+          dominant-baseline="middle"
+        >
+          {r.fromLocal ? `→ ${otherLabel}` : `${otherLabel} →`}
+        </text>
       {/snippet}
 
       <WorldView
@@ -797,11 +763,14 @@
         bind:api={worldApi}
       >
         {#snippet cables(api)}
-          <!-- Every cable with both ends in this view, drawn once as a continuous lead. Each object's
-               resolved paint layer (rear-object below, front-object above this pass) decides which panels
-               each cable passes in front of vs behind. -->
-          {#each scene.patch.connections.filter(bothInView).filter(connShown) as c (connKey(c))}
-            {@render oneCable(c, api)}
+          <!-- The main pass of every drawn cable and portal stub (the cable paint band). -->
+          {#if cableInput}
+            <SilhouetteClips prefix="main" silhouettes={cableInput.silhouettes} />
+          {/if}
+          {#each drawnCables as r (r.key)}
+            {#each r.passes.filter((p) => p.kind === "main") as pass, i (i)}
+              {@render cablePass(r, pass, "main")}
+            {/each}
           {/each}
         {/snippet}
 
@@ -845,45 +814,44 @@
               >
             </g>
           {/if}
-          <!-- Chassis patches: for each in-view cable end plugged into a visible front socket (occluded by
-               the panel above the z-2 cable layer), redraw the lead clipped to that device's chassis rect,
-               so the panel-hidden stretch paints back over the panel. Drawn before the portals/rubber-band
-               so those stay on top. -->
-          {#each scene.patch.connections.filter(bothInView).filter(connShown) as c (connKey(c))}
-            {#if tipPatchEnd(c.from, "output")}
-              {@render tipPatch(c, c.from, "output", api)}
-            {/if}
-            {#if tipPatchEnd(c.to, "input")}
-              {@render tipPatch(c, c.to, "input", api)}
-            {/if}
+          <!-- Foreground passes: a lead into a visible front socket, redrawn inside its owner minus every
+               object ordered above it — then the portal chips, above all physical content. -->
+          {#if cableInput}
+            <SilhouetteClips prefix="fg" silhouettes={cableInput.silhouettes} />
+          {/if}
+          {#each drawnCables as r (r.key)}
+            {#each r.passes.filter((p) => p.kind === "foreground") as pass, i (i)}
+              {@render cablePass(r, pass, "fg")}
+            {/each}
           {/each}
-          <!-- On top of everything: cross-view portal stubs and the drag rubber-band while patching. -->
-          {#each scene.patch.connections.filter(oneInView).filter(connShown) as c (connKey(c))}
-            {@render onePortal(c, api)}
+          {#each drawnCables as r (r.key)}
+            {#if r.kind === "portal"}{@render portalChip(r, api)}{/if}
           {/each}
-          <!-- A held lead hides while its source flips; the pick itself (and its banner) survives. -->
-          {#if dragCable && leadsShown(dragCable.source.device)}
-            {#if dragCable.mode === "drag" || inView(dragCable.source.device)}
-              <!-- Source visible: draw the rubber-band from its jack to the cursor. -->
-              <Cable
-                drag
-                d={cablePathData(dragCable.srcPoint, dragCable.free)}
-                pending={dragCable.mode === "pending"}
-                legal={dragCable.over && dragCable.legal}
-                illegal={dragCable.over && !dragCable.legal}
-              />
-            {:else}
-              <!-- Pending across a view switch: the source is off-view, so just track a floating end
-                   (the banner names where it came from; hovering a jack colours it legal/illegal). -->
-              <circle
-                class="pending-end"
-                class:legal={dragCable.over && dragCable.legal}
-                class:illegal={dragCable.over && !dragCable.legal}
-                cx={dragCable.free.x}
-                cy={dragCable.free.y}
-                r="12"
-              />
-            {/if}
+          <!-- The held lead (Story 10.6, "in hand" — I-163): re-resolved from its logical source every
+               frame, so it follows device/rack previews, view switches, and settled flips. It paints above
+               the panels, masked only by a hidden-face source's own chassis. Source off-view → a floating
+               end (the banner names where it came from); source mid-flip → no lead, the pick survives. -->
+          {#if heldCable?.kind === "lead" && dragCable}
+            {#each heldCable.passes as pass, i (i)}
+              <CablePass {pass} prefix="fg">
+                <Cable
+                  drag
+                  d={heldCable.path.d}
+                  pending={dragCable.mode === "pending"}
+                  legal={dragCable.over && dragCable.legal}
+                  illegal={dragCable.over && !dragCable.legal}
+                />
+              </CablePass>
+            {/each}
+          {:else if heldCable?.kind === "floating" && dragCable}
+            <circle
+              class="pending-end"
+              class:legal={dragCable.over && dragCable.legal}
+              class:illegal={dragCable.over && !dragCable.legal}
+              cx={dragCable.free.x}
+              cy={dragCable.free.y}
+              r="12"
+            />
           {/if}
         {/snippet}
 
