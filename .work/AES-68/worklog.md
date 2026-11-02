@@ -75,3 +75,7 @@
 - Waiting for Oskari to force-push the rebased branch (or allow me to):
   `git push --force-with-lease -u origin aes-68-story-10-5-resolved-presentation-stable`. After that:
   `fx mv AES-68 finished`. All work and gates are done; nothing else is pending.
+
+## 2026-11-02 — done
+- Oskari force-pushed the rebased branch (795a1e0). Story 10.5 is complete on top of e10-s1; all gates are
+  green except the pre-existing `cargo docs` link (AES-82). Waiting on Oskari's Validate-gate sign-off.
