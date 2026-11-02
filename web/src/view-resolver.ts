@@ -2,7 +2,7 @@
 // and cable-view.ts; this module supplies the small stage-specific answers those pure primitives need.
 
 import type { CableResolutionInput, SurfacePoint, SurfaceSilhouette } from "./cable-resolution";
-import type { CableLayout, SurfaceRect } from "./cable-view";
+import type { SurfaceRect } from "./cable-view";
 import { type PlacementPreview, resolveEffectivePlacement } from "./effective-placement";
 import type { PresentationState } from "./presentation-state";
 import { effectiveFacing, type LayoutCtx } from "./projection";
@@ -10,6 +10,7 @@ import type { DeviceFacing, Scene } from "./scene-store";
 import type { ProjectedSlot, SocketGeometryIndex } from "./socket-geometry";
 import type { Rect2 } from "./spatial";
 import {
+  CHASSIS_RADIUS_MM,
   physicalLeadsSuppressed,
   type ResolvedFace,
   type ResolvedObject,
@@ -93,11 +94,43 @@ export function benchVisibleFaces(scene: Scene, deviceId: string, dutId: string)
   return deviceId === dutId ? ["front", "back"] : [effectiveFacing(scene, deviceId)];
 }
 
-/** The workbench has no rooms or occluding spatial chassis: every registered socket is usable directly. */
-export const benchCableLayout: CableLayout = {
-  inView: () => true,
-  faceAnchorable: () => true,
-  rect: () => null,
-  clampsEstimate: () => false,
-  frontPatchOver: () => false,
-};
+export interface BenchCableInputArgs {
+  readonly scene: Scene;
+  readonly dutId: string;
+  /** Resolved bench objects (layer + total order). */
+  readonly objects: readonly ResolvedObject[];
+  /** Per object, its projected slot sides (frames = registered home + parent-resolved offset). */
+  readonly slots: ReadonlyMap<string, readonly ProjectedSlot[]>;
+  readonly presentation: PresentationState;
+  readonly geometry: SocketGeometryIndex;
+}
+
+/** The workbench's cable-resolution input (U2): the same exits and masks as the studio. A supporting
+ *  device's silhouette is its single flip-card frame, so a lead into its hidden side exits its nearest edge
+ *  instead of attaching to a mirrored see-through socket. The DUT presents both faces (never an exit owner)
+ *  and sits below the cable band (never above a foreground owner), so it contributes no silhouette.
+ *  Everything on the bench is local. */
+export function benchCableInput(args: BenchCableInputArgs): CableResolutionInput {
+  const { scene, dutId, objects, slots, presentation, geometry } = args;
+  const silhouettes = new Map<string, SurfaceSilhouette>();
+  for (const object of objects) {
+    if (object.id === dutId) continue;
+    const frame = slots.get(object.id)?.find((slot) => slot.frame)?.frame;
+    if (!frame) continue;
+    silhouettes.set(object.id, {
+      objectId: object.id,
+      rect: frame,
+      radius: CHASSIS_RADIUS_MM,
+      order: object.order,
+      layer: object.layer,
+    });
+  }
+  const present = new Set(scene.patch.devices.map((device) => device.id));
+  return {
+    silhouettes,
+    slots,
+    geometry,
+    membership: (id) => (present.has(id) ? "local" : "unresolved"),
+    suppressed: (id) => physicalLeadsSuppressed(scene, presentation, id),
+  };
+}

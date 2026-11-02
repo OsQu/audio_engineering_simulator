@@ -127,7 +127,12 @@ describe("resolveEndpoint", () => {
       { device: "a", port: 0 },
       "output",
     );
-    expect(end).toEqual({ kind: "socket", objectId: "a", point: { x: 1040, y: 2020 } });
+    expect(end).toEqual({
+      kind: "socket",
+      objectId: "a",
+      side: "front",
+      point: { x: 1040, y: 2020 },
+    });
   });
 
   it("exits a hidden-face socket at the edge nearest its see-through position", () => {
@@ -141,6 +146,7 @@ describe("resolveEndpoint", () => {
     expect(end).toEqual({
       kind: "exit",
       objectId: "a",
+      side: "front",
       edge: "top",
       point: { x: 1160, y: 2000 },
       lead: { x: 1160, y: 2000 - EXIT_LEAD },

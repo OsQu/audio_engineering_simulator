@@ -20,7 +20,7 @@ import { jackKey, PORTAL_LEN, portalKey, type SurfaceRect } from "./cable-view";
 import { type CableRoute, cableRoute } from "./connections";
 import type { Connection, PortRef } from "./scene";
 import { connKey } from "./scene-ops";
-import type { PortalOffset } from "./scene-store";
+import type { DeviceFacing, PortalOffset } from "./scene-store";
 import {
   type ProjectedSlot,
   projectSocket,
@@ -64,10 +64,17 @@ export type Edge = "bottom" | "right" | "left" | "top";
 const EDGE_ORDER: readonly Edge[] = ["bottom", "right", "left", "top"];
 
 export type EndpointPresentation =
-  | { readonly kind: "socket"; readonly objectId: string; readonly point: SurfacePoint }
+  | {
+      readonly kind: "socket";
+      readonly objectId: string;
+      /** The chassis side the socket is on. */
+      readonly side: DeviceFacing;
+      readonly point: SurfacePoint;
+    }
   | {
       readonly kind: "exit";
       readonly objectId: string;
+      readonly side: DeviceFacing;
       readonly edge: Edge;
       /** Where the lead crosses the chassis edge. */
       readonly point: SurfacePoint;
@@ -194,8 +201,8 @@ export function resolveEndpoint(
     if (found.status === "pending") pending = true;
     if (found.status !== "current") continue;
     const point = projectSocket(found.geometry, found.socket, frame, presented);
-    if (presented) return { kind: "socket", objectId, point };
-    hidden ??= { kind: "exit", objectId, ...edgeExit(frame, point) };
+    if (presented) return { kind: "socket", objectId, side: slot.side, point };
+    hidden ??= { kind: "exit", objectId, side: slot.side, ...edgeExit(frame, point) };
   }
   if (hidden) return hidden;
   return pending ? { kind: "pending", objectId } : { kind: "unresolved", objectId };

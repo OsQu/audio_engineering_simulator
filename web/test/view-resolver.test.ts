@@ -8,7 +8,7 @@ import type { DeviceFacing } from "../src/scene-store";
 import type { GeometryEntry } from "../src/socket-geometry";
 import type { Wall } from "../src/spatial";
 import { resolveFaces, resolveStudioObjects } from "../src/view-resolution";
-import { benchCableLayout, benchVisibleFaces, studioCableInput } from "../src/view-resolver";
+import { benchCableInput, benchVisibleFaces, studioCableInput } from "../src/view-resolver";
 import {
   benchFaceCases,
   benchScene,
@@ -130,13 +130,79 @@ describe("view resolver contract matrix", () => {
   it.each(benchFaceCases)("bench $id shows $faces", ({ id, faces }) => {
     expect(benchVisibleFaces(benchScene, id, "dut")).toEqual(faces);
   });
+});
 
-  it("the workbench anchors either measured face without scene-only behavior", () => {
-    expect(benchCableLayout.inView("anything")).toBe(true);
-    expect(benchCableLayout.faceAnchorable("support-back", "front")).toBe(true);
-    expect(benchCableLayout.faceAnchorable("support-back", "back")).toBe(true);
-    expect(benchCableLayout.rect("support-back")).toBeNull();
-    expect(benchCableLayout.clampsEstimate("support-back")).toBe(false);
-    expect(benchCableLayout.frontPatchOver("support-back")).toBe(false);
+describe("benchCableInput (U2)", () => {
+  // A DUT presenting both faces and a supporting device turned front-on, whose only socket is on its
+  // hidden back. Faces 100 × 50; the support frame sits at (0, 300), scale 1.
+  const scene = structuredClone(benchScene);
+  const geometry = (alias: string) => ({
+    status: "current" as const,
+    revision: "r",
+    generation: 1,
+    geometry: {
+      width: 100,
+      height: 50,
+      sockets: [{ id: alias, aliases: [alias], x: 90, y: 40, r: 2 }],
+    },
+  });
+  const supportId = scene.patch.devices.find((d) => d.id !== "dut")?.id ?? "";
+  const input = benchCableInput({
+    scene,
+    dutId: "dut",
+    objects: [
+      { id: "dut", kind: "device", parentId: null, layer: "rear-object", order: 0, rect: null },
+      {
+        id: supportId,
+        kind: "device",
+        parentId: null,
+        layer: "front-object",
+        order: 1,
+        rect: null,
+      },
+    ],
+    slots: new Map([
+      [
+        "dut",
+        [
+          {
+            slot: { face: "workbench:dut-front:dut", side: "front" },
+            frame: { x: 0, y: 0, width: 100, height: 50 },
+            presented: true,
+          },
+        ],
+      ],
+      [
+        supportId,
+        (["front", "back"] as const).map((side) => ({
+          slot: { face: `workbench:support:${supportId}`, side },
+          frame: { x: 0, y: 300, width: 100, height: 50 },
+          presented: side === "front",
+        })),
+      ],
+    ]),
+    presentation: createPresentationState(),
+    geometry: {
+      entries: { [`workbench:support:${supportId}|back`]: geometry(`${supportId}:output:0`) },
+      generation: 1,
+    },
+  });
+
+  it("gives supporting devices a silhouette and omits the both-faced DUT", () => {
+    expect([...input.silhouettes.keys()]).toEqual([supportId]);
+    expect(input.membership(supportId)).toBe("local");
+    expect(input.membership("ghost")).toBe("unresolved");
+  });
+
+  it("exits a supporting device's hidden-side socket instead of a mirrored attachment", () => {
+    // Back socket at (90, 40) seen through → x = 100 − 90 = 10, y = 340. Distances: bottom 10, left 10,
+    // top 40, right 90 → bottom (tie order bottom before left).
+    const end = resolveEndpoint(input, { device: supportId, port: 0 }, "output");
+    expect(end).toMatchObject({
+      kind: "exit",
+      edge: "bottom",
+      side: "back",
+      point: { x: 10, y: 350 },
+    });
   });
 });

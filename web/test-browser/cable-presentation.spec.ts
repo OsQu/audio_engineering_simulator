@@ -2,7 +2,13 @@
 // their sockets, hidden-face leads leave at the nearest chassis edge and are clipped from their owner,
 // portals obey the same rules, and leads follow a drag preview before release.
 import { expect, type Page, test } from "@playwright/test";
-import { elementCentre, jack, openFixture, stageObject } from "./support/fixture-page";
+import {
+  elementCentre,
+  jack,
+  objectChrome,
+  openFixture,
+  stageObject,
+} from "./support/fixture-page";
 
 type Pt = { x: number; y: number };
 
@@ -101,4 +107,44 @@ test("a lead follows its device's drag preview before release", async ({ page })
 
   expect(before.y - during.y).toBeGreaterThan(30);
   expect(Math.hypot(during.x - socket.x, during.y - socket.y)).toBeLessThan(2);
+});
+
+test("the workbench marks a hidden monitored socket with a labelled badge (U2)", async ({
+  page,
+}) => {
+  await page.goto("/devices/da_converter");
+  await expect(page.locator('[data-geometry="current"]').first()).toBeAttached({ timeout: 15000 });
+
+  // Add a supporting Synth Voice and listen to its output.
+  await page.locator("details.menu > summary").click();
+  await page.getByRole("button", { name: "Synth Voice", exact: true }).click();
+  const support = page.locator("[data-stage-object]");
+  await expect(support).toHaveCount(2, { timeout: 15000 });
+  const id = await support.evaluateAll(
+    (els) =>
+      els.map((e) => (e as HTMLElement).dataset.stageObject).find((v) => v && v !== "dev") ?? "",
+  );
+  const select = page.getByLabel("monitored output");
+  const option = await select
+    .locator("option", { hasText: "Synth Voice" })
+    .evaluateAll((els) => (els as HTMLOptionElement[]).map((o) => o.value));
+  await select.selectOption(option.find((v) => v.startsWith(`${id}:`)) ?? "");
+  await expect(page.locator('[data-geometry="pending"]')).toHaveCount(0);
+
+  const marker = page.locator(`[data-listen-marker="${id}"]`);
+  const badge = page.locator(`[data-listen-badge="${id}"]`);
+  await expect.poll(async () => (await marker.count()) + (await badge.count())).toBe(1);
+  const hiddenFirst = (await badge.count()) === 1;
+
+  // Rotating the device swaps a visible socket's ring for the hidden-socket badge, or back.
+  // (The added device lands below the fold; this test is about the badge, not toolbar reach — click the
+  // rotate control directly.)
+  await objectChrome(page, id)
+    .getByRole("button", { name: "rotate Synth Voice", includeHidden: true })
+    .evaluate((b) => (b as HTMLButtonElement).click());
+  await expect(hiddenFirst ? marker : badge).toHaveCount(1);
+  await expect(hiddenFirst ? badge : marker).toHaveCount(0);
+  // The badge is never a patch target.
+  if (!hiddenFirst)
+    expect(await badge.evaluate((el) => getComputedStyle(el).pointerEvents)).toBe("none");
 });

@@ -39,7 +39,16 @@
 - New browser spec cable-presentation.spec.ts (4) + "cable-portal" fixture.
 - Learned: the generic Out jack sits near mid-height, so top/bottom exit is a near tie that measurement
   rounding at different camera fits can flip — browser test asserts "on an edge", pure tests own tie order.
-- Assumption I-2xx: portal chips stay in the overlay SVG (not the HTML interaction div); foreground passes
+- Assumption I-221: portal chips stay in the overlay SVG (not the HTML interaction div); foreground passes
   have no hit path.
 - Gates: vitest ✓, typecheck ✓, biome ✓, Playwright 29 ✓ (+2 expected 10.7).
 - Next: 10.6.3 workbench U2.
+
+## 2026-11-02 — Task 10.6.3 done (workbench U2)
+- benchCableInput (support-device silhouettes from slot frames; DUT omitted), BenchStage on the shared
+  pipeline (main + new foreground svg), listening ring/badge from resolveEndpoint(output). Removed the
+  whole legacy CableLayout/cableEndpoints/estimate path from cable-view.ts + tests.
+- Browser: workbench badge test (add Synth Voice, listen to it, rotate → ring⇄badge). The added device
+  lands below the fold, so the test clicks the rotate control via DOM rather than hovering.
+- Gates: vitest 369 ✓, typecheck ✓, biome ✓, Playwright 30 ✓ (+2 expected 10.7).
+- Next: 10.6.4 held leads.

@@ -3,8 +3,8 @@
 // track the pointer with capture, convert the screen delta into position units via the view's live
 // zoom, snap, gate on legality, and report the candidate position back. Everything view-specific — what
 // the position *means* (world mm vs a flat bench offset), its y orientation, the grid, the legality
-// rule, and where the committed value is stored — is injected by the caller, mirroring how `cable-view`
-// takes a `CableLayout` and both views share one `PatchController`.
+// rule, and where the committed value is stored — is injected by the caller, mirroring how both stages
+// feed one cable-resolution pipeline and share one `PatchController`.
 //
 // A pointerdown on a control (knob/fader/switch = slider/button), a patch jack, or any other
 // self-gesturing element must NOT start a move, so those opt out via `DRAG_EXCLUDE` (a press that hits

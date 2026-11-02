@@ -1344,7 +1344,7 @@ presentation in camera-independent surface coordinates. Its inputs are the resol
   silhouette).
 - **Task 10.6.2** — ✅ Studio full cables and portals render from resolved connections with resolver-supplied
   clips on paint and hit paths; leads follow placement previews; delete the estimate/clamp/tip-patch path.
-- **Task 10.6.3** — Workbench adopts the same exits and masks (U2) and the labeled listening badge; delete
+- **Task 10.6.3** — ✅ Workbench adopts the same exits and masks (U2) and the labeled listening badge; delete
   `benchCableLayout`.
 - **Task 10.6.4** — Held leads resolve from a logical source on the shared pipeline (follow device/rack
   previews, view changes, settled flips); finish legacy removal; Story browser matrix.

@@ -17,7 +17,14 @@
   // surface so that machinery can measure jack anchors + draw cables in surface-local space.
 
   import { Camera } from "./camera.svelte";
-  import { cableEndpoints, jackKey } from "./cable-view";
+  import {
+    type CablePass as CablePassData,
+    type ResolvedConnection,
+    resolveConnections,
+    resolveEndpoint,
+  } from "./cable-resolution";
+  import CablePass from "./widgets/CablePass.svelte";
+  import SilhouetteClips from "./widgets/SilhouetteClips.svelte";
   import { draggable } from "./device-drag";
   import Cable from "./widgets/Cable.svelte";
   import CableInspector from "./widgets/CableInspector.svelte";
@@ -34,11 +41,11 @@
   import { footprint, RACK_UNIT_MM } from "./spatial";
   import type { SurfacePoint, WorldApi } from "./world-api";
   import { BENCH_DEVICE } from "./workbench-scene";
-  import { benchCableLayout, benchVisibleFaces } from "./view-resolver";
+  import { benchCableInput, benchVisibleFaces } from "./view-resolver";
   import { tick, untrack } from "svelte";
   import { awaitFlip } from "./face-lifecycle";
   import { faceGeometry, geometryContent } from "./face-geometry";
-  import { geometryKey } from "./socket-geometry";
+  import { geometryKey, type ProjectedSlot } from "./socket-geometry";
   import type { DeviceFacing } from "./scene-store";
   import {
     beginFlip,
@@ -92,12 +99,6 @@
     onRemove,
     onOpen,
   }: Props = $props();
-
-  // The monitored tap's measured anchor, for the "listening here" marker (the output PortRef → its jack).
-  const tapAnchor = $derived.by(() => {
-    const o = session.scene.patch.output;
-    return patch.jackAnchors[jackKey(o.device, "output", o.port)] ?? null;
-  });
 
   // A selected cable → the shared inspector (change type / disconnect). Cleared when it's disconnected.
   let selectedCableKey = $state<string | null>(null);
@@ -291,8 +292,6 @@
   // Whether a lead touching this device is drawn: not while it is mid-flip.
   const leadsShown = (id: string): boolean =>
     !physicalLeadsSuppressed(session.scene, presentation, id);
-  const connShown = (c: Connection): boolean =>
-    leadsShown(c.from.device) && leadsShown(c.to.device);
 
   // The devices to render: the scene's instances (the DUT + the fixed supporting cast) resolved against
   // the live catalog, in scene order (source → DUT → DA → speaker), each paired with its descriptor. The
@@ -324,13 +323,16 @@
       const offset = offsetFor(id);
       return { x: at.x - offset.x, y: at.y - offset.y };
     };
-  // svelte-ignore state_referenced_locally
-  patch.project(() =>
-    devices.flatMap((bd) => {
+  // Each device's projected slot sides. A supporting device presents its *settled* side (a mid-flip
+  // device is suppressed anyway); the DUT's two slots each present their own side.
+  const benchSlotMap = $derived.by((): Map<string, ProjectedSlot[]> => {
+    const map = new Map<string, ProjectedSlot[]>();
+    for (const bd of devices) {
       const isDut = bd.id === BENCH_DEVICE;
-      return benchVisibleFaces(session.scene, bd.id, BENCH_DEVICE).flatMap((face) => {
-        const { slot, sides, presented } = benchSlots(bd.id, isDut, face === "back");
+      const projected = benchVisibleFaces(session.scene, bd.id, BENCH_DEVICE).flatMap((face) => {
+        const { slot, sides } = benchSlots(bd.id, isDut, face === "back");
         if (!slot) return [];
+        const presented = isDut ? sides[0] : slot.face;
         const offset = offsetFor(bd.id);
         return sides.map((side) => {
           const key = { face: slot.id, side };
@@ -342,8 +344,41 @@
           return { slot: key, frame, presented: side === presented };
         });
       });
+      map.set(bd.id, projected);
+    }
+    return map;
+  });
+  // svelte-ignore state_referenced_locally
+  patch.project(() => [...benchSlotMap.values()].flat());
+
+  // --- Cables (Story 10.6, U2) ----------------------------------------------------------------------
+  // The same pipeline as the studio: endpoint states, hidden-face exits, and resolver-supplied mask
+  // passes. A lead into a supporting device's hidden side exits its nearest edge (no mirrored attachment).
+  const cableInput = $derived(
+    benchCableInput({
+      scene: session.scene,
+      dutId: BENCH_DEVICE,
+      objects: [...benchObjects.values()],
+      slots: benchSlotMap,
+      presentation,
+      geometry: patch.geometry,
     }),
   );
+  const drawnCables = $derived(
+    resolveConnections(cableInput, session.scene.patch.connections).filter(
+      (r): r is Extract<ResolvedConnection, { kind: "full" }> => r.kind === "full",
+    ),
+  );
+  // "Listening here": the monitored output. On a presented face it's a ring at the socket; on a hidden
+  // face (U2) it's a labelled badge on the device — never a patch target either way.
+  const listening = $derived(resolveEndpoint(cableInput, session.scene.patch.output, "output"));
+  const listenBadge = $derived.by(() => {
+    if (listening.kind !== "exit") return null;
+    const s = cableInput.silhouettes.get(listening.objectId);
+    return s
+      ? { id: listening.objectId, side: listening.side, x: s.rect.x + s.rect.width, y: s.rect.y }
+      : null;
+  });
 
   // Per-device layout: real footprint (world mm) + rack-unit count (0 if not rackmount).
   function layoutOf(d: DeviceDescriptor) {
@@ -408,26 +443,40 @@
              faceplates; only each cable's hit-path takes clicks (disabled mid-drag so a release lands on a
              jack). The cable layer is LAYER_Z.cable; device groups sit in their resolved layer's band around
              it, so a cable to a front-shown device's hidden rear socket tucks behind its panel. -->
-      <svg class="cables" width={natW} height={natH} viewBox="0 0 {natW} {natH}">
-        {#each session.scene.patch.connections.filter(connShown) as c (connKey(c))}
-          {@const ends = cableEndpoints(benchCableLayout, patch.jackAnchors, c, worldApi)}
-          {#if ends}
-            {@const d = cablePathData(ends.a, ends.b)}
-            {@const kind = connectionKind(session.scene, session.catalog, c)}
-            <Cable {d} {kind} selected={connKey(c) === selectedCableKey} />
+      {#snippet cablePass(
+        r: Extract<ResolvedConnection, { kind: "full" }>,
+        pass: CablePassData,
+        prefix: string,
+      )}
+        <CablePass {pass} {prefix}>
+          <Cable
+            d={r.path.d}
+            kind={connectionKind(session.scene, session.catalog, r.connection)}
+            selected={r.key === selectedCableKey}
+          />
+          {#if pass.kind === "main"}
             <path
               class="cable-hit"
-              {d}
+              d={r.path.d}
               role="button"
               tabindex="-1"
-              aria-label={`select cable ${connKey(c)}`}
+              aria-label={`select cable ${r.key}`}
+              data-cable={r.key}
               style:pointer-events={patch.dragCable ? "none" : "stroke"}
-              onclick={() => (selectedCableKey = connKey(c))}
+              onclick={() => (selectedCableKey = r.key)}
               onkeydown={(e: KeyboardEvent) => {
-                if (e.key === "Enter" || e.key === " ") selectedCableKey = connKey(c);
+                if (e.key === "Enter" || e.key === " ") selectedCableKey = r.key;
               }}
             ></path>
           {/if}
+        </CablePass>
+      {/snippet}
+      <svg class="cables" width={natW} height={natH} viewBox="0 0 {natW} {natH}">
+        <SilhouetteClips prefix="bench-main" silhouettes={cableInput.silhouettes} />
+        {#each drawnCables as r (r.key)}
+          {#each r.passes.filter((p) => p.kind === "main") as pass, i (i)}
+            {@render cablePass(r, pass, "bench-main")}
+          {/each}
         {/each}
 
         {#if patch.dragCable && leadsShown(patch.dragCable.source.device)}
@@ -440,9 +489,39 @@
           />
         {/if}
 
-        {#if tapAnchor}
+        {#if listening.kind === "socket"}
           <!-- "Listening here": the monitored output tap (what the capture hears). -->
-          <circle class="tap-marker" cx={tapAnchor.x} cy={tapAnchor.y} r="4.5" />
+          <circle
+            class="tap-marker"
+            data-listen-marker={listening.objectId}
+            cx={listening.point.x}
+            cy={listening.point.y}
+            r="4.5"
+          />
+        {/if}
+      </svg>
+      <!-- The foreground band: a lead into a visible front socket of a front-shown device, redrawn inside
+           its owner minus anything ordered above it; and the hidden-socket listening badge. -->
+      <svg
+        class="cables cables-fg"
+        width={natW}
+        height={natH}
+        viewBox="0 0 {natW} {natH}"
+        style:z-index={LAYER_Z["cable-foreground"]}
+      >
+        <SilhouetteClips prefix="bench-fg" silhouettes={cableInput.silhouettes} />
+        {#each drawnCables as r (r.key)}
+          {#each r.passes.filter((p) => p.kind === "foreground") as pass, i (i)}
+            {@render cablePass(r, pass, "bench-fg")}
+          {/each}
+        {/each}
+        {#if listenBadge}
+          <g class="listen-badge" data-listen-badge={listenBadge.id}>
+            <rect x={listenBadge.x - 92} y={listenBadge.y - 18} width="92" height="14" rx="3" />
+            <text x={listenBadge.x - 46} y={listenBadge.y - 8} text-anchor="middle">
+              listening · {listenBadge.side}
+            </text>
+          </g>
         {/if}
       </svg>
 
@@ -716,6 +795,20 @@
     fill: none;
     stroke: var(--ae-signal-mic-lit, #6cf);
     stroke-width: 1.5px;
+  }
+  /* "Listening" badge on a device whose monitored socket is on its hidden face (U2). Never a target. */
+  .listen-badge {
+    pointer-events: none;
+  }
+  .listen-badge rect {
+    fill: var(--ae-surface-raised, #1d232b);
+    stroke: var(--ae-signal-mic-lit, #6cf);
+    stroke-width: 1px;
+  }
+  .listen-badge text {
+    fill: var(--ae-signal-mic-lit, #6cf);
+    font-size: 8px;
+    dominant-baseline: middle;
   }
   /* The bench shows both faces at once, so each device faceplate is rendered twice (front column +
      back column). Hide the away face in each so its (mirrored, backface) jacks aren't measured — the

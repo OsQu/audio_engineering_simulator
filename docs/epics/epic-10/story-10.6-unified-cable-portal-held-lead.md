@@ -200,17 +200,32 @@ Notes:
   sit above all physical content.
 - The bench still uses `cableEndpoints` and `benchCableLayout` until 10.6.3.
 
-## Task 10.6.3 — Workbench hidden-face exits & listening badge (U2)  · planned
-_(program design drafted at pickup)_
+## Task 10.6.3 — Workbench hidden-face exits & listening badge (U2)  · done
 
-Expected shape:
+File-tree diff:
 
-- Bench silhouettes come from the slot frames `BenchStage` already projects (home + offset, geometry
-  size). The DUT presents both sides, so it has no exits.
-- Support devices' hidden sockets exit and mask exactly as in the studio.
-- The bare `tap-marker` becomes a labeled "listening" badge on the device whenever the monitored socket
-  is hidden. The badge references the socket through its endpoint alias, so it is never a patch target.
-- `benchCableLayout` is deleted.
+```text
+web/src/
+  view-resolver.ts     - benchCableLayout   + benchCableInput
+  cable-view.ts        - CableLayout, cableEndpoints, resolveAnchor, clampEnd, segmentRectExit,
+                         deviceSurfaceRect (now: keys, labels, JackAnchor/SurfaceRect types only)
+  cable-resolution.ts  socket/exit endpoints carry `side`
+  BenchStage.svelte    benchSlotMap (per-object ProjectedSlot[]) → patch.project + benchCableInput;
+                       main passes in .cables (z 2), new .cables-fg svg (z 5) for foreground passes +
+                       the listening badge; tapAnchor → resolveEndpoint(output)
+```
+
+Decisions:
+
+- Bench silhouettes are the supporting devices' flip-card slot frames (home + offset). The DUT contributes
+  none: it presents both faces, so it never owns an exit. It also sits in `rear-object`, so it is never
+  ordered above a foreground owner.
+- A supporting device's presented side is now its *settled* face side, not the durable facing. The two
+  differ only mid-flip, and leads are suppressed then anyway.
+- The listening marker becomes a `resolveEndpoint` of `patch.output`:
+  - socket: the ring at the socket, as before;
+  - exit: a "listening · {side}" badge at the device's top-right. It is `pointer-events: none` and
+    never a patch target.
 
 ## Task 10.6.4 — Held leads on the shared pipeline  · planned
 _(program design drafted at pickup)_
