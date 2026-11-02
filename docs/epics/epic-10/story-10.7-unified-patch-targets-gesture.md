@@ -113,7 +113,7 @@ What the code does today, which this Story changes:
    *Rejected:* patching through focus windows, which would need a coordinate mapping to the stage
    sockets, and no user has asked for it.
 
-## Task 10.7.1 — Pure socket targets & picker  · building
+## Task 10.7.1 — Pure socket targets & picker  · done
 
 This task adds one pure module and wires nothing yet.
 
@@ -179,7 +179,7 @@ The tests are hand-calculated, table-driven matrices:
   - pointers outside the viewport and inside a blocker miss.
 - **Invariant:** the result is the same for the same input, and only presented sockets ever appear.
 
-## Task 10.7.2 — Pure gesture classification, pointer session & release re-resolution  · planned
+## Task 10.7.2 — Pure gesture classification, pointer session & release re-resolution  · building
 
 File-tree diff:
 

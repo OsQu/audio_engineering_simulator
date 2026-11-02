@@ -20,3 +20,12 @@
 - Previous run died right after recording the I-222 approval (uncommitted). Committing that, then
   implementing Task 10.7.1. Branch now reported as based on `e10-s1/regression-harness`; the history
   still contains 10.2–10.6 (AES-64…69), so code baseline is unchanged.
+
+## 2026-11-02 — Task 10.7.1 done
+- `web/src/patch-targets.ts`: `resolveSocketTargets(CableResolutionInput)` (local, unsuppressed,
+  presented, current, centre exposed; one target per physical socket) + `pickSocketTarget` (client px,
+  8/12 px minimum, viewport/blocker clip, partial-exposure clip, exact > nearest > order > id).
+- `web/test/patch-targets.test.ts`: 26 hand-calc cases. Web gates green (check, typecheck, 394 tests).
+- Choice: an owner with no silhouette (bench DUT) gets order −1, i.e. anything above it occludes; the
+  bench stack doesn't overlap so this is moot today but physically right.
+- Next: 10.7.2 (classifyPress, pointer-session reducer, patching release re-resolution).

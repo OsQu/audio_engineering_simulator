@@ -1406,7 +1406,7 @@ capture/blur/unmount distinct from commit.
   survives other gestures and view navigation.
 - **Focus windows stay non-patchable** and block geometric search.
 
-- **Task 10.7.1** — Pure socket targets & picker (`patch-targets.ts`). Covered by hand-calc eligibility,
+- **Task 10.7.1** — ✅ Pure socket targets & picker (`patch-targets.ts`). Covered by hand-calc eligibility,
   exposure, exact/nearest/tie and zoom matrices.
 - **Task 10.7.2** — Pure press classification, the pointer-session reducer, and `patching.pointerUp`
   release re-resolution with illegal → pending.
