@@ -38,7 +38,7 @@ What the code does today, which this Story changes:
     `aliases` (one duplex socket has many endpoint keys);
   - `silhouetteContains`, `evaluateConnection`, and the `Camera` (`zoom`, `panX`, `panY`).
 
-## Settled decisions (proposed — awaiting Oskari's review)
+## Settled decisions (approved by Oskari as-is, I-222, 2026-11-02)
 
 1. **Targets are derived from the cable-resolution input.** `CableResolutionInput` already holds exactly
    what socket eligibility needs, so no new resolver input is introduced. A socket is a target iff:
@@ -98,7 +98,7 @@ What the code does today, which this Story changes:
 5. **Release always re-resolves.** `patching.pointerUp` takes the release-point pick for both modes and
    recomputes legality. It never reads `state.verdict` to commit. A move event only drives the
    magnetic/colour feedback.
-6. **Illegal targets keep the pick (proposed).** A drag released on an illegal socket becomes a
+6. **Illegal targets keep the pick.** A drag released on an illegal socket becomes a
    **pending** pick that carries the rejection reason. This is the same outcome as click-click on that
    socket, so the two modes return identical verdicts. The reason renders beside the held lead's free end
    and in the pick banner, and clears on the next target or move. A real drag released over no socket
@@ -113,7 +113,7 @@ What the code does today, which this Story changes:
    *Rejected:* patching through focus windows, which would need a coordinate mapping to the stage
    sockets, and no user has asked for it.
 
-## Task 10.7.1 — Pure socket targets & picker  · planned
+## Task 10.7.1 — Pure socket targets & picker  · building
 
 This task adds one pure module and wires nothing yet.
 

@@ -1023,7 +1023,7 @@ real-worklet, and pure-fixture seams that every later corrective Story graduates
 effective-placement and preview foundation, and Story 10.4 now adds explicit presentation identity and
 camera-independent socket geometry. Story 10.5 delivers resolver-owned paint layers, the interaction
 overlay and U3 ejection. Story 10.6 delivers unified cable/portal/held-lead endpoints and mask passes (awaiting review);
-Story 10.7 (unified patch targets & gesture lifecycle) is planned and its design is awaiting review.
+Story 10.7 (unified patch targets & gesture lifecycle) is in progress (design approved).
 
 **Goal:** make one pure, deterministic presentation model authoritative for effective rack/device
 placement, presented faces, socket visibility and patchability, cable endpoints and portals, physical
@@ -1368,7 +1368,7 @@ follow device/rack movement, view changes, and settled flips without retaining s
   - held leads across a view switch and a flip.
 - The old estimate, clamp and tip-patch path and `CableLayout` are deleted.
 
-### Story 10.7 — Unified patch targets & gesture lifecycle — 🚧 **In progress** (design awaiting review)
+### Story 10.7 — Unified patch targets & gesture lifecycle — 🚧 **In progress**
 
 *Goal:* derive patchable hit targets from resolved sockets and give controls, sockets, visible cables,
 device movement, and backdrop panning one capture-phase ownership and pointer lifecycle across both stages.
@@ -1378,7 +1378,7 @@ blockers. Exact physical hit wins, then nearest eligible centre, paint order, an
 illegal nearest socket for a farther legal one. Re-resolve and revalidate on release, and keep cancel/lost
 capture/blur/unmount distinct from commit.
 
-*Design notes (proposed at planning, awaiting review):*
+*Design notes (settled at planning, approved I-222):*
 
 - **Targets come from the cable-resolution input.** A socket is a target only if all of these hold:
   - its owner is local and unsuppressed, and its face is presented;

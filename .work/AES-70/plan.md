@@ -18,7 +18,7 @@ implementation** → tasks one by one, gates green, commit per task (factory flo
 | 10.7.3 | Studio arbiter + adapters; rejection reason UI; graduate known regressions | planned |
 | 10.7.4 | Workbench arbiter, blockers, Story browser/manual matrix | planned |
 
-## Decisions (proposed, awaiting review — see companion file "Settled decisions")
+## Decisions (approved by Oskari as-is, I-222, 2026-11-02 — see companion file "Settled decisions")
 - Targets derive from `CableResolutionInput` — it already carries everything eligibility needs.
 - Client-px picking: 8/12 px tolerances, exact > nearest > order > id; legality-blind picker.
 - Capture-phase arbiter with direct dispatch (rejected: ownership marker read by each adapter).
@@ -28,4 +28,4 @@ implementation** → tasks one by one, gates green, commit per task (factory flo
 - Base: stacked on AES-69 (10.6 not merged), as the ticket specifies.
 
 ## Open questions
-- Design review sign-off (asked via ask_human).
+- none
