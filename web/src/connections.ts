@@ -253,6 +253,33 @@ export function cablePathData(p0: Point, p3: Point): string {
   return `M ${a.x} ${a.y} C ${c1.x} ${c1.y} ${c2.x} ${c2.y} ${b.x} ${b.y}`;
 }
 
+/** One end of a routed cable: a plain point (a presented socket, a pointer, a portal chip), or a
+ *  hidden-face exit — the edge crossing plus the outward lead point where the sag begins. */
+export type RouteEnd =
+  | { readonly kind: "socket" | "point"; readonly point: Point }
+  | { readonly kind: "exit"; readonly point: Point; readonly lead: Point };
+
+/** A routed cable: the shared path data of every pass, plus the sagging curve's own endpoints. */
+export interface CableRoute {
+  readonly d: string;
+  readonly start: Point;
+  readonly end: Point;
+}
+
+/** Route a cable between two ends: an exit end runs straight from its edge crossing out to its lead
+ *  point, and the sagging cubic (`cableControlPoints`) spans the two curve starts. */
+export function cableRoute(a: RouteEnd, b: RouteEnd): CableRoute {
+  const start = a.kind === "exit" ? a.lead : a.point;
+  const end = b.kind === "exit" ? b.lead : b.point;
+  const [, c1, c2] = cableControlPoints(start, end);
+  const head =
+    a.kind === "exit"
+      ? `M ${a.point.x} ${a.point.y} L ${start.x} ${start.y}`
+      : `M ${start.x} ${start.y}`;
+  const tail = b.kind === "exit" ? ` L ${b.point.x} ${b.point.y}` : "";
+  return { d: `${head} C ${c1.x} ${c1.y} ${c2.x} ${c2.y} ${end.x} ${end.y}${tail}`, start, end };
+}
+
 /** A point on the cubic bezier at parameter `t ∈ [0, 1]` (Bernstein form). */
 function cubicAt(p0: Point, c1: Point, c2: Point, p3: Point, t: number): Point {
   const u = 1 - t;

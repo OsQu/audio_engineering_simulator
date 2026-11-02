@@ -1300,7 +1300,7 @@ sign-off): `stable-layers.spec.ts` covers hover/grace/focus/drag occlusion, the 
 hit-testing, and the workbench; `ejection.test.ts` and `ejection.spec.ts` cover U3. The known-regression list
 now holds only Story 10.7's two cases.
 
-### Story 10.6 — Unified cable, portal & held-lead presentation — 🚧 **In progress** (design awaiting review)
+### Story 10.6 — Unified cable, portal & held-lead presentation — 🚧 **In progress**
 
 *Goal:* derive ordinary cables, portal stubs/chips, and held leads from resolved socket presentation so all
 three share endpoint identity, hidden-face exits, preview following, transitions, and occlusion masks.
@@ -1334,9 +1334,11 @@ presentation in camera-independent surface coordinates. Its inputs are the resol
   slightly on load, which is accepted; the schema is unchanged.
 - **Workbench (U2).** The workbench uses the same exits instead of mirrored see-through attachments, and
   a labeled listening badge instead of a marker on a hidden socket.
-- **Held leads.** A held lead drops its cached `srcPoint` and re-resolves its source each frame.
+- **Held leads.** A held lead drops its cached `srcPoint` and re-resolves its source each frame. It is
+  "in hand" (I-163): it paints above objects, masked only by a hidden-face source owner. We rejected a
+  fully physical held lead because it would vanish behind the very panel being aimed at.
 
-- **Task 10.6.1** — Pure endpoint & connection resolution: endpoint states, nearest-edge exits, paths,
+- **Task 10.6.1** — ✅ Pure endpoint & connection resolution: endpoint states, nearest-edge exits, paths,
   main/foreground mask sets, portal chip placement, the pass-visibility predicate; hand-calc exit oracles
   and invariants (local end invariant under remote membership change, no pass visible inside an excluded
   silhouette).

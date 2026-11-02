@@ -44,7 +44,7 @@ They are camera-independent and match where the geometry index's anchors already
 converts `ResolvedObject.rect` (world mm, y-up) once through `worldToSurface`. The workbench supplies its
 slot frames directly. Nothing downstream uses world coordinates.
 
-## Task 10.6.1 — Pure endpoint & connection resolution  · planned
+## Task 10.6.1 — Pure endpoint & connection resolution  · done
 
 This task adds one pure module that turns *(objects, surface frames, faces, geometry, connections,
 portal offsets)* into resolved endpoints, paths and mask passes. It has no Svelte, no DOM and no clock.
@@ -198,8 +198,7 @@ Expected shape:
 - `resolveHeldCable` returns `lead` (the source endpoint plus the pointer, with the source's passes),
   `floating` (source off-view: pointer marker plus banner), or `suppressed` (source flipping: banner only).
 - Cancel removes only transient state.
-- *Open question:* how a held lead is occluded. Under (A), the recommended option, it is "in hand": it
-  paints above objects and is masked only by a hidden-face source owner. Under (B) it is fully physical,
-  like a settled cable, so it vanishes behind front panels, including the destination jack's panel.
+- *Decided (I-163, option A):* a held lead is "in hand". It paints above objects (the
+  `cable-foreground` band) and is masked only by a hidden-face source owner.
 - This task also finishes legacy removal in `cable-view.ts`, which keeps just labels and portal keys, and
   runs the Story's browser Validate matrix.

@@ -13,12 +13,12 @@ implementation** → tasks one by one, gates green.
 ## Slices
 | Task | What | Status |
 | --- | --- | --- |
-| 10.6.1 | Pure `cable-resolution.ts`: endpoint states, exits, paths, mask passes, portal chips | planned |
+| 10.6.1 | Pure `cable-resolution.ts`: endpoint states, exits, paths, mask passes, portal chips | done |
 | 10.6.2 | Studio cables + portals render from resolved connections; clips on paint + hit; preview following | planned |
 | 10.6.3 | Workbench exits/masks (U2) + listening badge | planned |
 | 10.6.4 | Held leads on the shared pipeline; legacy removal; browser matrix | planned |
 
-## Decisions (proposed — awaiting review)
+## Decisions (approved by Oskari, I-163 "A", 2026-11-02)
 - Surface coordinates (camera-independent, y-down) for all cable resolution — where anchors already live.
 - Exit edge from the hidden socket's see-through projection, tie order bottom/right/left/top; EXIT_LEAD 24.
 - Nested evenodd `clip-path` per excluded silhouette (not `mask`) — overlaps intersect correctly and
@@ -26,8 +26,10 @@ implementation** → tasks one by one, gates green.
 - Portal chip base = socket point or exit lead point; old offsets saved against the estimate shift (accepted).
 - Portal chip → interaction overlay; stub → main/foreground passes like any cable.
 
+- **Held-lead occlusion = A, "in hand"** (I-163): a held lead paints above objects, masked only by a
+  hidden-face source owner — the plug is in the operator's hand, in front of every panel.
+- Base: stacked on AES-68 (10.5 not yet merged to main), as the ticket specifies.
+- Commit per task (factory flow + AES-68 precedent), gates green before each commit.
+
 ## Open questions
-- Held-lead occlusion: (A, recommended) "in hand" — paints above objects, masked only by a hidden-face
-  source owner; or (B) fully physical like a settled cable (disappears behind front panels incl. the
-  destination jack's panel).
-- Base: stacked on AES-68 (10.5 not yet merged to main) — as the ticket specifies.
+- none
