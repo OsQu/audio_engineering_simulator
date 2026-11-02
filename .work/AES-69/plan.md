@@ -16,7 +16,7 @@ implementation** → tasks one by one, gates green.
 | 10.6.1 | Pure `cable-resolution.ts`: endpoint states, exits, paths, mask passes, portal chips | done |
 | 10.6.2 | Studio cables + portals render from resolved connections; clips on paint + hit; preview following | done |
 | 10.6.3 | Workbench exits/masks (U2) + listening badge | done |
-| 10.6.4 | Held leads on the shared pipeline; legacy removal; browser matrix | planned |
+| 10.6.4 | Held leads on the shared pipeline; legacy removal; browser matrix | done |
 
 ## Decisions (approved by Oskari, I-163 "A", 2026-11-02)
 - Surface coordinates (camera-independent, y-down) for all cable resolution — where anchors already live.

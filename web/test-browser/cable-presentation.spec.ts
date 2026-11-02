@@ -148,3 +148,68 @@ test("the workbench marks a hidden monitored socket with a labelled badge (U2)",
   if (!hiddenFirst)
     expect(await badge.evaluate((el) => getComputedStyle(el).pointerEvents)).toBe("none");
 });
+
+/** The held lead's start point (client px), or null when no held lead is drawn. */
+const heldStart = (page: Page): Promise<Pt | null> =>
+  page.evaluate(() => {
+    const path = document.querySelector<SVGPathElement>('.cable-pass[data-pass="held"] path');
+    const ctm = path?.getScreenCTM();
+    if (!path || !ctm) return null;
+    const p0 = path.getPointAtLength(0);
+    const p = new DOMPoint(p0.x, p0.y).matrixTransform(ctm);
+    return { x: p.x, y: p.y };
+  });
+
+test("a held lead re-resolves its source across a view switch", async ({ page }) => {
+  await openFixture(page, "patch-gestures");
+  const source = jack(page, "gesture-source:output:0");
+  await source.click();
+  await expect(page.getByText(/Patching from/)).toBeVisible();
+  const socket = await elementCentre(source);
+  await expect.poll(async () => (await heldStart(page))?.x ?? Number.NaN).toBeCloseTo(socket.x, 0);
+
+  // Another wall: the source is off-view, so only a floating end tracks the pointer.
+  await page.getByRole("button", { name: "Back", exact: true }).click();
+  await expect(page.locator('.cable-pass[data-pass="held"]')).toHaveCount(0);
+  await page.mouse.move(400, 300);
+  await expect(page.locator("circle.pending-end")).toHaveCount(1);
+
+  // Back again: the lead starts at the socket's *current* projection, not a stale pick-time point.
+  await page.getByRole("button", { name: "Front", exact: true }).click();
+  await page.mouse.move(420, 320);
+  const again = await elementCentre(source);
+  await expect
+    .poll(async () => {
+      const at = await heldStart(page);
+      return at ? Math.hypot(at.x - again.x, at.y - again.y) : Number.POSITIVE_INFINITY;
+    })
+    .toBeLessThan(2);
+});
+
+test("a held lead hides while its source flips, then exits the settled side's edge", async ({
+  page,
+}) => {
+  await openFixture(page, "patch-gestures");
+  await jack(page, "gesture-source:output:0").click();
+  await expect.poll(() => heldStart(page)).not.toBeNull();
+
+  await stageObject(page, "gesture-source").hover();
+  await expect(objectChrome(page, "gesture-source")).toHaveClass(/open/);
+  await objectChrome(page, "gesture-source")
+    .getByRole("button", { name: "front", exact: true })
+    .click();
+  await expect(page.getByText(/Patching from/)).toBeVisible(); // the pick survives the flip
+
+  // Settled front-on: the socket is on the hidden back, so the held lead exits the chassis edge.
+  await expect(page.locator('[data-face-instance="studio:gesture-source"]')).toHaveAttribute(
+    "data-face-state",
+    "presented",
+  );
+  await page.mouse.move(600, 600);
+  await expect
+    .poll(async () => {
+      const at = await heldStart(page);
+      return at ? edgeOf(page, "gesture-source", at) : "none";
+    })
+    .not.toMatch(/none|interior/);
+});

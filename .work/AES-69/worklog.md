@@ -52,3 +52,15 @@
   lands below the fold, so the test clicks the rotate control via DOM rather than hovering.
 - Gates: vitest 369 ✓, typecheck ✓, biome ✓, Playwright 30 ✓ (+2 expected 10.7).
 - Next: 10.6.4 held leads.
+
+## 2026-11-02 — Task 10.6.4 done (held leads); Story 10.6 complete pending review
+- PatchState.srcPoint and pointerMove's srcAnchor removed; App + BenchStage derive `heldCable` via
+  resolveHeldCable (lead / floating / hidden), drawn "in hand" in the z-5 band with the held pass mask.
+  leadsShown/connShown deleted (resolver owns U1 suppression).
+- Browser: held lead across a view switch and across a source flip (patch-gestures fixture).
+- Found (pre-existing, for 10.7): a connected rear socket's centre is covered by its own cable's hit path
+  (same as the old oneCable) — exact-socket-wins arbitration is 10.7.
+- Gates: vitest 368 ✓, typecheck ✓, biome ✓, Playwright 32 ✓ (+2 expected 10.7), stress ×6 of
+  cable/face/layers specs 126/126 ✓; cargo fmt/lint/test(534)/wasm ✓. `cargo docs` still fails on the
+  pre-existing `[instantiate]` link in crates/devices (no crate changes on this branch; AES-68 proposed it).
+- Next: Oskari reviews the Story Validate gate; PR draft in pr.md.

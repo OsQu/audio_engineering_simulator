@@ -1022,7 +1022,7 @@ real-worklet, and pure-fixture seams that every later corrective Story graduates
 10.2 makes structural engine changes trustworthy before view migration begins. Story 10.3 establishes the
 effective-placement and preview foundation, and Story 10.4 now adds explicit presentation identity and
 camera-independent socket geometry. Story 10.5 delivers resolver-owned paint layers, the interaction
-overlay and U3 ejection. Story 10.6 is planned (unified cable/portal/held-lead endpoints and mask passes);
+overlay and U3 ejection. Story 10.6 delivers unified cable/portal/held-lead endpoints and mask passes (awaiting review);
 Story 10.7 remains deliberately coarse until its planning pass.
 
 **Goal:** make one pure, deterministic presentation model authoritative for effective rack/device
@@ -1300,7 +1300,7 @@ sign-off): `stable-layers.spec.ts` covers hover/grace/focus/drag occlusion, the 
 hit-testing, and the workbench; `ejection.test.ts` and `ejection.spec.ts` cover U3. The known-regression list
 now holds only Story 10.7's two cases.
 
-### Story 10.6 — Unified cable, portal & held-lead presentation — 🚧 **In progress**
+### Story 10.6 — Unified cable, portal & held-lead presentation — 🚧 **In progress** (all Tasks done; Validate gate awaiting review)
 
 *Goal:* derive ordinary cables, portal stubs/chips, and held leads from resolved socket presentation so all
 three share endpoint identity, hidden-face exits, preview following, transitions, and occlusion masks.
@@ -1346,7 +1346,7 @@ presentation in camera-independent surface coordinates. Its inputs are the resol
   clips on paint and hit paths; leads follow placement previews; delete the estimate/clamp/tip-patch path.
 - **Task 10.6.3** — ✅ Workbench adopts the same exits and masks (U2) and the labeled listening badge; delete
   `benchCableLayout`.
-- **Task 10.6.4** — Held leads resolve from a logical source on the shared pipeline (follow device/rack
+- **Task 10.6.4** — ✅ Held leads resolve from a logical source on the shared pipeline (follow device/rack
   previews, view changes, settled flips); finish legacy removal; Story browser matrix.
 
 *Program design:* [`story-10.6-unified-cable-portal-held-lead.md`](./epics/epic-10/story-10.6-unified-cable-portal-held-lead.md)
@@ -1354,6 +1354,19 @@ presentation in camera-independent surface coordinates. Its inputs are the resol
 *Validate:* visible leads meet their sockets; hidden-face leads exit and remain masked through the owner;
 front/rear overlaps and remote-view changes are deterministic; portals obey ordinary cable rules; held leads
 follow device/rack movement, view changes, and settled flips without retaining stale absolute anchors.
+
+✅ met (awaiting Oskari's sign-off):
+- `cable-resolution.test.ts` covers hand-calc exits and tie order, the mask-pass matrix (front over front,
+  front over rear, overlap), portal local-end invariance, determinism, and held re-resolution.
+- `view-resolver.test.ts` runs the contract matrix and preview following through the resolver.
+- `cable-presentation.spec.ts` covers:
+  - visible leads meeting their sockets;
+  - hidden-face edge exits and clip chains;
+  - portals;
+  - drag-preview following;
+  - the workbench listening badge;
+  - held leads across a view switch and a flip.
+- The old estimate, clamp and tip-patch path and `CableLayout` are deleted.
 
 ### Story 10.7 — Unified patch targets & gesture lifecycle
 

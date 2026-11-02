@@ -22,6 +22,7 @@
     type ResolvedConnection,
     resolveConnections,
     resolveEndpoint,
+    resolveHeldCable,
   } from "./cable-resolution";
   import CablePass from "./widgets/CablePass.svelte";
   import SilhouetteClips from "./widgets/SilhouetteClips.svelte";
@@ -30,12 +31,10 @@
   import CableInspector from "./widgets/CableInspector.svelte";
   import DeviceChrome from "./widgets/DeviceChrome.svelte";
   import type { DeviceDescriptor } from "./catalog";
-  import { cablePathData } from "./connections";
   import { deviceUi } from "./device-ui";
   import { isFocusable } from "./focus";
   import type { PatchController } from "./patch-controller.svelte";
   import { effectiveFacing } from "./projection";
-  import type { Connection } from "./scene";
   import { connectionKind, connKey, toggleBenchFacing } from "./scene-ops";
   import type { SceneSession } from "./session.svelte";
   import { footprint, RACK_UNIT_MM } from "./spatial";
@@ -57,7 +56,6 @@
   import {
     faceInstanceId,
     LAYER_Z,
-    physicalLeadsSuppressed,
     type ResolvedFace,
     type ResolvedObject,
     resolveBenchObjects,
@@ -289,10 +287,6 @@
     return { ...home, x: home.x + offset.x, y: home.y + offset.y };
   };
 
-  // Whether a lead touching this device is drawn: not while it is mid-flip.
-  const leadsShown = (id: string): boolean =>
-    !physicalLeadsSuppressed(session.scene, presentation, id);
-
   // The devices to render: the scene's instances (the DUT + the fixed supporting cast) resolved against
   // the live catalog, in scene order (source → DUT → DA → speaker), each paired with its descriptor. The
   // stage renders whatever the scene holds — so a URL-restored scene (Story 6.3) needs no special-casing.
@@ -368,6 +362,16 @@
     resolveConnections(cableInput, session.scene.patch.connections).filter(
       (r): r is Extract<ResolvedConnection, { kind: "full" }> => r.kind === "full",
     ),
+  );
+  // The held lead, re-resolved from its logical source each frame (follows drags and settled flips).
+  const heldCable = $derived(
+    patch.dragCable
+      ? resolveHeldCable(cableInput, {
+          source: patch.dragCable.source,
+          direction: patch.dragCable.source.direction,
+          pointer: patch.dragCable.free,
+        })
+      : null,
   );
   // "Listening here": the monitored output. On a presented face it's a ring at the socket; on a hidden
   // face (U2) it's a labelled badge on the device — never a patch target either way.
@@ -479,16 +483,6 @@
           {/each}
         {/each}
 
-        {#if patch.dragCable && leadsShown(patch.dragCable.source.device)}
-          <!-- The drag rubber-band from the source jack to the cursor, coloured legal/illegal on hover. -->
-          <Cable
-            drag
-            d={cablePathData(patch.dragCable.srcPoint, patch.dragCable.free)}
-            legal={patch.dragCable.over && patch.dragCable.legal}
-            illegal={patch.dragCable.over && !patch.dragCable.legal}
-          />
-        {/if}
-
         {#if listening.kind === "socket"}
           <!-- "Listening here": the monitored output tap (what the capture hears). -->
           <circle
@@ -515,6 +509,19 @@
             {@render cablePass(r, pass, "bench-fg")}
           {/each}
         {/each}
+        <!-- The held lead, in hand (I-163): above the panels, masked only by a hidden-face source. -->
+        {#if heldCable?.kind === "lead" && patch.dragCable}
+          {#each heldCable.passes as pass, i (i)}
+            <CablePass {pass} prefix="bench-fg">
+              <Cable
+                drag
+                d={heldCable.path.d}
+                legal={patch.dragCable.over && patch.dragCable.legal}
+                illegal={patch.dragCable.over && !patch.dragCable.legal}
+              />
+            </CablePass>
+          {/each}
+        {/if}
         {#if listenBadge}
           <g class="listen-badge" data-listen-badge={listenBadge.id}>
             <rect x={listenBadge.x - 92} y={listenBadge.y - 18} width="92" height="14" rx="3" />

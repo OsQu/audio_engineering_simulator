@@ -227,17 +227,38 @@ Decisions:
   - exit: a "listening · {side}" badge at the device's top-right. It is `pointer-events: none` and
     never a patch target.
 
-## Task 10.6.4 — Held leads on the shared pipeline  · planned
-_(program design drafted at pickup)_
+## Task 10.6.4 — Held leads on the shared pipeline  · done
 
-Expected shape:
+Key signatures:
 
-- `PatchState.srcPoint` is removed. The held source is a logical `Endpoint`, re-resolved every frame
-  through `resolveEndpoint`, so it follows device/rack previews, view switches and settled flips.
-- `resolveHeldCable` returns `lead` (the source endpoint plus the pointer, with the source's passes),
-  `floating` (source off-view: pointer marker plus banner), or `suppressed` (source flipping: banner only).
-- Cancel removes only transient state.
-- *Decided (I-163, option A):* a held lead is "in hand". It paints above objects (the
-  `cable-foreground` band) and is masked only by a hidden-face source owner.
-- This task also finishes legacy removal in `cable-view.ts`, which keeps just labels and portal keys, and
-  runs the Story's browser Validate matrix.
+```ts
+// patching.ts — the pure state machine no longer caches an absolute source point
+type PatchState = { source: Endpoint; free: Pt; over; legal; verdict; mode } | null;   // - srcPoint
+pointerMove(state, hit, cursor, deps): PatchState                                       // - srcAnchor
+
+// cable-resolution.ts (landed in 10.6.1)
+resolveHeldCable(input, { source, direction, pointer }): ResolvedHeldCable
+  // "lead":     source socket/exit → pointer; one `held` pass (excludes a hidden-face source owner)
+  // "floating": source off-view → pointer marker only
+  // "hidden":   source suppressed (mid-flip) / pending / unresolved → no lead; the pick + banner survive
+```
+
+Rendering:
+
+- `App` draws a held lead in the overlay (z 5) and `BenchStage` in its foreground SVG (z 5), both
+  "in hand" (I-163).
+- Each renderer derives `heldCable` from `cableInput` + `dragCable`. The lead therefore follows previews,
+  view switches and settled flips without the controller tracking anything.
+- `leadsShown` / `connShown` and the controller's `srcAnchor` are deleted, because the resolver owns
+  suppression.
+
+Browser:
+
+- `cable-presentation.spec.ts` covers a view switch (lead → floating → lead at the socket's current
+  projection) and a source flip (pick survives; the settled lead exits the chassis edge).
+
+Observed, deferred to 10.7:
+
+- A *connected* rear socket's centre is covered by its own cable's main-pass hit path. This predates 10.6:
+  the old `oneCable` drew the same hit path from the socket centre in the same band.
+- Exact-socket-wins target arbitration is Story 10.7's job.

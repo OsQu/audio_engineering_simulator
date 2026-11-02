@@ -14,8 +14,7 @@
   import { wireKeyboardInput } from "./keyboard-input.svelte";
   import { SceneSession } from "./session.svelte";
   import { PatchController } from "./patch-controller.svelte";
-  import { cablePathData } from "./connections";
-  import type { Connection, DeviceInstance, PortRef } from "./scene";
+  import type { Connection, DeviceInstance } from "./scene";
   import { defaultScene, loadScene } from "./scene-store";
   import type { PlacementPreview } from "./effective-placement";
   import {
@@ -37,6 +36,7 @@
     type CableResolutionInput,
     type ResolvedConnection,
     resolveConnections,
+    resolveHeldCable,
   } from "./cable-resolution";
   import type { ProjectedSlot } from "./socket-geometry";
   import CablePass from "./widgets/CablePass.svelte";
@@ -63,7 +63,6 @@
   import type { DeviceFacing } from "./scene-store";
   import {
     faceInstanceId,
-    physicalLeadsSuppressed,
     type ResolvedFace,
     type ResolvedObject,
     resolveFaces,
@@ -215,9 +214,6 @@
     }
   });
 
-  // Whether a lead touching this device is drawn: not while it (or its rack) is mid-flip.
-  const leadsShown = (id: string): boolean => !physicalLeadsSuppressed(scene, presentation, id);
-
   // --- Patch cables (Story 10.6) --------------------------------------------------------------------
   // A stable key for a connection (its two endpoints), for the {#each} in the cable overlay.
   const connKey = sceneOps.connKey;
@@ -269,8 +265,16 @@
     ),
   );
 
-  // Membership for the held lead (until it moves onto the shared pipeline in 10.6.4).
-  const inView = (id: string): boolean => studioFaces.has(id);
+  // The held lead, re-resolved from its logical source (never a cached anchor).
+  const heldCable = $derived(
+    dragCable && cableInput
+      ? resolveHeldCable(cableInput, {
+          source: dragCable.source,
+          direction: dragCable.source.direction,
+          pointer: dragCable.free,
+        })
+      : null,
+  );
   const otherEndLabel = (id: string): string =>
     cableView.otherEndLabel(scene, currentSpace, WALL_LABELS, id);
 
@@ -823,29 +827,31 @@
           {#each drawnCables as r (r.key)}
             {#if r.kind === "portal"}{@render portalChip(r, api)}{/if}
           {/each}
-          <!-- A held lead hides while its source flips; the pick itself (and its banner) survives. -->
-          {#if dragCable && leadsShown(dragCable.source.device)}
-            {#if dragCable.mode === "drag" || inView(dragCable.source.device)}
-              <!-- Source visible: draw the rubber-band from its jack to the cursor. -->
-              <Cable
-                drag
-                d={cablePathData(dragCable.srcPoint, dragCable.free)}
-                pending={dragCable.mode === "pending"}
-                legal={dragCable.over && dragCable.legal}
-                illegal={dragCable.over && !dragCable.legal}
-              />
-            {:else}
-              <!-- Pending across a view switch: the source is off-view, so just track a floating end
-                   (the banner names where it came from; hovering a jack colours it legal/illegal). -->
-              <circle
-                class="pending-end"
-                class:legal={dragCable.over && dragCable.legal}
-                class:illegal={dragCable.over && !dragCable.legal}
-                cx={dragCable.free.x}
-                cy={dragCable.free.y}
-                r="12"
-              />
-            {/if}
+          <!-- The held lead (Story 10.6, "in hand" — I-163): re-resolved from its logical source every
+               frame, so it follows device/rack previews, view switches, and settled flips. It paints above
+               the panels, masked only by a hidden-face source's own chassis. Source off-view → a floating
+               end (the banner names where it came from); source mid-flip → no lead, the pick survives. -->
+          {#if heldCable?.kind === "lead" && dragCable}
+            {#each heldCable.passes as pass, i (i)}
+              <CablePass {pass} prefix="fg">
+                <Cable
+                  drag
+                  d={heldCable.path.d}
+                  pending={dragCable.mode === "pending"}
+                  legal={dragCable.over && dragCable.legal}
+                  illegal={dragCable.over && !dragCable.legal}
+                />
+              </CablePass>
+            {/each}
+          {:else if heldCable?.kind === "floating" && dragCable}
+            <circle
+              class="pending-end"
+              class:legal={dragCable.over && dragCable.legal}
+              class:illegal={dragCable.over && !dragCable.legal}
+              cx={dragCable.free.x}
+              cy={dragCable.free.y}
+              r="12"
+            />
           {/if}
         {/snippet}
 

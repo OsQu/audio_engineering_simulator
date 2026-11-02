@@ -4,7 +4,7 @@
 // transition unit-testable.
 //
 // The DOM facts a transition needs — which jack is under the pointer (as a JackHit), the surface-space
-// cursor, the source jack's live anchor, and whether the press was a click or a drag — are resolved by
+// cursor, the pressed jack's projected anchor, and whether the press was a click or a drag — are resolved by
 // the App adapter and passed in. A transition returns the next PatchState; the ones that can complete a
 // patch return a `commit` verdict alongside, and the caller commits it + hot-swaps.
 
@@ -16,14 +16,14 @@ import type { Scene } from "./scene-store";
 
 export type Pt = { x: number; y: number };
 
-// An in-progress patch from a source jack: the source end + its anchor, the moving free end (surface
-// coords), and — when hovering a candidate jack — the verdict so the cable can be coloured + committed.
+// An in-progress patch from a source jack: the logical source end (never a cached anchor — renderers
+// re-resolve it every frame through cable-resolution `resolveHeldCable`, Story 10.6), the moving free end
+// (surface coords), and — when hovering a candidate jack — the verdict so the cable can be coloured + committed.
 // `mode` is "drag" while the pointer is held (same-view patching), or "pending" after a *click* — a held
 // cable that survives a wall/room switch, so a cross-view patch completes by clicking the source jack,
 // turning to the other wall/room, and clicking the destination.
 export type PatchState = {
   source: Endpoint;
-  srcPoint: Pt;
   free: Pt;
   over: boolean;
   legal: boolean;
@@ -75,7 +75,6 @@ export function pointerDown(state: PatchState, hit: JackHit | null): PatchResult
   return {
     state: {
       source: hit.endpoint,
-      srcPoint: hit.anchor,
       free: hit.anchor,
       over: false,
       legal: false,
@@ -85,30 +84,27 @@ export function pointerDown(state: PatchState, hit: JackHit | null): PatchResult
   };
 }
 
-// Track the free end while dragging or holding a pending cable. `srcAnchor` is the source jack's live
-// anchor (or null if it's off-view — the lead then draws as a floating end). If the pointer is over
-// another jack, evaluate legality and snap the free end to it (a magnetic feel); else follow the cursor.
+// Track the free end while dragging or holding a pending cable. If the pointer is over another jack,
+// evaluate legality and snap the free end to it (a magnetic feel); else follow the cursor. The source end
+// is not tracked here: it is resolved from `state.source` wherever the lead is drawn.
 export function pointerMove(
   state: PatchState,
   hit: JackHit | null,
   cursor: Pt,
-  srcAnchor: Pt | null,
   deps: PatchDeps,
 ): PatchState {
   if (!state) return null;
-  const srcPoint = srcAnchor ?? state.srcPoint;
   if (hit && hit.key !== jackKeyOf(state.source)) {
     const verdict = evaluateConnection(state.source, hit.endpoint, deps.connections, deps.cables);
     return {
       ...state,
-      srcPoint,
       free: hit.anchor ?? cursor,
       over: true,
       legal: verdict.ok,
       verdict,
     };
   }
-  return { ...state, srcPoint, free: cursor, over: false, legal: false, verdict: null };
+  return { ...state, free: cursor, over: false, legal: false, verdict: null };
 }
 
 // Release. `clickNotDrag` is true when the press never moved past the drag threshold.
