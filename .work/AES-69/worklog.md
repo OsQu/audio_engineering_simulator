@@ -64,3 +64,9 @@
   cable/face/layers specs 126/126 ✓; cargo fmt/lint/test(534)/wasm ✓. `cargo docs` still fails on the
   pre-existing `[instantiate]` link in crates/devices (no crate changes on this branch; AES-68 proposed it).
 - Next: Oskari reviews the Story Validate gate; PR draft in pr.md.
+
+## 2026-11-02 — Wrap-up
+- PR draft in pr.md. record_learning (project) failed twice with a tool-side "scope must be ..., got \"\""
+  error; the learning (cable-resolution pipeline + 10.7 connected-jack hit-path note) is recorded here and
+  in pr.md instead.
+- Result: Story 10.6 all Tasks done; Validate gate met pending Oskari's review; branch pushed.
