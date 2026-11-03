@@ -251,7 +251,7 @@ describe("pickSocketTarget", () => {
     const cx = 50 + 100 * zoom;
     const cy = 20 + 100 * zoom;
     const c = ctx({ zoom, origin: { x: 50, y: 20 } });
-    // Rendered radius 0.5z ≤ 1.5 px < 8 → tolerance 8 px at every zoom.
+    // Rendered radius 0.5z ≤ 1.5 px; max(8, 1.5 + 6 halo) = 8 → tolerance 8 px at every zoom.
     expect(pickSocketTarget(sockets, { x: cx + 7.9, y: cy }, c).kind).toBe("near");
     expect(pickSocketTarget(sockets, { x: cx + 8.1, y: cy }, c).kind).toBe("none");
   });
@@ -264,6 +264,13 @@ describe("pickSocketTarget", () => {
       ctx({ zoom: 3 }),
     );
     expect(pick.kind).toBe("exact");
+  });
+
+  it("adds a 6 px halo beyond a zoomed-in socket's rendered edge", () => {
+    // r 5 at zoom 3 → 15 px rendered; tolerance max(8, 15 + 6) = 21 px.
+    const sockets = [target("a:o:0", 100, 100, 5)];
+    expect(pickSocketTarget(sockets, { x: 320.5, y: 300 }, ctx({ zoom: 3 })).kind).toBe("near");
+    expect(pickSocketTarget(sockets, { x: 321.5, y: 300 }, ctx({ zoom: 3 })).kind).toBe("none");
   });
 
   it("widens the minimum to 12 px for touch", () => {

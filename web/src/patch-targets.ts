@@ -8,7 +8,8 @@
 //      focus-window sockets therefore never appear. One physical socket is one target carrying every
 //      endpoint alias (a duplex USB socket).
 //   2. `pickSocketTarget` picks the socket a client point means, in client pixels after the camera: a named
-//      minimum radius per pointer type, clipped by the viewport and by UI blockers (focus windows,
+//      minimum radius per pointer type (or the rendered
+//      radius plus a small edge halo, when zoomed in), clipped by the viewport and by UI blockers (focus windows,
 //      toolbars, banners) and by any silhouette above the owner (the partial-exposure clip). An exact
 //      physical hit wins; otherwise the nearest centre; ties go to paint order, then the stable socket ID.
 //      The picker is legality-blind — the caller reports the nearest socket's verdict, so an illegal
@@ -26,6 +27,9 @@ import { geometryKey, projectSocket } from "./socket-geometry";
 export const MOUSE_TOLERANCE_PX = 8;
 /** Minimum screen-space hit radius (CSS px) for touch. */
 export const TOUCH_TOLERANCE_PX = 12;
+/** A halo (CSS px) beyond a socket's rendered edge that still means that socket. Without it, a zoomed-in
+ *  socket's tolerance collapses to its own outline and a press just outside it starts a device move. */
+export const EDGE_HALO_PX = 6;
 
 /** One physical, patchable socket in surface coordinates. */
 export interface SocketTarget {
@@ -157,7 +161,7 @@ export function pickSocketTarget(
       if (!exact || wins(target, exact)) exact = target;
       continue;
     }
-    if (distance > Math.max(minimum, rendered)) continue;
+    if (distance > Math.max(minimum, rendered + EDGE_HALO_PX)) continue;
     if (distance < nearDistance || (distance === nearDistance && near && wins(target, near))) {
       near = target;
       nearDistance = distance;

@@ -27,6 +27,7 @@
   import CablePass from "./widgets/CablePass.svelte";
   import SilhouetteClips from "./widgets/SilhouetteClips.svelte";
   import { draggable } from "./device-drag";
+  import { readStageFrame } from "./stage-gestures";
   import Cable from "./widgets/Cable.svelte";
   import CableInspector from "./widgets/CableInspector.svelte";
   import DeviceChrome from "./widgets/DeviceChrome.svelte";
@@ -143,6 +144,7 @@
     worldToSurface,
     clientToSurface,
     stageRoot: () => surface ?? null,
+    pickFrame: () => readStageFrame(viewport, surface, camera.zoom),
   };
   $effect(() => {
     api = worldApi;

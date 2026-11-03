@@ -10,6 +10,7 @@
 // self-gesturing element must NOT start a move, so those opt out via `DRAG_EXCLUDE` (a press that hits
 // one of these selectors is left alone). Pointer capture keeps the drag tracking outside the element.
 
+import { beginPointerSession } from "./pointer-session";
 import { snapToGrid } from "./spatial";
 
 /** Elements whose pointerdown must not start a device move: controls (knob/fader = slider, switch =
@@ -46,7 +47,44 @@ export interface MoveDraggable {
   exclude?: string;
 }
 
-/** Svelte action: make `node` a drag handle that repositions the device it renders. Attach to the whole
+/** The candidate position for a pointer at client `(cx, cy)`, given the grab point and origin. */
+function candidateAt(
+  p: MoveDraggable,
+  grab: { x: number; y: number },
+  origin: { x: number; y: number },
+  cx: number,
+  cy: number,
+): { x: number; y: number; legal: boolean } {
+  const scale = p.scale() || 1;
+  const dx = (cx - grab.x) / scale;
+  const dy = (cy - grab.y) / scale;
+  const x = snapToGrid(origin.x + dx, p.gridStep ?? 0);
+  let y = snapToGrid(origin.y + (p.invertY ? -dy : dy), p.gridStep ?? 0);
+  if (p.clampFloor) y = Math.max(0, y);
+  return { x, y, legal: p.canPlace?.(x, y) ?? true };
+}
+
+/** Start a device move the stage arbiter (stage-gestures.ts) has already decided this press owns. It
+ *  runs on the shared pointer session: a release reports `onEnd`, while pointercancel / lost capture /
+ *  blur / unmount report `onCancel` only — a cancelled move never reaches the commit path. */
+export function beginMove(root: HTMLElement, e: PointerEvent, p: MoveDraggable): void {
+  const grab = { x: e.clientX, y: e.clientY };
+  const origin = p.origin();
+  const session = beginPointerSession(root, e, {
+    move: (ev) => {
+      const c = candidateAt(p, grab, origin, ev.clientX, ev.clientY);
+      p.onMove(c.x, c.y, c.legal);
+    },
+    release: (ev) => {
+      const c = candidateAt(p, grab, origin, ev.clientX, ev.clientY);
+      p.onEnd(c.x, c.y, c.legal);
+    },
+    cancel: () => p.onCancel?.(),
+  });
+  if (session) p.onStart?.(origin.x, origin.y);
+}
+
+/** Svelte action (legacy — the workbench until it adopts the stage arbiter): make `node` a drag handle that repositions the device it renders. Attach to the whole
  *  device body; controls/jacks inside opt out via {@link DRAG_EXCLUDE}. */
 export function draggable(node: HTMLElement, params: MoveDraggable) {
   let p = params;

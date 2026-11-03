@@ -18,7 +18,7 @@ export class TestSceneSession extends SceneSession {
   }
 
   override submitPatchCandidate(candidate: Scene): boolean {
-    const accepted = structuredClone(candidate);
+    const accepted = structuredClone($state.snapshot(candidate));
     this.submissions.push(accepted);
     this.scene = accepted;
     this.status = "fixture patch accepted";
@@ -26,7 +26,8 @@ export class TestSceneSession extends SceneSession {
   }
 
   override proposeTopology(label: string, edit: (scene: Scene) => void): boolean {
-    const accepted = structuredClone(this.scene);
+    // Snapshot first, as production does: the scene is a $state proxy, which structuredClone rejects.
+    const accepted = structuredClone($state.snapshot(this.scene));
     edit(accepted);
     this.submissions.push(accepted);
     this.scene = accepted;

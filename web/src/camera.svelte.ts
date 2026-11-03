@@ -9,6 +9,8 @@
 // self-contained (pointer capture + element listeners on the grabbed backdrop), so a view needs no
 // window handlers — it just calls `startPan` on a backdrop pointerdown and `wheelZoom` on wheel.
 
+import { beginPointerSession } from "./pointer-session";
+
 export interface CameraOpts {
   /** Initial zoom (px per surface unit). */
   zoom?: number;
@@ -88,6 +90,25 @@ export class Camera {
     el.addEventListener("pointermove", move);
     el.addEventListener("pointerup", up);
     el.addEventListener("pointercancel", up);
+  }
+
+  /** Begin a drag-pan the stage arbiter assigned this press, on the shared pointer session captured at
+   *  `root`. A cancel simply stops panning where it is (a pan has nothing to commit or roll back). */
+  beginPan(e: PointerEvent, root: HTMLElement): void {
+    const start = { px: e.clientX, py: e.clientY, x0: this.panX, y0: this.panY };
+    const session = beginPointerSession(root, e, {
+      move: (ev) => {
+        this.panX = start.x0 + (ev.clientX - start.px);
+        this.panY = start.y0 + (ev.clientY - start.py);
+      },
+      release: () => {
+        this.#pan = null;
+      },
+      cancel: () => {
+        this.#pan = null;
+      },
+    });
+    if (session) this.#pan = start;
   }
 
   /** A viewport client point → surface-local coords: subtract the (post-transform) surface origin and

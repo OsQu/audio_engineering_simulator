@@ -9,10 +9,12 @@
   // **bottom** edge, so it maps straight to CSS `bottom` (floor = 0); pan/zoom is one CSS transform on
   // the surface, so items stay in raw world coordinates.
   //
-  // Interaction is split so it never conflicts: **panning** lives on a `.backdrop` *sibling* of the
-  // devices (a device press can't bubble to a sibling, so operating a control never pans), and
-  // **dragging** lives on the whole device body — a pointerdown that doesn't land on a control or jack
-  // (see DRAG_EXCLUDE) grabs the unit, so turning a knob never moves it.
+  // Interaction (Story 10.7): one capture-phase arbiter on the viewport (`stageGestures`) classifies every
+  // press exactly once — control/chrome, socket, visible cable, device move, or backdrop pan — and hands it
+  // to that one owner. Controls keep their own gestures; a press near a socket patches (the parent's
+  // `gestures.pick` + `gestures.socket`), so it can never start a device move; a device-body press moves
+  // the unit (`beginMove`) and anything else pans (`camera.beginPan`). Every owned gesture runs on the
+  // shared pointer session, so release and cancel stay distinct.
   //
   // Physical order (Story 10.5) is resolver-owned: `items` arrive in their total paint order and each
   // carries a semantic layer mapped to one fixed z band. Hover, focus, toolbar grace and dragging never
@@ -20,7 +22,9 @@
   // keyed by object ID, so revealing them can't raise (or trap) a chassis.
   import type { Snippet } from "svelte";
   import { Camera } from "../camera.svelte";
-  import { draggable } from "../device-drag";
+  import { beginMove, type MoveDraggable } from "../device-drag";
+  import type { SocketPick } from "../patch-targets";
+  import { readStageFrame, stageGestures } from "../stage-gestures";
   import { type Rect2, snapToGrid } from "../spatial";
   import { LAYER_Z, type ObjectLayer } from "../view-resolution";
   import type { SurfacePoint, WorldApi } from "../world-api";
@@ -69,6 +73,17 @@
     /** Bound out to the parent so it can convert coordinates outside the overlay snippet (e.g. to
      *  DOM-measure jack positions into surface space). `undefined` until the surface mounts. */
     api?: WorldApi;
+    /** The parent's patch-side gesture owners (Story 10.7): which socket a press means, and what to do
+     *  with a socket or cable press. Device moves and panning stay here. */
+    gestures?: {
+      pick: (e: PointerEvent) => SocketPick;
+      socket: (
+        e: PointerEvent,
+        pick: Extract<SocketPick, { kind: "exact" | "near" }>,
+        root: HTMLElement,
+      ) => void;
+      cable?: (e: PointerEvent, key: string, root: HTMLElement) => void;
+    };
   }
   let {
     items,
@@ -85,6 +100,7 @@
     overlay,
     cables,
     api = $bindable(),
+    gestures,
   }: Props = $props();
 
   // The room the surface spans, world mm. Generous so there's room to pan around; refined per-space later.
@@ -117,6 +133,7 @@
     worldToSurface,
     clientToSurface,
     stageRoot: () => surface ?? null,
+    pickFrame: () => readStageFrame(viewport, surface, camera.zoom),
   };
   // Expose the converters to the parent (for jack measurement outside the overlay snippet).
   $effect(() => {
@@ -170,12 +187,49 @@
     if (legalAt(it.id, x, y)) onMoveTo(it.id, x, y);
   }
 
-  // A backdrop press starts a camera drag-pan (self-contained: it captures the pointer). A device press
-  // never reaches the backdrop (the devices are siblings above it), so it drives the move action instead.
-  function startPan(e: PointerEvent): void {
-    userAdjusted = true;
-    camera.startPan(e);
+  // A device's move gesture: the pointer delta ÷ zoom, y-up, grid-snapped, floor-clamped, legality-gated;
+  // candidates feed the parent's placement preview and a legal release commits it.
+  function moveParams(it: WorldItem): MoveDraggable {
+    return {
+      origin: () => ({ x: it.rect.x, y: it.rect.y }),
+      scale: () => camera.zoom,
+      invertY: true,
+      gridStep,
+      clampFloor: true,
+      canPlace: (x, y) => legalAt(it.id, x, y),
+      onStart: () => {
+        userAdjusted = true;
+      },
+      onMove: (x, y, legal) => onPreviewCandidate?.(it.id, x, y, legal),
+      onEnd: (x, y, legal) => {
+        if (legal) onPreviewCommit?.(it.id, x, y);
+        else onPreviewCancel?.();
+      },
+      onCancel: () => onPreviewCancel?.(),
+    };
   }
+
+  // The stage arbiter's owners. Socket/cable presses go to the parent; a device body moves; anything
+  // else pans the camera.
+  const NO_PICK: SocketPick = { kind: "none", reason: "miss" };
+  const stageParams = $derived({
+    pick: (e: PointerEvent): SocketPick => gestures?.pick(e) ?? NO_PICK,
+    socket: (
+      e: PointerEvent,
+      pick: Extract<SocketPick, { kind: "exact" | "near" }>,
+      root: HTMLElement,
+    ): void => gestures?.socket(e, pick, root),
+    cable: (e: PointerEvent, key: string, root: HTMLElement): void =>
+      gestures?.cable?.(e, key, root),
+    device: (e: PointerEvent, objectId: string, root: HTMLElement): void => {
+      const it = items.find((item) => item.id === objectId);
+      if (it) beginMove(root, e, moveParams(it));
+    },
+    pan: (e: PointerEvent, root: HTMLElement): void => {
+      userAdjusted = true;
+      camera.beginPan(e, root);
+    },
+  });
 
   // Wheel zooms toward the cursor (the camera keeps the surface point under it fixed).
   function onWheel(e: WheelEvent): void {
@@ -223,18 +277,17 @@
   });
 </script>
 
-<div class="viewport" bind:this={viewport} onwheel={onWheel}>
+<div class="viewport" bind:this={viewport} onwheel={onWheel} use:stageGestures={stageParams}>
   <div
     class="surface"
     bind:this={surface}
     style="width: {ROOM_WIDTH}px; height: {ROOM_HEIGHT}px; transform: {camera.transform};"
   >
-    <!-- Pan backdrop: a sibling of the devices, so a device press never bubbles here. -->
+    <!-- Pan backdrop: the stage arbiter pans on any press no other owner claims. -->
     <div
       class="backdrop"
       role="application"
       aria-label="studio floor — drag to pan, scroll to zoom"
-      onpointerdown={startPan}
     >
       <div class="floor"></div>
     </div>
@@ -254,8 +307,8 @@
     {/if}
 
     {#each items as it (it.id)}
-      <!-- The whole device body is the drag surface (grab anywhere to move); controls / jacks opt out via
-           DRAG_EXCLUDE, so operating them never moves the unit. Its z is its layer's band — always. -->
+      <!-- The whole device body is the move surface (the stage arbiter starts the move unless the press
+           is a control or near a socket). Its z is its layer's band — always. -->
       <div
         class="device"
         data-stage-object={it.id}
@@ -271,23 +324,6 @@
         onpointerleave={() => hideChromeSoon(it.id)}
         onfocusin={() => showChrome(it.id)}
         onfocusout={() => hideChromeSoon(it.id)}
-        use:draggable={{
-          origin: () => ({ x: it.rect.x, y: it.rect.y }),
-          scale: () => camera.zoom,
-          invertY: true,
-          gridStep,
-          clampFloor: true,
-          canPlace: (x, y) => legalAt(it.id, x, y),
-          onStart: () => {
-            userAdjusted = true;
-          },
-          onMove: (x, y, legal) => onPreviewCandidate?.(it.id, x, y, legal),
-          onEnd: (x, y, legal) => {
-            if (legal) onPreviewCommit?.(it.id, x, y);
-            else onPreviewCancel?.();
-          },
-          onCancel: () => onPreviewCancel?.(),
-        }}
         onkeydown={(e) => onDeviceKey(e, it)}
       >
         <div class="content">{@render item(it.id)}</div>

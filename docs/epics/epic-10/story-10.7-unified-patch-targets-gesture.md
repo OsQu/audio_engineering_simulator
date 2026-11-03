@@ -242,18 +242,54 @@ The tests are table-driven:
   targets, and need no final move;
 - the rejection lifecycle and duplex source aliases.
 
-## Task 10.7.3 — Studio arbiter & adapters  · planned
-_(program design drafted at pickup)_
+## Task 10.7.3 — Studio arbiter & adapters  · done
 
-This task:
+File-tree diff:
 
-- adds the `stageGestures` capture-phase action on the `WorldView` viewport;
-- adds `PatchController.begin` / session wiring, which deletes the window `pointerdown` and the
-  `patchableJackKey`/`elementFromPoint` path;
-- turns `draggable` into `beginMove` and adds `camera.beginPan`;
-- moves cable select to release-without-move;
-- shows the rejection reason;
-- graduates both known regressions.
+```text
+web/src/
++ stage-gestures.ts       stageGestures capture-phase action, CONTROL_SELECTOR, readStageFrame/collectBlockers
+  world-api.ts            + pickFrame(): StageFrame | null (both stages implement it)
+  patch-controller.svelte.ts  + bindStage / begin / hover on the shared session; legacy window handlers
+                              kept for the workbench only (release now re-resolves there too)
+  device-drag.ts          + beginMove (session-driven); `draggable` kept for the workbench only
+  camera.svelte.ts        + beginPan (session-driven); `startPan` kept for the workbench only
+  widgets/WorldView.svelte    arbiter on the viewport; device moves + pan dispatched; no draggable/backdrop start
+  App.svelte              socketTargets + studioPick + patch.bindStage; gestures prop; cable select on a
+                          release without movement; window only feeds `patch.hover`; rejection reason
+                          (overlay label + banner)
+  widgets/{DeviceChrome,FloatingWindow,CableInspector}.svelte, banner   data-pointer-blocker
+  patch-targets.ts        + EDGE_HALO_PX (see below)
+  testing/test-session.svelte.ts  snapshot before structuredClone (fixture bug, see below)
+web/test-browser/known-regressions.spec.ts   both cases graduated; the list is empty
+```
+
+Call stack (studio press):
+
+```text
+viewport pointerdown (capture)            stage-gestures.ts
+  sessionActive(root)? → swallow (multi-pointer)
+  classifyPress({ inControl, socket: gestures.pick(e), cableKey, objectId })
+    control → propagate untouched
+    socket  → patch.begin(e, pick, root) → beginPointerSession → release: pointerUp(re-picked hit)
+    cable   → beginPointerSession → release without movement: select
+    device  → beginMove(root, e, moveParams(it)) → onEnd | onCancel
+    pan     → camera.beginPan(e, root)
+```
+
+Findings while wiring (recorded as assumptions):
+
+- **An edge halo is added to the hit radius** (I-232). With `max(8, rendered r)`, a socket at the maximum
+  studio zoom renders about 15 px in radius. The Validate oracle presses 4 px outside the jack, and that
+  press missed and started a device move. The radius is now `max(8 | 12, rendered r + EDGE_HALO_PX = 6)`.
+  At low zoom the 8/12 px floor still dominates.
+- **Fixture bug.** `TestSceneSession.proposeTopology` called `structuredClone` on the `$state` proxy, so
+  every fixture patch commit threw. The click-click half of the graduated regression could never pass
+  because of it. It now snapshots first, as production does.
+- **Blockers are DOM-marked.** `[data-pointer-blocker]` elements that currently take hits (computed
+  `pointer-events` is not `none`) are the blockers: focus windows, an open toolbar, the patch banner and
+  the cable inspector. A press inside one is a control press, so a toolbar gap never falls through to the
+  chassis, and its rect also removes targets whose centre lies beneath it.
 
 ## Task 10.7.4 — Workbench, blockers & the Story browser matrix  · planned
 _(program design drafted at pickup)_

@@ -18,7 +18,7 @@
   let { children }: { children: Snippet } = $props();
 </script>
 
-<div class="device-chrome">{@render children()}</div>
+<div class="device-chrome" data-pointer-blocker>{@render children()}</div>
 
 <style>
   .device-chrome {

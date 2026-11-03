@@ -1,15 +1,8 @@
 import { expect, test } from "@playwright/test";
 import { elementCentre, jack, openFixture, stageObject } from "./support/fixture-page";
 
-interface KnownRegression {
-  id: string;
-  owner: "10.7";
-  title: string;
-}
-
-function expectKnownFailure(regression: KnownRegression): void {
-  test.fail(true, `Story ${regression.owner}: ${regression.id} — ${regression.title}`);
-}
+// The Epic 10 known-regression list is empty: Story 10.7 graduated its last two cases. They stay here
+// as ordinary regression tests. A new confirmed failure gets a `test.fail` with its owning Story again.
 
 async function releaseWithoutFinalMove(
   page: Parameters<typeof openFixture>[0],
@@ -35,11 +28,6 @@ async function releaseWithoutFinalMove(
 test("click-click and drag release at the current target produce the same connection", async ({
   page,
 }) => {
-  expectKnownFailure({
-    id: "drag-release-target-differs-from-click-target",
-    owner: "10.7",
-    title: "release must resolve its current target, not the previous pointer-move verdict",
-  });
   await openFixture(page, "patch-gestures");
 
   await jack(page, "gesture-source:output:0").click();
@@ -58,11 +46,6 @@ test("click-click and drag release at the current target produce the same connec
 });
 
 test("near sockets do not become device drags at minimum and maximum zoom", async ({ page }) => {
-  expectKnownFailure({
-    id: "near-socket-press-starts-device-drag",
-    owner: "10.7",
-    title: "screen-space socket tolerance must block device moves at both zoom extremes",
-  });
   for (const wheelDelta of [100_000, -100_000]) {
     await openFixture(page, "patch-gestures");
     const source = jack(page, "gesture-source:output:0");

@@ -15,7 +15,7 @@ implementation** → tasks one by one, gates green, commit per task (factory flo
 | --- | --- | --- |
 | 10.7.1 | Pure `patch-targets.ts`: resolveSocketTargets + pickSocketTarget | done |
 | 10.7.2 | Pure classifyPress, pointer-session reducer, patching release re-resolution | done |
-| 10.7.3 | Studio arbiter + adapters; rejection reason UI; graduate known regressions | planned |
+| 10.7.3 | Studio arbiter + adapters; rejection reason UI; graduate known regressions | done |
 | 10.7.4 | Workbench arbiter, blockers, Story browser/manual matrix | planned |
 
 ## Decisions (approved by Oskari as-is, I-222, 2026-11-02 — see companion file "Settled decisions")
@@ -25,6 +25,8 @@ implementation** → tasks one by one, gates green, commit per task (factory flo
 - One shared pointer session; release ≠ cancel; clear ownership before releasing capture.
 - Illegal drag release → pending pick with visible reason (symmetric with click-click).
 - Focus windows non-patchable + blockers.
+- Hit radius = max(8|12 px, rendered r + 6 px halo) — I-232; the approved max(8, r) failed the max-zoom oracle.
+- A pending pick owns only socket presses — I-230; panning during a pick keeps working.
 - Base: stacked on AES-69 (10.6 not merged), as the ticket specifies.
 
 ## Open questions

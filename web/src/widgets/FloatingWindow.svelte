@@ -84,6 +84,7 @@
 <section
   bind:this={rootEl}
   class="window"
+  data-pointer-blocker
   role="dialog"
   aria-label={title}
   tabindex="-1"

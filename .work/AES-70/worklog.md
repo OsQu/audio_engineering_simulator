@@ -38,3 +38,15 @@
   only owns socket presses, so panning while a pick is pending still works); JackHit kept + `aliases`;
   session listens on window for move/up/cancel (the known regression dispatches pointerup on window).
 - Next: 10.7.3 studio arbiter + adapters.
+
+## 2026-11-03 — Task 10.7.3 done (resumed after a crashed run; the uncommitted work was intact)
+- `stage-gestures.ts` capture-phase arbiter on the WorldView viewport; `patch.begin/hover/bindStage` on
+  the shared pointer session; `beginMove` / `camera.beginPan`; cable select on release without move;
+  rejection reason (overlay label + banner); `[data-pointer-blocker]` on toolbars, focus windows, banner,
+  inspector; `WorldApi.pickFrame`. Both known regressions graduated (8/8 with --repeat-each=4).
+- Learned: (1) the approved radius max(8, r) misses the max-zoom oracle press 4 px outside a ~15 px jack
+  → added EDGE_HALO_PX 6 (I-232). (2) Fixture bug: TestSceneSession.proposeTopology structuredClone'd
+  the $state proxy and threw — click-click could never draw a cable in fixtures; now snapshots.
+  (3) Full browser run: 30/32; the 2 failures (worklet acceptance, rack-flip transitioning window) are
+  parallel-load flakes — both pass in isolation, and the worklet spec passes on the base commit too.
+- Next: 10.7.4 — workbench on the arbiter, delete the legacy window/draggable/startPan paths, browser matrix.

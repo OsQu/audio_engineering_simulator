@@ -1410,7 +1410,7 @@ capture/blur/unmount distinct from commit.
   exposure, exact/nearest/tie and zoom matrices.
 - **Task 10.7.2** — ✅ Pure press classification, the pointer-session reducer, and `patching.pointerUp`
   release re-resolution with illegal → pending.
-- **Task 10.7.3** — Studio arbiter and adapters (patch, device move, pan, cable select). The rejection
+- **Task 10.7.3** — ✅ Studio arbiter and adapters (patch, device move, pan, cable select). The rejection
   reason is shown, and both known regressions graduate.
 - **Task 10.7.4** — Workbench arbiter, focus-window/toolbar blockers, and the Story browser and manual
   matrix.
