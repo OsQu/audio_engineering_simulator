@@ -64,3 +64,7 @@
   and picks a jack that is actually under the pointer.
 - Not done here: the manual browser matrix (no interactive browser in the factory run) — flagged in the
   companion file and PR for Oskari.
+
+## 2026-11-03 — wrap-up
+- All four Tasks done; Rust + web + browser gates green (manual browser matrix left to Oskari). PR draft
+  in `.work/AES-70/pr.md`. Pushing the branch and moving AES-70 to finished.
