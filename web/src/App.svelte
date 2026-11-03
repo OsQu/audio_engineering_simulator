@@ -30,7 +30,7 @@
     type ViewCtx,
   } from "./projection";
   import * as cableView from "./cable-view";
-  import { studioCableInput, worldRectToSurface } from "./view-resolver";
+  import { studioCableInput } from "./view-resolver";
   import {
     type CablePass as CablePassData,
     type CableResolutionInput,
@@ -41,7 +41,6 @@
   import { pickSocketTarget, resolveSocketTargets, type SocketPick } from "./patch-targets";
   import { beginPointerSession } from "./pointer-session";
   import { pointerKind } from "./stage-gestures";
-  import type { ProjectedSlot } from "./socket-geometry";
   import CablePass from "./widgets/CablePass.svelte";
   import SilhouetteClips from "./widgets/SilhouetteClips.svelte";
   import * as placement from "./placement";
@@ -237,24 +236,6 @@
       worldToSurface: api.worldToSurface,
     });
   });
-
-  // Socket anchors for patching are projected from the same slot frames (preview-aware, settled side).
-  // A camera move, a placement or rack move, or a settled flip changes only this projection.
-  const studioSlots = $derived.by((): ProjectedSlot[] => {
-    const api = worldApi;
-    if (!api) return [];
-    const objects = new Map(studioObjects.map((o) => [o.id, o]));
-    return [...studioFaces.values()].flatMap((face) => {
-      const rect = objects.get(face.objectId)?.rect;
-      const frame = rect ? worldRectToSurface(rect, api.worldToSurface) : null;
-      return (["front", "back"] as const).map((side) => ({
-        slot: { face: face.id, side },
-        frame,
-        presented: side === face.face,
-      }));
-    });
-  });
-  patch.project(() => studioSlots);
 
   // Every connection resolved once: full cable, portal, or nothing (with a reason).
   const resolvedCables = $derived(

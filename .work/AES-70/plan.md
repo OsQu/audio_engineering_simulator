@@ -16,7 +16,7 @@ implementation** → tasks one by one, gates green, commit per task (factory flo
 | 10.7.1 | Pure `patch-targets.ts`: resolveSocketTargets + pickSocketTarget | done |
 | 10.7.2 | Pure classifyPress, pointer-session reducer, patching release re-resolution | done |
 | 10.7.3 | Studio arbiter + adapters; rejection reason UI; graduate known regressions | done |
-| 10.7.4 | Workbench arbiter, blockers, Story browser/manual matrix | planned |
+| 10.7.4 | Workbench arbiter, blockers, Story browser/manual matrix | done (manual matrix left to Oskari) |
 
 ## Decisions (approved by Oskari as-is, I-222, 2026-11-02 — see companion file "Settled decisions")
 - Targets derive from `CableResolutionInput` — it already carries everything eligibility needs.

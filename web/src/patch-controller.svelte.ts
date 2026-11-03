@@ -3,15 +3,15 @@
 // re-implementing the pointer bookkeeping. A thin reactive shell — all decision logic stays in the pure,
 // node-tested modules (patching.ts transitions, scene-ops.ts edits, socket-geometry.ts registration and
 // projection); this class holds the in-flight drag state + the socket-geometry index and adapts DOM
-// pointer events to the pure transitions. Bound to a SceneSession, whose scene/catalog/cables it reads and
+// pointer events to the pure transitions. Presses reach it only through a stage arbiter
+// (stage-gestures.ts, Story 10.7), which hands it socket presses (`begin`); the view root binds the
+// stage it picks sockets on (`bindStage`) and feeds a pending pick's cursor-follow (`hover`). Bound to a SceneSession, whose scene/catalog/cables it reads and
 // whose engine it hot-swaps after each committing edit. Each face slot registers its own geometry through
-// the `GeometryRegistrar` methods; the view root binds the projection (`project`) of its slots' frames.
+// the `GeometryRegistrar` methods.
 
-import type { JackAnchor } from "./cable-view";
 import type { CableType } from "./catalog";
 import type { ConnectVerdict } from "./connections";
 import type { GeometryRegistrar } from "./face-geometry";
-import { patchableJackKey } from "./jack-anchors";
 import type { PointerKind, SocketPick, SocketTarget } from "./patch-targets";
 import type { JackHit, PatchState } from "./patching";
 import * as patching from "./patching";
@@ -23,15 +23,12 @@ import {
   createSocketGeometryIndex,
   type FaceGeometry,
   type GeometrySlot,
-  type ProjectedSlot,
-  projectAnchors,
   type RegisterOutcome,
   registerGeometry,
   requestGeometry,
   unregisterGeometry,
 } from "./socket-geometry";
 import { pointerKind } from "./stage-gestures";
-import type { WorldApi } from "./world-api";
 
 /** What a view root binds so the controller can pick sockets and place the free end (Story 10.7). */
 export interface PatchStage {
@@ -46,36 +43,18 @@ export class PatchController implements GeometryRegistrar {
   // Face-local socket geometry (Story 10.4), registered per (face instance, side) by each face slot's
   // `faceGeometry` action at its current revision. Camera and placement never touch it.
   geometry = $state.raw(createSocketGeometryIndex());
-  // The view root's current projection of its registered slots onto the stage surface (frames + which
-  // side faces the operator). Pure inputs; moving a device or the camera only changes this.
-  #slots = $state.raw<() => readonly ProjectedSlot[]>(() => []);
-
-  // Socket centres in surface space, keyed "device:direction:port" (every endpoint alias of each socket),
-  // each tagged with the side it sits on — the contract cable routing and patching consume. Derived from
-  // the geometry index × the projected slots; lets a cable anchor at the real socket when its side is
-  // shown, falling back to a chassis-centre estimate otherwise.
-  jackAnchors = $derived<Record<string, JackAnchor>>(projectAnchors(this.geometry, this.#slots()));
-
   // An in-progress patch from a source jack: the logical source end, the moving free end (surface
   // coords), and — when hovering a candidate jack — the verdict so we can colour the cable + commit.
   // `mode` is "drag" while the pointer is held (same-view patching), or "pending" after a *click* — a
   // held cable that survives a wall/room switch, so you can complete a **cross-view** patch by clicking
   // the source jack, turning to the other wall/room, and clicking the destination jack.
   dragCable = $state<PatchState>(null);
-  // Pointer-down bookkeeping to tell a click (→ pending pick) from a drag — legacy window path only
-  // (the workbench until it adopts the stage arbiter); the studio uses the shared pointer session.
-  #cableDown = { x: 0, y: 0, moved: false };
   // The stage the arbiter-driven gesture picks on, and the session of the gesture in flight.
   #stage: PatchStage | null = null;
   #gesture: PointerSession | null = null;
 
   constructor(session: SceneSession) {
     this.#session = session;
-  }
-
-  /** Bind the view root's slot projection (read reactively by `jackAnchors`). */
-  project(slots: () => readonly ProjectedSlot[]): void {
-    this.#slots = slots;
   }
 
   // GeometryRegistrar — the face slots' `faceGeometry` action drives these.
@@ -91,14 +70,6 @@ export class PatchController implements GeometryRegistrar {
   }
   unregister(slot: GeometrySlot): void {
     this.geometry = unregisterGeometry(this.geometry, slot);
-  }
-
-  // Resolve a `data-jack` key into the JackHit the pure transitions need (endpoint + measured anchor),
-  // or null if it doesn't name a real, resolvable port.
-  #jackHitOf(key: string | undefined | null): JackHit | null {
-    if (!key) return null;
-    const endpoint = patching.endpointFromJackKey(this.#session.scene, this.#session.catalog, key);
-    return endpoint ? { key, endpoint, anchor: this.jackAnchors[key] ?? null } : null;
   }
 
   // A picked physical socket as the JackHit the pure transitions need: the alias that complements the
@@ -167,47 +138,6 @@ export class PatchController implements GeometryRegistrar {
       cursor,
       this.#patchDeps(),
     );
-  }
-
-  // LEGACY (deleted in Task 10.7.4, once the workbench adopts the stage arbiter): window handlers that
-  // resolve exact DOM jack hits. The patching handlers are thin adapters: they read the DOM into a JackHit + surface coords, keep the
-  // click-vs-drag threshold bookkeeping, call the pure transition, assign its state, and on a returned
-  // `commit` verdict commit the cable (which hot-swaps). See patching.ts for the transition semantics.
-  pointerDown(e: PointerEvent, worldApi: WorldApi | undefined): void {
-    if (!worldApi) return;
-    // A pending cable's second press: only record the point; pointerUp resolves click-vs-pan.
-    if (this.dragCable?.mode === "pending") {
-      this.#cableDown = { x: e.clientX, y: e.clientY, moved: false };
-      return;
-    }
-    const hit = this.#jackHitOf(patchableJackKey(e.target as Element | null));
-    if (!hit?.anchor) return; // only a jack with current geometry can start a drag
-    e.preventDefault();
-    this.#cableDown = { x: e.clientX, y: e.clientY, moved: false };
-    this.dragCable = patching.pointerDown(this.dragCable, hit).state;
-  }
-
-  pointerMove(e: PointerEvent, worldApi: WorldApi | undefined): void {
-    if (!this.dragCable || !worldApi) return;
-    // Track whether the active press has moved past the click threshold — but only while a button is
-    // held (`e.buttons`), so a pending cable's buttonless cursor-follow is never mistaken for a pan.
-    if (e.buttons !== 0 && !this.#cableDown.moved) {
-      if (Math.hypot(e.clientX - this.#cableDown.x, e.clientY - this.#cableDown.y) > 4) {
-        this.#cableDown.moved = true;
-      }
-    }
-    const cursor = worldApi.clientToSurface(e.clientX, e.clientY);
-    const hit = this.#jackHitOf(patchableJackKey(document.elementFromPoint(e.clientX, e.clientY)));
-    this.dragCable = patching.pointerMove(this.dragCable, hit, cursor, this.#patchDeps());
-  }
-
-  pointerUp(e: PointerEvent): void {
-    if (!this.dragCable) return;
-    // Release re-resolves the jack under the release point in both modes (Story 10.7).
-    const hit = this.#jackHitOf(patchableJackKey(document.elementFromPoint(e.clientX, e.clientY)));
-    const res = patching.pointerUp(this.dragCable, hit, !this.#cableDown.moved, this.#patchDeps());
-    if (res.commit) this.commitCable(res.commit);
-    this.dragCable = res.state;
   }
 
   // Cancel an in-progress patch (drag or pending) — Esc, or the cross-view banner's Cancel button.

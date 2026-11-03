@@ -291,13 +291,45 @@ Findings while wiring (recorded as assumptions):
   the cable inspector. A press inside one is a control press, so a toolbar gap never falls through to the
   chassis, and its rect also removes targets whose centre lies beneath it.
 
-## Task 10.7.4 — Workbench, blockers & the Story browser matrix  · planned
-_(program design drafted at pickup)_
+## Task 10.7.4 — Workbench, blockers & the Story browser matrix  · done
 
-This task:
+File-tree diff:
 
-- runs the same arbiter on `BenchStage`, with the DUT's two simultaneous faces as targets;
-- registers focus windows, toolbars and banners as blockers;
-- adds the browser matrix: zoom extremes, multi-pointer, cancel, blur, lost capture, view navigation with
-  a pending pick, illegal-target feedback, and control precedence;
-- updates the manual matrix notes.
+```text
+web/src/
+  BenchStage.svelte       stageGestures on the bench viewport; socketTargets/benchPick + patch.bindStage;
+                          beginMove / camera.beginPan; cable select on release; rejection label
+  Workbench.svelte        window: resume audio in the capture phase + `patch.hover` only
+  patch-controller.svelte.ts  − legacy pointerDown/Move/Up, #jackHitOf, #cableDown, jackAnchors, project()
+  device-drag.ts          − draggable, DRAG_EXCLUDE (beginMove is the only move start)
+  camera.svelte.ts        − startPan (beginPan is the only pan start)
+  App.svelte              − studioSlots projection (its only consumer was jackAnchors)
+- jack-anchors.ts         patchableJackKey: no DOM-exact jack hit testing remains
+  testing/browser-fixtures.ts  + "patch-matrix" (two back-shown sources + a sink: an illegal target)
+web/test-browser/
++ patch-gestures.spec.ts  the Story matrix (below)
+crates/devices/src/build.rs   pre-existing broken intra-doc link (`instantiate`) fixed so `cargo docs` passes
+```
+
+The browser matrix (`patch-gestures.spec.ts`, plus the graduated `known-regressions.spec.ts`):
+
+- drag + drop connects; a drag released on an illegal socket keeps the pick and shows the reason, then
+  completes on a legal one; click + click on the illegal socket gives the same reason;
+- `pointercancel` mid-drag drops the lead and never connects;
+- window blur cancels a device move, with no commit and the preview discarded;
+- a second, non-primary pointer cannot move a device mid-patch, and the patch still completes;
+- a pending pick survives a backdrop pan and still completes;
+- the workbench: a near-socket press starts a held lead, not a device move;
+- known regressions: release without a final move connects; near-socket presses at the minimum and
+  maximum zoom never move the device.
+
+Already covered elsewhere and still green:
+
+- focus-window duplicates can't start a patch (`face-lifecycle.spec.ts`);
+- pending picks survive view switches and flips (`cable-presentation.spec.ts`);
+- toolbar controls keep precedence (stable-layers specs).
+
+**Manual matrix: not run in this session.** The factory run has no interactive browser. Oskari should
+run the source design's manual browser matrix before signing off the Story. The checks that matter most
+here are click + click and drag + drop at min/default/max zoom in the stock scene, touch tolerance on a
+real touch device, and the feel of the 6 px edge halo.

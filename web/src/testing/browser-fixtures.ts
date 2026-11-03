@@ -9,6 +9,7 @@ export type BrowserFixtureId =
   | "cable-hover"
   | "cable-portal"
   | "patch-gestures"
+  | "patch-matrix"
   | "rack-drag";
 
 export interface BrowserFixture {
@@ -191,11 +192,32 @@ const patchGestures: BrowserFixture = {
   ),
 };
 
+// Story 10.7: the gesture matrix — two back-shown sources (so output → output is an illegal target that
+// still has a presented socket) and one sink.
+const patchMatrix: BrowserFixture = {
+  id: "patch-matrix",
+  catalog: [fixtureSource, fixtureSink],
+  cables: [],
+  scene: scene(
+    [
+      { id: "matrix-source", typeId: "fixture_source" },
+      { id: "matrix-other", typeId: "fixture_source" },
+      { id: "matrix-sink", typeId: "fixture_sink" },
+    ],
+    {
+      "matrix-source": free(900, "back"),
+      "matrix-other": free(1300, "back"),
+      "matrix-sink": free(1700, "back"),
+    },
+  ),
+};
+
 const fixtures: Readonly<Record<BrowserFixtureId, BrowserFixture>> = {
   "rack-hover": rackHover,
   "cable-hover": cableHover,
   "cable-portal": cablePortal,
   "patch-gestures": patchGestures,
+  "patch-matrix": patchMatrix,
   "rack-drag": rackDrag,
 };
 

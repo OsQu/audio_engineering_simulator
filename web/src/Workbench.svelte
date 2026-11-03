@@ -88,7 +88,7 @@
 
   // --- Patching -------------------------------------------------------------------------------------
   // The shared patch controller (identical machinery to the scene view) + the bench stage's coordinate
-  // seam, bound back from BenchStage so the window pointer handlers + jack measurement can use it.
+  // seam, bound back from BenchStage.
   const patch = new PatchController(session);
   let benchApi = $state<WorldApi | undefined>();
 
@@ -145,12 +145,10 @@
   });
 
   // Patching feels **identical to the scene view** — the same PatchController flow, so both click-to-pick
-  // (click a source jack, then a destination jack) and drag work. The pointer handlers just delegate; the
-  // monitored tap is chosen from the "Listen" selector in the header, not by a jack click.
-  function onPointerDown(e: PointerEvent): void {
-    resumeOnce();
-    patch.pointerDown(e, benchApi);
-  }
+  // (click a source jack, then a destination jack) and drag work. Presses are arbitrated by BenchStage's
+  // stage arbiter (Story 10.7); the window only resumes audio on the first press (capture phase, so the
+  // arbiter consuming the press can't swallow it) and feeds a pending pick's cursor-follow. The monitored
+  // tap is chosen from the "Listen" selector in the header, not by a jack click.
 
   function onKeyDown(e: KeyboardEvent): void {
     resumeOnce();
@@ -275,9 +273,8 @@
 </script>
 
 <svelte:window
-  onpointerdown={onPointerDown}
-  onpointermove={(e) => patch.pointerMove(e, benchApi)}
-  onpointerup={(e) => patch.pointerUp(e)}
+  onpointerdowncapture={resumeOnce}
+  onpointermove={(e) => patch.hover(e)}
   onkeydown={onKeyDown}
 />
 

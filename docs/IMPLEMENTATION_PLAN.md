@@ -1023,7 +1023,7 @@ real-worklet, and pure-fixture seams that every later corrective Story graduates
 effective-placement and preview foundation, and Story 10.4 now adds explicit presentation identity and
 camera-independent socket geometry. Story 10.5 delivers resolver-owned paint layers, the interaction
 overlay and U3 ejection. Story 10.6 delivers unified cable/portal/held-lead endpoints and mask passes (awaiting review);
-Story 10.7 (unified patch targets & gesture lifecycle) is in progress (design approved).
+Story 10.7 delivers geometry-based patch targets and one capture-phase gesture arbiter on both stages, which empties the known-regression list (awaiting review).
 
 **Goal:** make one pure, deterministic presentation model authoritative for effective rack/device
 placement, presented faces, socket visibility and patchability, cable endpoints and portals, physical
@@ -1368,7 +1368,7 @@ follow device/rack movement, view changes, and settled flips without retaining s
   - held leads across a view switch and a flip.
 - The old estimate, clamp and tip-patch path and `CableLayout` are deleted.
 
-### Story 10.7 — Unified patch targets & gesture lifecycle — 🚧 **In progress**
+### Story 10.7 — Unified patch targets & gesture lifecycle — 🚧 **In progress** (all Tasks done; Validate gate awaiting review)
 
 *Goal:* derive patchable hit targets from resolved sockets and give controls, sockets, visible cables,
 device movement, and backdrop panning one capture-phase ownership and pointer lifecycle across both stages.
@@ -1412,7 +1412,7 @@ capture/blur/unmount distinct from commit.
   release re-resolution with illegal → pending.
 - **Task 10.7.3** — ✅ Studio arbiter and adapters (patch, device move, pan, cable select). The rejection
   reason is shown, and both known regressions graduate.
-- **Task 10.7.4** — Workbench arbiter, focus-window/toolbar blockers, and the Story browser and manual
+- **Task 10.7.4** — ✅ Workbench arbiter, focus-window/toolbar blockers, and the Story browser and manual
   matrix.
 
 *Program design:* [`story-10.7-unified-patch-targets-gesture.md`](./epics/epic-10/story-10.7-unified-patch-targets-gesture.md)
@@ -1421,3 +1421,22 @@ capture/blur/unmount distinct from commit.
 is stable at minimum/default/maximum zoom; hidden, transitioning, occluded, off-view, and focus-window
 sockets cannot leak into targets; near-socket presses cannot start device moves; multi-pointer, blockers,
 illegal-target feedback, cancellation, and view navigation pass the pure/browser/manual matrices.
+
+✅ met in the pure and browser matrices (awaiting Oskari's sign-off and the manual matrix):
+- `patch-targets.test.ts` covers eligibility (hidden, transitioning, pending, off-view, top view, focus),
+  exposure, exact/nearest/tie order, zoom stability and blockers.
+- `gesture-ownership.test.ts`, `pointer-session.test.ts` and `patching.test.ts` cover ownership priority,
+  multi-pointer, release vs cancel, and drag/click verdict equality with no final move.
+- `patch-gestures.spec.ts` and the graduated `known-regressions.spec.ts` cover:
+  - min/max zoom;
+  - release without a final move;
+  - illegal-target feedback;
+  - cancel and blur;
+  - multi-pointer;
+  - a pending pick through a pan;
+  - the workbench arbiter.
+
+  The known-regression list is now empty.
+- Deviations (recorded assumptions):
+  - the hit radius gains a 6 px edge halo (I-232);
+  - a pending pick owns only socket presses, so panning still works (I-230).

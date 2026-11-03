@@ -50,3 +50,17 @@
   (3) Full browser run: 30/32; the 2 failures (worklet acceptance, rack-flip transitioning window) are
   parallel-load flakes — both pass in isolation, and the worklet spec passes on the base commit too.
 - Next: 10.7.4 — workbench on the arbiter, delete the legacy window/draggable/startPan paths, browser matrix.
+
+## 2026-11-03 — Task 10.7.4 done; Story 10.7 implemented
+- BenchStage on the same `stageGestures` arbiter (bench targets incl. both DUT faces, beginMove, beginPan,
+  cable select on release, rejection label). Workbench window keeps only capture-phase audio resume +
+  `patch.hover`. Deleted the legacy paths: controller window handlers, `jackAnchors`/`project`,
+  `draggable`/`DRAG_EXCLUDE`, `camera.startPan`, `jack-anchors.ts` (patchableJackKey).
+- New `patch-matrix` fixture + `patch-gestures.spec.ts` (8 cases). Browser: 40/40 full suite (3 workers),
+  60/60 on `--repeat-each=6` of the new + graduated specs. Web: check, typecheck, 420 unit tests green.
+- Rust gate: `cargo docs` failed on a pre-existing broken intra-doc link in crates/devices/src/build.rs
+  (`[instantiate]`, untouched since 37d94fe, same on main) — fixed the path; fmt/lint/test(534)/wasm/docs green.
+- Bench test gotcha: the bench stack is taller than Playwright's 720 px window; the spec sets 1400×1400
+  and picks a jack that is actually under the pointer.
+- Not done here: the manual browser matrix (no interactive browser in the factory run) — flagged in the
+  companion file and PR for Oskari.

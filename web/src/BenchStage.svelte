@@ -11,9 +11,10 @@
   // true; the transform then blows it up. Wheel zooms (cursor-anchored); drag empty space to pan.
   //
   // Deliberately *not* a WorldView (the bench is one flat layout of both faces, not a spatial room), but
-  // the three interaction concerns are shared, one place each: pan/zoom via `Camera`, moving a device via
-  // the `draggable` action (device-drag.ts) — dragging a device body repositions it, its offset kept in
-  // `scene.ui.bench` — and patching via `PatchController` + `cable-view`. It exposes a `WorldApi`-shaped
+  // the interaction concerns are shared, one place each: pan/zoom via `Camera`, moving a device via
+  // `beginMove` (device-drag.ts) — dragging a device body repositions it, its offset kept in
+  // `scene.ui.bench` — and patching via `PatchController` + `cable-view`. Every press goes through the same
+  // capture-phase stage arbiter as the studio (`stageGestures`, Story 10.7). It exposes a `WorldApi`-shaped
   // surface so that machinery can measure jack anchors + draw cables in surface-local space.
 
   import { Camera } from "./camera.svelte";
@@ -26,8 +27,10 @@
   } from "./cable-resolution";
   import CablePass from "./widgets/CablePass.svelte";
   import SilhouetteClips from "./widgets/SilhouetteClips.svelte";
-  import { draggable } from "./device-drag";
-  import { readStageFrame } from "./stage-gestures";
+  import { beginMove, type MoveDraggable } from "./device-drag";
+  import { pickSocketTarget, resolveSocketTargets, type SocketPick } from "./patch-targets";
+  import { beginPointerSession } from "./pointer-session";
+  import { pointerKind, readStageFrame, stageGestures } from "./stage-gestures";
   import Cable from "./widgets/Cable.svelte";
   import CableInspector from "./widgets/CableInspector.svelte";
   import DeviceChrome from "./widgets/DeviceChrome.svelte";
@@ -123,14 +126,6 @@
     if (viewport) camera.wheelZoom(e, viewport);
   }
 
-  // Drag empty space (not a device body/jack/control) to pan. A device-group press is left to its own
-  // move gesture (and jacks/controls to theirs); anything else grabs the camera.
-  function onViewportPointerDown(e: PointerEvent): void {
-    // Device groups, cables, and the interaction layer (toolbars) own their own presses.
-    if ((e.target as HTMLElement | null)?.closest(".device-group, .cables, .interaction")) return;
-    camera.startPan(e);
-  }
-
   // The coordinate seam: client→surface is the camera's (transform-origin top-left ⇒ the surface's client
   // top-left is surface-local (0,0)). The bench's world ≡ surface mm (one flat layout), so `worldToSurface`
   // is identity.
@@ -151,7 +146,7 @@
   });
 
   // --- Device move + rotate (shared with the scene view) --------------------------------------------
-  // Each device is a group on the flat bench; dragging its body repositions it (the `draggable` action).
+  // Each device is a group on the flat bench; dragging its body repositions it (`beginMove`).
   // A supporting device also rotates front↔back (`toggleBenchFacing` → `effectiveFacing`, the same facing
   // model the scene view uses); the DUT shows both faces and never rotates. The parent supplies both the
   // committed-or-preview offset and active drag identity. Bench placement is free — no walls/racks,
@@ -344,8 +339,6 @@
     }
     return map;
   });
-  // svelte-ignore state_referenced_locally
-  patch.project(() => [...benchSlotMap.values()].flat());
 
   // --- Cables (Story 10.6, U2) ----------------------------------------------------------------------
   // The same pipeline as the studio: endpoint states, hidden-face exits, and resolver-supplied mask
@@ -375,6 +368,67 @@
         })
       : null,
   );
+  // Patchable socket targets (Story 10.7) — the same rules as the studio. The DUT's two simultaneous
+  // faces are two presented slots, so both contribute targets; a supporting device's hidden side doesn't.
+  const socketTargets = $derived(resolveSocketTargets(cableInput));
+  function benchPick(
+    client: { x: number; y: number },
+    pointerType: "mouse" | "pen" | "touch",
+  ): SocketPick {
+    const frame = worldApi.pickFrame();
+    if (!frame) return { kind: "none", reason: "outside" };
+    return pickSocketTarget(socketTargets, client, {
+      ...frame,
+      silhouettes: cableInput.silhouettes,
+      pointerType,
+    });
+  }
+  // svelte-ignore state_referenced_locally
+  patch.bindStage({ clientToSurface: (x, y) => worldApi.clientToSurface(x, y), pick: benchPick });
+
+  // A device group's move: screen delta ÷ zoom on the y-down bench, free placement (overlaps allowed).
+  function moveParams(id: string): MoveDraggable {
+    return {
+      origin: () => offsetFor(id),
+      scale: () => camera.zoom,
+      onStart: () => {
+        const offset = offsetFor(id);
+        onPreviewCandidate?.(id, offset.x, offset.y);
+      },
+      onMove: (x, y) => onPreviewCandidate?.(id, x, y),
+      onEnd: (x, y) => onPreviewCommit?.(id, x, y),
+      onCancel: () => onPreviewCancel?.(),
+    };
+  }
+  // The stage arbiter's owners: socket → patch, cable → select on a release without movement, device
+  // body → move, anything else → pan.
+  const benchGestures = {
+    pick: (e: PointerEvent): SocketPick =>
+      benchPick({ x: e.clientX, y: e.clientY }, pointerKind(e)),
+    socket: (
+      e: PointerEvent,
+      pick: Extract<SocketPick, { kind: "exact" | "near" }>,
+      root: HTMLElement,
+    ): void => patch.begin(e, pick, root),
+    cable: (e: PointerEvent, key: string, root: HTMLElement): void => {
+      beginPointerSession(root, e, {
+        release: (_ev, moved) => {
+          if (!moved) selectedCableKey = key;
+        },
+        cancel: () => {},
+      });
+    },
+    device: (e: PointerEvent, id: string, root: HTMLElement): void =>
+      beginMove(root, e, moveParams(id)),
+    pan: (e: PointerEvent, root: HTMLElement): void => camera.beginPan(e, root),
+  };
+  // Why the held cable can't connect where it is (hovering an illegal socket, or the last release on one).
+  const patchReason = $derived(
+    patch.dragCable?.verdict && !patch.dragCable.verdict.ok
+      ? patch.dragCable.verdict.reason
+      : (patch.dragCable?.rejection?.reason ?? null),
+  );
+
   // "Listening here": the monitored output. On a presented face it's a ring at the socket; on a hidden
   // face (U2) it's a labelled badge on the device — never a patch target either way.
   const listening = $derived(resolveEndpoint(cableInput, session.scene.patch.output, "output"));
@@ -433,7 +487,7 @@
     aria-label="device bench — scroll to zoom, drag to pan, drag a device to move it"
     bind:this={viewport}
     onwheel={onWheel}
-    onpointerdown={onViewportPointerDown}
+    use:stageGestures={benchGestures}
   >
     <!-- Laid out at 1 px/mm, then translate·scale'd by the shared camera — grid/ruler read true and the
          faceplate controls scale. -->
@@ -469,7 +523,6 @@
               aria-label={`select cable ${r.key}`}
               data-cable={r.key}
               style:pointer-events={patch.dragCable ? "none" : "stroke"}
-              onclick={() => (selectedCableKey = r.key)}
               onkeydown={(e: KeyboardEvent) => {
                 if (e.key === "Enter" || e.key === " ") selectedCableKey = r.key;
               }}
@@ -524,6 +577,14 @@
             </CablePass>
           {/each}
         {/if}
+        {#if patch.dragCable && patchReason}
+          <text
+            class="patch-reason-label"
+            data-patch-reason
+            x={patch.dragCable.free.x + 6}
+            y={patch.dragCable.free.y - 6}>{patchReason}</text
+          >
+        {/if}
         {#if listenBadge}
           <g class="listen-badge" data-listen-badge={listenBadge.id}>
             <rect x={listenBadge.x - 92} y={listenBadge.y - 18} width="92" height="14" rx="3" />
@@ -549,9 +610,9 @@
             flipped: face === "back",
             label: face === "back" ? "Back" : "Front",
           }))}
-          <!-- One device: drag its body to move it on the bench (the shared `draggable` action, same as
-                 the scene view). Its jacks/controls/flip opt out (DRAG_EXCLUDE); its committed offset +
-                 facing live in `scene.ui.bench`. The transform is surface mm, applied inside the surface. -->
+          <!-- One device: drag its body to move it on the bench (the stage arbiter starts the move unless
+                 the press is a control or near a socket). Its committed offset + facing live in
+                 `scene.ui.bench`. The transform is surface mm, applied inside the surface. -->
           <!-- svelte-ignore a11y_no_static_element_interactions -->
           <div
             class="device-group"
@@ -566,17 +627,6 @@
             onpointerleave={() => hideChromeSoon(bd.id)}
             onfocusin={() => showChrome(bd.id)}
             onfocusout={() => hideChromeSoon(bd.id)}
-            use:draggable={{
-              origin: () => offsetFor(bd.id),
-              scale: () => camera.zoom,
-              onStart: () => {
-                const offset = offsetFor(bd.id);
-                onPreviewCandidate?.(bd.id, offset.x, offset.y);
-              },
-              onMove: (x, y) => onPreviewCandidate?.(bd.id, x, y),
-              onEnd: (x, y) => onPreviewCommit?.(bd.id, x, y),
-              onCancel: () => onPreviewCancel?.(),
-            }}
           >
             {#if isDut}<span class="dev-name muted">{bd.desc.name}</span>{/if}
             <!-- Keyed by index (stable per device) so a supporting device's single face-card persists
@@ -800,6 +850,15 @@
     outline: none;
   }
   /* "Listening here" marker at the monitored output tap. */
+  .patch-reason-label {
+    fill: #f2b8b5;
+    font-size: 5px;
+    font-weight: 600;
+    paint-order: stroke;
+    stroke: #1b1d20;
+    stroke-width: 1px;
+    pointer-events: none;
+  }
   .tap-marker {
     fill: none;
     stroke: var(--ae-signal-mic-lit, #6cf);
