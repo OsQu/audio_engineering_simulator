@@ -43,7 +43,8 @@ Full pre-push gate (mirrors CI):
 Browser harness (the web project is **pnpm**-managed — `pnpm-lock.yaml`): `cd web && pnpm install &&
 pnpm run wasm && pnpm run dev` (then open `http://localhost:5173/`). `pnpm run wasm` rebuilds the WASM
 artifact via `web/build-wasm.sh` (wraps `wasm-pack`); `pnpm run check` runs Biome; `pnpm run typecheck`
-runs `svelte-check`; `pnpm run test` runs Vitest.
+runs `svelte-check`; `pnpm run test` runs Vitest; `pnpm run test:browser` runs the Playwright specs in
+`web/test-browser/` (in a worktree with a leased port: `PLAYWRIGHT_PORT=$VITE_PORT pnpm run test:browser`).
 
 **Hot loop (Story 6.4):** for engine-Rust iteration, run `pnpm run wasm:watch` alongside `pnpm run dev`.
 It watches `crates/` (via `cargo watch` — install once with `cargo install cargo-watch`) and re-runs
@@ -66,6 +67,10 @@ This governs every body of work:
    code before any implementation begins. Do not roll from drafting the design straight into writing
    code unless the user has separately given permission to proceed without the review.
 3. After completing a task, make sure it **compiles, lints, and passes tests** before reporting it done.
+   If the change affects the UI or audio (anything under `web/`, the worklet, or engine code the browser
+   runs), **also verify it live** with the `verify-live` skill (`.claude/skills/verify-live/SKILL.md`):
+   it drives the running app headless and returns an evidence block (engine state, overruns, output
+   peak, screenshots, console errors) to include in the report. It can't judge sound or taste; say so.
 4. **Do not commit.** Stop and let the user verify what was done.
 5. **Discuss and follow up** on any changes together — the user commits the code himself.
 6. When the user says he has verified and committed, **review his commit message** to confirm it
