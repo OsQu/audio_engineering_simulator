@@ -6,18 +6,38 @@
   //
   // Presentation is the shared analog `VuFace`; here we only map the linear monitor peak onto its 0..1
   // needle fraction (−60..0 dBFS) and format the dBFS readout.
+  //
+  // The wrapper carries the `output-peak` live-verification hook (see `EngineHealth.svelte`): the current
+  // and held peak as dBFS (`-inf` = silence).
+  import { dbfsAttr, peakDbfs } from "../live-status";
   import VuFace from "./VuFace.svelte";
 
   interface Props {
     /** Linear peak of the output block (±1.0 = monitor full scale). */
     level: number;
+    /** The highest `level` since the engine started (exposed as a hook only; the needle shows `level`). */
+    hold?: number;
   }
-  let { level }: Props = $props();
+  let { level, hold = 0 }: Props = $props();
 
   // dBFS scale, -60..0 mapped across the sweep; silence reads as empty (needle hard left).
-  const dbfs = $derived(level > 1e-4 ? 20 * Math.log10(level) : Number.NEGATIVE_INFINITY);
+  const dbfs = $derived(peakDbfs(level));
   const fraction = $derived((dbfs + 60) / 60);
   const readout = $derived(dbfs === Number.NEGATIVE_INFINITY ? "—" : `${dbfs.toFixed(0)} dBFS`);
 </script>
 
-<VuFace {fraction} label="OUT" {readout} />
+<span
+  class="hook"
+  data-testid="output-peak"
+  data-dbfs={dbfsAttr(dbfs)}
+  data-hold-dbfs={dbfsAttr(peakDbfs(hold))}
+  aria-label="output peak {dbfsAttr(dbfs)} dBFS"
+>
+  <VuFace {fraction} label="OUT" {readout} />
+</span>
+
+<style>
+  .hook {
+    display: contents;
+  }
+</style>

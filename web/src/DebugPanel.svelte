@@ -7,11 +7,14 @@
   //      (the 8i6 alone has 206), so it's a searchable watch-list, never a flat dump. Pins persist in
   //      `scene.ui.benchWatch` (URL round-trip), so a watched value re-renders after a `wasm:watch` reload.
   // The panel is read-only: the faceplate knobs remain the editor; this surfaces the exact numbers,
-  // ranges, and ids the knobs don't. Engine-internal health (overruns/render-ms/drops) + the seed
-  // control are deliberately *not* here — they stay on `session.health` / the pinned SEED.
+  // ranges, and ids the knobs don't. The header also carries the compact engine state/overruns/drops
+  // (`EngineHealth`) so live checks can read health on `/devices/*` routes too; the full prose health
+  // line (render-ms) stays on `session.health`.
 
   import { type Watchable, matchesQuery, watchables } from "./bench-watch";
   import { type DeviceDescriptor, descriptorFor } from "./catalog";
+  import EngineHealth from "./EngineHealth.svelte";
+  import { dbfsAttr, peakDbfs } from "./live-status";
   import { noteName } from "./notes";
   import type { BenchWatch } from "./scene-store";
   import { isWatched, toggleWatch, watchKey } from "./scene-ops";
@@ -37,9 +40,8 @@
 
   // --- Header ---------------------------------------------------------------------------------------
   // Master output peak as dBFS (the level message is linear ±1.0 = full scale); silence → "−∞".
-  const peakDbfs = $derived(
-    session.level <= 1e-4 ? "−∞" : (20 * Math.log10(session.level)).toFixed(1),
-  );
+  const peak = $derived(peakDbfs(session.level));
+  const peakText = $derived(Number.isFinite(peak) ? peak.toFixed(1) : "−∞");
 
   // The monitored tap (patch.output): the device + analog-output-port label it renders from.
   const tap = $derived.by(() => {
@@ -146,8 +148,17 @@
 <div class="debug">
   <section class="header">
     <div class="stat">
+      <span class="k">Engine</span>
+      <span class="v"><EngineHealth {session} /></span>
+    </div>
+    <div
+      class="stat"
+      data-testid="output-peak"
+      data-dbfs={dbfsAttr(peak)}
+      data-hold-dbfs={dbfsAttr(peakDbfs(session.peakHold))}
+    >
       <span class="k">Output peak</span>
-      <span class="v">{peakDbfs} <span class="u">dBFS</span></span>
+      <span class="v">{peakText} <span class="u">dBFS</span></span>
     </div>
     <div class="stat">
       <span class="k">Monitoring</span>

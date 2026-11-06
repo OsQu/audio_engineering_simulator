@@ -15,8 +15,10 @@
     value: number;
     /** Render as a thin **vertical** bar (label/readout dropped) — a channel meter beside a fader. */
     vertical?: boolean;
+    /** Owning device instance id, for the `meter` live-verification hook (`data-device`). */
+    device?: string;
   }
-  let { label, unit, value, vertical = false }: Props = $props();
+  let { label, unit, value, vertical = false, device = "" }: Props = $props();
 
   // Per-unit bar range (min..max), so each meter's scale matches its quantity. VU centres on 0 VU;
   // dBu spans a wide analog range; dBFS runs up to the 0 dBFS ceiling.
@@ -35,27 +37,41 @@
   const readout = $derived(value <= OFF_SCALE ? "—" : `${value.toFixed(1)} ${unit}`);
 </script>
 
-{#if unit === "VU"}
-  <!-- A VU reading is the archetypal analog needle, not a bar — share the master monitor's face,
+<!-- The `meter` live-verification hook (see `EngineHealth.svelte`): device, label, unit and the reading
+     (`-inf` once it's below the off-scale floor) as data, whatever the presentation. -->
+<span
+  class="hook"
+  data-testid="meter"
+  data-device={device}
+  data-label={label}
+  data-unit={unit}
+  data-value={value <= OFF_SCALE ? "-inf" : value.toFixed(1)}
+>
+  {#if unit === "VU"}
+    <!-- A VU reading is the archetypal analog needle, not a bar — share the master monitor's face,
        compact so it fits a thin (1U) device front. -->
-  <VuFace fraction={pct / 100} {label} {readout} compact />
-{:else if vertical}
-  <!-- A thin vertical channel meter: lit from the bottom up to the level, no label/readout so it sits
+    <VuFace fraction={pct / 100} {label} {readout} compact />
+  {:else if vertical}
+    <!-- A thin vertical channel meter: lit from the bottom up to the level, no label/readout so it sits
        flush beside a fader and the strip stays narrow. Tooltip carries the label + value. -->
-  <div class="vmeter" title={`${label}: ${readout}`} aria-label={`${label} ${readout}`}>
-    <div class="unlit" style={`bottom: ${pct}%`}></div>
-  </div>
-{:else}
-  <div class="meter-widget" title={`${label} (${unit})`}>
-    <span class="cap">{label}</span>
-    <div class="bar">
-      <div class="unlit" style={`left: ${pct}%`}></div>
+    <div class="vmeter" title={`${label}: ${readout}`} aria-label={`${label} ${readout}`}>
+      <div class="unlit" style={`bottom: ${pct}%`}></div>
     </div>
-    <span class="readout">{readout}</span>
-  </div>
-{/if}
+  {:else}
+    <div class="meter-widget" title={`${label} (${unit})`}>
+      <span class="cap">{label}</span>
+      <div class="bar">
+        <div class="unlit" style={`left: ${pct}%`}></div>
+      </div>
+      <span class="readout">{readout}</span>
+    </div>
+  {/if}
+</span>
 
 <style>
+  .hook {
+    display: contents;
+  }
   /* Sits on a device faceplate, so the engraved text reads the faceplate ink tokens (dark on a light
      finish, light on a dark one); the bar is a recessed screen with an LED-palette fill, dark where
      unlit — matching the app's indicator LEDs (--ae-led-*) and the analog VU face. */

@@ -18,5 +18,11 @@
 </script>
 
 {#if readout}
-  <Meter label={readout.label} unit={readout.unit} value={handle.reading(id)} {vertical} />
+  <Meter
+    label={readout.label}
+    unit={readout.unit}
+    value={handle.reading(id)}
+    {vertical}
+    device={handle.device}
+  />
 {/if}

@@ -23,6 +23,7 @@ import {
   startEngine,
   type TransportState,
 } from "./engine";
+import { type EngineState, resolveEngineState } from "./live-status";
 import { DEFAULT_VELOCITY } from "./notes";
 import * as params from "./params";
 import { deviceById } from "./projection";
@@ -85,6 +86,20 @@ export class SceneSession {
   midiStatus = $state("MIDI: requesting access…");
   started = $state(false);
   ready = $state(false);
+  // Structured twins of the prose `status`/`health` lines, for the live-verification hooks
+  // (`EngineHealth.svelte`): the AudioContext's state + rate, a fatal fault, and the last health snapshot.
+  audioState = $state<AudioContextState | null>(null);
+  sampleRate = $state<number | null>(null);
+  fault = $state<string | null>(null);
+  lastHealth = $state<HealthMessage | null>(null);
+  engineState: EngineState = $derived(
+    resolveEngineState({
+      fault: this.fault,
+      started: this.started,
+      ready: this.ready,
+      audioState: this.audioState,
+    }),
+  );
   // The fetched device catalog (arrives on `ready`) — controls render from it, not hardcoded ids.
   catalog = $state<DeviceDescriptor[]>([]);
   // Cable presets the picker offers for analog connections (fetched with the device catalog).
@@ -95,6 +110,9 @@ export class SceneSession {
   // --- Live readout state (streamed from the worklet) ---------------------------------------------
   // Master output peak (linear, ±1.0 = full scale), from the worklet's throttled level message.
   level = $state(0);
+  // The highest `level` since the engine started (a peak hold) — so a check can play a short note and
+  // read afterwards whether anything came out, without racing the release.
+  peakHold = $state(0);
   // Live device meter readings from the node→host lane, keyed by device id (values in readout-id
   // order). Updated ~47×/s from the worklet's `readouts` message.
   readings = $state<Record<string, number[]>>({});
@@ -502,6 +520,7 @@ export class SceneSession {
   ): Promise<void> {
     if (this.started) return;
     this.started = true;
+    this.fault = null;
     // The OPFS storage worker owns the take files (sync access handles need a Worker). Create it once
     // here; the record/playback orchestrator that drives it is built on `ready` (it needs `send`).
     this.#storage = new StorageClient(
@@ -514,11 +533,20 @@ export class SceneSession {
           onStatus: (m) => {
             this.status = m;
           },
+          onAudioState: (state, rate) => {
+            this.audioState = state;
+            this.sampleRate = rate;
+          },
+          onFault: (message) => {
+            this.fault = message;
+          },
           onHealth: (h: HealthMessage) => {
             this.health = healthSummary(h);
+            this.lastHealth = h;
           },
           onLevel: (peak) => {
             this.level = peak;
+            if (peak > this.peakHold) this.peakHold = peak;
           },
           onReadouts: (r) => {
             this.readings = Object.fromEntries(r);
@@ -586,6 +614,7 @@ export class SceneSession {
       this.#resume = control.resume;
     } catch (err) {
       this.status = `error: ${err}`;
+      this.fault = `error: ${err}`;
       this.started = false;
     }
   }

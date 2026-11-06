@@ -170,6 +170,10 @@ export interface EngineControl {
 /** Callbacks the host drives as the worklet reports back. */
 export interface EngineHandlers {
   onStatus: (message: string) => void;
+  /** The AudioContext's state (and its rate) — on creation and on every `statechange`. Optional. */
+  onAudioState?: (state: AudioContextState, sampleRate: number) => void;
+  /** A fatal engine fault (worklet crash/error, protocol mismatch). Also reported via `onStatus`. */
+  onFault?: (message: string) => void;
   onHealth: (health: HealthMessage) => void;
   /** Output peak for the master meter (linear, ±1.0 = full scale). */
   onLevel: (peak: number) => void;
@@ -248,6 +252,13 @@ export async function startEngine(
     latencyHint: "interactive",
   });
   handlers.onStatus(`AudioContext @ ${audio.sampleRate} Hz — loading worklet…`);
+  handlers.onAudioState?.(audio.state, audio.sampleRate);
+  audio.onstatechange = () => handlers.onAudioState?.(audio.state, audio.sampleRate);
+  // A fault is both a status line (for people) and a structured signal (for the engine-status hook).
+  const fault = (message: string): void => {
+    handlers.onStatus(message);
+    handlers.onFault?.(message);
+  };
 
   // public/ assets are served from the web root by Vite (dev and build).
   await audio.audioWorklet.addModule("/processor.js");
@@ -279,18 +290,20 @@ export async function startEngine(
     );
 
   node.onprocessorerror = () => {
-    handlers.onStatus("processor error — the worklet crashed (see console)");
+    fault("processor error — the worklet crashed (see console)");
   };
+  let readySeen = false;
   node.port.onmessage = (e: MessageEvent) => {
     const d = e.data;
     if (d?.type === "ready") {
       const ready = d as ReadyMessage;
       if (!protocolVersionsMatch(ready.topologyProtocolVersion, expectedTopologyProtocolVersion)) {
-        handlers.onStatus(
+        fault(
           `topology protocol mismatch: UI ${expectedTopologyProtocolVersion}, worklet ${ready.topologyProtocolVersion}`,
         );
         return;
       }
+      readySeen = true;
       handlers.onStatus(latencySummary(audio, ready));
       handlers.onReady(ready, send);
     } else if (d?.type === "health") {
@@ -313,7 +326,9 @@ export async function startEngine(
       const m = d as RecordStoppedMessage;
       handlers.onRecordStopped?.(m.device, m.track, m.header);
     } else if (d?.type === "error") {
-      handlers.onStatus(`worklet error: ${d.message}`);
+      // Before `ready` it's a construction failure (no engine); after, a rejected hot-swap while the
+      // previous patch keeps playing — reported, but the engine itself is still up.
+      (readySeen ? handlers.onStatus : fault)(`worklet error: ${d.message}`);
       console.error("worklet error:", d.message, "\n", d.stack);
     } else if (d?.type === "patchAccepted") {
       handlers.onPatchAccepted?.((d as PatchAcceptedMessage).requestId);
@@ -329,7 +344,7 @@ export async function startEngine(
       handlers.onTopologyInstalled?.((d as TopologyInstalledMessage).transaction);
     } else if (d?.type === "protocolMismatch") {
       const m = d as ProtocolMismatchMessage;
-      handlers.onStatus(`topology protocol mismatch: UI ${m.actual}, worklet ${m.expected}`);
+      fault(`topology protocol mismatch: UI ${m.actual}, worklet ${m.expected}`);
     } else if (d?.type === "deviceDescriptors") {
       handlers.onDeviceDescriptors?.((d as DeviceDescriptorMessage).deviceDescriptors);
     }

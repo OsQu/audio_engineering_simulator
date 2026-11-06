@@ -50,6 +50,8 @@
   import CableInspector from "./widgets/CableInspector.svelte";
   import FloatingWindow from "./widgets/FloatingWindow.svelte";
   import Vu from "./widgets/Vu.svelte";
+  import EngineHealth from "./EngineHealth.svelte";
+  import { debugRequested } from "./live-status";
   import WorldView from "./widgets/WorldView.svelte";
   import type { WorldApi } from "./world-api";
   import { tick, untrack } from "svelte";
@@ -546,6 +548,9 @@
   // MIDI, then resume the AudioContext — the button click *is* the user gesture, so audio flows
   // immediately, same as before the suspended-boot split (the workbench, by contrast, boots on load and
   // resumes on its first interaction).
+  // `?debug=1`: land with the Debug menu open (read once; the menu is user-toggled afterwards).
+  const debugOnLoad = debugRequested(location.search);
+
   async function start(): Promise<void> {
     await session.start(() => {
       // Request Web MIDI once (the permission); the note target follows focus via playNote. The
@@ -684,11 +689,13 @@
         </div>
       </details>
 
-      <!-- Global VU + simulation status/health/MIDI readout, behind a debug menu. -->
-      <details class="menu right">
+      <!-- Global VU + simulation status/health/MIDI readout, behind a debug menu (`?debug=1` opens it
+           on load — the live-verification hook). -->
+      <details class="menu right" data-testid="debug-panel" open={debugOnLoad}>
         <summary>Debug</summary>
         <div class="menu-panel debug-menu">
-          <Vu level={session.level} />
+          <Vu level={session.level} hold={session.peakHold} />
+          <EngineHealth {session} />
           <span class="statuses"
             >{[session.status, session.health, session.midiStatus]
               .filter(Boolean)

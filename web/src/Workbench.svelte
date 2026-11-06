@@ -249,7 +249,8 @@
 
   let keybedOpen = $state(true);
   // The debug surface is a collapsible right-hand drawer (view-only state — pins persist in the scene,
-  // but whether the drawer is open is ephemeral). Open by default so the instrumentation is visible.
+  // but whether the drawer is open is ephemeral). Open by default so the instrumentation is visible —
+  // `?debug=1` is accepted here too (always open on load) so one URL flag works on every route.
   let debugOpen = $state(true);
 
   // --- Device focus mode (sit down at a device) -----------------------------------------------------
@@ -377,7 +378,7 @@
          filter+pin watch-list over the rig's params/configs/readouts. Reads the shared session. Toggled
          from the always-visible header "Debug" button; the × here just collapses it. -->
     {#if debugOpen}
-      <aside class="debug-drawer">
+      <aside class="debug-drawer" data-testid="debug-panel">
         <div class="drawer-head">
           <span class="drawer-title">Debug</span>
           <button
