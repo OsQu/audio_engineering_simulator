@@ -1,13 +1,15 @@
 // The shared pan/zoom **camera** over a transformed surface — one place, used by both the spatial scene
 // (WorldView) and the flat workbench (BenchStage). It owns the `translate(pan) · scale(zoom)` transform,
 // cursor-anchored wheel zoom, and drag-to-pan; each view keeps only its own *content layout* and its
-// world↔surface coordinate mapping. This is the twin of `device-drag`'s `draggable` (which moves one
+// world↔surface coordinate mapping. This is the twin of `device-drag`'s `beginMove` (which moves one
 // item): the camera moves the whole view. Mirrors how `PatchController` centralises the patch gesture.
 //
 // Held as a `$state` class (like PatchController): the reactive `zoom`/`panX`/`panY` fields drive the
 // surface `transform`, and the methods adapt DOM pointer/wheel events to camera moves. Drag-to-pan is
-// self-contained (pointer capture + element listeners on the grabbed backdrop), so a view needs no
-// window handlers — it just calls `startPan` on a backdrop pointerdown and `wheelZoom` on wheel.
+// started by the stage arbiter (`beginPan`, on the shared pointer session), so a view needs no window
+// handlers — the arbiter calls `beginPan` for an unclaimed press and the view calls `wheelZoom` on wheel.
+
+import { beginPointerSession } from "./pointer-session";
 
 export interface CameraOpts {
   /** Initial zoom (px per surface unit). */
@@ -67,27 +69,23 @@ export class Camera {
     this.zoom = next;
   }
 
-  /** Begin a drag-to-pan from a backdrop pointerdown: capture the pointer on the grabbed element and
-   *  track it to release (self-contained — no window handlers). Left button only. */
-  startPan(e: PointerEvent): void {
-    if (e.button !== 0) return;
-    const el = e.currentTarget as HTMLElement;
-    el.setPointerCapture(e.pointerId);
-    this.#pan = { px: e.clientX, py: e.clientY, x0: this.panX, y0: this.panY };
-    const move = (ev: PointerEvent): void => {
-      if (!this.#pan) return;
-      this.panX = this.#pan.x0 + (ev.clientX - this.#pan.px);
-      this.panY = this.#pan.y0 + (ev.clientY - this.#pan.py);
-    };
-    const up = (): void => {
-      this.#pan = null;
-      el.removeEventListener("pointermove", move);
-      el.removeEventListener("pointerup", up);
-      el.removeEventListener("pointercancel", up);
-    };
-    el.addEventListener("pointermove", move);
-    el.addEventListener("pointerup", up);
-    el.addEventListener("pointercancel", up);
+  /** Begin a drag-pan the stage arbiter assigned this press, on the shared pointer session captured at
+   *  `root`. A cancel simply stops panning where it is (a pan has nothing to commit or roll back). */
+  beginPan(e: PointerEvent, root: HTMLElement): void {
+    const start = { px: e.clientX, py: e.clientY, x0: this.panX, y0: this.panY };
+    const session = beginPointerSession(root, e, {
+      move: (ev) => {
+        this.panX = start.x0 + (ev.clientX - start.px);
+        this.panY = start.y0 + (ev.clientY - start.py);
+      },
+      release: () => {
+        this.#pan = null;
+      },
+      cancel: () => {
+        this.#pan = null;
+      },
+    });
+    if (session) this.#pan = start;
   }
 
   /** A viewport client point → surface-local coords: subtract the (post-transform) surface origin and

@@ -6,17 +6,12 @@
 // rule, and where the committed value is stored — is injected by the caller, mirroring how both stages
 // feed one cable-resolution pipeline and share one `PatchController`.
 //
-// A pointerdown on a control (knob/fader/switch = slider/button), a patch jack, or any other
-// self-gesturing element must NOT start a move, so those opt out via `DRAG_EXCLUDE` (a press that hits
-// one of these selectors is left alone). Pointer capture keeps the drag tracking outside the element.
+// Which press is a device move is decided once by the stage arbiter (stage-gestures.ts, Story 10.7):
+// controls and near-socket presses never reach here. `beginMove` runs on the shared pointer session, so
+// the pointer is captured and a cancel never commits.
 
+import { beginPointerSession } from "./pointer-session";
 import { snapToGrid } from "./spatial";
-
-/** Elements whose pointerdown must not start a device move: controls (knob/fader = slider, switch =
- *  button), text inputs/links, and patch jacks. A press landing on any of these is left to its own
- *  gesture. Shared so the scene view and the bench exclude exactly the same things. */
-export const DRAG_EXCLUDE =
-  'button, input, select, textarea, a, [role="slider"], [role="switch"], [data-jack]';
 
 /** The caller's seam for one draggable device. Position units are the caller's (world mm for the scene,
  *  surface-mm offset for the bench); the action only does px→units via `scale` and reports candidates. */
@@ -42,80 +37,41 @@ export interface MoveDraggable {
   onEnd: (x: number, y: number, legal: boolean) => void;
   /** The pointer gesture was cancelled, so no placement may be committed. */
   onCancel?: () => void;
-  /** Override the excluded-selectors set (defaults to {@link DRAG_EXCLUDE}). */
-  exclude?: string;
 }
 
-/** Svelte action: make `node` a drag handle that repositions the device it renders. Attach to the whole
- *  device body; controls/jacks inside opt out via {@link DRAG_EXCLUDE}. */
-export function draggable(node: HTMLElement, params: MoveDraggable) {
-  let p = params;
-  // Grab bookkeeping: the pointer's start client px + the item's origin position at grab.
-  let startX = 0;
-  let startY = 0;
-  let ox = 0;
-  let oy = 0;
+/** The candidate position for a pointer at client `(cx, cy)`, given the grab point and origin. */
+function candidateAt(
+  p: MoveDraggable,
+  grab: { x: number; y: number },
+  origin: { x: number; y: number },
+  cx: number,
+  cy: number,
+): { x: number; y: number; legal: boolean } {
+  const scale = p.scale() || 1;
+  const dx = (cx - grab.x) / scale;
+  const dy = (cy - grab.y) / scale;
+  const x = snapToGrid(origin.x + dx, p.gridStep ?? 0);
+  let y = snapToGrid(origin.y + (p.invertY ? -dy : dy), p.gridStep ?? 0);
+  if (p.clampFloor) y = Math.max(0, y);
+  return { x, y, legal: p.canPlace?.(x, y) ?? true };
+}
 
-  // The candidate position for a pointer event: origin + (screen delta ÷ zoom), y-oriented, snapped,
-  // floor-clamped, and run through the legality gate.
-  function candidate(ev: PointerEvent): { x: number; y: number; legal: boolean } {
-    const scale = p.scale() || 1;
-    const dx = (ev.clientX - startX) / scale;
-    const dy = (ev.clientY - startY) / scale;
-    const x = snapToGrid(ox + dx, p.gridStep ?? 0);
-    let y = snapToGrid(oy + (p.invertY ? -dy : dy), p.gridStep ?? 0);
-    if (p.clampFloor) y = Math.max(0, y);
-    return { x, y, legal: p.canPlace?.(x, y) ?? true };
-  }
-
-  function onMove(ev: PointerEvent): void {
-    const c = candidate(ev);
-    p.onMove(c.x, c.y, c.legal);
-  }
-
-  function clearPointerListeners(): void {
-    node.removeEventListener("pointermove", onMove);
-    node.removeEventListener("pointerup", onUp);
-    node.removeEventListener("pointercancel", onCancel);
-  }
-
-  function onUp(ev: PointerEvent): void {
-    clearPointerListeners();
-    const c = candidate(ev);
-    p.onEnd(c.x, c.y, c.legal);
-  }
-
-  function onCancel(): void {
-    clearPointerListeners();
-    p.onCancel?.();
-  }
-
-  function onDown(ev: PointerEvent): void {
-    if (ev.button !== 0) return; // primary button only
-    if ((ev.target as HTMLElement | null)?.closest(p.exclude ?? DRAG_EXCLUDE)) return;
-    ev.preventDefault();
-    startX = ev.clientX;
-    startY = ev.clientY;
-    const o = p.origin();
-    ox = o.x;
-    oy = o.y;
-    node.setPointerCapture(ev.pointerId);
-    p.onStart?.(ox, oy);
-    node.addEventListener("pointermove", onMove);
-    node.addEventListener("pointerup", onUp);
-    node.addEventListener("pointercancel", onCancel);
-  }
-
-  node.addEventListener("pointerdown", onDown);
-  return {
-    update(next: MoveDraggable): void {
-      p = next;
+/** Start a device move the stage arbiter (stage-gestures.ts) has already decided this press owns. It
+ *  runs on the shared pointer session: a release reports `onEnd`, while pointercancel / lost capture /
+ *  blur / unmount report `onCancel` only — a cancelled move never reaches the commit path. */
+export function beginMove(root: HTMLElement, e: PointerEvent, p: MoveDraggable): void {
+  const grab = { x: e.clientX, y: e.clientY };
+  const origin = p.origin();
+  const session = beginPointerSession(root, e, {
+    move: (ev) => {
+      const c = candidateAt(p, grab, origin, ev.clientX, ev.clientY);
+      p.onMove(c.x, c.y, c.legal);
     },
-    destroy(): void {
-      node.removeEventListener("pointerdown", onDown);
-      node.removeEventListener("pointermove", onMove);
-      node.removeEventListener("pointerup", onUp);
-      node.removeEventListener("pointercancel", onCancel);
+    release: (ev) => {
+      const c = candidateAt(p, grab, origin, ev.clientX, ev.clientY);
+      p.onEnd(c.x, c.y, c.legal);
     },
-  };
+    cancel: () => p.onCancel?.(),
+  });
+  if (session) p.onStart?.(origin.x, origin.y);
 }

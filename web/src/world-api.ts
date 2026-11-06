@@ -4,6 +4,8 @@
 // bolted-down device). It lives here, not inside a widget, so the bench doesn't import a type from the
 // scene-view widget it deliberately isn't (Story 6.3).
 
+import type { StageFrame } from "./stage-gestures";
+
 /** A point in a stage's surface-local pixel space (y increases downward — SVG/DOM convention). */
 export interface SurfacePoint {
   x: number;
@@ -18,9 +20,13 @@ export interface SurfacePoint {
  *  - `clientToSurface`: a viewport client point (e.g. a measured DOM rect) → surface-local.
  *  - `stageRoot`: the transformed surface element — the root that scopes stage-only DOM queries (the flip
  *    lifecycle's transitions), so a duplicate faceplate *outside* the surface (a focus window) is never
- *    mistaken for a stage face. `null` until the surface mounts. */
+ *    mistaken for a stage face. `null` until the surface mounts.
+ *  - `pickFrame`: what `pickSocketTarget` needs from the DOM, read fresh at each press/move/release. */
 export interface WorldApi {
   worldToSurface: (worldX: number, worldY: number) => SurfacePoint;
   clientToSurface: (clientX: number, clientY: number) => SurfacePoint;
   stageRoot: () => HTMLElement | null;
+  /** The stage's current client frame for socket picking (camera zoom + origin, viewport clip, UI
+   *  blockers), or null before it mounts (Story 10.7). */
+  pickFrame: () => StageFrame | null;
 }

@@ -39,7 +39,7 @@
   }
 </script>
 
-<div class="cable-inspector">
+<div class="cable-inspector" data-pointer-blocker>
   <span class="ci-label">
     Cable <strong>{conn.from.device}</strong> → <strong>{conn.to.device}</strong>
   </span>

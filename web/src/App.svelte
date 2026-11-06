@@ -30,7 +30,7 @@
     type ViewCtx,
   } from "./projection";
   import * as cableView from "./cable-view";
-  import { studioCableInput, worldRectToSurface } from "./view-resolver";
+  import { studioCableInput } from "./view-resolver";
   import {
     type CablePass as CablePassData,
     type CableResolutionInput,
@@ -38,7 +38,9 @@
     resolveConnections,
     resolveHeldCable,
   } from "./cable-resolution";
-  import type { ProjectedSlot } from "./socket-geometry";
+  import { pickSocketTarget, resolveSocketTargets, type SocketPick } from "./patch-targets";
+  import { beginPointerSession } from "./pointer-session";
+  import { pointerKind } from "./stage-gestures";
   import CablePass from "./widgets/CablePass.svelte";
   import SilhouetteClips from "./widgets/SilhouetteClips.svelte";
   import * as placement from "./placement";
@@ -235,24 +237,6 @@
     });
   });
 
-  // Socket anchors for patching are projected from the same slot frames (preview-aware, settled side).
-  // A camera move, a placement or rack move, or a settled flip changes only this projection.
-  const studioSlots = $derived.by((): ProjectedSlot[] => {
-    const api = worldApi;
-    if (!api) return [];
-    const objects = new Map(studioObjects.map((o) => [o.id, o]));
-    return [...studioFaces.values()].flatMap((face) => {
-      const rect = objects.get(face.objectId)?.rect;
-      const frame = rect ? worldRectToSurface(rect, api.worldToSurface) : null;
-      return (["front", "back"] as const).map((side) => ({
-        slot: { face: face.id, side },
-        frame,
-        presented: side === face.face,
-      }));
-    });
-  });
-  patch.project(() => studioSlots);
-
   // Every connection resolved once: full cable, portal, or nothing (with a reason).
   const resolvedCables = $derived(
     cableInput
@@ -275,6 +259,53 @@
         })
       : null,
   );
+  // Patchable socket targets (Story 10.7): presented, current, exposed sockets of this view, derived from
+  // the same input as the cables — so hidden, mid-flip, occluded, off-view and top-view sockets never
+  // appear. One stage picker serves press, move and release.
+  const socketTargets = $derived(cableInput ? resolveSocketTargets(cableInput) : []);
+  function studioPick(
+    client: { x: number; y: number },
+    pointerType: "mouse" | "pen" | "touch",
+  ): SocketPick {
+    const frame = worldApi?.pickFrame();
+    if (!frame || !cableInput) return { kind: "none", reason: "outside" };
+    return pickSocketTarget(socketTargets, client, {
+      ...frame,
+      silhouettes: cableInput.silhouettes,
+      pointerType,
+    });
+  }
+  patch.bindStage({
+    clientToSurface: (x, y) => worldApi?.clientToSurface(x, y) ?? { x: 0, y: 0 },
+    pick: studioPick,
+  });
+  // The studio's patch-side gesture owners for the stage arbiter: a socket press patches; a cable press
+  // selects it on a release without movement (a drag off a cable does nothing).
+  const studioGestures = {
+    pick: (e: PointerEvent): SocketPick =>
+      studioPick({ x: e.clientX, y: e.clientY }, pointerKind(e)),
+    socket: (
+      e: PointerEvent,
+      pick: Extract<SocketPick, { kind: "exact" | "near" }>,
+      root: HTMLElement,
+    ): void => patch.begin(e, pick, root),
+    cable: (e: PointerEvent, key: string, root: HTMLElement): void => {
+      beginPointerSession(root, e, {
+        release: (_ev, moved) => {
+          if (!moved) selectedCableKey = key;
+        },
+        cancel: () => {},
+      });
+    },
+  };
+  // The reason the held cable can't connect where it is — hovering an illegal socket, or the last
+  // release on one — kept visible so another destination can be chosen.
+  const patchReason = $derived(
+    dragCable?.verdict && !dragCable.verdict.ok
+      ? dragCable.verdict.reason
+      : (dragCable?.rejection?.reason ?? null),
+  );
+
   const otherEndLabel = (id: string): string =>
     cableView.otherEndLabel(scene, currentSpace, WALL_LABELS, id);
 
@@ -538,15 +569,9 @@
   const reload = (): void => session.reload();
 </script>
 
-<!-- Cable-drag pointer tracking: a jack press starts a cable; move/up run globally so the drag keeps
-     working past the jack. WorldView's own pan/device-drag handlers stay inert (no jack ⇒ no cable drag,
-     and no device drag/pan is active during a cable drag). -->
-<svelte:window
-  onpointerdown={(e) => patch.pointerDown(e, worldApi)}
-  onpointermove={(e) => patch.pointerMove(e, worldApi)}
-  onpointerup={(e) => patch.pointerUp(e)}
-  onkeydown={onGlobalKey}
-/>
+<!-- Presses are arbitrated by WorldView's stage arbiter (Story 10.7); the window only feeds a pending
+     pick's buttonless cursor-follow (an owned gesture is driven by its own pointer session). -->
+<svelte:window onpointermove={(e) => patch.hover(e)} onkeydown={onGlobalKey} />
 
 <main>
   <header class="toolbar">
@@ -713,7 +738,6 @@
               aria-label={`select cable ${r.key}`}
               data-cable={r.key}
               style:pointer-events={dragCable ? "none" : "stroke"}
-              onclick={() => (selectedCableKey = r.key)}
               onkeydown={(e) => {
                 if (e.key === "Enter" || e.key === " ") selectedCableKey = r.key;
               }}
@@ -761,6 +785,7 @@
         fitKey={`${currentSpace}:${currentView}`}
         gridStep={GRID_MM}
         bind:api={worldApi}
+        gestures={studioGestures}
       >
         {#snippet cables(api)}
           <!-- The main pass of every drawn cable and portal stub (the cable paint band). -->
@@ -852,6 +877,14 @@
               cy={dragCable.free.y}
               r="12"
             />
+          {/if}
+          {#if dragCable && patchReason}
+            <text
+              class="patch-reason-label"
+              data-patch-reason
+              x={dragCable.free.x + 18}
+              y={dragCable.free.y - 18}>{patchReason}</text
+            >
           {/if}
         {/snippet}
 
@@ -1035,8 +1068,9 @@
       {#if pendingSourceName}
         <!-- Cross-view patch in progress: a cable end is held from a click on a source jack. Turn to
              another wall/room and click a destination jack to complete (Esc / Cancel to drop it). -->
-        <div class="patch-banner">
+        <div class="patch-banner" data-pointer-blocker>
           Patching from <strong>{pendingSourceName}</strong> — click a destination jack
+          {#if patchReason}<span class="patch-reason">— {patchReason}</span>{/if}
           <button type="button" onclick={() => patch.cancel()}>Cancel</button>
         </div>
       {/if}
@@ -1525,6 +1559,18 @@
     border-radius: var(--ae-radius-panel);
     box-shadow: var(--ae-shadow-card);
     font-size: 0.8rem;
+  }
+  .patch-banner .patch-reason {
+    color: #f2b8b5;
+  }
+  :global(.patch-reason-label) {
+    fill: #f2b8b5;
+    font-size: 22px;
+    font-weight: 600;
+    paint-order: stroke;
+    stroke: #1b1d20;
+    stroke-width: 4;
+    pointer-events: none;
   }
   .patch-banner button {
     font: inherit;
