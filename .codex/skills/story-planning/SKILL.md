@@ -122,11 +122,14 @@ State which Story you resolved in one line before doing anything else, so a wron
 ### 1. Resolve the target Story and its base
 
 - Resolve the Story id (arg or next not-done). State it in one line.
-- Check git state and resolve the base for the new Story branch. By default, use an up-to-date `main` after
-  the previous Story is merged. When the user explicitly asks to start on the current branch or a named
-  previous Story branch, use that requested base instead: report its name and cleanliness, but do not treat
-  the unmerged relationship as a blocker or ask them to repeat authorization. If no base was specified and
-  the previous Story is unmerged, or if the worktree is dirty, surface it and ask how to proceed.
+- **Factory mode** (`CLAUDE.md` §2a — an fx ticket run): fx already created the branch and worktree; plan
+  on it as-is and skip base resolution. Story ordering is the ticket's `blocked_by`, not yours to check.
+- Otherwise, check git state and resolve the base for the new Story branch. By default, use an up-to-date
+  `main` after the previous Story is merged. When the user explicitly asks to start on the current branch
+  or a named previous Story branch, use that requested base instead: report its name and cleanliness, but
+  do not treat the unmerged relationship as a blocker or ask them to repeat authorization. If no base was
+  specified and the previous Story is unmerged, or if the worktree is dirty, surface it and ask how to
+  proceed.
 
 ### 2. Read the inputs and reconstruct context
 
@@ -203,22 +206,30 @@ done-state markers (`planned | building | done`), and the program design from st
 clear task(s); the rest read `_(program design drafted at pickup)_`. Follow the companion-file template
 in the "Program design" section.
 
-Per the task loop below: **do not commit.** The user verifies and commits both edits himself.
+Interactive mode: **do not commit** — the user verifies and commits both edits himself. Factory mode:
+commit the plan edits (`<KEY>: Story X.Y planning — design draft`) along with `.work/<KEY>/plan.md`.
 
 ### 8. Hand off to execution
 
 After the plan and companion file are written and agreed:
 
-- **Create the Story branch:** `e<epic>-s<story>/<short-story-slug>` (`CLAUDE.md` §8), off the resolved base
-  (which may be the current/named previous Story branch when the user explicitly requested it).
-  (Branching is normal repo work, not a commit — fine to do.)
+- **Create the Story branch** (interactive mode only — in factory mode fx owns the branch):
+  `e<epic>-s<story>/<short-story-slug>` (`CLAUDE.md` §8), off the resolved base (which may be the
+  current/named previous Story branch when the user explicitly requested it). (Branching is normal repo
+  work, not a commit — fine to do.)
 - **Seed the harness task list:** `TaskCreate` one entry per planned Task, so the work can be executed
   one-by-one. This is the entry into the task loop.
 
 ## The working model (the task loop) — always honor this
 
-This governs every body of work (`CLAUDE.md` §2) and is included here so it stays in context while
-planning *and* executing:
+This summarizes `CLAUDE.md` §2 so it stays in context while planning *and* executing.
+
+**Factory mode (`CLAUDE.md` §2a):** same steps 1–3, but the design review in step 2 happens only when the
+ticket asks for it (via the fx inbox, answer recorded in `.work/<KEY>/plan.md`); then each green task is
+committed on the ticket branch (`<KEY>: Task X.Y.Z — …`) and you continue to the next. Never push, merge or
+open the PR. Steps 4–6 below are interactive-only.
+
+**Interactive mode (`CLAUDE.md` §2b):**
 
 1. **Create tasks** for the work before starting (step 8 seeds them).
 2. **Before building a Task, draft its program design** in the companion file (unless step 6 already did,
@@ -233,9 +244,9 @@ planning *and* executing:
 6. When the user says he has verified and committed, **review his commit message** to confirm it
    accurately reflects the work.
 
-Never run `git commit` unless explicitly asked. Committing is the user's verification gate.
-**System-modifying commands are the user's to run** (package installs, toolchain/global config) — surface
-the exact command via `! <command>`; editing repo files and running project-local `cargo` tooling is normal
+In interactive mode, never run `git commit` unless explicitly asked — committing is the user's
+verification gate. **System-modifying commands are the user's to run** (package installs, toolchain/global
+config) — surface the exact command via `! <command>` (factory mode: via the inbox); editing repo files and running project-local `cargo` tooling is normal
 work. (Toolchain note: this shell doesn't source `~/.zshenv`, so prefix cargo with
 `source "$HOME/.cargo/env" &&`.)
 
@@ -257,5 +268,6 @@ work. (Toolchain note: this shell doesn't source `~/.zshenv`, so prefix cargo wi
   just-in-time at pickup, or you'll design against a shape the earlier tasks will change.
 - **Don't mechanically emit all three artifacts.** Pick the ones that carry a decision; a trivial
   call-stack or empty file-tree diff is filler that hides the artifact that matters.
-- **Don't commit, and don't run system-modifying installs.** Surface them; the user runs them.
+- **Don't commit (interactive mode), and don't run system-modifying installs** (either mode). Surface them;
+  the user runs them.
 - **Don't over-plan future Stories.** Elaborate only the Story being picked up; leave the rest coarse.

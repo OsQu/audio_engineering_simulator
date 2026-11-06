@@ -41,7 +41,9 @@ Full pre-push gate (mirrors CI):
 `cargo fmt --check && cargo lint && cargo test && cargo wasm && cargo docs`.
 
 Browser harness (the web project is **pnpm**-managed — `pnpm-lock.yaml`): `cd web && pnpm install &&
-pnpm run wasm && pnpm run dev` (then open `http://localhost:5173/`). `pnpm run wasm` rebuilds the WASM
+pnpm run wasm && pnpm run dev` (then open `http://localhost:5173/`). **In an fx run** the setup hook has
+already done the install + wasm build, and 5173 belongs to whoever got there first — start the server on
+the leased port instead: `cd web && pnpm run dev --port "$VITE_PORT"` (see `fx.toml`). `pnpm run wasm` rebuilds the WASM
 artifact via `web/build-wasm.sh` (wraps `wasm-pack`); `pnpm run check` runs Biome; `pnpm run typecheck`
 runs `svelte-check`; `pnpm run test` runs Vitest.
 
@@ -57,7 +59,41 @@ Biome doesn't format Svelte). Run it after editing any web file.
 
 ## 2. How we work (the task loop)
 
-This governs every body of work:
+Work happens in one of two modes. **Factory mode** applies whenever you're running as an fx ticket run —
+you're in an fx worktree with a ticket key (`AES-<n>`) and a `.work/<KEY>/` folder. Otherwise it's
+**interactive mode** (the user is in the session with you). When unsure, assume interactive.
+
+### 2a. Factory mode (fx runs)
+
+The ticket is the authorization: approving/queuing it authorizes its listed scope, the tasks it implies,
+and one commit per task. The user's verification gate moves from "every commit" to the PR.
+
+1. **Plan in `.work/<KEY>/plan.md`** (intent, approach, slices table, decisions) and keep
+   `.work/<KEY>/worklog.md` current (dated entries: did / learned / next). For Story work, also
+   write/refresh the Story's program-design companion file as usual.
+2. **Design review only when asked.** If the ticket says to get the design reviewed (or the work crosses
+   a stop condition below), write the design, then ask through the **fx inbox** and wait — not in chat.
+   Record the answer and its inbox id in `plan.md` ("Decisions (approved, I-<id>)").
+   Otherwise proceed through the tasks without stopping between them.
+3. **Gate each task green** (`cargo fmt --check && cargo lint && cargo test && cargo wasm && cargo docs`,
+   plus `pnpm run format`/`check`/`typecheck`/`test` when `web/` changed), then **commit it** on the
+   ticket branch: one focused commit per task, subject `<KEY>: Task X.Y.Z — <what>`. Don't fold
+   pre-existing unrelated changes into it.
+4. **Never push, merge, rebase onto `main`, or open the PR yourself** — `fx ship`/`fx merge` do that. Finish
+   by writing the PR draft in `.work/<KEY>/pr.md` and committing it (`<KEY>: PR draft + worklog`).
+5. **Stop and ask via the inbox** on: an architectural gap or change to a §5 non-negotiable, a material
+   scope change beyond the ticket, a shared contract/schema change the ticket didn't plan for, or a
+   failing gate you can't fix within scope. Record the open question in `plan.md` before asking.
+6. **System-modifying commands** (package installs, `brew`, global config): request them through the
+   inbox with the exact command; don't run them. Project-local tooling — `cargo`, `pnpm install`,
+   `pnpm run wasm`, the dev server on `$VITE_PORT` — is normal work.
+7. Browser checks: drive the page yourself (Playwright) against `$VITE_PORT`; there's no human to paste
+   screenshots. For visual-approval gates (e.g. `add-audio-equipment`), post the evidence to the inbox and
+   wait for approval.
+
+### 2b. Interactive mode
+
+This governs every body of work when the user is in the session:
 
 1. **Create tasks** for the work before starting.
 2. **Draft the task's program design first, and do not start implementing until the user has gone
@@ -71,8 +107,8 @@ This governs every body of work:
 6. When the user says he has verified and committed, **review his commit message** to confirm it
    accurately reflects the work.
 
-Never run `git commit` unless explicitly asked. Committing is the user's verification gate, not a
-mechanical step.
+In interactive mode, never run `git commit` unless explicitly asked. Committing is the user's
+verification gate, not a mechanical step.
 
 **System-modifying commands are the user's to run** — package installs, `brew`, global toolchain/config
 changes, network installers. Surface the exact command and let the user run it (via `! <command>`).
@@ -97,10 +133,11 @@ gate; don't start the next Story until it's green.
 
 `docs/osku_rust_concepts.md` and `docs/osku_physics_concepts.md` are the user's running learning
 references (Rust, and audio/electrical physics) — **tracked in git** (the `osku_` prefix marks them as
-his personal references kept in-repo for easy access). When you explain a **new** Rust or physics concept
-to the user, append it to the matching file (organized by its existing numbered sections, in the same
+his personal references kept in-repo for easy access). In interactive mode, when you explain a **new**
+Rust or physics concept to the user, append it to the matching file (organized by its existing numbered sections, in the same
 terse house style — update the Contents list when adding a section), so each stays a complete
-cross-context reference.
+cross-context reference. Factory runs don't edit these files; they're refreshed afterwards (e.g.
+via `guided-reading` on a merged Story).
 
 ## 4. What this project is
 
@@ -190,7 +227,9 @@ and WASM portability. Same seed ⇒ identical output.
 
 - **Branches:** one per **Story**, `e<epic>-s<story>/<short-story-slug>` (e.g. `e1-s2/electrical-primitives`).
   A Story's Tasks are commits on that branch; PR (or fast-forward) to `main` and delete on merge once
-  the Story's *Validate* gate is green.
+  the Story's *Validate* gate is green. **In factory mode fx owns the branch and worktree** — work on the
+  branch you were started on; don't create, rename or delete branches. Story ordering ("don't start the
+  next Story until Validate is green") is expressed as ticket `blocked_by`/stacking, not checked by hand.
 - **Cargo aliases** (in `.cargo/config.toml`) shortcut the commands with fiddly flags:
   - `cargo lint` → clippy, all targets, warnings-as-errors
   - `cargo wasm` → wasm32 portability check (engine + bindings)
@@ -206,3 +245,25 @@ and WASM portability. Same seed ⇒ identical output.
 Audio is the ground-truth oracle for DSP (you can hear wrong dynamics/filters). **Tests are the oracle for
 the analog domain** — cable loss, impedance ratios, noise floors, and calibration can't be heard reliably,
 so they're asserted numerically against hand calculations.
+
+## 10. Known traps (hard-won; read before touching the area)
+
+- **Catalog vs web split.** The Rust `devices` catalog holds *specs* (ports, params, ranges, connector,
+  form-factor dims); `web/` holds *rendering* (`skin.ts` finish/cap/`ioFace`, `focus.ts` surfaces). Don't
+  add UI-presentation fields to catalog entries.
+- **WASM is not rebuilt by the gates.** Any change crossing `catalog()`/`cable_catalog()`/`parse_patch`
+  is invisible in the browser until `pnpm run wasm` (or `wasm:watch`) rebuilds `web/public/`. Rebuild
+  before browser-checking, and mention it in the handoff/PR.
+- **`$state` → `postMessage`.** Svelte 5 `$state` values are Proxies; posting them to the worklet throws
+  `DataCloneError`. Pass `$state.snapshot(...)` (see `plainPatch()` in `web/src/session.svelte.ts`) at every boundary.
+- **Biome.** `/biome.json` is strict JSON — a comment silently drops Biome to default config. One config
+  at the repo root (`"root": true`); `.svelte` is excluded (svelte-check + Prettier own it; Biome's
+  on-save fix corrupts Svelte files).
+- **"Global CSS leak" in dev** is usually a stale vite-plugin-svelte style module, not a source bug: curl
+  `…/X.svelte?svelte&type=style&lang.css` and look for `.s-<hash>`; restart Vite / clear
+  `web/node_modules/.vite`. Don't paper over it with defensive selectors.
+- **Screenshots of the running sim can hang** tools that wait for idle (continuous rAF + worklet + HMR).
+  For geometry/rendering bugs prefer a temporary `TEMP DEBUG` text/overlay dump of computed values over
+  pixel-reading; remove it in the fix.
+- **Tree drift.** A stopped agent may have left edits; `git status`/`git diff` before debugging behavior
+  that contradicts the code you remember.

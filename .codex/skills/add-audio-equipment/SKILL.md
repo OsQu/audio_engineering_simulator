@@ -16,6 +16,12 @@ focused commit per completed task. It does not authorize unlisted scope, archite
 operations, or external side effects. Read the relevant settled decisions in `docs/IMPLEMENTATION_PLAN.md`
 before planning edits.
 
+In an fx ticket run (`CLAUDE.md` §2a), every "stop for user approval" in this skill — scope, Story
+breakdown, visual approval, architectural gap — is a blocking **fx inbox** question carrying the evidence
+(brief path, screenshots, manager score). Record the answer and its inbox id in the brief/Story and in
+`.work/<KEY>/plan.md`. A ticket that already says "approved for autonomous execution" counts as the Story
+approval; it never counts as visual approval.
+
 ## Architectural boundary
 
 Equipment additions are **additive content work**. Use the architecture and extension seams that already
