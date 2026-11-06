@@ -181,9 +181,29 @@ describe("cableRoute", () => {
       { kind: "exit", point: { x: 0, y: 0 }, lead: { x: 0, y: 24 } },
       { kind: "socket", point: { x: 300, y: 24 } },
     );
-    // dist 300 → sag 60; c1 = (100, 84), c2 = (200, 84).
-    expect(route.d).toBe("M 0 0 L 0 24 C 100 84 200 84 300 24");
+    // dist 300 → sag 60; sag handles c1 = (100, 84), c2 = (200, 84). The exit end's handle is re-aimed
+    // along the lead (straight down) keeping its length √(100² + 60²) = √13600 ≈ 116.62 → c1 = (0, 140.62).
+    const [head, curve] = route.d.split(" C ");
+    expect(head).toBe("M 0 0 L 0 24");
+    const [c1x, c1y, ...rest] = (curve ?? "").split(" ").map(Number);
+    expect(c1x).toBeCloseTo(0);
+    expect(c1y).toBeCloseTo(24 + Math.sqrt(13600));
+    expect(rest).toEqual([200, 84, 300, 24]);
     expect(route.start).toEqual({ x: 0, y: 24 });
+  });
+
+  it("joins the straight lead and the sag without a kink (tangent-continuous)", () => {
+    // A right-edge exit whose lead runs +x, heading to a socket below-left: the sag handle alone would
+    // point down-left, a sharp corner at the lead tip; the re-aimed handle continues +x.
+    const route = cableRoute(
+      { kind: "socket", point: { x: -200, y: 300 } },
+      { kind: "exit", point: { x: 100, y: 50 }, lead: { x: 124, y: 50 } },
+    );
+    const nums = route.d.split(" C ")[1]?.split(" L ")[0]?.split(" ").map(Number) ?? [];
+    const [, , c2x, c2y, ex, ey] = nums;
+    expect(ey).toBeCloseTo(50);
+    expect(c2y).toBeCloseTo(50); // handle is horizontal, collinear with the lead
+    expect(c2x).toBeGreaterThan(ex ?? 0); // and points outward (+x), continuing the lead
   });
 });
 

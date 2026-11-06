@@ -266,12 +266,28 @@ export interface CableRoute {
   readonly end: Point;
 }
 
+/** Re-aim a control handle so the curve leaves `anchor` along an exit's lead direction (edge crossing
+ *  → lead), keeping the handle's length — the straight lead and the sag then join without a kink
+ *  (tangent-continuous). A non-exit end keeps its sag handle unchanged. */
+function alignHandle(end: RouteEnd, anchor: Point, handle: Point): Point {
+  if (end.kind !== "exit") return handle;
+  const lx = end.lead.x - end.point.x;
+  const ly = end.lead.y - end.point.y;
+  const leadLen = Math.hypot(lx, ly);
+  if (leadLen === 0) return handle;
+  const reach = Math.hypot(handle.x - anchor.x, handle.y - anchor.y);
+  return { x: anchor.x + (lx / leadLen) * reach, y: anchor.y + (ly / leadLen) * reach };
+}
+
 /** Route a cable between two ends: an exit end runs straight from its edge crossing out to its lead
- *  point, and the sagging cubic (`cableControlPoints`) spans the two curve starts. */
+ *  point, and the sagging cubic (`cableControlPoints`) spans the two curve starts — its handle at an
+ *  exit end continues the lead's direction, so the cable bends smoothly out of the straight run. */
 export function cableRoute(a: RouteEnd, b: RouteEnd): CableRoute {
   const start = a.kind === "exit" ? a.lead : a.point;
   const end = b.kind === "exit" ? b.lead : b.point;
-  const [, c1, c2] = cableControlPoints(start, end);
+  const [, sag1, sag2] = cableControlPoints(start, end);
+  const c1 = alignHandle(a, start, sag1);
+  const c2 = alignHandle(b, end, sag2);
   const head =
     a.kind === "exit"
       ? `M ${a.point.x} ${a.point.y} L ${start.x} ${start.y}`
