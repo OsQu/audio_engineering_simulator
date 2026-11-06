@@ -28,6 +28,23 @@ describe("effective placement", () => {
     });
   });
 
+  it("inherits room, wall, and facing from a rack on every wall", () => {
+    for (const wall of ["front", "back", "left", "right"] as const) {
+      const scene = structuredClone(studioScene);
+      const rack = scene.ui.racks.find((r) => r.id === "rack-front");
+      if (!rack) throw new Error("fixture rack missing");
+      rack.space = "booth";
+      rack.wall = wall;
+      rack.facing = "back";
+      expect(resolveEffectivePlacement(scene, CATALOG, "mounted-front")).toMatchObject({
+        kind: "studio-mounted",
+        space: "booth",
+        wall,
+        facing: "back",
+      });
+    }
+  });
+
   it("diagnoses missing parents and invalid U-slot spans without falling back to copied fields", () => {
     const missingRack = structuredClone(studioScene);
     missingRack.ui.placements["mounted-front"].rack = { id: "gone", uSlot: 0 };

@@ -138,3 +138,14 @@ The final pure regression extends `effective-placement.test.ts`: a workbench pre
 same effective placement as committing its `x/y` into a cloned scene, while an absent preview leaves the
 durable result unchanged. The existing shared-action cancellation path is used unchanged, so cancellation
 has no command/write callback at either stage.
+
+## Story Validate — close-out
+
+- Mounted devices inherit room/wall/facing from their rack on every wall, ignoring stale copied fields
+  (`effective-placement.test.ts`); top-view and per-wall projection stay covered by `projection.test.ts`.
+- Rack previews move every occupant: pure (`effective-placement.test.ts`, `placement.test.ts`) and in the
+  browser, where the Story 10.1 known regression `rack-preview-leaves-occupant-behind` started passing and
+  was graduated to `web/test-browser/placement-preview.spec.ts`.
+- Cancel is mutation-free and commit matches the final preview for free, rack, mount, eject, and workbench
+  candidates (`placementPreviewAt` vs `moveTo` equivalence in `placement.test.ts`).
+- Invalid references (missing rack/room/placement, bad U-slot span) resolve to `unresolved` diagnostics.

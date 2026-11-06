@@ -68,3 +68,15 @@
 ## 2026-11-03 — wrap-up
 - All four Tasks done; Rust + web + browser gates green (manual browser matrix left to Oskari). PR draft
   in `.work/AES-70/pr.md`. Pushing the branch and moving AES-70 to finished.
+
+## 2026-11-06 — merge origin/e10-s1/regression-harness (ship request)
+- Picking up to merge the upstream base (it now carries rebased/squashed 10.2–10.6) and resolve conflicts.
+- Conflict: only `docs/IMPLEMENTATION_PLAN.md`, the Epic 10 **Progress** paragraph. Upstream reworded the
+  10.3 sentence (✅ complete, graduated the rack-drag regression) and still said 10.7 "remains coarse";
+  this branch said 10.7 delivers targets + the arbiter. Resolved: upstream's 10.3–10.6 wording + this
+  branch's 10.7 status.
+- Upstream also brought test-only changes (populated-rack-drag moved from stable-layers.spec.ts to the
+  new placement-preview.spec.ts, extra placement/effective-placement unit tests, 10.2/10.3 doc notes) and
+  removed `.work/AES-69/`; all taken as-is.
+- Gates after merge: web check/typecheck green, 422 unit tests, browser 40/40 (3 workers); Rust fmt, lint,
+  test (534), wasm, docs green.

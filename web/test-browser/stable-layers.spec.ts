@@ -1,6 +1,7 @@
 // Story 10.5.2: physical paint order is resolver-owned. Hover, keyboard focus, toolbar grace, and drag
 // can never change which chassis is on top, and toolbars live in a separate interaction layer.
-// Graduated from known-regressions.spec.ts (rack-hover, rear/front cable hover, populated rack drag).
+// Graduated from known-regressions.spec.ts (rack-hover, rear/front cable hover); the populated-rack-drag
+// case graduated earlier, in Story 10.3's placement-preview.spec.ts.
 import { expect, type Locator, type Page, test } from "@playwright/test";
 import {
   elementCentre,
@@ -86,24 +87,6 @@ test("hover, grace, focus, and drag never change rack/occupant occlusion", async
   await occupantOnTop(); // mid-drag: the assembly moves, the frame stays behind its occupant
   await page.mouse.up();
   await occupantOnTop();
-});
-
-test("populated rack drag moves the occupant before release", async ({ page }) => {
-  await openFixture(page, "rack-drag");
-
-  const rack = stageObject(page, "fixture-rack");
-  const occupant = stageObject(page, "fixture-compressor");
-  const rackBox = await rack.boundingBox();
-  const before = await occupant.boundingBox();
-  if (!rackBox || !before) throw new Error("rack-drag fixture did not render");
-
-  await page.mouse.move(rackBox.x + 2, rackBox.y + 2);
-  await page.mouse.down();
-  await page.mouse.move(rackBox.x + 160, rackBox.y + 40);
-  const during = await occupant.boundingBox();
-  await page.mouse.up();
-
-  expect(during?.x).toBeGreaterThan(before.x + 100);
 });
 
 test("an occupant's toolbar controls are hittable above the rack and its neighbours", async ({
