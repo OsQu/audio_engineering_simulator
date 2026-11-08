@@ -1621,6 +1621,107 @@ mod tests {
             .expect("the same balanced adapter connects Luma output to Scarlett Line In 3");
     }
 
+    /// The two-cable **hardware insert** — Scarlett Line Out 3 → Luma Line In, Luma Line Out →
+    /// Scarlett Line In 3 — closes a device-level cycle through the 8i6's matrix (one node), but its
+    /// only cycle-breakable edges are digital (inside the interface, AD → matrix → DA), so `compile`
+    /// delays one of those and the patch builds. Both external cables stay analog (each keeps a baked
+    /// loading divider), and the signal really goes through the Luma: with the matrix routing
+    /// Pre 1 → Line Out 3 and Line In 3 → Line Out 4, a note on combo in 1 reaches Line Out 4 only
+    /// while the Luma is powered.
+    #[test]
+    fn luma_hardware_insert_builds_and_passes_signal_through_the_luma() {
+        let adapter = crate::scene::CableSpec {
+            type_id: Some("balanced_trs_xlr_3m".into()),
+            resistance_ohms: 0.15,
+            capacitance_farads: 1.5e-10,
+        };
+        let patch = Patch {
+            devices: vec![
+                device("synth", "synth_voice"),
+                device("if", "scarlett_8i6"),
+                device("luma", "luma_leveler"),
+            ],
+            connections: vec![
+                conn("synth", 0, "if", 0), // synth → combo in 1
+                Connection {
+                    cable: Some(adapter.clone()),
+                    ..conn("if", 4, "luma", 0) // Line Out 3 → Luma Line In
+                },
+                Connection {
+                    cable: Some(adapter),
+                    ..conn("luma", 0, "if", 2) // Luma Line Out → Line In 3
+                },
+            ],
+            output: PortRef {
+                device: "if".into(),
+                port: 5, // Line Out 4 — carries the insert's return
+            },
+        };
+
+        let peak_with_luma_power = |luma_power: f32| {
+            let mut scene = build_patch(&patch, BLOCK_LEN, rate(), 0)
+                .expect("the insert's cycle is broken at a digital edge and builds");
+            // Both insert cables stay analog, each with its baked resistive loading divider:
+            //   conn 1: Scarlett line-out DA 150 Ω + cable 0.15 Ω → Luma 600 Ω:
+            //           20·log10(600 / 750.15) = −1.9399 dB
+            //   conn 2: Luma 600 Ω + cable 0.15 Ω → Scarlett line receiver 44 kΩ:
+            //           20·log10(44000 / 44600.15) = −0.1177 dB
+            for (index, expected) in [(1, -1.9399_f32), (2, -0.1177)] {
+                let loss = scene
+                    .connection_loading_loss(index)
+                    .expect("insert cable is an analog connection");
+                assert!(
+                    (loss - expected).abs() < 1e-3,
+                    "conn {index} loss {loss} dB"
+                );
+            }
+            // Matrix crosspoint (i → j) is exposed param 8 + 14·i + j. Ins: 0 = Pre 1, 2 = Line In 3;
+            // outs: 10 = Line Out 3, 11 = Line Out 4.
+            // 8i6 Power fans out to every powered node's handle, so size the queue generously.
+            let mut params = ParamQueue::with_capacity(64);
+            for (device, id, value) in [
+                ("if", 205, 1.0),             // 8i6 power
+                ("if", 8 + 10, 1.0),          // Pre 1 → Line Out 3 (insert send)
+                ("if", 8 + 14 * 2 + 11, 1.0), // Line In 3 → Line Out 4 (insert return)
+                ("luma", 3, luma_power),      // Luma power
+            ] {
+                for h in scene.param(device, id).to_vec() {
+                    params.set(h, value);
+                }
+            }
+            let ev = scene.event_input("synth").expect("synth event input");
+            let mut events = EventQueue::with_capacity(4);
+            events.push(
+                0,
+                ev,
+                EventMessage::NoteOn {
+                    note: NOTE,
+                    velocity: 100,
+                },
+            );
+            let mut out = VoltageBuffer::zeros(BLOCK_LEN, rate());
+            let mut peak = 0.0_f32;
+            // Measure only the second half, after the power and crosspoint glides have settled.
+            for block in 0..256 {
+                scene
+                    .schedule_mut()
+                    .process_io(&mut out, &mut params, &mut events);
+                if block >= 128 {
+                    peak = out.as_slice().iter().fold(peak, |p, &v| p.max(v.abs()));
+                }
+            }
+            peak
+        };
+
+        let on = peak_with_luma_power(1.0);
+        let off = peak_with_luma_power(0.0);
+        assert!(on > 0.01, "the note returns through the Luma, got {on} V");
+        assert!(
+            off < on * 0.01,
+            "an unpowered Luma breaks the insert: {off} V vs {on} V powered"
+        );
+    }
+
     /// The static loading-loss readout reads each connection's baked divider. In the canonical patch
     /// `synth(1 Ω)→ad(1 MΩ)` [conn 0], `ad→da` digital [conn 1], `da(150 Ω)→spk(10 kΩ)` [conn 2]:
     /// hand calc for conn 2 is 10000/(150+10000) = 0.985222 → 20·log10 = −0.1293 dB; conn 0 is
