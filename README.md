@@ -77,3 +77,18 @@ To run the browser harness (the live engine in an AudioWorklet):
 ```sh
 cd web && pnpm install && pnpm run wasm && pnpm run dev   # then open http://localhost:5173/
 ```
+
+### Complexity metrics
+
+`scripts/rust-code-analysis.sh` runs a pinned
+[rust-code-analysis-cli](https://github.com/mozilla/rust-code-analysis) (per-function cognitive and
+cyclomatic complexity, Rust and TypeScript). The binary is installed into a version-specific cache
+directory shared by all checkouts, so everyone measures with the same version:
+
+```sh
+scripts/rust-code-analysis.sh --install                     # once (~/.cache/rust-code-analysis-cli/<version>)
+scripts/rust-code-analysis.sh -m -O json -p crates -p web/src   # JSON metrics, one line per file
+```
+
+The exact scan (paths and test excludes) and the complexity limits live in `fx.toml`'s `[quality]`.
+Svelte components (`.svelte`) aren't analyzed.

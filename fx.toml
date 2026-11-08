@@ -18,3 +18,16 @@ RUSTC_WRAPPER = "sccache"
 # which are untracked and the harness needs. The Rust toolchain isn't on the
 # broker's PATH by default, hence cargo's env.
 setup = '. "$HOME/.cargo/env" && cd web && pnpm install --frozen-lockfile && pnpm run wasm'
+
+[quality]
+# Per-function complexity, recorded by fx at each merge. scripts/rust-code-analysis.sh runs the
+# pinned rust-code-analysis-cli (install once: scripts/rust-code-analysis.sh --install). It covers
+# Rust and TypeScript; .svelte components get no records. target/ and web/public/ lie outside the
+# scanned paths; tests are excluded here (fx's adapter also skips #[cfg(test)] items).
+[[quality.analyzers]]
+adapter = "rust-code-analysis"
+command = "scripts/rust-code-analysis.sh -m -O json -p crates -p web/src -X '**/tests/**' -X '**/tests.rs' -X '**/test_util.rs' -X '**/testing/**' -X '**/*.test.ts'"
+
+[quality.limits]
+cognitive = 20
+cyclomatic = 15
