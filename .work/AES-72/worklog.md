@@ -17,3 +17,11 @@
 
 **Next**
 - PR draft, push, fx mv finished.
+
+## 2026-11-08 (merge origin/main)
+**Did**
+- Merged origin/main, which brought in the codebase-hygiene split. The only conflict was `crates/devices/src/build.rs`: main moved its inline `mod tests { … }` to `build/tests.rs`. I kept main's `mod tests;` and moved this branch's new `luma_hardware_insert_builds_and_passes_signal_through_the_luma` test into `build/tests.rs` unchanged (dedented, placed after the balanced-adapter test). The docs merged cleanly.
+- Gates are green: check-plan-refs, fmt, lint, test (the new test passes), wasm, docs.
+
+**Next**
+- Push and fx mv finished.
