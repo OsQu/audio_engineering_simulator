@@ -364,7 +364,7 @@
 
   // Connection introspection is pure scene-ops; App binds scene/catalog for cable rendering.
   const connectionKind = (c: Connection): PortKind =>
-    sceneOps.connectionKind(scene, session.catalog, c);
+    sceneOps.connectionKind(session.descriptorOf, c);
 
   // --- Cable inspector (select a cable to change its type / disconnect it) --------------------------
   let selectedCableKey = $state<string | null>(null);

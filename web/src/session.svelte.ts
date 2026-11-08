@@ -323,7 +323,7 @@ export class SceneSession {
     const edit = accepted.request.delta.payload as (scene: Scene) => void;
     edit(this.scene);
     this.topology = clearAccepted(this.topology);
-    this.paramValues = params.seedParamValues(this.scene, this.catalog);
+    this.paramValues = params.seedParamValues(this.scene, this.descriptorOf);
     this.status = `accepted ${accepted.request.label}; installing…`;
   }
 
@@ -354,12 +354,13 @@ export class SceneSession {
   // The descriptor to render a *placed* device with: its per-instance (config-sized) descriptor if the
   // engine has reported one, else the static type descriptor. A config-driven face (the computer's USB
   // shape) resizes with its config; every other device's per-instance descriptor equals its type one.
-  descriptorOf(deviceId: string): DeviceDescriptor | undefined {
+  // An arrow property so it can be handed to the pure helpers as their `Describe` resolver.
+  descriptorOf = (deviceId: string): DeviceDescriptor | undefined => {
     const perInstance = this.deviceDescriptors[deviceId];
     if (perInstance) return perInstance;
     const dev = this.scene.patch.devices.find((d) => d.id === deviceId);
     return dev ? descriptorFor(this.catalog, dev.typeId) : undefined;
-  }
+  };
 
   // A knob move touches all three param lanes at once — the live map (UI), the scene (for save), and the
   // engine (live) — so keep them in sync in this one visible place; they mustn't drift apart.
@@ -576,6 +577,10 @@ export class SceneSession {
           },
           onDeviceDescriptors: (deviceDescriptors) => {
             this.deviceDescriptors = deviceDescriptors;
+            // The per-instance descriptors land only once a hot-swap installs, after the accept-time
+            // seed above — a config change that grows a device's params (the computer's crossbar)
+            // needs this reseed so the new params have values. Saved values win, so it's idempotent.
+            this.paramValues = params.seedParamValues(this.scene, this.descriptorOf);
           },
           onTopologyAccepted: (transaction) => this.#receiveTopology("accepted", transaction),
           onTopologyRejected: (transaction, message) =>
@@ -617,8 +622,8 @@ export class SceneSession {
             this.ready = true;
             // The orchestrator needs `send` + the storage client (created in `start`).
             if (this.#storage) this.#daw = new DawController(sendFn, this.#storage);
-            this.paramValues = params.seedParamValues(this.scene, r.catalog);
-            params.pushParams(sendFn, this.scene, r.catalog, this.paramValues);
+            this.paramValues = params.seedParamValues(this.scene, this.descriptorOf);
+            params.pushParams(sendFn, this.scene, this.descriptorOf, this.paramValues);
             this.applyTrackState(); // match the fresh recorder to the scene's track model
             this.#refreshAllWaveforms(); // show any takes already on disk
             onReady(r, sendFn);

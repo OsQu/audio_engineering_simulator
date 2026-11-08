@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { matchesQuery, type Watchable, watchables } from "../src/bench-watch";
-import type { DeviceDescriptor } from "../src/catalog";
+import { type Describe, type DeviceDescriptor, typeDescriber } from "../src/catalog";
 import { isWatched, toggleWatch, watchKey } from "../src/scene-ops";
 import type { BenchWatch, Scene } from "../src/scene-store";
 
@@ -28,9 +28,15 @@ const scene = (): Scene => ({
   },
 });
 
+// A fresh scene plus a type-descriptor resolver over it.
+const withTypes = (catalog: DeviceDescriptor[]): [Scene, Describe] => {
+  const s = scene();
+  return [s, typeDescriber(s, catalog)];
+};
+
 describe("watchables", () => {
   it("flattens a device's params, configs, then readouts", () => {
-    const list = watchables(scene(), [IFACE]);
+    const list = watchables(...withTypes([IFACE]));
     expect(list.map((w) => `${w.kind}:${w.id}`)).toEqual([
       "param:0",
       "param:1",
@@ -40,7 +46,7 @@ describe("watchables", () => {
   });
 
   it("tags configs as recompile and carries label/unit + device name", () => {
-    const list = watchables(scene(), [IFACE]);
+    const list = watchables(...withTypes([IFACE]));
     const config = list.find((w) => w.kind === "config") as Watchable;
     expect(config).toMatchObject({
       device: "if",
@@ -53,12 +59,12 @@ describe("watchables", () => {
   });
 
   it("skips devices whose type isn't in the catalog (a stale pin)", () => {
-    expect(watchables(scene(), [])).toEqual([]);
+    expect(watchables(...withTypes([]))).toEqual([]);
   });
 });
 
 describe("matchesQuery", () => {
-  const list = watchables(scene(), [IFACE]);
+  const list = watchables(...withTypes([IFACE]));
   const byLabel = (label: string) => list.find((w) => w.label === label) as Watchable;
 
   it("matches nothing for an empty/whitespace query (filter-to-pin, not a dump)", () => {

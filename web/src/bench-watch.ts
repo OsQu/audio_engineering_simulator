@@ -3,7 +3,7 @@
 // its inputs (no Svelte) — the DebugPanel builds the `$derived` results from these, and unit tests pin
 // the enumeration + matching. The pin *set* itself (persistence, toggle) lives in scene-ops.
 
-import { type DeviceDescriptor, descriptorFor } from "./catalog";
+import type { Describe } from "./catalog";
 import type { BenchWatch, Scene } from "./scene-store";
 
 /** One searchable/pinnable item — a device instance's param, structural config, or readout, flattened
@@ -21,12 +21,13 @@ export interface Watchable {
   recompile: boolean;
 }
 
-/** Enumerate every watchable in the scene: each device's params, configs, and readouts, in that order.
- *  Devices whose type isn't in the catalog (a stale pin after a Rust edit) are simply skipped. */
-export function watchables(scene: Scene, catalog: DeviceDescriptor[]): Watchable[] {
+/** Enumerate every watchable in the scene: each device's params, configs, and readouts (from its
+ *  per-instance descriptor), in that order. Devices that don't resolve (a type that left the catalog — a
+ *  stale pin after a Rust edit) are simply skipped. */
+export function watchables(scene: Scene, describe: Describe): Watchable[] {
   const out: Watchable[] = [];
   for (const dev of scene.patch.devices) {
-    const desc = descriptorFor(catalog, dev.typeId);
+    const desc = describe(dev.id);
     if (!desc) continue;
     for (const p of desc.params)
       out.push({

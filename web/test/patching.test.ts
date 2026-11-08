@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { DeviceDescriptor } from "../src/catalog";
+import { type DeviceDescriptor, typeDescriber } from "../src/catalog";
 import type { Endpoint } from "../src/connections";
 import {
   aliasFor,
@@ -97,13 +97,13 @@ const started = (): PatchState => pointerDown(null, srcHit).state;
 
 describe("endpointFromJackKey / jackKeyOf", () => {
   it("round-trips a valid jack key to an Endpoint with its domain", () => {
-    expect(endpointFromJackKey(scene, CATALOG, "s1:output:0")).toEqual(OUT);
+    expect(endpointFromJackKey(typeDescriber(scene, CATALOG), "s1:output:0")).toEqual(OUT);
     expect(jackKeyOf(OUT)).toBe("s1:output:0");
   });
   it("rejects a malformed direction or an unknown port", () => {
-    expect(endpointFromJackKey(scene, CATALOG, "s1:sideways:0")).toBeNull();
-    expect(endpointFromJackKey(scene, CATALOG, "s1:output:9")).toBeNull();
-    expect(endpointFromJackKey(scene, CATALOG, "ghost:output:0")).toBeNull();
+    expect(endpointFromJackKey(typeDescriber(scene, CATALOG), "s1:sideways:0")).toBeNull();
+    expect(endpointFromJackKey(typeDescriber(scene, CATALOG), "s1:output:9")).toBeNull();
+    expect(endpointFromJackKey(typeDescriber(scene, CATALOG), "ghost:output:0")).toBeNull();
   });
 });
 

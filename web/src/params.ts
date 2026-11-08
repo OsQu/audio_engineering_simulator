@@ -2,7 +2,7 @@
 // engine. Pure given their inputs (no Svelte). App owns the `paramValues` $state and `onParamInput`
 // (which touches all three param lanes at once); these are the read/seed/push helpers around it.
 
-import { type DeviceDescriptor, descriptorFor } from "./catalog";
+import type { Describe, DeviceDescriptor } from "./catalog";
 import type { ControlMessage } from "./engine";
 import type { Scene } from "./scene-store";
 
@@ -22,11 +22,12 @@ export function paramValue(
 }
 
 // Build the live param map from the scene: each device's saved value if present, else the descriptor
-// default. Returned (not assigned) so the caller owns the reactive state.
-export function seedParamValues(scene: Scene, catalog: DeviceDescriptor[]): Record<string, number> {
+// default. Returned (not assigned) so the caller owns the reactive state. `describe` resolves each
+// device's *per-instance* descriptor, so a config-sized device seeds every param it actually has.
+export function seedParamValues(scene: Scene, describe: Describe): Record<string, number> {
   const values: Record<string, number> = {};
   for (const device of scene.patch.devices) {
-    const desc = descriptorFor(catalog, device.typeId);
+    const desc = describe(device.id);
     if (!desc) continue;
     for (const p of desc.params) {
       const saved = device.params?.find((s) => s.id === p.id)?.value;
@@ -41,11 +42,11 @@ export function seedParamValues(scene: Scene, catalog: DeviceDescriptor[]): Reco
 export function pushParams(
   sendFn: (msg: ControlMessage) => void,
   scene: Scene,
-  catalog: DeviceDescriptor[],
+  describe: Describe,
   values: Record<string, number>,
 ): void {
   for (const device of scene.patch.devices) {
-    const desc = descriptorFor(catalog, device.typeId);
+    const desc = describe(device.id);
     if (!desc) continue;
     for (const p of desc.params) {
       sendFn({
