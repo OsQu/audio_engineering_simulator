@@ -59,12 +59,9 @@ mod tests {
     use crate::graph::Graph;
     use crate::node::SynthVoice;
     use crate::schedule::{EventQueue, compile};
-    use crate::signal::{AnalogRate, EventMessage, VoltageBuffer, Volts};
+    use crate::signal::{EventMessage, VoltageBuffer, Volts};
+    use crate::test_util::rate;
     use crate::test_util::rms;
-
-    fn rate() -> AnalogRate {
-        AnalogRate::new(384_000.0)
-    }
 
     /// The controller's forwarder drives a downstream synth: a note-on injected into the pass-through's
     /// **open** event input reaches the voice through the `EventRoute` edge and makes it sound — the

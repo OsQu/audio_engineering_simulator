@@ -62,11 +62,8 @@ impl NoiseDensity {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_util::rate;
     use approx::assert_relative_eq;
-
-    fn rate() -> AnalogRate {
-        AnalogRate::new(384_000.0)
-    }
 
     #[test]
     fn sigma_matches_hand_calc() {

@@ -245,12 +245,9 @@ pub trait Node {
 mod tests {
     use super::*;
     use crate::electrical::{InputZ, Ohms, OutputZ};
-    use crate::signal::{AnalogRate, VoltageBuffer, Volts};
+    use crate::signal::{VoltageBuffer, Volts};
     use crate::test_util::process_voltage;
-
-    fn rate() -> AnalogRate {
-        AnalogRate::new(384_000.0)
-    }
+    use crate::test_util::rate;
 
     /// A minimal node exercising the trait shape: one input, one output, doubles the signal.
     /// Confirms the declared port counts line up with the lanes `process` receives.

@@ -345,12 +345,9 @@ mod tests {
     use super::*;
     use crate::param::Smoother;
     use crate::signal::VoltageBuffer;
+    use crate::test_util::rate;
     use crate::test_util::{measure_gain, process_voltage};
     use approx::assert_relative_eq;
-
-    fn rate() -> AnalogRate {
-        AnalogRate::new(384_000.0)
-    }
 
     fn preamp(gain: f32, rail: f32) -> MicPreamp {
         MicPreamp::new(

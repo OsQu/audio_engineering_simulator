@@ -106,12 +106,9 @@ mod tests {
     use crate::electrical::Ohms;
     use crate::level::pascals_to_spl;
     use crate::param::Smoother;
-    use crate::signal::{AnalogRate, Domain, Pascals, PressureBuffer, VoltageBuffer, Volts};
+    use crate::signal::{Domain, Pascals, PressureBuffer, VoltageBuffer, Volts};
+    use crate::test_util::rate;
     use approx::assert_relative_eq;
-
-    fn rate() -> AnalogRate {
-        AnalogRate::new(384_000.0)
-    }
 
     fn monitor(sensitivity: f32) -> PoweredMonitor {
         PoweredMonitor::new(sensitivity, InputZ::new(Ohms::new(10_000.0)))

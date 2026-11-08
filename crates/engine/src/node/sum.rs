@@ -63,13 +63,10 @@ impl Node for PassiveSum {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::signal::{AnalogRate, VoltageBuffer, Volts};
+    use crate::signal::{VoltageBuffer, Volts};
     use crate::test_util::process_voltage;
+    use crate::test_util::rate;
     use approx::assert_relative_eq;
-
-    fn rate() -> AnalogRate {
-        AnalogRate::new(384_000.0)
-    }
 
     fn sum(n: usize) -> PassiveSum {
         PassiveSum::new(vec![InputZ::new(Ohms::new(10_000.0)); n], Ohms::new(150.0))

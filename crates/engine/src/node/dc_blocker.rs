@@ -123,12 +123,9 @@ impl Node for DcBlocker {
 mod tests {
     use super::*;
     use crate::signal::{VoltageBuffer, Volts};
+    use crate::test_util::rate;
     use crate::test_util::{measure_gain, process_voltage, rms};
     use approx::assert_relative_eq;
-
-    fn rate() -> AnalogRate {
-        AnalogRate::new(384_000.0)
-    }
 
     /// A blocker with a ~1 kHz corner: r = 10 kΩ, c = 15.915 nF ⇒ f_c = 1/(2π·1e4·15.915e-9) =
     /// 1000 Hz. (A real DC blocker corners near 5 Hz; 1 kHz keeps the test buffers short while

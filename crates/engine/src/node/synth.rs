@@ -288,11 +288,8 @@ mod tests {
     use crate::param::ParamQueue;
     use crate::schedule::{EventQueue, compile};
     use crate::signal::{EventMessage, VoltageBuffer};
+    use crate::test_util::rate;
     use crate::test_util::{rms, tone_amplitude};
-
-    fn rate() -> AnalogRate {
-        AnalogRate::new(384_000.0)
-    }
 
     /// note 69 = A4 = 440 Hz exactly (the tuning reference).
     #[test]

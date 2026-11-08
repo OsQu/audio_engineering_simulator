@@ -59,12 +59,9 @@ mod tests {
     use super::*;
     use crate::electrical::Ohms;
     use crate::schedule::compile;
-    use crate::signal::{AnalogRate, Volts};
+    use crate::signal::Volts;
+    use crate::test_util::rate;
     use crate::{Graph, TestSource};
-
-    fn rate() -> AnalogRate {
-        AnalogRate::new(384_000.0)
-    }
 
     /// A one-node graph emitting a constant `level`, tapped at the source output.
     fn dc_schedule(level: f32) -> Schedule {
