@@ -3,8 +3,11 @@ use engine::{BitDepth, DigitalMeter, Matrix, MultitrackRecorder, SampleRate};
 use crate::{
     Connector, DeviceConfig, ParamKind, PortKind,
     catalog::{
-        BITS, CatalogEntry, FormFactor, GridAxis, GridSpec, InternalEdge, MeterBank, NodeSpec,
-        PortUi, ReadoutSpec, ReadoutUi,
+        descriptor::FormFactor,
+        spec::{
+            BITS, CatalogEntry, GridAxis, GridSpec, InternalEdge, MeterBank, NodeSpec, PortUi,
+            ReadoutSpec, ReadoutUi,
+        },
     },
 };
 
@@ -239,7 +242,7 @@ mod tests {
     use engine::Graph;
 
     use super::crossbar_defaults;
-    use crate::catalog::instantiate;
+    use crate::catalog::expand::instantiate;
     use crate::scene::ConfigSetting;
     use crate::{DeviceConfig, PortDirection, describe_device, descriptors};
 
