@@ -14,6 +14,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # Project-plan ids (Story/Task/Epic numbers, plan-doc section refs) belong in docs/ and commit
+      # messages, never in source, comments or test names.
+      - name: No plan references in source
+        run: scripts/check-plan-refs.sh
+
       # rust-toolchain.toml drives the channel; ensure components + wasm target.
       - name: Toolchain
         run: |
