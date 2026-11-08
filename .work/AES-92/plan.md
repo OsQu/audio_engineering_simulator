@@ -6,9 +6,9 @@ Three independent web correctness fixes from the project audit.
 ## Approach / slices
 | # | Slice | Status |
 |---|-------|--------|
-| 1 | `benchScene` adds the speaker instance when the tap falls back to it (digital-only DUT) + test | todo |
-| 2 | Engine teardown: `startEngine` → `dispose()` (port close, node disconnect, `audio.close()`, and close on failed bring-up); `SceneSession.dispose()` (engine, storage worker, MIDI unbind, topology timer); `$effect` cleanup in `App` / `Workbench` | todo |
-| 3 | Per-instance descriptor resolver (`Describe = (deviceId) => DeviceDescriptor \| undefined`) threaded through params / patching / bench-watch / scene-ops / DebugPanel; session passes `descriptorOf` + reseeds params when per-instance descriptors land | todo |
+| 1 | `benchScene` adds the speaker instance when the tap falls back to it (digital-only DUT) + test | done |
+| 2 | Engine teardown: `startEngine` → `dispose()` (port close, node disconnect, `audio.close()`, and close on failed bring-up); `SceneSession.dispose()` (engine, storage worker, MIDI unbind, topology timer); `$effect` cleanup in `App` / `Workbench` | done |
+| 3 | Per-instance descriptor resolver (`Describe = (deviceId) => DeviceDescriptor \| undefined`) threaded through params / patching / bench-watch / scene-ops / DebugPanel; session passes `descriptorOf` + reseeds params when per-instance descriptors land | done |
 
 ## Decisions
 - (1) Add the speaker rather than return `undefined`: keeps a digital-only device benchable (patch it via an added DA → the speaker) and needs no new Workbench hint UI.
