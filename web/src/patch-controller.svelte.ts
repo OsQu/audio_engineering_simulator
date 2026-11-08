@@ -1,10 +1,10 @@
 // The patch controller: the pointer/drag interaction machinery for patching cables, factored beside the
-// SceneSession so a second view root (the 6.2 workbench) drives the identical glue instead of
+// SceneSession so a second view root (the workbench) drives the identical glue instead of
 // re-implementing the pointer bookkeeping. A thin reactive shell — all decision logic stays in the pure,
 // node-tested modules (patching.ts transitions, scene-ops.ts edits, socket-geometry.ts registration and
 // projection); this class holds the in-flight drag state + the socket-geometry index and adapts DOM
 // pointer events to the pure transitions. Presses reach it only through a stage arbiter
-// (stage-gestures.ts, Story 10.7), which hands it socket presses (`begin`); the view root binds the
+// (stage-gestures.ts), which hands it socket presses (`begin`); the view root binds the
 // stage it picks sockets on (`bindStage`) and feeds a pending pick's cursor-follow (`hover`). Bound to a SceneSession, whose scene/catalog/cables it reads and
 // whose engine it hot-swaps after each committing edit. Each face slot registers its own geometry through
 // the `GeometryRegistrar` methods.
@@ -30,7 +30,7 @@ import {
 } from "./socket-geometry";
 import { pointerKind } from "./stage-gestures";
 
-/** What a view root binds so the controller can pick sockets and place the free end (Story 10.7). */
+/** What a view root binds so the controller can pick sockets and place the free end. */
 export interface PatchStage {
   clientToSurface: (clientX: number, clientY: number) => { x: number; y: number };
   /** The socket a client point means on this stage right now (its targets + client frame). */
@@ -40,7 +40,7 @@ export interface PatchStage {
 export class PatchController implements GeometryRegistrar {
   #session: SceneSession;
 
-  // Face-local socket geometry (Story 10.4), registered per (face instance, side) by each face slot's
+  // Face-local socket geometry, registered per (face instance, side) by each face slot's
   // `faceGeometry` action at its current revision. Camera and placement never touch it.
   geometry = $state.raw(createSocketGeometryIndex());
   // An in-progress patch from a source jack: the logical source end, the moving free end (surface
@@ -95,7 +95,7 @@ export class PatchController implements GeometryRegistrar {
     this.#stage = stage;
   }
 
-  /** A press the stage arbiter assigned to a socket (Story 10.7). A fresh press starts a drag from it; a
+  /** A press the stage arbiter assigned to a socket. A fresh press starts a drag from it; a
    *  press while a pick is pending resolves on release. Either way the gesture runs on the shared pointer
    *  session: release re-picks its own target, a cancel never commits. */
   begin(e: PointerEvent, pick: { target: SocketTarget }, root: HTMLElement): void {

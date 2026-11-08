@@ -1,5 +1,5 @@
 //! The DAW control facade — the host's off-block seam onto a recorder node's transport, tracks, and
-//! file-byte streams (Story 5.11).
+//! file-byte streams.
 //!
 //! A node like [`MultitrackRecorder`](crate::MultitrackRecorder) owns state the generic control
 //! surface can't reach: the [`Transport`], the per-track faders/arm/monitor/input assignment, and the

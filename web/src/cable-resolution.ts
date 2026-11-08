@@ -1,18 +1,18 @@
-// Unified cable presentation (Story 10.6): ordinary cables, portal stubs, and held leads all start from the
+// Unified cable presentation: ordinary cables, portal stubs, and held leads all start from the
 // same resolved endpoint state, then route and mask by the same rules. Pure — no DOM, Svelte, camera, or
 // clock. Everything here is in **surface coordinates** (the stage's own y-down space, which the camera only
 // scales and translates), the space the socket-geometry projection already produces.
 //
 // The pipeline:
 //   1. `resolveEndpoint` turns a logical port into an explicit state: a socket on a presented face, an exit
-//      from a hidden face, off-view (a portal address), suppressed (U1 flip), geometry-pending, or
+//      from a hidden face, off-view (a portal address), suppressed (mid-flip), geometry-pending, or
 //      unresolved. Nothing falls back to an interior estimate.
 //   2. A hidden-face end leaves its chassis at the edge nearest the socket's see-through position (ties
 //      bottom → right → left → top), through a short straight outward lead, then joins the sagging curve.
 //      The other endpoint is never an input, so a portal or remote move cannot swap the side.
 //   3. Every drawable cable gets mask *passes*: the main pass (cable band) excludes the silhouette of each
 //      owner whose end is hidden-face; a front socket on a front object adds a foreground pass clipped to
-//      that owner minus every silhouette ordered above it. Held leads are "in hand" (I-163): one held pass
+//      that owner minus every silhouette ordered above it. Held leads are "in hand": one held pass
 //      above objects, masked only by a hidden-face source owner. Renderers turn these sets into clip-paths
 //      and hit paths share them (`passVisibleAt` is the same predicate, for tests and hit testing).
 
@@ -55,7 +55,7 @@ export interface CableResolutionInput {
   readonly geometry: SocketGeometryIndex;
   /** Is this object in the view (studio: same space + wall), on another view, or unresolvable? */
   readonly membership: (objectId: string) => Membership;
-  /** U1: the object (or its rack) is mid-flip, so no physical lead touching it is drawn. */
+  /** The object (or its rack) is mid-flip, so no physical lead touching it is drawn. */
   readonly suppressed: (objectId: string) => boolean;
 }
 

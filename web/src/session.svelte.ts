@@ -1,10 +1,9 @@
-// The engine session: the view-agnostic consumer surface over the worklet engine (PROJECT_PLAN §7 —
-// the UI is a pure consumer of the engine API, factored here so a second view root can construct the
-// same interaction path). It owns the engine lifecycle, the live readout state streaming from the
-// worklet, the authoritative `Scene`, and the param/config control lanes that mutate it. Note routing
-// and patching move in over the rest of Story 6.1. A class with `$state` fields (the codebase's first
-// `.svelte.ts` rune module), constructed once per view root with its initial scene — App seeds from
-// `loadScene() ?? defaultScene()`; the 6.3 workbench will seed from the URL.
+// The engine session: the view-agnostic consumer surface over the worklet engine (the UI is a pure
+// consumer of the engine API, factored here so a second view root can construct the same interaction
+// path). It owns the engine lifecycle, the live readout state streaming from the worklet, the
+// authoritative `Scene`, and the param/config control lanes that mutate it. A class with `$state`
+// fields (a `.svelte.ts` rune module), constructed once per view root with its initial scene — App
+// seeds from `loadScene() ?? defaultScene()`; the workbench seeds from the URL.
 
 import {
   type CableType,
@@ -229,7 +228,7 @@ export class SceneSession {
     return true;
   }
 
-  // Compatibility seam for the Story 10.1 browser fixture; production paths use proposeTopology.
+  // Compatibility seam for the browser fixture; production paths use proposeTopology.
   submitPatchCandidate(candidate: Scene): boolean {
     return this.proposeTopology("patch change", (scene) => Object.assign(scene, candidate));
   }
@@ -342,7 +341,7 @@ export class SceneSession {
   }
 
   // A structural edit → rebuild the engine from the new patch (compile + ScheduleSlot hot-swap, in the
-  // worklet, the Story 4.1 path) and re-apply param values. Edits are rare gestures, so the off-block
+  // worklet) and re-apply param values. Edits are rare gestures, so the off-block
   // compile cost is acceptable; the live audio thread swaps at a block boundary.
   // --- DAW: transport, tracks, record/playback ----------------------------------------------------
 

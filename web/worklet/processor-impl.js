@@ -82,7 +82,7 @@ class SceneProcessor extends AudioWorkletProcessor {
       if (typeof wasm_bindgen.catalog !== "function") throw new Error("catalog missing from glue");
       const catalog = wasm_bindgen.catalog();
       // The cable catalog (realistic R·C presets) ships alongside the device catalog — same reason:
-      // the wasm instance lives here, and the UI's cable picker (Story 4.4) needs the presets.
+      // the wasm instance lives here, and the UI's cable picker needs the presets.
       const cables =
         typeof wasm_bindgen.cable_catalog === "function" ? wasm_bindgen.cable_catalog() : [];
       // Build the engine from the scene's patch. Throws (Result→exception) on a bad patch — caught below.

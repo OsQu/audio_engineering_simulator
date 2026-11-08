@@ -2,7 +2,7 @@
 //!
 //! A [`Node`] is the engine's unit of processing and scheduling — the thing the graph wires
 //! together and the schedule sorts and runs. It presents **real electrical faces**
-//! (PROJECT_PLAN §5.3): each analog input has an input impedance ([`InputZ`](crate::InputZ)),
+//! (the local-solve model): each analog input has an input impedance ([`InputZ`](crate::InputZ)),
 //! each analog output an output impedance ([`OutputZ`](crate::OutputZ) — the `Zout` of a
 //! [`Thevenin`](crate::Thevenin) source), wrapped in a domain-tagged [`InputPort`] / [`OutputPort`].
 //! We model
@@ -183,7 +183,7 @@ pub trait Node {
 
     /// Deliver the compile-solved phantom DC **operating point** at output port `port`'s terminals.
     ///
-    /// Called by [`compile`](crate::compile) — the `prepare`-like delivery of the §5.3-style DC
+    /// Called by [`compile`](crate::compile) — the `prepare`-like delivery of the local-divider DC
     /// solve — **once for every output port that declares a [`phantom_load`](Self::phantom_load)**:
     /// the solved terminal volts when the port faces exactly one engaged supply, and an explicit
     /// **0 V** otherwise (no consumer, no supply declared, or the supply disengaged) — so a node's

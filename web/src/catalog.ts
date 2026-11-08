@@ -124,14 +124,14 @@ export type PortDomain = "analog" | "digital" | "events" | "acoustic";
 
 /** Signal-class of a jack, for styling/labelling (mic/line/instrument/…). Distinct from the physical
  *  {@link Connector} shape that governs whether two jacks can actually be joined. `acoustic` is a sound
- *  source's air output / a mic's capsule input (Story 8.2). */
+ *  source's air output / a mic's capsule input. */
 export type PortKind = "mic" | "line" | "instrument" | "speaker" | "digital" | "midi" | "acoustic";
 
 /** The **physical connector shape** a port (or cable end) presents — the hard constraint on what can
  *  plug into what (mirrors the Rust `Connector`; `quarterInch` unifies TS/TRS). `combo` is the XLR+TRS
  *  combo jack on an interface's front input; `usb`/`spdif` are specific digital connectors, `digital`
  *  the generic one. `acoustic` is the ideal-air "connector" between a sound source and a mic capsule —
- *  not a physical plug; it mates only with itself (Story 8.2). Two ports may only be joined when their
+ *  not a physical plug; it mates only with itself. Two ports may only be joined when their
  *  connectors {@link connectorsCompatible match}; a signal-class/level mismatch is *not* rejected (that
  *  stays emergent from the voltage physics). Authoritatively enforced in `build_patch`; mirrored here
  *  for live patching feedback. */
@@ -159,8 +159,8 @@ export function connectorsCompatible(a: Connector, b: Connector): boolean {
  *  content authored on the Rust side, `crates/devices/src/cables.rs`) plus physical endpoint connectors.
  *  Fetched via the wasm `cable_catalog()` export. The chosen R·C rides the connection as a `CableSpec`;
  *  the engine's loading loss + treble rolloff emerge from it. Realistic cables into today's low-Z sources
- *  are inaudible by design (the effect is a numeric oracle; audible payoff arrives with Epic 5's high-Z
- *  sources). Field names are camelCase, matching the Rust `#[serde(rename_all = "camelCase")]`. */
+ *  are inaudible by design (the effect is a numeric oracle; it becomes audible with high-Z sources).
+ *  Field names are camelCase, matching the Rust `#[serde(rename_all = "camelCase")]`. */
 export interface CableType {
   /** Stable catalog id — what a cable picker selects. */
   typeId: string;

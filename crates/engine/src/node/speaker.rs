@@ -9,7 +9,7 @@ use crate::signal::Lane;
 /// A speaker — the **terminus** of the simulated signal chain: `out = sensitivity · in`.
 ///
 /// This is where the simulation stops. We deliberately do **not** model acoustics (no cone
-/// physics, no V→SPL, no air or room — PROJECT_PLAN §5.5): the speaker stays in the voltage
+/// physics, no V→SPL, no air or room): the speaker stays in the voltage
 /// domain, applying a single **sensitivity** gain to the drive voltage it's fed, and its output
 /// is the voltage the harness *taps and captures* as "what we hear" (the implicit
 /// analog→digital capture lives off-engine, in the render harness). The output port is therefore a

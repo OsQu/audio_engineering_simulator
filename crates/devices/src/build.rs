@@ -1048,14 +1048,13 @@ mod tests {
         );
     }
 
-    /// **The acoustic feedback loop builds (Story 8.3).** The product howlround chain —
+    /// **The acoustic feedback loop builds.** The product howlround chain —
     /// `condenser mic → 8i6 (combo in → preamp → AD → matrix → DA → Line Out 1) → powered monitor →
     /// air → mic` — is a genuine graph cycle (the 8i6's matrix is one node, so its input path and
     /// output path close a loop through it). `build_patch` + `compile` **auto-break it** at the air
-    /// edge (Story 8.3's prefer-acoustic policy; *which* edge carries the delay is pinned by the engine
-    /// test `acoustic_feedback`), so the loop builds and runs — feedback is not special-cased, and a
-    /// pre-8.3 build would have rejected an acoustic-only loop as `Cycle`. We build it and run a few
-    /// blocks to exercise the delayed acoustic edge on the real product graph.
+    /// edge (the prefer-acoustic policy; *which* edge carries the delay is pinned by the engine test
+    /// `acoustic_feedback`), so the loop builds and runs — feedback is not special-cased, and the
+    /// loop is not rejected as `Cycle`. We build it and run a few blocks to exercise the delayed acoustic edge on the real product graph.
     #[test]
     fn acoustic_feedback_loop_through_the_8i6_builds_and_runs() {
         let patch = Patch {
@@ -1275,11 +1274,11 @@ mod tests {
         assert!(inst > -0.2, "inst-Z barely loads it, got {inst} dB");
     }
 
-    /// Regression oracle for the balanced preamp front-end (Story 5.8): the **unbalanced** synth
-    /// into the preamp's now-balanced combo input rides the engine's grounding edge, whose hot leg
-    /// uses the *same* divider formula the unbalanced input did — the differential Zin plays exactly
-    /// the role the unbalanced Zin played, so the loading gain is **numerically unchanged** by the
-    /// front-end change. Hand calc (synth Zout = 1 Ω, no cable, line-Z 10 kΩ):
+    /// Regression oracle for the balanced preamp front-end: the **unbalanced** synth into the
+    /// preamp's balanced combo input rides the engine's grounding edge, whose hot leg uses the
+    /// *same* divider formula an unbalanced input would — the differential Zin plays exactly the
+    /// role an unbalanced Zin plays, so the loading gain is **numerically the plain unbalanced
+    /// divider**. Hand calc (synth Zout = 1 Ω, no cable, line-Z 10 kΩ):
     /// gain = 10 000/(1 + 0 + 10 000) = 0.99990001 → 20·log10 = −0.000869 dB.
     #[test]
     fn balanced_preamp_keeps_the_unbalanced_loading_gain() {
@@ -1346,7 +1345,7 @@ mod tests {
         }
     }
 
-    /// The Story 5.8 payoff at the scene level: a condenser mic into the 8i6's combo input is
+    /// Phantom power at the scene level: a condenser mic into the 8i6's combo input is
     /// **dead with 48V off and alive with it on** — the same patch, rebuilt with the structural
     /// `phantom` config toggled, and nothing else changed. Routed Pre 1 → Line 1 through the matrix
     /// so the capsule tone reaches the analog tap. Hand calc for the powered amplitude — 10 mV
@@ -1476,8 +1475,8 @@ mod tests {
         }
     }
 
-    /// **Story 8.2 exit gate — the micing scenario, gain-staging by hand calc.** Drive a vox into a mic
-    /// into the 8i6's preamp and read the post-preamp **In 1 Peak** meter (dBu, exposed readout 1; the
+    /// **The micing scenario, gain-staging by hand calc.** Drive a vox into a mic into the 8i6's
+    /// preamp and read the post-preamp **In 1 Peak** meter (dBu, exposed readout 1; the
     /// meter taps the preamp output, so this is `differential × mic→preamp divider × preamp gain ×
     /// preamp→meter divider`, floored at −60 dBu). The whole front-end gain-staging story falls out of
     /// `v = pressure × sensitivity` + the existing dividers/rail — nothing special-cased.
@@ -1518,10 +1517,11 @@ mod tests {
         // 30 dB SPL = 632.5 µPa. Condenser at default gain: 632.5e-6 × 0.01 × 0.985222 × 2.511886 ×
         // 0.999850 = 15.65 µV = −93.89 dBu — below the meter's −60 floor, below the 8i6's 16-bit AD
         // LSB (1 V/2¹⁵ = 30.5 µV = −88.1 dBu), and below the condenser's own f32 phantom-pedestal
-        // cancellation floor (~4 µV, Story 8.1). A whisper is simply lost: you need a sensitive mic and
+        // cancellation floor (~4 µV). A whisper is simply lost: you need a sensitive mic and
         // a lot of gain. (We assert the buried floor, not a precise recovered magnitude — at high gain
         // the condenser's amplified pedestal residual dominates a signal this small, the documented
-        // Story-8.1 f32 boundary; the physical gain-staging lesson is carried by the two cases below.)
+        // f32 pedestal-cancellation boundary; the physical gain-staging lesson is carried by the two
+        // cases below.)
         let whisper = read_in1_peak("condenser_mic", 30.0, MicPreamp::MIN_GAIN, false);
         assert!(
             (whisper - (-60.0)).abs() < 1e-3,
@@ -1804,10 +1804,9 @@ mod tests {
     }
 
     /// `ConnectorMismatch` renders a legible message (the worklet surfaces build errors as text).
-    /// The rejection path itself needs two **same-domain** ports with different connectors, which the
-    /// current all-¼" analog catalog can't yet produce — that integration test arrives with Epic-5 gear
-    /// (XLR mics / speakON). Until then the gate is covered by `connectors_compatible` (catalog) + the
-    /// TS `evaluateConnection` mirror; here we at least pin the error's Display.
+    /// The rejection path itself needs two **same-domain** ports with different connectors; the gate
+    /// is covered by `connectors_compatible` (catalog) + the TS `evaluateConnection` mirror, and here
+    /// we pin the error's Display.
     #[test]
     fn connector_mismatch_displays_legibly() {
         let e = BuildError::ConnectorMismatch {

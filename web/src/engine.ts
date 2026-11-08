@@ -159,7 +159,7 @@ export interface EngineControl {
   setVolume: (gain: number) => void;
   /** Resume the AudioContext so audio flows. Bring-up leaves the context **suspended** — the worklet
    *  still instantiates and posts `ready`/catalog with no sound (so the catalog is available before any
-   *  user gesture, per the Epic-6 autoplay policy) — so this must be called from a user gesture to hear
+   *  user gesture, per the browser autoplay policy) — so this must be called from a user gesture to hear
    *  anything. The scene view calls it from its start button; the workbench from the first interaction. */
   resume: () => Promise<void>;
   /** Release this engine's browser resources. Callers that mount a short-lived engine (such as the
@@ -176,7 +176,7 @@ export interface EngineHandlers {
   /** Fired once the engine is live: hands back the catalog and the `send` channel. */
   onReady: (ready: ReadyMessage, send: (msg: ControlMessage) => void) => void;
   /** Live device meter readings (node→host lane), ~47×/s: `[deviceId, values]` per metering device.
-   *  Optional — the UI wires it when it renders meter screens (Story 4.5.7). */
+   *  Optional — the UI wires it when it renders meter screens. */
   onReadouts?: (readings: [string, number[]][]) => void;
   /** Refreshed per-connection loading loss (dB, or `null`) after a structural edit. Optional, like
    *  `onReadouts`. The initial losses arrive on `ready`. */
@@ -342,7 +342,7 @@ export async function startEngine(
   node.connect(monitor);
   monitor.connect(audio.destination);
   // The context is left **suspended** — the worklet still instantiates and posts `ready`/catalog above
-  // (the catalog is available before any gesture, per the Epic-6 autoplay policy). Audio starts only when
+  // (the catalog is available before any gesture, per the browser autoplay policy). Audio starts only when
   // the caller `resume()`s from a user gesture. (The scene view resumes right after start; the workbench
   // on first interaction.)
   handlers.onStatus("node created — initializing engine in worklet…");
@@ -359,7 +359,7 @@ export async function startEngine(
 // --- Keyboard + Web MIDI note capture -------------------------------------------------------------
 //
 // Both surfaces *detect* note-on/off and hand them to a `NoteSink`; neither knows **which** device
-// plays. The caller (App) routes each note to the currently-focused instrument (Story 4.8), so
+// plays. The caller (App) routes each note to the currently-focused instrument, so
 // capture follows focus instead of being bolted to one synth at startup. The QWERTY note layout +
 // octave logic live in notes.ts.
 

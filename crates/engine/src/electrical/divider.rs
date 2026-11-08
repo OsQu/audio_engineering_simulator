@@ -2,8 +2,7 @@
 
 use super::{InputZ, Ohms};
 
-/// The dimensionless gain a source sees into a load across a cable — the local solve
-/// (PROJECT_PLAN §5.3):
+/// The dimensionless gain a source sees into a load across a cable — the local solve:
 ///
 /// ```text
 ///   gain = Zin / (Zout + Zcable + Zin)        V_in = V_src · gain

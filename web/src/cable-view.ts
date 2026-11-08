@@ -1,6 +1,6 @@
 // Cable-view vocabulary shared by the stages: socket alias keys, the projected-anchor shape, surface
 // rects, and the scene view's portal labels/keys. Endpoint resolution, exits, paths, and mask passes live
-// in cable-resolution.ts (Story 10.6), the single pipeline full cables, portals, and held leads share.
+// in cable-resolution.ts, the single pipeline full cables, portals, and held leads share.
 
 import type { Connection } from "./scene";
 import { connKey } from "./scene-ops";

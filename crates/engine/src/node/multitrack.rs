@@ -1,4 +1,4 @@
-//! The multitrack recorder: the track-channel stage of the `computer` DAW (Story 5.11).
+//! The multitrack recorder: the track-channel stage of the `computer` DAW.
 //!
 //! A digital node carrying an arbitrary number of **mono tracks**, each a DAW **channel strip**: its
 //! source is its recorded playback plus (when monitoring) its assigned live input, scaled by a

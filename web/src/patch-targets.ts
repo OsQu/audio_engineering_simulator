@@ -1,4 +1,4 @@
-// Patchable socket hit targets (Story 10.7). Pure — no DOM, Svelte, camera object, or clock.
+// Patchable socket hit targets. Pure — no DOM, Svelte, camera object, or clock.
 //
 // Two steps:
 //   1. `resolveSocketTargets` derives the patchable sockets of a view from the same cable-resolution input

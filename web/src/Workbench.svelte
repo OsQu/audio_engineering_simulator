@@ -1,10 +1,10 @@
 <script lang="ts">
-  // The device workbench — the second view root (Epic 6): a focused single-device development view at
+  // The device workbench — the second view root: a focused single-device development view at
   // /devices/<typeId>. It constructs its own SceneSession (the shared engine consumer surface), boots it
   // **suspended** on a known-good bootstrap so the catalog arrives before any gesture, then resolves the
   // requested typeId against that catalog — hot-swapping to the bench scene (the device-under-test plus a
   // fixed supporting cast: synth source + DA + speaker, unwired) or falling back to the catalog index.
-  // Audio resumes on the first interaction; the user patches source→DUT→monitor by hand (Story 6.3).
+  // Audio resumes on the first interaction; the user patches source→DUT→monitor by hand.
   import { faceInstanceId } from "./view-resolution";
   import { type DawUi, focusUi, hasFocusSurface } from "./device-ui";
   import { wireMidi } from "./engine";
@@ -146,7 +146,7 @@
 
   // Patching feels **identical to the scene view** — the same PatchController flow, so both click-to-pick
   // (click a source jack, then a destination jack) and drag work. Presses are arbitrated by BenchStage's
-  // stage arbiter (Story 10.7); the window only resumes audio on the first press (capture phase, so the
+  // stage arbiter; the window only resumes audio on the first press (capture phase, so the
   // arbiter consuming the press can't swallow it) and feeds a pending pick's cursor-follow. The monitored
   // tap is chosen from the "Listen" selector in the header, not by a jack click.
 
@@ -253,7 +253,7 @@
   let debugOpen = $state(true);
 
   // --- Device focus mode (sit down at a device) -----------------------------------------------------
-  // The same large interaction surface the scene view opens (Story 4.8) — for the 8i6 it's the Focusrite
+  // The same large interaction surface the scene view opens — for the 8i6 it's the Focusrite
   // Control routing matrix, which is how you actually route an input to an analog output on the bench.
   // Reuses the shared focusUi / isFocusable machinery; note input follows focus to the focused device.
   const FOCUS_FACE_WIDTH_PX = 720;
@@ -372,7 +372,7 @@
         {/if}
       </div>
     {/if}
-    <!-- The audio debug surface (Story 6.4) lives in a collapsible right-hand drawer so it doesn't add to
+    <!-- The audio debug surface lives in a collapsible right-hand drawer so it doesn't add to
          the bench's vertical stack: always-on header (level/tap/latency/losses) + MIDI monitor + a
          filter+pin watch-list over the rig's params/configs/readouts. Reads the shared session. Toggled
          from the always-visible header "Debug" button; the × here just collapses it. -->
@@ -393,7 +393,7 @@
     {#if focused}
       {@const f = focused}
       {@const Surface = focusUi(f.device.typeId)}
-      <!-- Device focus overlay — the same large surface the scene view opens (Story 4.8). For the 8i6
+      <!-- Device focus overlay — the same large surface the scene view opens. For the 8i6
            this is the Focusrite Control routing matrix; click the backdrop or press Esc to leave. -->
       <div
         class="focus-backdrop"

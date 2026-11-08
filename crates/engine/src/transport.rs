@@ -1,13 +1,13 @@
 //! The DAW transport — a play/stop/record state machine on an in-simulation digital-domain playhead.
 //!
-//! Story 5.11's `computer` records and plays tracks against one transport whose clock is the
-//! **in-simulation digital domain**, never the host's capture clock (PROJECT_PLAN §5.6: "clock is a
-//! real rate, not a label"). The [`playhead`](Transport::playhead) is a `u64` counter in **digital
+//! The `computer` DAW records and plays tracks against one transport whose clock is the
+//! **in-simulation digital domain**, never the host's capture clock (the clock-domain rule: "clock is
+//! a real rate, not a label"). The [`playhead`](Transport::playhead) is a `u64` counter in **digital
 //! samples** that advances one digital block per processed block **while rolling** and holds while
 //! stopped. One digital block is **128 samples @ 48 kHz** — the analog block (1024) ÷ M (8), the
 //! integer decimation the schedule already enforces. It is the DAW's *own* counter, distinct from
-//! [`Schedule`](crate::Schedule)'s analog-rate external-event `sample_pos`, so when Story 5.3 lets a
-//! DAW clock drift from the interface clock it is already modelled as its own digital clock.
+//! [`Schedule`](crate::Schedule)'s analog-rate external-event `sample_pos`, so a DAW clock
+//! that drifts from the interface clock is already modelled as its own digital clock.
 //!
 //! **Rolling and record-enable are independent — the overdub invariant.** Playback happens whenever
 //! the transport is [`rolling`](Transport::is_rolling); recording happens only when it is *also*

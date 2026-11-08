@@ -7,10 +7,10 @@ import { describe, expect, it } from "vitest";
 // instead this statically scans the surface source(s) for the ids its bound widgets
 // (Control/Socket/Reading/ConfigSwitch) reference and checks them against the device's exposed face.
 //
-// **Declared coverage across surfaces (Story 5.7.6, extended in 5.7.9).** A param may be placed on the
+// **Declared coverage across surfaces.** A param may be placed on the
 // in-world faceplate *or* on the device's focus surface, so a device declares its surfaces here and the
 // test **unions** the ids scanned from all of them. Some surfaces render params from **data** (the
-// 5.7.9 routing-matrix grid derives its cells from the crosspoint params), so their ids aren't literal
+// routing-matrix grid derives its cells from the crosspoint params), so their ids aren't literal
 // in the source; such a surface additionally **declares** the id range it covers (`declaredParams`),
 // unioned with the literal scans. The union must still cover the full param face.
 //

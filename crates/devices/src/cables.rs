@@ -1,12 +1,12 @@
 //! The cable catalog: named cable *types* the UI offers when patching two analog jacks.
 //!
 //! A cable is **physical content** — its series resistance and shunt capacitance are as intrinsic as a
-//! device's impedance — so, like device dimensions (Story 4.3), it lives here on the content layer, not
+//! device's impedance — so, like device dimensions, it lives here on the content layer, not
 //! invented in the TypeScript UI where it would drift. Each [`CableType`] maps a stable `type_id` to a
 //! realistic R·C (authored from a per-metre basis at a nominal length) plus endpoint connectors for jack
 //! styling. The UI fetches the table, the user picks one when wiring an **analog↔analog** connection,
 //! and the chosen R·C rides the edge as the scene [`CableSpec`](crate::CableSpec) — where the engine's
-//! loading divider + one-pole treble rolloff emerge from it (Epic 1.2).
+//! loading divider + one-pole treble rolloff emerge from it.
 //!
 //! **Modelled, not necessarily audible — by design.** The rolloff corner is
 //! `f_c = 1/(2π · R_thev · C)` with `R_thev = (Zout + R_cable) ∥ Zin` (see `engine`'s `Cable::lowpass`),
@@ -14,8 +14,8 @@
 //! (synth 1 Ω, gain/DA 150 Ω), so a realistic cable's corner sits far above 20 kHz and the series-R
 //! level drop is negligible: a clean chain does not degrade audibly even though the physics is faithful.
 //! That is the point, and it matches the project's rule that cable loss is a **numeric** oracle, not an
-//! ear test. The audible payoff arrives with high-Z instrument sources in Epic 5 (and becomes *visible*
-//! via the analog-domain readouts in Story 4.5).
+//! ear test. The audible payoff comes with high-Z instrument sources (and is *visible* via the
+//! analog-domain readouts).
 //!
 //! Digital / event routes carry no cable (the engine ignores a `CableSpec` on a non-analog edge), so the
 //! UI offers cables on analog connections only.
@@ -250,7 +250,7 @@ mod tests {
 
     /// **Modelled-but-inaudible, by design** — the *same* preset into the catalog's real low-Z synth
     /// source (`Zout = 1 Ω`) puts the corner far above the audio band, so a clean chain doesn't degrade
-    /// audibly even though the R·C is faithfully modelled (§9: cable loss is a numeric oracle).
+    /// audibly even though the R·C is faithfully modelled (cable loss is a numeric oracle).
     ///
     /// synth `Zout = 1 Ω`, AD input `Zin = 1 MΩ`, `instrument_6m` (R = 0.3 Ω, C = 600 pF):
     ///   R_thev = (1 + 0.3) ∥ 1e6 ≈ 1.3 Ω

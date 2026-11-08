@@ -1,5 +1,5 @@
 <script lang="ts">
-  // Story 10.6: paint one cable pass inside its resolver-supplied clip chain. Each clip is a nested <g>,
+  // Paint one cable pass inside its resolver-supplied clip chain. Each clip is a nested <g>,
   // so the chain intersects; the children (stroke + hit path) are clipped for paint *and* hit testing.
   import type { Snippet } from "svelte";
   import { type CablePass, passClipIds } from "../cable-resolution";

@@ -528,9 +528,9 @@ mod balanced_phenomena {
     #[test]
     fn dc_blocker_composes_on_the_balanced_pair() {
         // The DC blocker is a per-conductor node, so the compiler lifts it across the pair: the
-        // driver's 2-conductor output infers it to 2 and replicates it per leg. Before the lift
-        // this very wiring would be a LaneCountMismatch — now an ordinary processor just composes,
-        // "balanced" never a label. (This is the mechanism phantom rides on in 1.5.3.)
+        // driver's 2-conductor output infers it to 2 and replicates it per leg. Without the lift
+        // this very wiring would be a LaneCountMismatch — with it an ordinary processor just
+        // composes, "balanced" never a label. (This is the mechanism phantom power rides on.)
         //
         //   source:  2 V DC + 1 V·sin(2π·10k)                    (single-ended)
         //   driver:  V+ = 1 + 0.5·sin, V− = −(1 + 0.5·sin)       (≈unity edge)
@@ -965,7 +965,7 @@ mod hum_phenomena {
 
 /// Phantom power resolved at compile: the DC bias network — an engaged supply on the consumer's
 /// input face, a load on the producer's output face, the edge's cable R between — is solved once
-/// (§17's operating point) and the mic runs on the *earned* pedestal. Sag, dead-mic, and the
+/// (the DC operating point) and the mic runs on the *earned* pedestal. Sag, dead-mic, and the
 /// no-supply cases all emerge from the divider; the fan-in of two engaged supplies is a legible
 /// compile error. Tests are the oracle — every number hand-computed.
 mod phantom_phenomena {
@@ -1016,7 +1016,7 @@ mod phantom_phenomena {
 
     #[test]
     fn solved_operating_point_rides_the_wire() {
-        // The §17 reference solve, no cable: V_dc = 48·12 700/(3 400 + 0 + 12 700) = 37.8634 V.
+        // The P48 reference solve, no cable: V_dc = 48·12 700/(3 400 + 0 + 12 700) = 37.8634 V.
         // With the capsule unconnected there is no audio, so the mic's open-circuit hot leg is the
         // earned pedestal *alone* on every sample: 37.8634 V — power arrived from the patch, not from
         // any flag. (When a source is patched the ±½·audio wiggle rides on top of this same pedestal,
@@ -1592,8 +1592,8 @@ mod converter_phenomena {
         // Every analog face is near-ideal (1 Ω out into ≥ 1 MΩ in) so dividers ≈ unity: the
         // receiver returns the 2 V differential single-ended; the AD digitizes it (2 V / 10 V
         // reference = 0.2 full scale); the DA reconstructs it (0.2 × 10 V = 2 V). A 1 kHz tone,
-        // deep in the passband, should survive end-to-end at ≈ 2 V — the analog physics of
-        // Stories 1.2–1.5 intact across the digital round trip.
+        // deep in the passband, should survive end-to-end at ≈ 2 V — the analog physics (local
+        // solve, cables, balanced lines) intact across the digital round trip.
         let mut g = Graph::new();
         let src = g.add(SineSource::new(
             1_000.0,
@@ -2976,7 +2976,7 @@ mod delayed_edges {
     }
 }
 
-/// **Acoustic feedback** (Story 8.3) — the air hop is delay-eligible, so `compile` auto-breaks an
+/// **Acoustic feedback** — the air hop is delay-eligible, so `compile` auto-breaks an
 /// acoustic feedback loop by delaying the **acoustic** edge (preferring it over any digital edge on
 /// the same cycle, since the air physically carries the latency). Howlround then emerges from the
 /// delayed loop: a below-unity loop settles, a super-unity one grows and self-limits at the rail.
@@ -3239,7 +3239,7 @@ mod acoustic_feedback {
         );
     }
 
-    // --- Story 8.3 exit gate: the feedback scenario through real transducers, by hand calc. ---
+    // --- The feedback scenario through real transducers, by hand calc. ---
 
     /// Run a **real** acoustic feedback loop for `blocks` blocks and return the monitor's radiated
     /// pressure (Pa) after each block. The loop is `mic → receiver → sum(+drive) → gain → monitor →
@@ -3333,8 +3333,8 @@ mod acoustic_feedback {
     /// (10 mV/Pa) rings away:
     ///   condenser: `L = 200·0.01 = 2.0` (> 1) ⇒ howls up to the 10 Pa rail
     ///   dynamic:   `L = 200·0.002 = 0.4` (< 1) ⇒ settles at `A/(1−L) = 2.0/0.6 = 3.333 Pa`, clear of it
-    /// This is the emergent "why loud stages favour dynamics" lesson — the same Story-8.1 sensitivity
-    /// gap, now as feedback headroom.
+    /// This is the emergent "why loud stages favour dynamics" lesson — the same condenser-vs-dynamic
+    /// sensitivity gap, now as feedback headroom.
     #[test]
     fn a_dynamic_resists_feedback_that_makes_a_condenser_howl() {
         let cond = run_feedback_loop(0.01, 200.0, 0.01, 10.0, 12);

@@ -1,4 +1,4 @@
-// The stage gesture arbiter (Story 10.7): one capture-phase `pointerdown` listener per stage viewport
+// The stage gesture arbiter: one capture-phase `pointerdown` listener per stage viewport
 // classifies every press *before* any gesture adapter captures the pointer or mutates anything, then
 // dispatches it to exactly one owner — control/chrome, socket (patching), visible cable (select), device
 // move, or backdrop pan (gesture-ownership.ts decides). A control press propagates untouched to its own

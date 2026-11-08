@@ -1,5 +1,5 @@
 // The device-UI registry: which Svelte component draws a given device type — its bespoke faceplate, or
-// the generic `Panel` fallback (Story 5.7). This is the *look & feel* seam that mirrors `skin.ts`: the
+// the generic `Panel` fallback. This is the *look & feel* seam that mirrors `skin.ts`: the
 // Rust catalog owns which params/ports a device has (by id); a registered component owns how they're
 // arranged and styled, composing the shared bound widgets (Control/Socket/Reading) which bind by id.
 //
@@ -34,7 +34,7 @@ import Scarlett8i6 from "./widgets/Scarlett8i6.svelte";
 import Speaker from "./widgets/Speaker.svelte";
 import SynthVoice from "./widgets/SynthVoice.svelte";
 
-/** The DAW control seam a `computer`'s mixer surface drives (Story 5.11.6): live transport state + the
+/** The DAW control seam a `computer`'s mixer surface drives: live transport state + the
  *  per-track model, plus the transport/track commands. Wired to the session by `App`/`Workbench` for the
  *  focused DAW device only; other surfaces leave it unset. `transport`/`tracks`/`sends` are reactive
  *  reads (getters), so the surface re-renders as the playhead advances and the model changes. */

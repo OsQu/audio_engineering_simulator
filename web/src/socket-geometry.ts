@@ -1,4 +1,4 @@
-// The revisioned socket-geometry index (Story 10.4): where each physical socket sits on a presented face,
+// The revisioned socket-geometry index: where each physical socket sits on a presented face,
 // in that face's own natural millimetres. Pure — no DOM, camera, placement, or time. The DOM adapter
 // (face-geometry.ts) measures a face once per *revision* (descriptor/config, content layout, size, skin,
 // fonts) and registers it here; camera pans, zooms, and placement moves never touch the index, they only

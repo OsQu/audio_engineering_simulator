@@ -1,9 +1,8 @@
 <script lang="ts">
-  // The harness shell, now in Svelte 5. The authoritative scene, engine lifecycle, and control lanes
+  // The harness shell. The authoritative scene, engine lifecycle, and control lanes
   // live on the SceneSession (session.svelte.ts); App owns the scene-view UI state and consumes the
   // session throughout. The engine/worklet bring-up and control transport live in engine.ts. Controls are rendered
-  // **from the fetched device catalog** (not hardcoded ids) — a generic stepping stone; the
-  // skeuomorphic panel widgets land in Story 4.2.3. Generic by device id throughout.
+  // **from the fetched device catalog** (not hardcoded ids). Generic by device id throughout.
 
   import type { DeviceDescriptor, PortKind } from "./catalog";
   import { descriptorFor, isPlayable } from "./catalog";
@@ -84,8 +83,7 @@
   // The engine session: the view-agnostic consumer surface over the worklet engine (engine lifecycle,
   // live readout state, monitor volume, the authoritative scene + param/config lanes). App constructs
   // one — seeding the scene from a saved one if present, else the default studio — and reads it
-  // throughout; the Story-6.2 workbench will construct its own (seeding from the URL in 6.3). Note
-  // routing and patching move onto it over the rest of Story 6.1.
+  // throughout; the workbench constructs its own (seeding from the URL).
   // A reactive view of the session's scene: reads track it, and a `session.load()` reassignment
   // re-derives, so every `scene.*` read below stays live without App owning the state. App never
   // reassigns it — the scene lane lives on the session now.
@@ -93,7 +91,7 @@
 
   // The patch controller: the pointer/drag patching glue (drag + click-to-pick + cross-view pending,
   // the projected socket-anchor store, commit/disconnect/setCableType). App delegates its window pointer
-  // handlers to it; the Story-6.2 workbench will drive the identical machinery.
+  // handlers to it; the workbench drives the identical machinery.
   // svelte-ignore state_referenced_locally
   const patch = new PatchController(session);
   // A reactive, read-only view of the in-flight patch, so the template can narrow `{#if dragCable}` on a
@@ -117,7 +115,6 @@
   // svelte-ignore state_referenced_locally
   let currentSpace = $state(session.scene.ui.spaces[0]?.id ?? "");
   // The view within the current space: one of the four wall elevations, or the top-down floor plan.
-  // "top" lands in Story 4.6.4; the wall elevations render here.
   let currentView = $state<Wall | "top">("front");
   // The wall currently in elevation, or null in the top view.
   const currentWall = $derived<Wall | null>(currentView === "top" ? null : currentView);
@@ -155,7 +152,7 @@
     placedItemsFor(layout(), placementPreview ?? undefined),
   );
 
-  // --- Presented faces (Story 10.4) -----------------------------------------------------------------
+  // --- Presented faces -----------------------------------------------------------------
   // The studio's flip state: pure, generation-guarded (presentation-state.ts). A flip writes the durable
   // facing at once — the chassis animates toward it — and the resolved face stays on its settled side,
   // non-patchable, with every physical lead touching it suppressed, until the generation's CSS
@@ -174,7 +171,7 @@
     return new Map(faces.map((face) => [face.objectId, face]));
   });
 
-  // --- Physical objects & paint order (Story 10.5) --------------------------------------------------
+  // --- Physical objects & paint order --------------------------------------------------
   // Resolver-owned: each object's semantic layer (rack frames = furniture; a device by its settled
   // face, a mounted one by its rack's), rack parentage, and the total order WorldView paints in. Hover,
   // focus, toolbar grace, and drag are not inputs, so they cannot reorder anything.
@@ -216,13 +213,13 @@
     }
   });
 
-  // --- Patch cables (Story 10.6) --------------------------------------------------------------------
+  // --- Patch cables --------------------------------------------------------------------
   // A stable key for a connection (its two endpoints), for the {#each} in the cable overlay.
   const connKey = sceneOps.connKey;
 
   // The one cable-resolution input every cable-like presentation shares: preview-aware chassis
   // silhouettes and slot frames (leads follow a drag), settled faces, the face-local geometry index,
-  // view membership, and U1 suppression. Pure (view-resolver.ts `studioCableInput`).
+  // view membership, and mid-flip suppression. Pure (view-resolver.ts `studioCableInput`).
   const cableInput = $derived.by((): CableResolutionInput | null => {
     const api = worldApi;
     if (!api) return null;
@@ -259,7 +256,7 @@
         })
       : null,
   );
-  // Patchable socket targets (Story 10.7): presented, current, exposed sockets of this view, derived from
+  // Patchable socket targets: presented, current, exposed sockets of this view, derived from
   // the same input as the cables — so hidden, mid-flip, occluded, off-view and top-view sockets never
   // appear. One stage picker serves press, move and release.
   const socketTargets = $derived(cableInput ? resolveSocketTargets(cableInput) : []);
@@ -488,7 +485,7 @@
     const facing = rackById(scene, id)?.facing;
     if (facing) void startFlip(id, facing);
   }
-  // U3 ejection (Story 10.5): all-or-nothing; a failure leaves the scene untouched and is reported on the
+  // Ejection: all-or-nothing; a failure leaves the scene untouched and is reported on the
   // status line. Disabled while the rack is flipping (an ejected unit would change transition owner mid-flip).
   const reportEjection = (what: string, plan: EjectionPlan): void => {
     if (!plan.ok) session.status = `${what} failed: ${plan.reason.replaceAll("-", " ")}`;
@@ -569,7 +566,7 @@
   const reload = (): void => session.reload();
 </script>
 
-<!-- Presses are arbitrated by WorldView's stage arbiter (Story 10.7); the window only feeds a pending
+<!-- Presses are arbitrated by WorldView's stage arbiter; the window only feeds a pending
      pick's buttonless cursor-follow (an owned gesture is driven by its own pointer session). -->
 <svelte:window onpointermove={(e) => patch.hover(e)} onkeydown={onGlobalKey} />
 
@@ -709,7 +706,7 @@
 
   {#if session.ready}
     <div class="stage">
-      <!-- Story 10.6: every drawn connection (full cable or portal stub) is resolved once by
+      <!-- Every drawn connection (full cable or portal stub) is resolved once by
            cable-resolution.ts — its path and its mask passes. The main pass sits in the cable band (rear
            objects below, front objects above) clipped away from hidden-face owners; a front socket's
            foreground pass redraws the lead inside its owner, minus everything ordered above it. The hit
@@ -852,7 +849,7 @@
           {#each drawnCables as r (r.key)}
             {#if r.kind === "portal"}{@render portalChip(r, api)}{/if}
           {/each}
-          <!-- The held lead (Story 10.6, "in hand" — I-163): re-resolved from its logical source every
+          <!-- The held lead ("in hand"): re-resolved from its logical source every
                frame, so it follows device/rack previews, view switches, and settled flips. It paints above
                the panels, masked only by a hidden-face source's own chassis. Source off-view → a floating
                end (the banner names where it came from); source mid-flip → no lead, the pick survives. -->
@@ -1088,7 +1085,7 @@
 
       <!-- The device's focus surface (its dedicated one — e.g. a console — or a zoomed physical faceplate),
            rendered into a focus window. The surface reuses the same descriptor-driven Panel props as the
-           in-world panel (Story 4.8.4 adds the instrument keybed, 4.8.6 the console). -->
+           in-world panel. -->
       {#snippet deviceSurface(device: DeviceInstance, desc: DeviceDescriptor)}
         {@const Surface = focusUi(device.typeId)}
         {#snippet focusFace()}
@@ -1170,8 +1167,8 @@
       {/each}
 
       <!-- Global levels & losses: gain-staging across the chain in one place — every meter device's
-           live readings, and each analog connection's static loading loss (the §5.3 divider). The
-           MIDI status + scene buttons now live in the header (design-system layout). -->
+           live readings, and each analog connection's static loading loss (the impedance
+           voltage divider). The MIDI status + scene buttons live in the header. -->
       <details class="levels">
         <summary>Signal path — levels &amp; losses</summary>
         <div class="levels-body">

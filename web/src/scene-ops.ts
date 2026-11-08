@@ -329,7 +329,7 @@ export function toggleBenchFacing(scene: Scene, id: string): void {
   entry.facing = flip(entry.facing ?? "front");
 }
 
-// --- Bench debug watch-list (Story 6.4) -----------------------------------------------------------
+// --- Bench debug watch-list -----------------------------------------------------------
 // Pin management for the bench debug panel: the pinned set lives on `scene.ui.benchWatch` so it
 // round-trips through the bench URL (pins survive a `wasm:watch` reload). UI-only — the engine never
 // sees `ui`. Pure scene writes, like the rest of this module.
@@ -354,7 +354,7 @@ export function toggleWatch(scene: Scene, item: BenchWatch): void {
   else list.push({ device: item.device, kind: item.kind, id: item.id });
 }
 
-// Eject a device from its rack (approved policy U3, see ejection.ts): it stands free at the nearest legal
+// Eject a device from its rack (ejection policy, see ejection.ts): it stands free at the nearest legal
 // spot to where it visibly was, keeping the rack's room/wall/facing, so it can then be flipped on its own.
 // All-or-nothing: on failure (not racked, no free space) the scene is untouched. UI-only.
 export function unmount(scene: Scene, catalog: DeviceDescriptor[], id: string): EjectionPlan {
@@ -362,7 +362,7 @@ export function unmount(scene: Scene, catalog: DeviceDescriptor[], id: string): 
 }
 
 // Add gear from the catalog: a new instance placed free-standing on the wall in view (just past the
-// existing gear). Its ports read silence until patched (Story 4.4). **Caller must hot-swap.**
+// existing gear). Its ports read silence until patched. **Caller must hot-swap.**
 export function addDevice(ctx: LayoutCtx, placedItems: PlacedItem[], typeId: string): void {
   const rightX = placedItems.reduce((m, it) => Math.max(m, it.rect.x + it.rect.width), 0);
   let n = 1;
@@ -423,8 +423,8 @@ export function addRack(ctx: LayoutCtx, placedItems: PlacedItem[]): void {
   });
 }
 
-// Remove a rack — UI furniture, so no hot-swap. Its occupants are ejected first under U3 (each to the
-// nearest legal free spot, in slot order); if any cannot be placed, nothing changes and the rack stays.
+// Remove a rack — UI furniture, so no hot-swap. Its occupants are ejected first (each to the nearest
+// legal free spot, in slot order); if any cannot be placed, nothing changes and the rack stays.
 export function removeRack(scene: Scene, catalog: DeviceDescriptor[], id: string): EjectionPlan {
   return eject(scene, catalog, { kind: "rack", rackId: id });
 }

@@ -1,6 +1,6 @@
 //! A bounded, frame-safe byte FIFO — the host↔engine transport for bulk audio file bytes.
 //!
-//! The Story 5.11 DAW moves **opaque file bytes** across the sim↔host boundary: recorded WAV bytes
+//! The `computer` DAW moves **opaque file bytes** across the sim↔host boundary: recorded WAV bytes
 //! out to disk (OPFS), file bytes back in for playback. Like the
 //! [`EventQueue`](crate::EventQueue), this is **single-producer / single-consumer in shape** and
 //! **pre-allocated** — [`write`](ByteRing::write) never reallocates, and on a full ring it drops the

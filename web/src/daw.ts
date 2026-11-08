@@ -1,4 +1,4 @@
-// DAW orchestration on the main thread (Story 5.11.6): the record relay and the playback feed loop that
+// DAW orchestration on the main thread: the record relay and the playback feed loop that
 // sit between the worklet (which owns the engine, rings, transport, and WAV codec) and the OPFS storage
 // worker (which owns the take files). The worklet drains recorded PCM and reports the playhead; this
 // routes those to storage and keeps each playing track's ring topped up ahead of the playhead.

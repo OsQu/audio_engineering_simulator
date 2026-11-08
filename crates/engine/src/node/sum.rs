@@ -15,7 +15,7 @@ use crate::signal::Lane;
 /// attenuates (roughly `1/N`) and couples its sources to one another through the shared bus.
 /// We model a unity sum and leave that make-up/attenuation to a downstream
 /// [`GainStage`](super::GainStage); the inter-source bus coupling is not modeled. This is the
-/// "correct-enough, never false" line (PROJECT_PLAN §3): the loading is real, the
+/// "correct-enough, never false" line: the loading is real, the
 /// mixing-resistor network is abstracted.
 ///
 /// `n` inputs; one output.

@@ -353,8 +353,8 @@ pub enum PortKind {
     Speaker,
     Digital,
     Midi,
-    /// Acoustic sound-pressure port (a mic capsule, a sound source). Styled by the web layer in
-    /// Story 8.2; declared here so a mic's acoustic input appears on its descriptor face.
+    /// Acoustic sound-pressure port (a mic capsule, a sound source). Styled by the web layer;
+    /// declared here so a mic's acoustic input appears on its descriptor face.
     Acoustic,
 }
 
@@ -391,8 +391,8 @@ pub enum Connector {
     /// S/PDIF (RCA coax) — a stereo digital in/out on an interface.
     Spdif,
     /// The acoustic "connector" — the ideal-air link between a sound source and a mic capsule. Not a
-    /// physical plug; it mates only with itself (the acoustic cable, drawn by the web layer in Story
-    /// 8.2). It exists so acoustic ports declare a connector like every other port.
+    /// physical plug; it mates only with itself (the acoustic cable, drawn by the web layer). It
+    /// exists so acoustic ports declare a connector like every other port.
     Acoustic,
 }
 
@@ -455,10 +455,6 @@ type NodeFaceBuilder = fn(&DeviceConfig) -> NodeFace;
 /// still provide an exposed face before the graph is built.
 pub(super) enum NodeSpec {
     Plain(NodeBuilder),
-    #[allow(
-        dead_code,
-        reason = "the production guitar entries that use this variant arrive in Task 9.4.2"
-    )]
     Asset {
         build: AssetNodeBuilder,
         face: NodeFaceBuilder,
@@ -467,9 +463,8 @@ pub(super) enum NodeSpec {
 
 /// Build an asset-backed node with the explicit context supplied by patch assembly.
 ///
-/// This is the fallible counterpart to the catalog's ordinary node builders. It is intentionally
-/// public for a future catalog entry, but 9.3 exercises it only with a private fixture: visible
-/// instruments remain Story 9.4 work.
+/// This is the fallible counterpart to the catalog's ordinary node builders, used by the
+/// asset-backed (SoundFont) entries such as the guitars.
 pub fn build_asset_node(
     builder: AssetNodeBuilder,
     config: &DeviceConfig,
@@ -709,7 +704,7 @@ const PREAMP_EIN_V_PER_ROOT_HZ: f32 = 2.2e-9;
 /// The 8i6's 48V phantom key — **one switch feeding both preamps** (the real 3rd-gen 8i6 has a
 /// single global 48V button; contrast the per-channel INST keys). 48V is **structural** like INST:
 /// engaging it changes the DC bias topology, so a toggle recompiles rather than smoothing a param
-/// (the Story 5.8 design note). Acoustically safe — the pedestal cancels at every balanced
+/// (an INST-style structural switch). Acoustically safe — the pedestal cancels at every balanced
 /// receiver in both states, so the swap can't click.
 const PHANTOM_KEY: &str = "phantom";
 
@@ -1078,10 +1073,9 @@ const CATALOG: &[CatalogEntry] = &[
     },
     // A generic acoustic sound source ("vox") — the catalog face of `engine::SoundSource`. A sine at a
     // chosen loudness radiating into the air: patch its acoustic output into a mic's capsule (over the
-    // ideal-air acoustic edge) to mic it. Deliberately simple (PROJECT_PLAN §2): recognizable, not
-    // realistic — a stand-in for whatever makes the sound. The device *exists* here (Story 8.1) so the
-    // acoustic chain can be built and tested; its skeuomorphic faceplate and the dB-SPL loudness knob
-    // are Story 8.2 (the engine param is a linear peak pressure in pascals, like a gain is linear volts).
+    // ideal-air acoustic edge) to mic it. Deliberately simple: recognizable, not realistic —
+    // a stand-in for whatever makes the sound. The engine param is a linear peak pressure in pascals
+    // (like a gain is linear volts); the web shows it as a dB-SPL loudness knob.
     CatalogEntry {
         type_id: "vox",
         name: "Vox",
@@ -1101,7 +1095,7 @@ const CATALOG: &[CatalogEntry] = &[
             ParamUi {
                 // The engine param is a linear peak pressure in pascals; the web shows it as dB SPL (the
                 // engineer's loudness unit) via the `"dB SPL"` unit — display only, the stored value stays
-                // linear Pa. The log taper's dB-below-max travel is reused as-is (Story 8.2).
+                // linear Pa. The log taper's dB-below-max travel is reused as-is.
                 label: "Loudness",
                 unit: "dB SPL",
                 kind: ParamKind::Knob,
@@ -1131,9 +1125,9 @@ const CATALOG: &[CatalogEntry] = &[
     // A condenser microphone — the catalog face of `engine::CondenserMic`. A balanced XLR mic that is
     // **dead until phantom-fed**: the node declares its P48 DC load on its output port and `compile`
     // resolves the operating point against whatever engaged supply faces it (the 8i6's 48V config) —
-    // power arrives from the patch, never a flag. As of Story 8.1 it is a true **acoustic→analog
-    // transducer**: its capsule takes sound pressure in (from a patched source over the ideal-air
-    // acoustic edge) and converts it at a fixed sensitivity (~10 mV/Pa) — no tone params, no self-sine.
+    // power arrives from the patch, never a flag. It is a true **acoustic→analog transducer**: its
+    // capsule takes sound pressure in (from a patched source over the ideal-air acoustic edge) and
+    // converts it at a fixed sensitivity (~10 mV/Pa) — no tone params, no self-sine.
     CatalogEntry {
         type_id: "condenser_mic",
         name: "Condenser Mic",
@@ -1172,10 +1166,9 @@ const CATALOG: &[CatalogEntry] = &[
     },
     // A dynamic microphone — the catalog face of `engine::DynamicMic`. A **passive** balanced XLR mic:
     // a moving coil that generates its own EMF, so it draws no phantom (no DC load declared) and is
-    // always alive regardless of the 8i6's 48V toggle. As of Story 8.1 it is an **acoustic→analog
-    // transducer** like the condenser, only **less sensitive** (~2 mV/Pa vs ~10 mV/Pa — a factor of 5,
-    // ~14 dB), so it leans harder on preamp gain — now emergent from the transducer efficiency, not an
-    // asserted level.
+    // always alive regardless of the 8i6's 48V toggle. It is an **acoustic→analog transducer** like
+    // the condenser, only **less sensitive** (~2 mV/Pa vs ~10 mV/Pa — a factor of 5, ~14 dB), so it
+    // leans harder on preamp gain — emergent from the transducer efficiency, not an asserted level.
     CatalogEntry {
         type_id: "dynamic_mic",
         name: "Dynamic Mic",
@@ -1385,7 +1378,7 @@ const CATALOG: &[CatalogEntry] = &[
             kind: PortKind::Speaker,
             // The speaker is a simplified powered-monitor terminus fed by the line-level DA, so its
             // input is a ¼" line jack today — this keeps the default `da→spk` connection legal. A
-            // Speakon input arrives with an Epic-5 power amp + passive speaker.
+            // Speakon input belongs to a power amp + passive speaker pair.
             connector: Connector::QuarterInch,
         }],
         outputs: &[PortUi {
@@ -1399,12 +1392,12 @@ const CATALOG: &[CatalogEntry] = &[
         configs: &[],
     },
     // A powered monitor — the catalog face of `engine::PoweredMonitor`, the **output-side mirror** of a
-    // microphone (Story 8.3). It takes a line-level drive voltage and **radiates it as sound pressure**
+    // microphone. It takes a line-level drive voltage and **radiates it as sound pressure**
     // (`pressure = drive_volts × sensitivity × volume`, ~1 Pa/V ⇒ 1 V ≈ 94 dB SPL at unity), so a device
     // can now be **mic'd**: patch its Air output into a mic capsule over the ideal-air acoustic edge.
-    // Distinct from the `speaker` terminus above — that one stays in volts (the §5.5 capture tap). Wire
-    // `mic → preamp → monitor → air → mic` and raise the gain to hear howlround emerge: the delayed air
-    // edge breaks the loop (Story 8.3) and the feedback is not special-cased.
+    // Distinct from the `speaker` terminus above — that one stays in volts (the voltage-capture tap).
+    // Wire `mic → preamp → monitor → air → mic` and raise the gain to hear howlround emerge: the
+    // delayed air edge breaks the loop and the feedback is not special-cased.
     CatalogEntry {
         type_id: "powered_monitor",
         name: "Powered Monitor",
@@ -1664,13 +1657,13 @@ const CATALOG: &[CatalogEntry] = &[
         ]),
         configs: &[],
     },
-    // A simplified Focusrite Scarlett 8i6 — the first **mixed-face, multi-I/O** interface (Story 5.7).
+    // A simplified Focusrite Scarlett 8i6 — the first **mixed-face, multi-I/O** interface.
     // Two `MicPreamp`s (gain + PAD + AIR, INST/hi-Z via structural config) each feed an AD; the two ADs
     // and a "USB return" feed a 3×3 routing **matrix**; the matrix's two "USB send" outputs go to the
     // computer and its third output drives a DA whose analog monitor bus fans out to a line output and a
     // headphone amp; MIDI passes through. The web faceplate splits the exposed face across two chassis
     // faces (front: combo inputs + phones; back: line/USB/MIDI + power), and the routing matrix is
-    // driven from the Focusrite Control focus surface. 48V phantom (Story 5.8) is the shared
+    // driven from the Focusrite Control focus surface. 48V phantom is the shared
     // `PHANTOM_KEY` structural config: one switch engages both preamps' P48 supplies at build.
     CatalogEntry {
         type_id: "scarlett_8i6",
@@ -2258,7 +2251,7 @@ const CATALOG: &[CatalogEntry] = &[
         //
         // 48V (`PHANTOM_KEY`): the phantom supply, **one switch over both preamps** (the real unit
         // has one global button; contrast the per-channel INST keys). Structural like INST — the DC
-        // bias topology changes, so toggling recompiles (the Story 5.8 design note). Default off:
+        // bias topology changes, so toggling recompiles. Default off:
         // an unfed condenser mic is dead, and non-phantom sources are unaffected either way.
         configs: &[
             ConfigUi {
@@ -3246,7 +3239,7 @@ mod tests {
     }
 
     /// The vox source's descriptor face: no inputs, one **acoustic** output (mono), and two params
-    /// (loudness in Pa, pitch in Hz — the engine-native units; the dB-SPL knob is Story 8.2).
+    /// (loudness in Pa, pitch in Hz — the engine-native units; dB SPL is web display only).
     #[test]
     fn vox_descriptor_face() {
         let vox = descriptors()
@@ -3271,7 +3264,7 @@ mod tests {
         assert!(vox.configs.is_empty());
     }
 
-    /// The powered monitor's descriptor face (Story 8.3): a line-level ¼" **input** + an acoustic Air
+    /// The powered monitor's descriptor face: a line-level ¼" **input** + an acoustic Air
     /// **output** (mono, `Connector::Acoustic`, mating only with a mic capsule), and one Volume knob.
     /// The output-side mirror of the vox's face.
     #[test]
@@ -3310,8 +3303,8 @@ mod tests {
     }
 
     /// The condenser mic's port remap (single node): one node, no internal edges, its acoustic capsule
-    /// exposed as device input 0 and its balanced output as device output 0, and — since Story 8.1 —
-    /// **no params** (sensitivity is a fixed transducer property, not a knob).
+    /// exposed as device input 0 and its balanced output as device output 0, and **no params**
+    /// (sensitivity is a fixed transducer property, not a knob).
     #[test]
     fn condenser_mic_expands_and_maps() {
         let mut g = Graph::new();

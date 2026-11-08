@@ -422,7 +422,7 @@ describe("addBenchDevice", () => {
 });
 
 describe("removeRack", () => {
-  it("ejects its gear under U3 (not to a stale stored position) and drops the rack", () => {
+  it("ejects its gear to the nearest legal spot (not to a stale stored position) and drops the rack", () => {
     const mounted = place("s1", "front", { id: "r1", uSlot: 3 });
     mounted.position = { x: 111, y: 0, z: 222 };
     const scene = makeScene({

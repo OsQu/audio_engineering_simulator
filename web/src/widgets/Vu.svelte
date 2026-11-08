@@ -1,8 +1,7 @@
 <script lang="ts">
-  // The master-output level meter. In Story 4.2 it reads the **already-exposed output buffer** (the host
+  // The master-output level meter. It reads the **already-exposed output buffer** (the host
   // monitor level the worklet posts as a peak each ~8 quanta) — an honest signal, but the host monitor
-  // level, *not* a simulated meter device. A voltage-native, calibrated `VuMeter` node (with real
-  // ballistics) + a node→host readout lane land in Story 4.5; this widget repoints onto it then.
+  // level, *not* a simulated meter device.
   //
   // Presentation is the shared analog `VuFace`; here we only map the linear monitor peak onto its 0..1
   // needle fraction (−60..0 dBFS) and format the dBFS readout.

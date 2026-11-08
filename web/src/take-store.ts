@@ -1,4 +1,4 @@
-// OPFS take storage — the host's dumb byte store for the DAW's per-track WAV files (Story 5.11.6).
+// OPFS take storage — the host's dumb byte store for the DAW's per-track WAV files.
 //
 // The simulation owns the *format* (the worklet builds WAV headers via the sim's `wav_header`, and the
 // engine's rings carry raw PCM frames); this module is only the host **byte storage** behind that seam.

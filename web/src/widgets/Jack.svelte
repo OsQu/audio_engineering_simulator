@@ -1,7 +1,7 @@
 <script lang="ts">
   // A back-panel connector, rendered from a port descriptor. Styled by connector `kind` (color) and
-  // carrier `domain` (round for analog/events, square-ish for digital). **Display-only** in Story 4.2 —
-  // drag-to-connect patching lands in 4.4; this just establishes the jack vocabulary and labels.
+  // carrier `domain` (round for analog/events, square-ish for digital). **Display-only** —
+  // it establishes the jack vocabulary and labels; the patching layer locates it via `data-jack`.
   import type { PortDescriptor, PortDirection } from "../catalog";
 
   interface Props {

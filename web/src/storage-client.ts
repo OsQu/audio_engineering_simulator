@@ -1,4 +1,4 @@
-// Main-thread client for the OPFS storage worker (Story 5.11.6).
+// Main-thread client for the OPFS storage worker.
 //
 // Wraps the worker's message protocol as promises, correlating each request with its reply by a
 // monotonic id. `append` is fire-and-forget (no reply — it happens per record block per armed track).

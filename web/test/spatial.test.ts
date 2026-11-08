@@ -54,7 +54,7 @@ describe("wallProjection", () => {
   const pos = { x: 500, y: 0, z: 200 };
   const size = { width: 480, height: 90, depth: 300 };
 
-  it("front is the identity projection (screen-x = world x), matching the pre-4.6 single view", () => {
+  it("front is the identity projection (screen-x = world x)", () => {
     // horizontal = x = 500; width = 480; vertical = y = 0; height = 90.
     expect(wallProjection(pos, size, "front", room)).toEqual({
       x: 500,

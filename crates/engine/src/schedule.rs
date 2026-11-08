@@ -34,7 +34,7 @@
 //! grounding-plug physics and stays a [`CompileError`].
 //!
 //! ## Phantom power: the compile-time DC operating point
-//! `compile` also resolves the **phantom DC bias network** (`osku_physics_concepts.md` §17): where
+//! `compile` also resolves the **phantom DC bias network** (the superposition split): where
 //! an output port declaring a [`phantom_load`](crate::Node::phantom_load) faces a consumer input
 //! declaring an **engaged** [`phantom_supply`](crate::Node::phantom_supply), the DC operating
 //! point is solved once — the same local divider as the audio solve, over the supply's common-mode
@@ -754,8 +754,8 @@ pub fn compile(
     //         physical only where the medium itself carries delay: a **digital** link (a buffered
     //         transport) or the **air** of an acoustic hop (sound takes time to travel). So a cycle may
     //         be cut only at a digital or acoustic edge — and we **prefer the acoustic** one when the
-    //         loop has both, because the air hop is where a howlround loop's latency physically lives
-    //         (Story 8.3). We delay the lowest-index preferred edge on a cycle (deterministic given the
+    //         loop has both, because the air hop is where a howlround loop's latency physically lives.
+    //         We delay the lowest-index preferred edge on a cycle (deterministic given the
     //         graph) and repeat until acyclic. A cycle with no delay-eligible edge is analog feedback
     //         with nowhere to carry the latency: it falls through to the `Cycle` rejection in step 6. ---
     loop {
@@ -1006,7 +1006,7 @@ pub fn compile(
         }
     }
 
-    // --- 8b. Resolve the phantom DC operating point (§17's superposition split: the bias network
+    // --- 8b. Resolve the phantom DC operating point (the superposition split: the bias network
     //         is linear and static, so its solve belongs here, not per-sample). For every output
     //         port declaring a phantom load, find the engaged supplies among its consumers'
     //         declared input faces: exactly one ⇒ deliver the divider-solved terminal volts

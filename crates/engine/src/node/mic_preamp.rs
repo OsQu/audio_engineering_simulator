@@ -43,8 +43,8 @@ use crate::signal::{AnalogRate, Lane, SampleRate, Volts};
 /// common-mode rejection only survives **linear** per-leg processing
 /// (`f(cm + s/2) − f(cm − s/2) = f(s)` needs linearity), so it must happen upstream of the first
 /// nonlinearity. Put the rail clamp first and a 48 V phantom pedestal pins *both* legs to the rail —
-/// `clamp(48·g) − clamp(48·g) = 0`, the audio annihilated with no way to recover it downstream
-/// (`osku_physics_concepts.md` §17). Difference-first is exact at the ideal-CMRR altitude (perfectly
+/// `clamp(48·g) − clamp(48·g) = 0`, the audio annihilated with no way to recover it downstream.
+/// Difference-first is exact at the ideal-CMRR altitude (perfectly
 /// symmetric legs); finite CMRR is leg *asymmetry*, deferred with the per-leg-caps topology it would
 /// make distinguishable. An **unbalanced** source still plugs straight in: the schedule's grounding
 /// edge (a TS plug's sleeve shorts the cold pin) delivers hot = signal, cold = 0, and `s − 0 = s`.
@@ -480,7 +480,7 @@ mod tests {
         //   (V+ − V−) · gain = 0.01 · 100 = 1.0 V,   with zero DC (no trace of the 48 V).
         // Ordering is what this proves: were the clamp applied per leg *before* the difference,
         // clamp(48.005·100, ±10) − clamp(47.995·100, ±10) = 10 − 10 = 0 — both legs pin to the
-        // rail and the audio is annihilated (physics §17). Difference-first makes the pedestal
+        // rail and the audio is annihilated. Difference-first makes the pedestal
         // vanish while everything is still linear.
         let mut p = preamp(100.0, 10.0);
         p.prepare(rate());

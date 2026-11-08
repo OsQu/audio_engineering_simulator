@@ -1,4 +1,4 @@
-// Story 10.5.4 — approved ejection policy U3: nearest legal free lattice position, atomic, preserving the
+// Ejection policy: nearest legal free lattice position, atomic, preserving the
 // rack's effective room/wall/facing. Every expected position is a hand calc (FRAME_MARGIN 14 mm,
 // 1U = 44.45 mm, 19" = 482.6 mm, frame 510.6 mm wide, GRID_MM 50).
 import { describe, expect, it } from "vitest";
@@ -57,7 +57,7 @@ function scene(racks: Rack[], devices: [string, string, Placement][], room: Room
   };
 }
 
-describe("U3 ejection planner", () => {
+describe("ejection planner", () => {
   it("removes a rack by allocating its occupants in slot order without overlapping each other", () => {
     // Rack at (900, 0): d2 (2U, slot 0) origin (914, 14) → nearest (900, 0) [dx −14 beats +36; dy −14
     // beats +36]; it then occupies [900, 1382.6] × [0, 88.9]. d1 (1U, slot 2) origin (914, 102.9) →
