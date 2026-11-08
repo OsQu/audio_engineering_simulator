@@ -6,20 +6,22 @@
 //! the **internal edges** wiring them, and the **UI metadata** for its panel. Adding a device is one
 //! entry here.
 //!
-//! **One chassis → one-or-many nodes (the chassis-group seam).** A device expands into 1..N
-//! engine nodes wired by internal edges; a physical multi-I/O box (a preamp + its converter, a channel
+//! **One chassis → one-or-many nodes (the chassis-group seam).** A device expands into 1..N engine
+//! nodes wired by internal edges; a physical multi-I/O box (a preamp + its converter, a channel
 //! strip) is several nodes behind one logical device. The device's **exposed face** is derived by
-//! convention: an input/output port is exposed when **no internal edge consumes it** (open ports, in
-//! node order); all node params are exposed, concatenated in node order. [`instantiate`] expands an
-//! entry into a `Graph` and returns a [`BuiltDevice`] — the map from device-level ports/params to
-//! concrete `(NodeId, …)` `build_patch` uses to remap connections and resolve handles.
-//! A single-node device is the trivial case (no internal edges; the one node's whole face is exposed).
+//! convention: an input/output port is exposed when **no internal edge consumes it** (open ports,
+//! in node order); all node params are exposed, concatenated in node order.
+//! [`instantiate_with_assets`] expands an entry into a `Graph` and returns a [`BuiltDevice`] — the
+//! map from device-level ports/params to concrete `(NodeId, …)` `build_patch` uses to remap
+//! connections and resolve handles. A single-node device is the trivial case (no internal edges;
+//! the one node's whole face is exposed).
 //!
-//! **Routing seam (extension points, not yet built).** [`instantiate`] → [`BuiltDevice`] is the stable
-//! boundary: callers never see *how* a device built itself, so richer topologies stay additive behind
-//! it. Static [`InternalEdge`] data covers fixed topology (what exists). *Build-time-parameterized*
-//! topology (an N-channel mixer, an interface with N preamps) needs an imperative-builder variant of
-//! [`CatalogEntry`] + an optional structural-config field on the scene `DeviceInstance`.
+//! **Routing seam (extension points, not yet built).** [`instantiate_with_assets`] →
+//! [`BuiltDevice`] is the stable boundary: callers never see *how* a device built itself, so richer
+//! topologies stay additive behind it. Static [`InternalEdge`] data covers fixed topology (what
+//! exists). *Build-time-parameterized* topology (an N-channel mixer, an interface with N preamps)
+//! needs an imperative-builder variant of [`CatalogEntry`] + an optional structural-config field on
+//! the scene `DeviceInstance`.
 //! *Runtime-switchable* routing (bypass, mid/side, a routing matrix) is **not** a topology change — it
 //! lives inside a node behind a control param (or is user-repatching → a graph edit + recompile).
 //!
@@ -35,7 +37,7 @@
 use std::borrow::Cow;
 
 use crate::{
-    assets::{AssetBuildError, BuildContext, SoundFontBankLibrary},
+    assets::{AssetBuildError, BuildContext},
     scene::ConfigSetting,
 };
 use engine::{
@@ -78,9 +80,15 @@ impl<'a> DeviceConfig<'a> {
     }
 }
 
-/// The fixed converter clock + word length the catalog's digital devices are built at — the same
-/// 48 kHz / 16-bit as the canonical patch (`M = 384 kHz / 48 kHz = 8` against the analog rate).
-const HOST_RATE_HZ: f64 = 48_000.0;
+/// Each digital device's own converter clock. There is no global digital rate: every converter
+/// stamps its rate onto the data it produces, so these are per-device, all 48 kHz today
+/// (`M = 384 kHz / 48 kHz = 8` against the canonical analog rate).
+const SCARLETT_CLOCK_HZ: f64 = 48_000.0;
+const AD_CLOCK_HZ: f64 = 48_000.0;
+const DA_CLOCK_HZ: f64 = 48_000.0;
+const EQ_CLOCK_HZ: f64 = 48_000.0;
+const DIGITAL_METER_CLOCK_HZ: f64 = 48_000.0;
+/// The word length the catalog's digital devices are built at.
 const BITS: u32 = 16;
 
 const TIM_GM_6MB: &str = "tim_gm_6mb";
@@ -438,7 +446,7 @@ type NodeBuilder = fn(&DeviceConfig) -> Box<dyn Node>;
 /// A cold-path builder for a node that needs a host-supplied parsed asset. The normal catalog keeps
 /// using [`NodeBuilder`]; this separate signature prevents asset-free entries from gaining needless
 /// error handling while giving a future instrument entry the explicit construction context it needs.
-pub type AssetNodeBuilder =
+pub(crate) type AssetNodeBuilder =
     fn(&DeviceConfig, &BuildContext) -> Result<Box<dyn Node>, AssetBuildError>;
 
 /// A constructor-independent node declaration used solely to describe an asset-backed face.
@@ -463,9 +471,10 @@ pub(super) enum NodeSpec {
 
 /// Build an asset-backed node with the explicit context supplied by patch assembly.
 ///
-/// This is the fallible counterpart to the catalog's ordinary node builders, used by the
-/// asset-backed (SoundFont) entries such as the guitars.
-pub fn build_asset_node(
+/// The fallible counterpart to the catalog's ordinary node builders; tests use it to drive an
+/// [`AssetNodeBuilder`] directly.
+#[cfg(test)]
+pub(crate) fn build_asset_node(
     builder: AssetNodeBuilder,
     config: &DeviceConfig,
     context: &BuildContext,
@@ -476,7 +485,7 @@ pub fn build_asset_node(
 /// Normalize scalar structural config to a GM program number. Finite values round to the nearest
 /// integer then clamp to `0..=127`; non-finite values use the normalized default.
 #[must_use]
-pub fn gm_preset(config: &DeviceConfig, key: &str, default: f32) -> u8 {
+pub(crate) fn gm_preset(config: &DeviceConfig, key: &str, default: f32) -> u8 {
     let normalize = |value: f32| {
         if value.is_finite() {
             value.round().clamp(0.0, 127.0) as u8
@@ -741,7 +750,7 @@ fn scarlett_preamp(cfg: &DeviceConfig, inst_key: &str) -> Box<dyn Node> {
 /// source loads against.
 fn scarlett_ad(z_in_ohms: f32) -> Box<dyn Node> {
     Box::new(AdConverter::new(
-        SampleRate::new(HOST_RATE_HZ),
+        SampleRate::new(SCARLETT_CLOCK_HZ),
         BitDepth::new(BITS),
         Volts::new(1.0),
         Ohms::new(z_in_ohms),
@@ -756,7 +765,7 @@ fn scarlett_line_receiver() -> Box<dyn Node> {
 }
 fn scarlett_da() -> Box<dyn Node> {
     Box::new(DaConverter::new(
-        SampleRate::new(HOST_RATE_HZ),
+        SampleRate::new(SCARLETT_CLOCK_HZ),
         BitDepth::new(BITS),
         Volts::new(1.0),
         Ohms::new(150.0),
@@ -1254,7 +1263,7 @@ const CATALOG: &[CatalogEntry] = &[
         form_factor: FormFactor::Rackmount { rack_units: 1 },
         nodes: &[NodeSpec::Plain(|_cfg| {
             Box::new(ThreeBandEq::new(
-                SampleRate::new(HOST_RATE_HZ),
+                SampleRate::new(EQ_CLOCK_HZ),
                 BitDepth::new(BITS),
                 // Transparent default (all 0 dB): the UI sets bands later. Frequencies are the usual
                 // low-shelf / mid-peak / high-shelf split.
@@ -1288,7 +1297,7 @@ const CATALOG: &[CatalogEntry] = &[
         form_factor: FormFactor::Rackmount { rack_units: 1 },
         nodes: &[NodeSpec::Plain(|_cfg| {
             Box::new(AdConverter::new(
-                SampleRate::new(HOST_RATE_HZ),
+                SampleRate::new(AD_CLOCK_HZ),
                 BitDepth::new(BITS),
                 Volts::new(1.0),
                 Ohms::new(1_000_000.0),
@@ -1325,7 +1334,7 @@ const CATALOG: &[CatalogEntry] = &[
         form_factor: FormFactor::Rackmount { rack_units: 1 },
         nodes: &[NodeSpec::Plain(|_cfg| {
             Box::new(DaConverter::new(
-                SampleRate::new(HOST_RATE_HZ),
+                SampleRate::new(DA_CLOCK_HZ),
                 BitDepth::new(BITS),
                 Volts::new(1.0),
                 Ohms::new(150.0),
@@ -1624,7 +1633,7 @@ const CATALOG: &[CatalogEntry] = &[
         form_factor: FormFactor::Rackmount { rack_units: 1 },
         nodes: &[NodeSpec::Plain(|_cfg| {
             Box::new(DigitalMeter::new(
-                SampleRate::new(HOST_RATE_HZ),
+                SampleRate::new(DIGITAL_METER_CLOCK_HZ),
                 BitDepth::new(BITS),
                 1,
             ))
@@ -1696,28 +1705,28 @@ const CATALOG: &[CatalogEntry] = &[
             NodeSpec::Plain(|_cfg| scarlett_ad(1_000_000.0)), // buffered line in 6 AD
             NodeSpec::Plain(|_cfg| {
                 Box::new(DigitalDemux::new(
-                    SampleRate::new(HOST_RATE_HZ),
+                    SampleRate::new(SCARLETT_CLOCK_HZ),
                     BitDepth::new(BITS),
                     2,
                 ))
             }), // S/PDIF in (2ch)
             NodeSpec::Plain(|_cfg| {
                 Box::new(DigitalDemux::new(
-                    SampleRate::new(HOST_RATE_HZ),
+                    SampleRate::new(SCARLETT_CLOCK_HZ),
                     BitDepth::new(BITS),
                     6,
                 ))
             }), // USB return (6ch)
             NodeSpec::Plain(|_cfg| {
                 Box::new(DigitalMux::new(
-                    SampleRate::new(HOST_RATE_HZ),
+                    SampleRate::new(SCARLETT_CLOCK_HZ),
                     BitDepth::new(BITS),
                     8,
                 ))
             }), // USB send (8ch)
             NodeSpec::Plain(|_cfg| {
                 Box::new(DigitalMux::new(
-                    SampleRate::new(HOST_RATE_HZ),
+                    SampleRate::new(SCARLETT_CLOCK_HZ),
                     BitDepth::new(BITS),
                     2,
                 ))
@@ -1743,7 +1752,7 @@ const CATALOG: &[CatalogEntry] = &[
                     d[i * n + i] = 1.0;
                 }
                 Box::new(Matrix::new(
-                    SampleRate::new(HOST_RATE_HZ),
+                    SampleRate::new(SCARLETT_CLOCK_HZ),
                     BitDepth::new(BITS),
                     n,
                     n,
@@ -2281,8 +2290,8 @@ const CATALOG: &[CatalogEntry] = &[
 ];
 
 /// A built device's footprint in a graph: its engine nodes and the resolved maps from device-level
-/// ports/params to concrete `(NodeId, …)`. Built by [`instantiate`]; consumed by `build_patch` to
-/// remap inter-device connections to graph edges and to resolve control handles.
+/// ports/params to concrete `(NodeId, …)`. Built by `instantiate_with_assets`; consumed by
+/// `build_patch` to remap inter-device connections to graph edges and to resolve control handles.
 ///
 /// `inputs`/`outputs` are indexed by **device-level port id** (the same index a scene's `PortRef`
 /// uses); `params` by **device-level param id**. An event input is just an input port whose node port
@@ -2332,8 +2341,8 @@ struct ExposedReadout {
 }
 
 /// A device's built nodes plus its exposed face (open ports + all params + all readouts),
-/// node-index-based. Shared by [`instantiate`] (maps node indices → `NodeId`) and [`describe`]
-/// (reads domains + UI labels).
+/// node-index-based. Shared by [`instantiate_with_assets`] (maps node indices → `NodeId`) and
+/// [`describe`] (reads domains + UI labels).
 struct Expansion {
     nodes: Vec<Box<dyn Node>>,
     face: FaceExpansion,
@@ -2481,9 +2490,23 @@ fn build_expansion(
     })
 }
 
+/// [`instantiate_with_assets`] with an empty asset library, for tests of asset-free entries. `None`
+/// if the type is unknown or an asset failed to build.
+#[cfg(test)]
+pub(crate) fn instantiate(
+    type_id: &str,
+    config: &DeviceConfig,
+    g: &mut Graph,
+) -> Option<BuiltDevice> {
+    let assets = crate::assets::SoundFontBankLibrary::default();
+    instantiate_with_assets(type_id, config, g, &BuildContext::new(&assets))
+        .ok()
+        .flatten()
+}
+
 /// Expand the device type `type_id` (built with structural `config`) into `g`: add its node(s), wire
 /// its internal edges, and return the instance map (device-level ports/params → concrete
-/// `(NodeId, …)`). `None` if the type is unknown.
+/// `(NodeId, …)`).
 ///
 /// The chassis-seam primitive: `build_patch` calls this per device with the instance's config, then
 /// uses the returned [`BuiltDevice`] to remap inter-device connections and resolve control handles.
@@ -2491,16 +2514,10 @@ fn build_expansion(
 /// ports/params exist), but a **channel-count config** can resize it — the `computer`'s
 /// `usb_sends`/`usb_returns` grow its port lanes, crosspoints, and readouts — so the returned map is
 /// built for *this* config, not a canonical one.
-pub fn instantiate(type_id: &str, config: &DeviceConfig, g: &mut Graph) -> Option<BuiltDevice> {
-    let assets = SoundFontBankLibrary::default();
-    instantiate_with_assets(type_id, config, g, &BuildContext::new(&assets))
-        .ok()
-        .flatten()
-}
-
-/// Asset-aware variant of [`instantiate`]. Ordinary catalog entries ignore `context`; an
-/// asset-backed entry can instead use [`build_asset_node`] to resolve the bank it needs. `Ok(None)`
-/// means the type is unknown; `Err` preserves an asset-construction failure for patch assembly.
+///
+/// Ordinary catalog entries ignore `context`; an asset-backed entry (the guitars) resolves the
+/// SoundFont bank it needs from it. `Ok(None)` means the type is unknown; `Err` preserves an
+/// asset-construction failure for patch assembly.
 pub fn instantiate_with_assets(
     type_id: &str,
     config: &DeviceConfig,
@@ -2726,6 +2743,11 @@ fn describe(entry: &CatalogEntry, config: &DeviceConfig) -> DeviceDescriptor {
     }
 }
 
+/// The descriptor of device type `type_id` built with structural `config` — the same face
+/// [`descriptors`] lists, but sized for *this* config (a channel-count config such as the
+/// `computer`'s `usb_sends` resizes ports, params and readouts). `None` if the type is unknown.
+/// Describes without building: asset-backed entries never parse their asset here.
+#[must_use]
 pub fn describe_device(type_id: &str, config: &DeviceConfig) -> Option<DeviceDescriptor> {
     entry(type_id).map(|entry| describe(entry, config))
 }
@@ -2733,6 +2755,7 @@ pub fn describe_device(type_id: &str, config: &DeviceConfig) -> Option<DeviceDes
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::assets::SoundFontBankLibrary;
     const FIXTURE_SOUNDFONT_ID: &str = "test-gm";
 
     const ASSET_FIXTURE: CatalogEntry = CatalogEntry {

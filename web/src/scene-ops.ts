@@ -61,7 +61,7 @@ export function connectionKind(scene: Scene, catalog: DeviceDescriptor[], c: Con
 
 // The physical connectors of a connection. A cable fits only if its two ends match this pair (in either
 // orientation); `null` when either endpoint can no longer be resolved.
-export function connectionConnectors(
+function connectionConnectors(
   scene: Scene,
   catalog: DeviceDescriptor[],
   c: Connection,

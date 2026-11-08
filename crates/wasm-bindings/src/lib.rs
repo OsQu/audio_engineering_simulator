@@ -145,6 +145,12 @@ pub fn decode_wav(bytes: &[u8]) -> Result<DecodedWav, JsValue> {
     })
 }
 
+/// The [`devices::DeviceDescriptor`] of device type `type_id` under the structural `configs` (a JS
+/// array of `{ key, value }` config settings), as a plain JS object. The UI calls this when a
+/// config change can resize a device's face (e.g. the computer's USB channel counts).
+///
+/// # Errors
+/// Throws if `configs` isn't a valid settings array or `type_id` isn't in the catalog.
 #[wasm_bindgen]
 pub fn describe_device(type_id: String, configs: JsValue) -> Result<JsValue, JsValue> {
     let settings: Vec<devices::ConfigSetting> = serde_wasm_bindgen::from_value(configs)?;

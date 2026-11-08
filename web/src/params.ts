@@ -1,6 +1,7 @@
 // Control-param helpers: the live-value map keying, seeding it from the scene, and pushing it to the
-// engine. Pure given their inputs (no Svelte). App owns the `paramValues` $state and `onParamInput`
-// (which touches all three param lanes at once); these are the read/seed/push helpers around it.
+// engine. Pure given their inputs (no Svelte). `SceneSession` owns the `paramValues` $state and
+// `onParamInput` (which touches all three param lanes at once); these are the read/seed/push helpers
+// around it.
 
 import { type DeviceDescriptor, descriptorFor } from "./catalog";
 import type { ControlMessage } from "./engine";

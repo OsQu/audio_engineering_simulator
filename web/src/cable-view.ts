@@ -27,7 +27,7 @@ export const jackKey = (device: string, direction: "input" | "output", port: num
 // How far a portal stub extends from its jack by default, in surface mm.
 export const PORTAL_LEN = 180;
 
-export const spaceName = (scene: Scene, id: string): string =>
+const spaceName = (scene: Scene, id: string): string =>
   scene.ui.spaces.find((s) => s.id === id)?.name ?? id;
 
 // A short label for where a cable's off-view end lives: the room name if it's in another space, else the

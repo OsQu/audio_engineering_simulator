@@ -1,12 +1,12 @@
-// Engine bring-up + control transport — the non-UI half of the harness, extracted from main.ts so
-// the Svelte app (App.svelte) is a thin consumer.
+// Engine bring-up + control transport — the non-UI half of the harness. The `SceneSession`
+// (session.svelte.ts) drives it; the views consume the session.
 //
 // `startEngine` fetches the wasm bytes (no reliable fetch in the worklet) and hands them plus the
 // runnable patch to the AudioWorklet via `processorOptions`; the processor instantiates the module,
 // builds `SceneEngine(patch)`, and on `ready` posts back the engine geometry **and the device
 // catalog** (`wasm_bindgen.catalog()`, called in the worklet where the wasm instance lives). Control
 // is generic, by device id: `send` posts param/note/loadPatch messages the worklet maps onto the
-// engine. Keyboard + Web MIDI are wired here onto the same `send`.
+// engine. The keyboard and Web MIDI note-capture surfaces live here too.
 
 import type { CableType, DeviceDescriptor } from "./catalog";
 import { clampOctave, DEFAULT_VELOCITY, noteForKey, octaveShiftFor } from "./notes";
@@ -359,7 +359,7 @@ export async function startEngine(
 // --- Keyboard + Web MIDI note capture -------------------------------------------------------------
 //
 // Both surfaces *detect* note-on/off and hand them to a `NoteSink`; neither knows **which** device
-// plays. The caller (App) routes each note to the currently-focused instrument, so
+// plays. The caller (the scene view or the workbench) routes each note to the focused instrument, so
 // capture follows focus instead of being bolted to one synth at startup. The QWERTY note layout +
 // octave logic live in notes.ts.
 

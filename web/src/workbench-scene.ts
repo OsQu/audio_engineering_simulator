@@ -1,8 +1,7 @@
 // Pure scene builders for the device workbench. Kept out of the `.svelte` shell so the logic is
-// node-testable and the component stays thin. The workbench runs the device-under-test plus a **fixed
-// supporting cast** (a synth source + a DA + a speaker) on a bench with no spatial UI — these wrap a
-// runnable `Patch` in a bare `Scene` (empty `ui`, since the workbench doesn't use WorldView). The cast is
-// **unwired**: the user patches source→DUT→monitor by hand (no auto-rig).
+// node-testable and the component stays thin. The workbench runs the device-under-test on a bench with
+// no spatial UI — these wrap a runnable `Patch` in a bare `Scene` (empty `ui`, since the workbench
+// doesn't use WorldView). Nothing is auto-wired: the user adds and patches any other gear by hand.
 
 import type { DeviceDescriptor } from "./catalog";
 import type { Patch, PortRef } from "./scene";
@@ -10,18 +9,14 @@ import { SCHEMA_VERSION, type Scene } from "./scene-store";
 
 /** The device-under-test's instance id on the bench. */
 export const BENCH_DEVICE = "dev";
-/** The supporting-cast instance ids: a synth source feeding the DUT, and a DA + speaker monitor chain. */
-export const SOURCE_DEVICE = "src";
-export const DA_DEVICE = "da";
+/** The instance id the fallback bench tap addresses: a speaker the user patches the DUT through. */
 export const SPEAKER_DEVICE = "spk";
 
 /** A guaranteed-valid device to boot on before the catalog is known: the worklet only posts the catalog
  *  after `SceneEngine(patch)` builds, so we boot this known-good type first, then resolve the requested
  *  `typeId` against the catalog that comes back. `synth_voice` is a core device. */
 export const BOOTSTRAP_TYPE = "synth_voice";
-/** The supporting-cast type ids (all core devices). */
-const _SOURCE_TYPE = "synth_voice";
-const _DA_TYPE = "da_converter";
+/** The speaker's type id — its descriptor resolves the fallback tap. */
 const SPEAKER_TYPE = "speaker";
 
 /** Wrap a runnable patch in a minimal Scene — empty spatial `ui` (the workbench has no WorldView). */
@@ -67,11 +62,10 @@ export function defaultBenchTap(
   return undefined;
 }
 
-/** The bench scene for a device-under-test: the DUT plus the fixed supporting cast (synth source, DA,
- *  speaker), all **unwired** and ordered left→right by signal flow (source → DUT → DA → speaker) for the
- *  bench layout. `output` starts at {@link defaultBenchTap} (user-retargetable by clicking an analog output
- *  jack). Needs the live catalog to resolve the speaker descriptor + the default tap; returns
- *  `undefined` if the speaker is missing from the catalog or no analog tap resolves (a catalog regression). */
+/** The bench scene for a device-under-test: the DUT alone, unwired. `output` starts at
+ *  {@link defaultBenchTap} (user-retargetable by clicking an analog output jack). Needs the live catalog
+ *  to resolve the speaker descriptor for the default tap; returns `undefined` if the speaker is missing
+ *  from the catalog or no analog tap resolves (a catalog regression). */
 export function benchScene(dut: DeviceDescriptor, catalog: DeviceDescriptor[]): Scene | undefined {
   const speaker = catalog.find((d) => d.typeId === SPEAKER_TYPE);
   if (!speaker) return undefined;

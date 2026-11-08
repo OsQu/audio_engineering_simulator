@@ -16,7 +16,7 @@
   import type { BenchWatch } from "./scene-store";
   import { isWatched, toggleWatch, watchKey } from "./scene-ops";
   import type { SceneSession } from "./session.svelte";
-  import { formatParam } from "./widgets/format";
+  import { fmtReading, formatParam } from "./widgets/format";
 
   interface Props {
     session: SceneSession;
@@ -132,7 +132,7 @@
       ...base,
       device: desc.name,
       label: r.label,
-      value: `${v <= -55 ? "—" : v.toFixed(1)}${r.unit ? ` ${r.unit}` : ""}`,
+      value: `${fmtReading(v)}${r.unit ? ` ${r.unit}` : ""}`,
       detail: "readout",
       available: true,
     };

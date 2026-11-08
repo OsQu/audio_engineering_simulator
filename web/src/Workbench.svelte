@@ -6,7 +6,7 @@
   // fixed supporting cast: synth source + DA + speaker, unwired) or falling back to the catalog index.
   // Audio resumes on the first interaction; the user patches source→DUT→monitor by hand.
   import { faceInstanceId } from "./view-resolution";
-  import { type DawUi, focusUi, hasFocusSurface } from "./device-ui";
+  import { focusUi, hasFocusSurface } from "./device-ui";
   import { wireMidi } from "./engine";
   import { isFocusable } from "./focus";
   import { wireKeyboardInput } from "./keyboard-input.svelte";
@@ -119,30 +119,6 @@
     bench[id] = { ...bench[id], x, y }; // retain the durable facing
     clearPlacementPreview();
   };
-
-  // The DAW control seam for a benched computer's mixer surface (see App's `dawFor`) — session-backed,
-  // reactive getters. Lets the device bench drive the DAW like the scene view.
-  const dawFor = (device: string): DawUi => ({
-    get transport() {
-      return session.transportOf(device);
-    },
-    get tracks() {
-      return session.tracksOf(device);
-    },
-    get sends() {
-      return session.sendsOf(device);
-    },
-    waveform: (t) => session.waveformOf(device, t),
-    play: () => session.play(device),
-    stop: () => session.stop(device),
-    setRecordEnabled: (on) => session.setRecordEnabled(device, on),
-    seek: (pos) => session.seek(device, pos),
-    setTrackInput: (t, l) => session.setTrackInput(device, t, l),
-    setTrackArmed: (t, a) => session.setTrackArmed(device, t, a),
-    setTrackMonitoring: (t, on) => session.setTrackMonitoring(device, t, on),
-    setTrackLevel: (t, v) => session.setTrackLevel(device, t, v),
-    setTrackCount: (n) => session.setTrackCount(device, n),
-  });
 
   // Patching feels **identical to the scene view** — the same PatchController flow, so both click-to-pick
   // (click a source jack, then a destination jack) and drag work. Presses are arbitrated by BenchStage's
@@ -438,7 +414,7 @@
               heldNotes={session.heldNotes}
               notesDriven={eventsInputDriven(session.scene, f.desc, f.device.id)}
               onNote={(on, note) => session.playNote(f.device.id, on, note)}
-              daw={dawFor(f.device.id)}
+              daw={session.dawUi(f.device.id)}
             />
           {/snippet}
           <!-- The focus copy is its own non-patchable face instance (its jacks share the bench's keys). -->

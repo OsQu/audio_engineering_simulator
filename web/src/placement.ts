@@ -38,7 +38,7 @@ import {
 
 // The rack occupants (start-slot + U-height) in `rackId`, excluding one device — the collision set the
 // slot finder needs.
-export function rackOccupants(ctx: LayoutCtx, rackId: string, excludeId: string): RackOccupant[] {
+function rackOccupants(ctx: LayoutCtx, rackId: string, excludeId: string): RackOccupant[] {
   const occ: RackOccupant[] = [];
   for (const d of ctx.scene.patch.devices) {
     if (d.id === excludeId) continue;

@@ -62,7 +62,7 @@ pub trait DawControl {
 /// [`DawControl::drain_record`] impl: reads exactly `ring.len()` bytes (always available, so the
 /// all-or-nothing [`ByteRing::read`] succeeds), leaving the ring empty. Off the hot path (it allocates).
 #[must_use]
-pub fn drain_ring(ring: &mut ByteRing) -> Vec<u8> {
+pub(crate) fn drain_ring(ring: &mut ByteRing) -> Vec<u8> {
     let mut out = vec![0u8; ring.len()];
     let _ = ring.read(&mut out);
     out

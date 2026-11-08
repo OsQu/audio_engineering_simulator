@@ -13,6 +13,7 @@ import {
   type ParamDescriptor,
 } from "./catalog";
 import { DawController } from "./daw";
+import type { DawUi } from "./device-ui";
 import {
   type ControlMessage,
   type EngineControl,
@@ -340,10 +341,36 @@ export class SceneSession {
     );
   }
 
-  // A structural edit → rebuild the engine from the new patch (compile + ScheduleSlot hot-swap, in the
-  // worklet) and re-apply param values. Edits are rare gestures, so the off-block
-  // compile cost is acceptable; the live audio thread swaps at a block boundary.
   // --- DAW: transport, tracks, record/playback ----------------------------------------------------
+
+  /** The DAW control seam for a device's mixer surface — session-backed, with reactive getters so the
+   *  surface re-renders as the transport advances / the track model changes. Harmless on a non-DAW
+   *  device (its commands no-op in the engine). */
+  dawUi(device: string): DawUi {
+    // The getters below run with the returned object as `this`, so capture the session.
+    const session = this;
+    return {
+      get transport() {
+        return session.transportOf(device);
+      },
+      get tracks() {
+        return session.tracksOf(device);
+      },
+      get sends() {
+        return session.sendsOf(device);
+      },
+      waveform: (t) => session.waveformOf(device, t),
+      play: () => session.play(device),
+      stop: () => session.stop(device),
+      setRecordEnabled: (on) => session.setRecordEnabled(device, on),
+      seek: (pos) => session.seek(device, pos),
+      setTrackInput: (t, l) => session.setTrackInput(device, t, l),
+      setTrackArmed: (t, a) => session.setTrackArmed(device, t, a),
+      setTrackMonitoring: (t, on) => session.setTrackMonitoring(device, t, on),
+      setTrackLevel: (t, v) => session.setTrackLevel(device, t, v),
+      setTrackCount: (n) => session.setTrackCount(device, n),
+    };
+  }
 
   /** A DAW device's live transport state (playhead + rolling/recording), or undefined if none yet. */
   transportOf(device: string): TransportState | undefined {
