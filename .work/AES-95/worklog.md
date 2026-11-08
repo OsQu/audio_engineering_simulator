@@ -12,3 +12,6 @@
   Kept limits 20 / 15 (I-304): 10 and 17 functions over, led by engine `schedule.rs:compile` 129/92.
 - Learned: `fx toml check` without an arg checks the main repo, not the worktree (recorded, I-305).
 - Next: none; ready for review.
+
+## 2026-11-08 — finished: quality check on the base
+- `fx mv AES-95 finished` warned "quality scan failed: scanning the merge base fe2f881bfe … scripts/rust-code-analysis.sh: No such file". The check runs the head's analyzer command on the merge base, which predates the script. Expected for the ticket that introduces the analyzer; later tickets' bases will have it.
