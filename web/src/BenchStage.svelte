@@ -511,7 +511,7 @@
         <CablePass {pass} {prefix}>
           <Cable
             d={r.path.d}
-            kind={connectionKind(session.scene, session.catalog, r.connection)}
+            kind={connectionKind(session.descriptorOf, r.connection)}
             selected={r.key === selectedCableKey}
           />
           {#if pass.kind === "main"}

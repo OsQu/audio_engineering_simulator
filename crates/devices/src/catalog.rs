@@ -11,12 +11,12 @@
 //! strip) is several nodes behind one logical device. The device's **exposed face** is derived by
 //! convention: an input/output port is exposed when **no internal edge consumes it** (open ports,
 //! in node order); all node params are exposed, concatenated in node order.
-//! [`instantiate_with_assets`] expands an entry into a `Graph` and returns a [`BuiltDevice`] — the
+//! [`instantiate_described`] expands an entry into a `Graph` and returns a [`BuiltDevice`] — the
 //! map from device-level ports/params to concrete `(NodeId, …)` `build_patch` uses to remap
 //! connections and resolve handles. A single-node device is the trivial case (no internal edges;
 //! the one node's whole face is exposed).
 //!
-//! **Routing seam (extension points, not yet built).** [`instantiate_with_assets`] →
+//! **Routing seam (extension points, not yet built).** [`instantiate_described`] →
 //! [`BuiltDevice`] is the stable boundary: callers never see *how* a device built itself, so richer
 //! topologies stay additive behind it. Static [`InternalEdge`](spec::InternalEdge) data covers fixed topology (what
 //! exists). *Build-time-parameterized* topology (an N-channel mixer, an interface with N preamps)
@@ -67,7 +67,7 @@ pub use descriptor::{
     ParamKind, ParamTaper, PortDescriptor, PortDirection, PortDomain, PortKind,
     connectors_compatible,
 };
-pub use expand::{BuiltDevice, describe_device, descriptors, instantiate_with_assets};
+pub use expand::{BuiltDevice, describe_device, descriptors, instantiate_described};
 pub use spec::DeviceConfig;
 
 use spec::CatalogEntry;

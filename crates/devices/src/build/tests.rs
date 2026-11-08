@@ -1214,3 +1214,73 @@ fn a_default_computer_cannot_receive_the_interfaces_wide_send() {
         "got {err:?}"
     );
 }
+
+/// Two `computer`s on **different** `usb_sends`/`usb_returns` configs: each connection is checked
+/// against *its own* instance's descriptor. The wide (8×6) computer accepts the 8i6's 8-ch send even
+/// though a default (2×2) computer is listed after it — a type-keyed descriptor map (last instance
+/// wins) would have checked it against the 2-ch face and wrongly rejected it.
+#[test]
+fn each_computer_is_validated_against_its_own_config() {
+    let patch = Patch {
+        devices: vec![
+            device("if", "scarlett_8i6"),
+            computer_8x6("wide"),
+            device("narrow", "computer"),
+            device("spk", "speaker"),
+        ],
+        connections: vec![
+            conn("if", 0, "wide", 0), // 8i6 USB send (8 ch) → wide computer USB in (8 ch)
+            conn("if", 2, "spk", 0),  // 8i6 Line Out 1 → speaker
+        ],
+        output: PortRef {
+            device: "spk".into(),
+            port: 0,
+        },
+    };
+    let scene = build_patch(&patch, BLOCK_LEN, rate(), 0)
+        .expect("the 8-ch send matches the wide computer's own 8-ch input");
+
+    // The scene carries each instance's own descriptor: 8 send lanes vs the default 2.
+    let usb_in_channels = |id: &str| {
+        scene.device_descriptors()[id]
+            .ports
+            .iter()
+            .find(|p| p.direction == PortDirection::Input && p.id == 0)
+            .map(|p| p.channels)
+    };
+    assert_eq!(usb_in_channels("wide"), Some(8));
+    assert_eq!(usb_in_channels("narrow"), Some(2));
+    assert_eq!(scene.device_descriptors().len(), 4, "one per device");
+}
+
+/// The flip side: the 8i6's 8-ch send into the **narrow** computer is a legible
+/// `ChannelCountMismatch` even when a wide computer is listed after it (with a type-keyed map, the
+/// wide face would have passed the pre-compile check, leaving only the engine's lane error).
+#[test]
+fn a_narrow_computer_rejects_the_wide_send_regardless_of_order() {
+    let patch = Patch {
+        devices: vec![
+            device("if", "scarlett_8i6"),
+            device("narrow", "computer"),
+            computer_8x6("wide"),
+            device("spk", "speaker"),
+        ],
+        connections: vec![conn("if", 0, "narrow", 0), conn("if", 2, "spk", 0)],
+        output: PortRef {
+            device: "spk".into(),
+            port: 0,
+        },
+    };
+    let err = build_patch(&patch, BLOCK_LEN, rate(), 0).unwrap_err();
+    assert!(
+        matches!(
+            err,
+            BuildError::ChannelCountMismatch {
+                from_channels: 8,
+                to_channels: 2,
+                ..
+            }
+        ),
+        "got {err:?}"
+    );
+}

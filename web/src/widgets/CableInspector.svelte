@@ -20,10 +20,10 @@
   }
   let { session, patch, conn, onClose }: Props = $props();
 
-  const domain = $derived(sceneOps.connectionDomain(session.scene, session.catalog, conn));
+  const domain = $derived(sceneOps.connectionDomain(session.descriptorOf, conn));
   // The cable presets that physically fit this link (matching connector) — so you can't put an XLR cable
   // on a ¼" link. The current type id resolves the connection's stored R·C back to a preset (else ideal).
-  const cables = $derived(sceneOps.cablesFor(session.scene, session.catalog, session.cables, conn));
+  const cables = $derived(sceneOps.cablesFor(session.descriptorOf, session.cables, conn));
   const currentType = $derived(cableTypeIdFor(session.cables, conn.cable));
   // The loading loss (impedance voltage divider) in dB, from the static per-connection losses — null for a digital link.
   const loss = $derived.by((): number | null => {

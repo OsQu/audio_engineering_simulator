@@ -7,7 +7,6 @@
   // Audio resumes on the first interaction; the user patches source→DUT→monitor by hand.
   import { faceInstanceId } from "./view-resolution";
   import { focusUi, hasFocusSurface } from "./device-ui";
-  import { wireMidi } from "./engine";
   import { isFocusable } from "./focus";
   import { wireKeyboardInput } from "./keyboard-input.svelte";
   import { PatchController } from "./patch-controller.svelte";
@@ -37,6 +36,10 @@
   $effect(() => {
     void session.start(() => {});
   });
+  // Unmount (a switch back to the scene view) releases the engine, storage worker and MIDI binding. Its
+  // own dependency-free effect: the start effect above re-runs on reactive reads inside `start()`, and
+  // its cleanup would dispose the session on every rerun.
+  $effect(() => () => session.dispose());
 
   // Autoplay: the context is suspended until the first user interaction (a click/keypress anywhere).
   let resumed = false;
@@ -218,9 +221,7 @@
   $effect(() => {
     if (!session.ready || midiWired) return;
     midiWired = true;
-    wireMidi(playNote, (m) => {
-      session.midiStatus = m;
-    });
+    session.wireMidi(playNote);
   });
 
   let keybedOpen = $state(true);

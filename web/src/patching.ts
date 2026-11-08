@@ -8,11 +8,9 @@
 // the App adapter and passed in. A transition returns the next PatchState; the ones that can complete a
 // patch return a `commit` verdict alongside, and the caller commits it + hot-swaps.
 
-import { type CableType, type DeviceDescriptor, descriptorFor } from "./catalog";
+import type { CableType, Describe } from "./catalog";
 import { type ConnectVerdict, type Endpoint, evaluateConnection } from "./connections";
-import { deviceById } from "./projection";
 import type { Connection } from "./scene";
-import type { Scene } from "./scene-store";
 
 export type Pt = { x: number; y: number };
 
@@ -49,16 +47,11 @@ export const jackKeyOf = (e: Endpoint): string => `${e.device}:${e.direction}:${
 
 // Resolve a `data-jack` value ("device:direction:port") to a full Endpoint (with the port's domain from
 // the descriptor), or null if it doesn't name a real port.
-export function endpointFromJackKey(
-  scene: Scene,
-  catalog: DeviceDescriptor[],
-  key: string,
-): Endpoint | null {
+export function endpointFromJackKey(describe: Describe, key: string): Endpoint | null {
   const [device, direction, portStr] = key.split(":");
   if (!device || (direction !== "input" && direction !== "output")) return null;
   const port = Number(portStr);
-  const dev = deviceById(scene, device);
-  const desc = dev ? descriptorFor(catalog, dev.typeId) : undefined;
+  const desc = describe(device);
   const pd = desc?.ports.find((p) => p.direction === direction && p.id === port);
   if (!pd) return null;
   return {

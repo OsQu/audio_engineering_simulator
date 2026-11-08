@@ -6,6 +6,8 @@
 // (derived from the node on the Rust side); the labels/units/kinds are authored. Field names are
 // camelCase to match the Rust `#[serde(rename_all = "camelCase")]`; a Rust test pins the type ids.
 
+import type { Patch } from "./scene";
+
 /** Full UI descriptor for one device type — everything needed to list it and draw its panel. */
 export interface DeviceDescriptor {
   /** Stable catalog type id — the `typeId` a scene's device instance names. */
@@ -178,6 +180,22 @@ export interface CableType {
   resistanceOhms: number;
   /** Shunt capacitance, farads (forms the treble-rolloff one-pole). */
   capacitanceFarads: number;
+}
+
+/** Resolves a placed device instance (by id) to the descriptor it is built with. A config-driven
+ *  device (the computer, sized by `usb_sends`/`track_count`) has more ports/params than its type's
+ *  default face, so helpers that walk a scene's devices take one of these rather than the type catalog.
+ *  The session's `descriptorOf` is the live one. */
+export type Describe = (deviceId: string) => DeviceDescriptor | undefined;
+
+/** A {@link Describe} over the static *type* descriptors: each instance resolves to its type's default
+ *  face. For contexts with no engine-reported per-instance descriptors (tests, catalog-only tools).
+ *  Reads `scene` at call time, so it tracks later edits. */
+export function typeDescriber(scene: { patch: Patch }, catalog: DeviceDescriptor[]): Describe {
+  return (deviceId) => {
+    const dev = scene.patch.devices.find((d) => d.id === deviceId);
+    return dev ? descriptorFor(catalog, dev.typeId) : undefined;
+  };
 }
 
 /** The descriptor for a `typeId`, or `undefined` if the catalog has no such type. */

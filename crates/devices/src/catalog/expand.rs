@@ -1,5 +1,5 @@
 //! Expanding a catalog entry: deriving its exposed face from its nodes, building it into a graph
-//! (`instantiate_with_assets`), and describing it for the UI (`descriptors` / `describe_device`).
+//! (`instantiate_described`), and describing it for the UI (`descriptors` / `describe_device`).
 
 use super::CATALOG;
 use super::descriptor::{
@@ -26,7 +26,7 @@ pub(crate) fn build_asset_node(
 }
 
 /// A built device's footprint in a graph: its engine nodes and the resolved maps from device-level
-/// ports/params to concrete `(NodeId, …)`. Built by `instantiate_with_assets`; consumed by
+/// ports/params to concrete `(NodeId, …)`. Built by `instantiate_described`; consumed by
 /// `build_patch` to remap inter-device connections to graph edges and to resolve control handles.
 ///
 /// `inputs`/`outputs` are indexed by **device-level port id** (the same index a scene's `PortRef`
@@ -77,7 +77,7 @@ pub(super) struct ExposedReadout {
 }
 
 /// A device's built nodes plus its exposed face (open ports + all params + all readouts),
-/// node-index-based. Shared by [`instantiate_with_assets`] (maps node indices → `NodeId`) and
+/// node-index-based. Shared by [`instantiate_described`] (maps node indices → `NodeId`) and
 /// [`describe`] (reads domains + UI labels).
 pub(super) struct Expansion {
     pub(super) nodes: Vec<Box<dyn Node>>,
@@ -226,7 +226,7 @@ pub(super) fn build_expansion(
     })
 }
 
-/// [`instantiate_with_assets`] with an empty asset library, for tests of asset-free entries. `None`
+/// [`instantiate_described`] with an empty asset library, for tests of asset-free entries. `None`
 /// if the type is unknown or an asset failed to build.
 #[cfg(test)]
 pub(crate) fn instantiate(
@@ -240,9 +240,20 @@ pub(crate) fn instantiate(
         .flatten()
 }
 
+/// [`instantiate_described`] without the descriptor, for tests that only need the instance map.
+#[cfg(test)]
+pub(crate) fn instantiate_with_assets(
+    type_id: &str,
+    config: &DeviceConfig,
+    g: &mut Graph,
+    context: &BuildContext,
+) -> Result<Option<BuiltDevice>, AssetBuildError> {
+    Ok(instantiate_described(type_id, config, g, context)?.map(|(built, _)| built))
+}
+
 /// Expand the device type `type_id` (built with structural `config`) into `g`: add its node(s), wire
 /// its internal edges, and return the instance map (device-level ports/params → concrete
-/// `(NodeId, …)`).
+/// `(NodeId, …)`) together with this instance's [`DeviceDescriptor`].
 ///
 /// The chassis-seam primitive: `build_patch` calls this per device with the instance's config, then
 /// uses the returned [`BuiltDevice`] to remap inter-device connections and resolve control handles.
@@ -254,25 +265,22 @@ pub(crate) fn instantiate(
 /// Ordinary catalog entries ignore `context`; an asset-backed entry (the guitars) resolves the
 /// SoundFont bank it needs from it. `Ok(None)` means the type is unknown; `Err` preserves an
 /// asset-construction failure for patch assembly.
-pub fn instantiate_with_assets(
+///
+/// The descriptor is described from the **same expansion** (the nodes actually added to `g`), so it
+/// matches the instance's config-driven face and the device's nodes are built only once.
+/// `build_patch` validates every connection against it and hands it to the host as the
+/// per-instance descriptor.
+pub fn instantiate_described(
     type_id: &str,
     config: &DeviceConfig,
     g: &mut Graph,
     context: &BuildContext,
-) -> Result<Option<BuiltDevice>, AssetBuildError> {
+) -> Result<Option<(BuiltDevice, DeviceDescriptor)>, AssetBuildError> {
     let Some(entry) = entry(type_id) else {
         return Ok(None);
     };
-    let Expansion {
-        nodes,
-        face:
-            FaceExpansion {
-                inputs,
-                outputs,
-                params,
-                readouts,
-            },
-    } = build_expansion(entry, config, context)?;
+    let Expansion { nodes, face } = build_expansion(entry, config, context)?;
+    let descriptor = describe_face(entry, &face);
 
     let node_ids: Vec<NodeId> = nodes.into_iter().map(|node| g.add_boxed(node)).collect();
     for edge in entry.internal {
@@ -284,10 +292,19 @@ pub fn instantiate_with_assets(
         );
     }
 
-    Ok(Some(BuiltDevice {
-        inputs: inputs.iter().map(|p| (node_ids[p.node], p.port)).collect(),
-        outputs: outputs.iter().map(|p| (node_ids[p.node], p.port)).collect(),
-        params: params
+    let built = BuiltDevice {
+        inputs: face
+            .inputs
+            .iter()
+            .map(|p| (node_ids[p.node], p.port))
+            .collect(),
+        outputs: face
+            .outputs
+            .iter()
+            .map(|p| (node_ids[p.node], p.port))
+            .collect(),
+        params: face
+            .params
             .iter()
             .map(|p| {
                 p.targets
@@ -296,9 +313,14 @@ pub fn instantiate_with_assets(
                     .collect()
             })
             .collect(),
-        readouts: readouts.iter().map(|r| (node_ids[r.node], r.id)).collect(),
+        readouts: face
+            .readouts
+            .iter()
+            .map(|r| (node_ids[r.node], r.id))
+            .collect(),
         nodes: node_ids,
-    }))
+    };
+    Ok(Some((built, descriptor)))
 }
 
 /// The full catalog of device descriptors, one per `CATALOG` entry. Each is built by reading freshly
@@ -312,11 +334,15 @@ pub fn descriptors() -> Vec<DeviceDescriptor> {
         .collect()
 }
 
-/// Build one descriptor: numeric param fields + port domains from the exposed face, labels from the entry.
+/// Build one descriptor for `config`, describing a fresh (face-only) expansion. The type catalog
+/// passes the EMPTY config — the device's *default* face (2×2 for the config-driven computer).
 pub(super) fn describe(entry: &CatalogEntry, config: &DeviceConfig) -> DeviceDescriptor {
-    // The type-catalog descriptor is built with the EMPTY config — the device's *default* face (2×2
-    // for the config-driven computer). A per-instance, config-aware descriptor is a later story.
-    let face = describe_expansion(entry, config);
+    describe_face(entry, &describe_expansion(entry, config))
+}
+
+/// Build one descriptor from an already-computed exposed face: numeric param fields + port domains
+/// from the face, labels from the entry.
+fn describe_face(entry: &CatalogEntry, face: &FaceExpansion) -> DeviceDescriptor {
     // The grid's column (return) count — the summed exposed output lanes.
     let m_out = face.outputs.iter().map(|o| usize::from(o.channels)).sum();
 

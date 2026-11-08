@@ -11,7 +11,7 @@
   // control are deliberately *not* here — they stay on `session.health` / the pinned SEED.
 
   import { type Watchable, matchesQuery, watchables } from "./bench-watch";
-  import { type DeviceDescriptor, descriptorFor } from "./catalog";
+  import type { DeviceDescriptor } from "./catalog";
   import { noteName } from "./notes";
   import type { BenchWatch } from "./scene-store";
   import { isWatched, toggleWatch, watchKey } from "./scene-ops";
@@ -25,15 +25,12 @@
 
   // A device instance's display name (its catalog `name`), falling back to the instance id.
   function deviceName(id: string): string {
-    const dev = session.scene.patch.devices.find((d) => d.id === id);
-    return (dev && session.catalog.find((c) => c.typeId === dev.typeId)?.name) ?? id;
+    return session.descriptorOf(id)?.name ?? id;
   }
 
-  // The catalog descriptor for a device instance (or undefined if its type left the catalog — a stale pin).
-  function descOf(id: string): DeviceDescriptor | undefined {
-    const dev = session.scene.patch.devices.find((d) => d.id === id);
-    return dev && descriptorFor(session.catalog, dev.typeId);
-  }
+  // The per-instance descriptor for a device (config-sized, so a computer's extra crosspoints resolve),
+  // or undefined if its type left the catalog — a stale pin.
+  const descOf = (id: string): DeviceDescriptor | undefined => session.descriptorOf(id);
 
   // --- Header ---------------------------------------------------------------------------------------
   // Master output peak as dBFS (the level message is linear ±1.0 = full scale); silence → "−∞".
@@ -73,7 +70,7 @@
   let query = $state("");
 
   // The full searchable set (every device's params/configs/readouts) and the filtered results.
-  const all = $derived(watchables(session.scene, session.catalog));
+  const all = $derived(watchables(session.scene, session.descriptorOf));
   const matched = $derived(query.trim() ? all.filter((w) => matchesQuery(w, query)) : []);
   const results = $derived(matched.slice(0, MAX_RESULTS));
 

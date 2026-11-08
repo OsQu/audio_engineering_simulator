@@ -20,6 +20,16 @@
   let smokeState: WorkletSmokeState = $state("idle");
   let detail = $state("");
   let events = $state<string[]>([]);
+  // The per-instance descriptors must arrive as a plain object keyed by device id (a JS `Map` would
+  // silently read as empty), both in `ready` and after an installed hot-swap.
+  const deviceIds = patch.devices
+    .map((device) => device.id)
+    .sort()
+    .join(",");
+  const descriptorKeys = (map: Record<string, unknown>): string =>
+    Object.keys(map).sort().join(",");
+  let readyDescriptors = $state("");
+  let installedDescriptors = $state("");
   let send: ((message: ControlMessage) => void) | undefined;
   let control: EngineControl | undefined;
   let destroyed = false;
@@ -36,9 +46,13 @@
           },
           onHealth: () => {},
           onLevel: () => {},
-          onReady: (_ready, nextSend) => {
+          onReady: (ready, nextSend) => {
+            readyDescriptors = descriptorKeys(ready.deviceDescriptors);
             send = nextSend;
             smokeState = "ready";
+          },
+          onDeviceDescriptors: (deviceDescriptors) => {
+            installedDescriptors = descriptorKeys(deviceDescriptors);
           },
           onTopologyAccepted: (transaction) => {
             if (transaction.id === request.id) {
@@ -65,7 +79,7 @@
           : {},
       );
       control = next;
-      if (destroyed) await control.close();
+      if (destroyed) await control.dispose();
       else await control.resume();
     } catch (error) {
       smokeState = "error";
@@ -89,13 +103,18 @@
 
   onDestroy(() => {
     destroyed = true;
-    void control?.close();
+    void control?.dispose();
   });
 </script>
 
 <main data-testid="worklet-smoke">
-  <output data-testid="worklet-state" data-state={smokeState} data-events={events.join(",")}
-    >{smokeState}</output
+  <output
+    data-testid="worklet-state"
+    data-state={smokeState}
+    data-events={events.join(",")}
+    data-device-ids={deviceIds}
+    data-ready-descriptors={readyDescriptors}
+    data-installed-descriptors={installedDescriptors}>{smokeState}</output
   >
   {#if detail}
     <output data-testid="worklet-detail">{detail}</output>

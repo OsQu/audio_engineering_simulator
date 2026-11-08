@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { CableType, DeviceDescriptor } from "../src/catalog";
+import { type CableType, type DeviceDescriptor, typeDescriber } from "../src/catalog";
 import type { ConnectVerdict } from "../src/connections";
 import type { LayoutCtx } from "../src/projection";
 import type { Connection } from "../src/scene";
@@ -200,7 +200,7 @@ describe("commitCable", () => {
       connection: { from: { device: "amp1", port: 0 }, to: { device: "amp2", port: 0 } },
       replaces: null,
     };
-    commitCable(scene, CATALOG, CABLES, v);
+    commitCable(scene, typeDescriber(scene, CATALOG), CABLES, v);
     expect(scene.patch.connections).toHaveLength(1);
     // analog ⇒ carries the first preset's R·C
     expect(scene.patch.connections[0].cable).toEqual({
@@ -219,8 +219,12 @@ describe("commitCable", () => {
     });
     // sanity: the source port is an events domain
     const conn = { from: { device: "m1", port: 0 }, to: { device: "amp2", port: 0 } };
-    expect(connectionDomain(scene, CATALOG, conn)).toBe("events");
-    commitCable(scene, CATALOG, CABLES, { ok: true, connection: conn, replaces: null });
+    expect(connectionDomain(typeDescriber(scene, CATALOG), conn)).toBe("events");
+    commitCable(scene, typeDescriber(scene, CATALOG), CABLES, {
+      ok: true,
+      connection: conn,
+      replaces: null,
+    });
     expect(scene.patch.connections[0].cable).toBeUndefined();
   });
 
@@ -242,7 +246,7 @@ describe("commitCable", () => {
       },
       replaces: null,
     };
-    commitCable(scene, CATALOG, CABLES, v);
+    commitCable(scene, typeDescriber(scene, CATALOG), CABLES, v);
     expect(scene.patch.connections).toHaveLength(1);
     expect(scene.patch.connections[0].duplex).toBe(true);
     expect(scene.patch.connections[0].cable).toBeUndefined();
@@ -266,7 +270,7 @@ describe("commitCable", () => {
       connection: { from: { device: "amp3", port: 0 }, to: { device: "amp2", port: 0 } },
       replaces: existing,
     };
-    commitCable(scene, CATALOG, CABLES, v);
+    commitCable(scene, typeDescriber(scene, CATALOG), CABLES, v);
     // old amp1→amp2 gone, new amp3→amp2 in
     expect(scene.patch.connections.map(connKey)).toEqual(["amp3:0->amp2:0"]);
   });
@@ -300,13 +304,17 @@ describe("connector-aware cable selection", () => {
     });
 
   it("cablesFor keeps only presets whose connector matches the connection's ports (¼\")", () => {
-    const fit = cablesFor(twoAmps(), CATALOG, mixedCables, analogConn);
+    const fit = cablesFor(typeDescriber(twoAmps(), CATALOG), mixedCables, analogConn);
     expect(fit.map((c) => c.typeId)).toEqual(["trs", "long"]); // the XLR cable is excluded
   });
 
   it("commitCable assigns the first *matching* preset, not the first overall", () => {
     const scene = twoAmps();
-    commitCable(scene, CATALOG, mixedCables, { ok: true, connection: analogConn, replaces: null });
+    commitCable(scene, typeDescriber(scene, CATALOG), mixedCables, {
+      ok: true,
+      connection: analogConn,
+      replaces: null,
+    });
     // trs (first ¼" preset), not the XLR that leads the list.
     expect(scene.patch.connections[0].cable).toEqual({
       typeId: "trs",
@@ -616,7 +624,7 @@ describe("enumerateComputerUsb", () => {
     // A stale routing override, to prove re-enumeration resets it.
     deviceOf(scene, "pc").params = [{ id: 0, value: 0.5 }];
 
-    const changed = enumerateComputerUsb(scene, USB_CAT, conn);
+    const changed = enumerateComputerUsb(scene, typeDescriber(scene, USB_CAT), conn);
 
     expect(changed).toBe(true);
     const pc = deviceOf(scene, "pc");
@@ -642,7 +650,7 @@ describe("enumerateComputerUsb", () => {
       { key: "usb_returns", value: 6 },
     ];
 
-    const changed = enumerateComputerUsb(scene, USB_CAT, conn);
+    const changed = enumerateComputerUsb(scene, typeDescriber(scene, USB_CAT), conn);
 
     expect(changed).toBe(true);
     expect(deviceOf(scene, "pc").config).toEqual([
@@ -661,7 +669,7 @@ describe("enumerateComputerUsb", () => {
       connections: [conn],
     });
 
-    const changed = enumerateComputerUsb(scene, USB_CAT, conn);
+    const changed = enumerateComputerUsb(scene, typeDescriber(scene, USB_CAT), conn);
 
     expect(changed).toBe(false); // both keep the default 2×2 — no config written
     expect(deviceOf(scene, "pc1").config).toBeUndefined();
