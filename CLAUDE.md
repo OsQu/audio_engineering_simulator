@@ -38,7 +38,7 @@ cargo fmt --check                 # formatting check (drop --check to apply)
 ```
 
 Full pre-push gate (mirrors CI):
-`cargo fmt --check && cargo lint && cargo test && cargo wasm && cargo docs`.
+`scripts/check-plan-refs.sh && cargo fmt --check && cargo lint && cargo test && cargo wasm && cargo docs`.
 
 Browser harness (the web project is **pnpm**-managed — `pnpm-lock.yaml`): `cd web && pnpm install &&
 pnpm run wasm && pnpm run dev` (then open `http://localhost:5173/`). **In an fx run** the setup hook has
@@ -213,6 +213,13 @@ and WASM portability. Same seed ⇒ identical output.
   the oracle there (you can't hear cable loss or impedance ratios).
 - Determinism makes golden-file render tests viable later (Epic 2).
 
+### No project-plan ids in code
+Plan ids — `Story 8.1`, `Task 5.7.8`, `Epic 4`, bare ids like `pre-4.6`, `PROJECT_PLAN §5.6`, and the
+personal `osku_*` notes — belong in `docs/` and commit messages, **never in source, comments or test
+names**. Comments say what the code does and why, in the present tense; history lives in git. Name a
+design concept ("the clock-domain rule") instead of citing a plan section. `scripts/check-plan-refs.sh`
+enforces this in CI and the pre-push gate.
+
 ## 7. Numeric & rate model — settled
 
 - **One fundamental clock: the analog rate** — the proxy for "continuous." A parameter, never a constant.
@@ -236,7 +243,7 @@ and WASM portability. Same seed ⇒ identical output.
   - `cargo docs` → doc build with broken-intra-doc-link and bare-URL lints denied (via
     `[build] rustdocflags`, which apply only to rustdoc — never rustc)
   - `cargo test` and `cargo fmt --check` are used as-is (already short; `fmt` isn't aliasable)
-  - **Full pre-push gate** (mirrors CI): `cargo fmt --check && cargo lint && cargo test && cargo wasm && cargo docs`
+  - **Full pre-push gate** (mirrors CI): `scripts/check-plan-refs.sh && cargo fmt --check && cargo lint && cargo test && cargo wasm && cargo docs`
 - **CI** (`.github/workflows/ci.yml`) runs those same five gates plus `Swatinem/rust-cache`. WASM
   release profile is `panic = "abort"`; crate-level lints deny `clippy::all` and `unsafe_code`.
 

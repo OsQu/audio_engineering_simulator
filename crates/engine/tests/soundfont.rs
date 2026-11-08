@@ -1,10 +1,10 @@
-//! Stories 9.2–9.3.1 — the `SoundFontSource` node and its shared parsed bank.
+//! The `SoundFontSource` node and its shared parsed bank.
 //!
-//! - Task 9.2.1 drives the node **alone** (no schedule): parse a real GM font, play a note through
+//! - The node **alone** (no schedule): parse a real GM font, play a note through
 //!   `process`, and confirm a recognizable, finite, non-silent signal lands on the digital `Sample`
 //!   lane.
-//! - Task 9.2.2 wires the **headless chassis** — `SoundFontSource → DaConverter` in a compiled
-//!   `Graph` — and confirms note events become recognizable, correctly-pitched analog **volts**.
+//! - The **headless chassis** — `SoundFontSource → DaConverter` in a compiled `Graph`: confirm
+//!   note events become recognizable, correctly-pitched analog **volts**.
 //!
 //! `test_util`'s `rms` / `tone_amplitude` are `#[cfg(test)]`-internal to the crate and unreachable
 //! from this (external) integration test, so minimal local copies live at the bottom of the file.
@@ -24,8 +24,8 @@ fn rate() -> AnalogRate {
 /// steady tone the single-bin DFT can read cleanly for the pitch/release checks.
 const GM_ORGAN: u8 = 16;
 
-/// The shared GM SoundFont, read at test time (native only — the wasm byte seam is Story 9.3). Lives
-/// at the repo root so the 9.4 web build can serve the same asset.
+/// The shared GM SoundFont, read at test time (native only — wasm receives the font as bytes). Lives
+/// at the repo root so the web build can serve the same asset.
 fn soundfont_bytes() -> Vec<u8> {
     let path = concat!(
         env!("CARGO_MANIFEST_DIR"),
@@ -156,11 +156,11 @@ fn sources_share_a_bank_without_sharing_voice_state() {
     );
 }
 
-// ---- Task 9.2.2: the headless chassis (SoundFontSource → DaConverter → volts) ------------------
+// ---- The headless chassis (SoundFontSource → DaConverter → volts) ------------------------------
 
 /// A compiled `SoundFontSource → DaConverter` chassis playing `preset`, over a `block`-sample analog
 /// block, plus a handle to the source's open event input. The 1.0 V DA reference maps full scale to
-/// ±1 V (provisional — the real instrument-out calibration is Story 9.4). `block` must be a multiple
+/// ±1 V (a fixed test calibration, not the catalog's instrument-out level). `block` must be a multiple
 /// of 8 (the 384 kHz ← 48 kHz factor), or `compile` rejects it.
 fn chassis(preset: u8, block: usize) -> (Schedule, EventInputId) {
     let mut g = Graph::new();
@@ -287,7 +287,7 @@ fn chassis_note_off_releases_to_near_silence() {
     );
 }
 
-// ---- Task 9.2.3: polyphony + velocity (delegated to the black box) -----------------------------
+// ---- Polyphony + velocity (delegated to the black box) -----------------------------------------
 
 #[test]
 fn chassis_is_polyphonic() {
@@ -337,7 +337,7 @@ fn velocity_scales_loudness() {
     );
 }
 
-// ---- Task 9.2.4: adversarial events are panic-free (the hot-path panic gate) -------------------
+// ---- Adversarial events are panic-free (the hot-path panic gate) -------------------------------
 
 #[test]
 fn adversarial_events_do_not_panic() {

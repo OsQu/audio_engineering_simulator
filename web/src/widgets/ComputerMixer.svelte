@@ -1,5 +1,5 @@
 <script lang="ts">
-  // The `computer`'s focus surface — the DAW mixer (Story 5.11.6), laid out like a real DAW: a
+  // The `computer`'s focus surface — the DAW mixer, laid out like a real DAW: a
   // **transport** bar, an **arrangement** where every track's waveform is a bare horizontal lane on
   // one shared timeline with a single playhead sweeping across all of them, and a **mixer (MCP)** below
   // where each track is a channel strip (input send, arm, monitor, a real vertical fader with the track

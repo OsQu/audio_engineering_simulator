@@ -14,7 +14,7 @@
   // the interaction concerns are shared, one place each: pan/zoom via `Camera`, moving a device via
   // `beginMove` (device-drag.ts) — dragging a device body repositions it, its offset kept in
   // `scene.ui.bench` — and patching via `PatchController` + `cable-view`. Every press goes through the same
-  // capture-phase stage arbiter as the studio (`stageGestures`, Story 10.7). It exposes a `WorldApi`-shaped
+  // capture-phase stage arbiter as the studio (`stageGestures`). It exposes a `WorldApi`-shaped
   // surface so that machinery can measure jack anchors + draw cables in surface-local space.
 
   import { Camera } from "./camera.svelte";
@@ -153,7 +153,7 @@
   // overlaps allowed.
   // A supporting device's toolbar can overhang its narrow chassis. Give diagonal pointer travel to an
   // overhanging button a short grace period instead of hiding the toolbar the instant the chassis ends.
-  // The toolbar lives in the interaction layer (Story 10.5), so its own enter/focus cancels the close;
+  // The toolbar lives in the interaction layer, so its own enter/focus cancels the close;
   // nothing here changes physical stacking.
   let openChromeId = $state<string | null>(null);
   let chromeCloseTimer: ReturnType<typeof setTimeout> | undefined;
@@ -169,7 +169,7 @@
       chromeCloseTimer = undefined;
     }, 300);
   }
-  // --- Presented faces (Story 10.4) ---------------------------------------------------------------
+  // --- Presented faces ---------------------------------------------------------------
   // The bench's flip state, as in the studio (App): the durable facing changes at once, the resolved face
   // stays settled + non-patchable with its leads hidden until the generation's transition reports back.
   // The DUT's front/back slots never flip; only a supporting device's single slot does.
@@ -219,7 +219,7 @@
     }
   });
 
-  // --- Physical objects & interaction layer (Story 10.5) ---------------------------------------------
+  // --- Physical objects & interaction layer ---------------------------------------------
   // Each device group's paint layer is resolver-owned (resolveBenchObjects): the both-faced DUT and a
   // back-shown support device sit below the cable pass, a front-shown support device above it. The DOM
   // order is the scene order, which is the resolved order within a layer. Hover/focus/drag never touch it.
@@ -286,7 +286,7 @@
 
   // The devices to render: the scene's instances (the DUT + the fixed supporting cast) resolved against
   // the live catalog, in scene order (source → DUT → DA → speaker), each paired with its descriptor. The
-  // stage renders whatever the scene holds — so a URL-restored scene (Story 6.3) needs no special-casing.
+  // stage renders whatever the scene holds — so a URL-restored scene needs no special-casing.
   type BenchDevice = { id: string; desc: DeviceDescriptor };
   const devices = $derived<BenchDevice[]>(
     session.scene.patch.devices
@@ -340,7 +340,7 @@
     return map;
   });
 
-  // --- Cables (Story 10.6, U2) ----------------------------------------------------------------------
+  // --- Cables -----------------------------------------------------------------------------------
   // The same pipeline as the studio: endpoint states, hidden-face exits, and resolver-supplied mask
   // passes. A lead into a supporting device's hidden side exits its nearest edge (no mirrored attachment).
   const cableInput = $derived(
@@ -368,7 +368,7 @@
         })
       : null,
   );
-  // Patchable socket targets (Story 10.7) — the same rules as the studio. The DUT's two simultaneous
+  // Patchable socket targets — the same rules as the studio. The DUT's two simultaneous
   // faces are two presented slots, so both contribute targets; a supporting device's hidden side doesn't.
   const socketTargets = $derived(resolveSocketTargets(cableInput));
   function benchPick(
@@ -430,7 +430,7 @@
   );
 
   // "Listening here": the monitored output. On a presented face it's a ring at the socket; on a hidden
-  // face (U2) it's a labelled badge on the device — never a patch target either way.
+  // face it's a labelled badge on the device — never a patch target either way.
   const listening = $derived(resolveEndpoint(cableInput, session.scene.patch.output, "output"));
   const listenBadge = $derived.by(() => {
     if (listening.kind !== "exit") return null;
@@ -564,7 +564,7 @@
             {@render cablePass(r, pass, "bench-fg")}
           {/each}
         {/each}
-        <!-- The held lead, in hand (I-163): above the panels, masked only by a hidden-face source. -->
+        <!-- The held lead, in hand: above the panels, masked only by a hidden-face source. -->
         {#if heldCable?.kind === "lead" && patch.dragCable}
           {#each heldCable.passes as pass, i (i)}
             <CablePass {pass} prefix="bench-fg">
@@ -864,7 +864,7 @@
     stroke: var(--ae-signal-mic-lit, #6cf);
     stroke-width: 1.5px;
   }
-  /* "Listening" badge on a device whose monitored socket is on its hidden face (U2). Never a target. */
+  /* "Listening" badge on a device whose monitored socket is on its hidden face. Never a target. */
   .listen-badge {
     pointer-events: none;
   }

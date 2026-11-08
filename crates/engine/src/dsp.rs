@@ -11,7 +11,7 @@ mod biquad;
 mod envelope;
 
 pub use biquad::Biquad;
-pub use envelope::PeakEnvelope;
+pub(crate) use envelope::PeakEnvelope;
 
 /// Flush a subnormal `f64` to zero.
 ///

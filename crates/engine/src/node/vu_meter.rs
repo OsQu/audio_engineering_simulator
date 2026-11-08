@@ -154,12 +154,9 @@ mod tests {
     use crate::graph::Graph;
     use crate::schedule::compile;
     use crate::signal::VoltageBuffer;
+    use crate::test_util::rate;
     use crate::test_util::{SineSource, process_voltage, sine};
     use approx::assert_relative_eq;
-
-    fn rate() -> AnalogRate {
-        AnalogRate::new(384_000.0)
-    }
 
     /// Peak amplitude of a 1.228 V RMS sine: A = RMS·√2 = 1.228 × 1.414214 ≈ 1.736706 V.
     fn ref_sine_peak() -> f32 {

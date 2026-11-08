@@ -283,13 +283,10 @@ mod tests {
     use crate::graph::Graph;
     use crate::param::ParamQueue;
     use crate::signal::VoltageBuffer;
+    use crate::test_util::rate;
     use crate::test_util::{BalancedTestSource, process_voltage};
     use crate::{Volts, compile};
     use approx::assert_relative_eq;
-
-    fn rate() -> AnalogRate {
-        AnalogRate::new(384_000.0)
-    }
 
     fn process(leveler: &mut LumaLeveler, plus: &[f32], minus: &[f32]) -> [VoltageBuffer; 2] {
         let input = [

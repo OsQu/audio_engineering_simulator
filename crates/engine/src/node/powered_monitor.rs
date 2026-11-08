@@ -12,11 +12,11 @@ use crate::signal::Lane;
 /// This is the output-side bookend to the [`DynamicMic`](super::DynamicMic): where a mic transduces
 /// capsule pressure to a balanced voltage (`v = pressure · sensitivity`, V/Pa), the monitor does the
 /// exact reverse (`pressure = v · sensitivity`, **Pa/V**), pointwise at the same analog rate — no
-/// anti-alias FIR, no resample (converters other than the AD/DA never resample; §5.6). A source you
+/// anti-alias FIR, no resample (converters other than the AD/DA never resample). A source you
 /// can now *mic* on the way out: patch its acoustic output into a mic capsule and the whole
 /// gain-before-feedback / "ring out the monitors" story follows from the physics + a delayed air edge.
 ///
-/// **Distinct from the [`Speaker`](super::Speaker) terminus.** `Speaker` is the §5.5 voltage-capture
+/// **Distinct from the [`Speaker`](super::Speaker) terminus.** `Speaker` is the voltage-capture
 /// tap — it stays in volts (the harness samples its output as "what we hear"). This node instead
 /// *leaves* the voltage domain: its output is a [`Pressure`](crate::Lane::Pressure) lane radiating
 /// into the air, the seam a mic picks back up.
@@ -52,7 +52,7 @@ impl PoweredMonitor {
     /// 1 V ⇒ 1 Pa ≈ 94 dB SPL at unity volume), presenting the bridging input impedance `z_in`.
     ///
     /// Like the [`Speaker`](super::Speaker) it is a line-level *bridging* input — it doesn't load its
-    /// source (we model neither speaker current draw nor amplifier power, §5.5), so `z_in` is high and
+    /// source (we model neither speaker current draw nor amplifier power), so `z_in` is high and
     /// never enters a divider solve in anger. Volume defaults to unity (0 dB).
     #[must_use]
     pub fn new(sensitivity: f32, z_in: InputZ) -> Self {
@@ -106,12 +106,9 @@ mod tests {
     use crate::electrical::Ohms;
     use crate::level::pascals_to_spl;
     use crate::param::Smoother;
-    use crate::signal::{AnalogRate, Domain, Pascals, PressureBuffer, VoltageBuffer, Volts};
+    use crate::signal::{Domain, Pascals, PressureBuffer, VoltageBuffer, Volts};
+    use crate::test_util::rate;
     use approx::assert_relative_eq;
-
-    fn rate() -> AnalogRate {
-        AnalogRate::new(384_000.0)
-    }
 
     fn monitor(sensitivity: f32) -> PoweredMonitor {
         PoweredMonitor::new(sensitivity, InputZ::new(Ohms::new(10_000.0)))

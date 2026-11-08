@@ -1,5 +1,5 @@
 <script lang="ts">
-  // A static waveform thumbnail for a DAW take (Story 5.11.6) — display only. Draws the host-computed
+  // A static waveform thumbnail for a DAW take — display only. Draws the host-computed
   // per-bucket peak magnitudes as centred vertical bars in an SVG scaled to the container. The peaks are
   // a filesystem read the host renders (see waveform.ts); the simulation still owns all audio.
   interface Props {

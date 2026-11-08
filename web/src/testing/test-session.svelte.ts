@@ -1,6 +1,6 @@
 // Browser-fixture session: it exercises the production App/WorldView/PatchController composition without
-// creating an AudioContext or worklet. Future regression fixtures may inspect accepted candidates, but the
-// real-worklet boundary intentionally belongs to Task 10.1.3.
+// creating an AudioContext or worklet. The real-worklet boundary is covered
+// by a separate browser smoke, not this fixture.
 
 import type { Scene } from "../scene-store";
 import { SceneSession } from "../session.svelte";

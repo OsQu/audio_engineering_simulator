@@ -1,5 +1,5 @@
 <script lang="ts">
-  // The full Focusrite Scarlett 8i6 faceplate (Story 5.7.8) — the proving device for the per-device UI
+  // The full Focusrite Scarlett 8i6 faceplate — the proving device for the per-device UI
   // system. It composes the shared bound widgets (Control/Socket) inside Chassis and lays its I/O across
   // BOTH faces per the real 2nd-gen panels:
   //   • front — the two combo inputs with gain knobs + per-channel INST/AIR/PAD indicator LEDs, the big
@@ -10,7 +10,7 @@
   // The signature red chassis comes from the skin `accent`. Faces are just which snippet a jack is
   // written in — no per-port face resolver. INST/AIR/PAD are software-controlled (Focusrite Control): the
   // front shows only indicator LEDs; the actual toggles + the routing matrix live in the focus surface
-  // (FocusriteControl.svelte). **48V** (Story 5.8) is a real front-panel button on the unit, so the
+  // (FocusriteControl.svelte). **48V** is a real front-panel button on the unit, so the
   // faceplate carries the interactive toggle itself: one global `ConfigButton` on the shared `phantom`
   // config key — structural, so pressing it rebuilds/recompiles, exactly like INST. The two phones jacks
   // are mono (stereo-TRS-as-two-lanes is a later fidelity case). Exposed ids from the Rust `scarlett_8i6` entry:

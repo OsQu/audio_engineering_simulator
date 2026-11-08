@@ -11,25 +11,12 @@
 import type { Patch } from "./scene";
 import type { Room, Vec3, Wall } from "./spatial";
 
-/** Current save-format version. A saved scene at any other version is discarded (no migration). Bumped
- *  to 15 in Task 5.7.8: the default scene became the round-trip **monitoring loop** through the computer
- *  (synth → 8i6 → computer → 8i6 → speaker), so a stale v14 save (the earlier placeholder chain) is
- *  discarded to bring every studio up to the new default. (v14 grew the 8i6 to the full 206-param unit
- *  and added the `computer` peer.)
- *  v16: the stock devices (synth_voice / midi_controller / speaker / computer) were shrunk to compact,
- *  8i6-scale footprints and given proper faceplates, so their placements changed — discard stale v15.
- *  v17: the computer became config-driven (Story 5.10) — the default scene now authors its 8×6 USB
- *  config to match the attached 8i6; a stale v16 computer has no config and builds as a 2×2 that can't
- *  receive the 8-lane send.
- *  v18: the computer became a multitrack DAW (Story 5.11). Its routing `Matrix` was reshaped from the
- *  Story 5.10 diagonal loopback to a `tracks → returns` **crossbar**, so a stale v17 computer's matrix
- *  crosspoint param ids no longer map; and the scene now carries a per-track DAW model (`ui.tracks`).
- *  Discard stale v17 saves. */
+/** Bump when a saved scene can no longer load correctly; old saves are discarded. */
 export const SCHEMA_VERSION = 18;
 
 /** A space (room) in the studio — a UI grouping over the one engine graph (the engine never knows
  *  about rooms). A space is a **rectangular room**: gear stands against one of four walls, each an
- *  elevation view you turn between, over a top-down floor plan (Story 4.6). */
+ *  elevation view you turn between, over a top-down floor plan. */
 export interface Space {
   /** Stable space id, referenced by a device's `Placement.space` and a `Rack.space`. */
   id: string;
@@ -41,7 +28,7 @@ export interface Space {
 }
 
 /** A 19" rack — a container of U-slots that rackmount gear mounts into. UI-only (the engine has no
- *  rooms or racks). Racks can be repositioned (Story 4.3.5). */
+ *  rooms or racks). Racks can be repositioned. */
 export interface Rack {
   /** Stable rack id, referenced by a device's `Placement.rack.id`. */
   id: string;
@@ -67,7 +54,7 @@ export type DeviceFacing = "front" | "back";
  *  free-standing device, a rack, a bench device). */
 export const flip = (f: DeviceFacing): DeviceFacing => (f === "back" ? "front" : "back");
 
-/** One device's placement in the spatial world. The **single 3-D coordinate truth** (Story 4.3.2's
+/** One device's placement in the spatial world. The **single 3-D coordinate truth** (the spatial
  *  model projects it to a rendered view): free-standing gear lives at `position`; rack-mounted gear's
  *  position is derived from its rack + U-slot instead. UI-only — never sent to the engine. */
 export interface Placement {
@@ -101,7 +88,7 @@ export interface BenchWatch {
   id: string;
 }
 
-/** One DAW track's UI + control state, persisted per `computer` device (Story 5.11.6). Engine track
+/** One DAW track's UI + control state, persisted per `computer` device. Engine track
  *  state (arm/monitor/input/fader) is **runtime-only** — reset on every recompile — so the durable truth
  *  lives here and the session re-applies it after each build. The index in a device's `tracks` array is
  *  the track number; the fields mirror `MultitrackRecorder::new`'s construction defaults. */

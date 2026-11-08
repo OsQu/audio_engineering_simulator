@@ -44,7 +44,7 @@ pub fn catalog() -> Result<JsValue, JsValue> {
 }
 
 /// The cable catalog as a structured JS value — the realistic cable presets the UI offers when wiring
-/// an analog connection (Story 4.4). Pure marshalling over [`devices::cable_types`]; the R·C content
+/// an analog connection. Pure marshalling over [`devices::cable_types`]; the R·C content
 /// lives in `devices`. Cold path (UI startup), like [`catalog`].
 ///
 /// # Errors
@@ -58,7 +58,7 @@ pub fn cable_catalog() -> Result<JsValue, JsValue> {
 // --- WAV codec bridge: the sim owns encode/decode; the host is dumb byte storage. ----------------
 //
 // The DAW records to / plays back from **WAV files on disk (OPFS)**, but the simulation owns the byte
-// format (Story 5.11). These thin wrappers over `engine`'s `wav` module let the host: build a streaming
+// format. These thin wrappers over `engine`'s `wav` module let the host: build a streaming
 // take file's header up front (`wav_header`, patched with the true length at stop), decode a stored
 // take back to samples for playback + the waveform view (`decode_wav`), and one-shot encode
 // (`encode_wav`). Byte format authority stays in Rust; JS never hand-rolls a RIFF header.

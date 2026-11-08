@@ -1,7 +1,7 @@
-// The app's first URL routing (Epic 6) — hand-rolled, no dependency. Holds the current pathname as
+// The app's URL routing — hand-rolled, no dependency. Holds the current pathname as
 // reactive state, parses it into a `Route`, and drives navigation via the History API. Two routes today:
 // the scene view (default) and the single-device workbench at `/devices/<typeId>`. A class instance (the
-// rune-module pattern from Story 6.1), constructed once at the app root; `popstate` wiring lives in the
+// rune-module pattern), constructed once at the app root; `popstate` wiring lives in the
 // root component's `$effect` (so its listener lifecycle is tied to the mount), calling `sync()`.
 
 // The resolved route. `workbench` with an empty `typeId` (bare `/devices`) is the catalog index; a

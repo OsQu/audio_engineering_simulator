@@ -11,7 +11,7 @@
   // surface covers Pad/Air (1/2/4/5). The **matrix grid** is data-rendered by `RoutingGrid` — it derives
   // its rows/cols and per-cell param ids from the crosspoint params (those whose label reads "input →
   // output"), so its ids aren't literal in the source; the guardrail covers them via a declared range
-  // instead (Story 5.7.6's declared-coverage mechanism). Exposed ids from the Rust entry (full 8i6):
+  // instead (the faceplate test's declared-coverage mechanism). Exposed ids from the Rust entry (full 8i6):
   // 0 Gain1 · 1 Pad1 · 2 Air1 · 3 Gain2 · 4 Pad2 · 5 Air2 · 6 Phones1 · 7 Phones2 · 8–203 crosspoints ·
   // 204 Monitor · 205 Power.
   import { untrack } from "svelte";

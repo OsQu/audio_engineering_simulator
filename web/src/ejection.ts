@@ -1,4 +1,4 @@
-// Approved ejection policy U3 (Story 10.5): ejecting a rack-mounted device, or removing a rack with
+// Ejection policy: ejecting a rack-mounted device, or removing a rack with
 // occupants, places every affected device at the nearest legal free position to its *current effective*
 // location, preserving its effective room, wall, and facing (all inherited from the rack). The planner
 // is pure and computes every placement before anything is written; a command either applies the whole

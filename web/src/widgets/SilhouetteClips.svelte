@@ -1,5 +1,5 @@
 <script lang="ts">
-  // Story 10.6: one inside and one outside clip per chassis silhouette, defined once per SVG under a
+  // One inside and one outside clip per chassis silhouette, defined once per SVG under a
   // prefix. `CablePass` nests these by id. The outside clip is a huge rect minus the rounded silhouette
   // (evenodd), so each clip removes exactly one silhouette and nesting removes their union.
   import {

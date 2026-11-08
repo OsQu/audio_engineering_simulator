@@ -10,6 +10,11 @@ use crate::param::Params;
 use crate::port::{InputPort, OutputPort};
 use crate::signal::{AnalogRate, Lane, VoltageBuffer, Volts};
 
+/// The analog rate unit tests run at (384 kHz — 8× a 48 kHz converter clock).
+pub fn rate() -> AnalogRate {
+    AnalogRate::new(384_000.0)
+}
+
 /// A steady sine of `len` samples: `amp · sin(2π·freq·t)`, sampled at `rate`.
 ///
 /// Computed in `f64` (phase accumulates over the block); stored as the buffer's `f32`.
@@ -208,10 +213,6 @@ impl Node for BalancedTestSource {
 mod tests {
     use super::*;
     use approx::assert_relative_eq;
-
-    fn rate() -> AnalogRate {
-        AnalogRate::new(384_000.0)
-    }
 
     #[test]
     fn rms_of_unit_sine_is_one_over_root_two() {

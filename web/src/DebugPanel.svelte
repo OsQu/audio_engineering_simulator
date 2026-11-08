@@ -1,5 +1,5 @@
 <script lang="ts">
-  // The bench debug surface (Story 6.4) — an *audio-parameter* inspector over the rig, reading the same
+  // The bench debug surface — an *audio-parameter* inspector over the rig, reading the same
   // shared `SceneSession` the scene view does (nothing forks the engine/patch plumbing). Two parts:
   //   1. an always-on header (the few-enough things: master output peak + monitored tap, signal-path
   //      latency, and the per-connection loading losses) — no filtering needed at these counts;
@@ -16,7 +16,7 @@
   import type { BenchWatch } from "./scene-store";
   import { isWatched, toggleWatch, watchKey } from "./scene-ops";
   import type { SceneSession } from "./session.svelte";
-  import { formatParam } from "./widgets/format";
+  import { fmtReading, formatParam } from "./widgets/format";
 
   interface Props {
     session: SceneSession;
@@ -129,7 +129,7 @@
       ...base,
       device: desc.name,
       label: r.label,
-      value: `${v <= -55 ? "—" : v.toFixed(1)}${r.unit ? ` ${r.unit}` : ""}`,
+      value: `${fmtReading(v)}${r.unit ? ` ${r.unit}` : ""}`,
       detail: "readout",
       available: true,
     };

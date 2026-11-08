@@ -12,15 +12,13 @@ voltage physics**. Digital samples exist only *after* a modeled AD converter sam
 The purpose is **learning** — building hands-on intuition about routing, the analog medium, AD/DA, and
 DSP that's impractical to explore with real gear.
 
-> **Status:** the headless Rust engine is built and validated (Epic 1), renders to WAV (Epic 2), and
-> runs **live in the browser** inside an AudioWorklet (Epic 3). Epic 4 is building the UI as a pure
-> consumer of the engine API — the engine→UI seam (scene IR, device catalog, hot-swap) landed in
-> Story 4.1; skeuomorphic device panels are next (Story 4.2). See the plans below.
+> **Status:** see [`docs/IMPLEMENTATION_PLAN.md`](docs/IMPLEMENTATION_PLAN.md) for what's done and
+> what's next.
 
 ## Documentation
 
-- **[`PROJECT_PLAN.md`](PROJECT_PLAN.md)** — the *what and why*: vision, domain model, engine design, roadmap.
-- **[`IMPLEMENTATION_PLAN.md`](IMPLEMENTATION_PLAN.md)** — the *order and granularity*: Epic → Story → Task.
+- **[`docs/PROJECT_PLAN.md`](docs/PROJECT_PLAN.md)** — the *what and why*: vision, domain model, engine design, roadmap.
+- **[`docs/IMPLEMENTATION_PLAN.md`](docs/IMPLEMENTATION_PLAN.md)** — the *order and granularity*: Epic → Story → Task.
 - **[`CLAUDE.md`](CLAUDE.md)** — engineering conventions and the non-negotiable architecture decisions.
 
 ## Project structure
@@ -34,7 +32,7 @@ A Cargo workspace (plus a TypeScript web harness):
 | `crates/capture` | The implicit off-sim-clock capture (speaker volts → host samples); shared by harness + wasm. |
 | `crates/wasm-bindings` | Browser/WASM bindings — `SceneEngine` + the catalog/patch JS bridge. |
 | `crates/harness` | Native render/CLI test harness (offline WAV render + the waveform-plot demo). |
-| `web/` | Vite + TypeScript browser harness that hosts the engine in an AudioWorklet (Epic 4's base). |
+| `web/` | Vite + TypeScript browser harness that hosts the engine in an AudioWorklet. |
 
 ## Setup
 
@@ -68,11 +66,14 @@ cargo fmt --check    # formatting check (drop --check to apply)
 Run the full gate before pushing (this is exactly what CI runs):
 
 ```sh
-cargo fmt --check && cargo lint && cargo test && cargo wasm && cargo docs
+scripts/check-plan-refs.sh && cargo fmt --check && cargo lint && cargo test && cargo wasm && cargo docs
 ```
+
+`scripts/check-plan-refs.sh` keeps project-plan ids (Story/Task/Epic numbers, plan-doc section refs) out
+of source, comments and test names — they belong in `docs/` and commit messages.
 
 To run the browser harness (the live engine in an AudioWorklet):
 
 ```sh
-cd web && npm install && npm run wasm && npm run dev   # then open http://localhost:5173/
+cd web && pnpm install && pnpm run wasm && pnpm run dev   # then open http://localhost:5173/
 ```

@@ -3,8 +3,8 @@
   // skeuomorphic frame every faceplate sits in. A device (the generic `Panel`, or a bespoke per-device
   // component) fills the two faces via the `front`/`back` snippets and never re-implements the flip.
   // Chassis also publishes the `DeviceHandle` to context, so the bound widgets composed inside those
-  // snippets bind to the live engine by id (see device-handle.ts). Extracted from `Panel` in Story 5.7
-  // so custom faceplates and the generic fallback share one flip implementation.
+  // snippets bind to the live engine by id (see device-handle.ts). Custom
+  // faceplates and the generic fallback share one flip implementation.
   import { type Snippet, untrack } from "svelte";
   import { setDeviceHandle, type DeviceHandle } from "../device-handle";
   import type { Finish } from "../skin";

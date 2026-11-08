@@ -13,7 +13,7 @@ use crate::signal::SampleRate;
 /// `τ` seconds (a `τ` of 0 ⇒ `a = 1`, instantaneous). Designed once at construction; `step` is the
 /// hot path — denormal-flushed, panic-free.
 #[derive(Debug, Clone)]
-pub struct PeakEnvelope {
+pub(crate) struct PeakEnvelope {
     attack: f64,
     release: f64,
     env: f64,
@@ -32,6 +32,7 @@ impl PeakEnvelope {
     }
 
     /// Clear the envelope to silence. Off the hot path.
+    #[cfg(test)]
     pub fn reset(&mut self) {
         self.env = 0.0;
     }

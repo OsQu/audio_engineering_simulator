@@ -105,7 +105,7 @@ export interface BenchCableInputArgs {
   readonly geometry: SocketGeometryIndex;
 }
 
-/** The workbench's cable-resolution input (U2): the same exits and masks as the studio. A supporting
+/** The workbench's cable-resolution input: the same exits and masks as the studio. A supporting
  *  device's silhouette is its single flip-card frame, so a lead into its hidden side exits its nearest edge
  *  instead of attaching to a mirrored see-through socket. The DUT presents both faces (never an exit owner)
  *  and sits below the cable band (never above a foreground owner), so it contributes no silhouette.

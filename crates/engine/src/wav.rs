@@ -1,6 +1,6 @@
 //! Minimal WAV (RIFF/WAVE) reader/writer for the in-simulation DAW.
 //!
-//! The `computer` DAW (Story 5.11) records to and plays back from **WAV files on disk**, but the
+//! The `computer` DAW records to and plays back from **WAV files on disk**, but the
 //! host is only dumb byte storage — the *simulation* owns encode/decode, in the digital domain. So
 //! this is a small, dependency-free, `wasm32`-safe codec, deliberately **not** the native-only
 //! `hound` (which lives in the `harness` crate and never reaches the engine's wasm build).

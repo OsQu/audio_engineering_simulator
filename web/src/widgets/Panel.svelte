@@ -1,6 +1,6 @@
 <script lang="ts">
   // The **generic**, descriptor-driven faceplate — the fallback for any device that doesn't register its
-  // own (Story 5.7). The **front** carries one bound `Control` per param (widget chosen by `kind`) plus a
+  // own. The **front** carries one bound `Control` per param (widget chosen by `kind`) plus a
   // `Reading` per readout; the **back** carries the I/O `Socket`s (inputs then outputs). The shared
   // `Chassis` owns the bezel + 3-D flip (driven by `flipped`) and publishes the `DeviceHandle` to context,
   // so the bound widgets bind to the live engine by id — this component just arranges them.

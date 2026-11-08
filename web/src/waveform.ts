@@ -1,4 +1,4 @@
-// Host-side waveform reduction for the DAW's take display (Story 5.11.6). A take's raw PCM (the frames
+// Host-side waveform reduction for the DAW's take display. A take's raw PCM (the frames
 // the storage worker returns, header already stripped) is reduced to a small array of per-bucket peak
 // magnitudes the mixer draws as a static thumbnail. **Display only** — this is a filesystem read the
 // host renders, not the host doing audio (the sim still owns encode/decode + all playback).

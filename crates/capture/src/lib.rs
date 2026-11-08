@@ -3,7 +3,7 @@
 //!
 //! It sits **outside** the engine on purpose. The simulation ends in the analog domain at the
 //! speaker's output; this captures that voltage and resamples it to the host rate. It is the
-//! PROJECT_PLAN §5.1 "internal AD" role minus the acoustics and minus node status — it carries
+//! "internal AD" role minus the acoustics and minus node status — it carries
 //! **no clock domain**, rides on **no modeled-converter rate**, and has no dBFS-calibration
 //! meaning. Its one job is to stay **transparent**: every audible artifact in a render must
 //! originate in the *modeled* AD/DA under test, never here. So it reuses the same windowed-sinc

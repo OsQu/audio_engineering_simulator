@@ -1,5 +1,5 @@
 //! The DAW control facade — the host's off-block seam onto a recorder node's transport, tracks, and
-//! file-byte streams (Story 5.11).
+//! file-byte streams.
 //!
 //! A node like [`MultitrackRecorder`](crate::MultitrackRecorder) owns state the generic control
 //! surface can't reach: the [`Transport`], the per-track faders/arm/monitor/input assignment, and the
@@ -66,7 +66,7 @@ const FRAME_BYTES: usize = std::mem::size_of::<f32>();
 /// Drain up to `out.len()` buffered bytes out of `ring` into `out`, in whole frames, and return the
 /// count. Shared helper for a [`DawControl::drain_record_into`] impl. The count never exceeds
 /// `ring.len()`, so the all-or-nothing [`ByteRing::read`] always succeeds. Allocation-free.
-pub fn drain_ring_into(ring: &mut ByteRing, out: &mut [u8]) -> usize {
+pub(crate) fn drain_ring_into(ring: &mut ByteRing, out: &mut [u8]) -> usize {
     let n = ring.len().min(out.len()) / FRAME_BYTES * FRAME_BYTES;
     match out.get_mut(..n) {
         Some(dst) => {

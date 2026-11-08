@@ -1,4 +1,4 @@
-// Story 10.7.2: press ownership priority.
+// Press ownership priority.
 import { describe, expect, it } from "vitest";
 import { classifyPress, type PressFacts } from "../src/gesture-ownership";
 import type { SocketPick, SocketTarget } from "../src/patch-targets";

@@ -1,7 +1,7 @@
 //! Integration tests for the offline render driver.
 //!
 //! These render a played note through the real engine + capture + driver and assert the result
-//! numerically — the analog-domain oracle (PROJECT_PLAN §9): you can't ear-check a CI run, so the
+//! numerically — the analog-domain oracle: you can't ear-check a CI run, so the
 //! rendered audio is checked against hand calcs (fundamental, causal onset, level) and for
 //! determinism. We use the **analog-only** patch (`synth → speaker`, no modeled AD): with no
 //! converter dither the pre-onset output is true silence, so the causal-onset check is exact, and

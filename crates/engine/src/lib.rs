@@ -2,8 +2,7 @@
 //!
 //! The analog domain is modeled as a real, oversampled voltage waveform in volts —
 //! physical behavior (levels, impedance loss, clipping, noise, DC, hum) emerges from
-//! the voltage math rather than being flagged. See `PROJECT_PLAN.md` for the design;
-//! this crate stays portable to `wasm32` (no `std::thread`, no ambient `std::time`).
+//! the voltage math rather than being flagged. This crate stays portable to `wasm32` (no `std::thread`, no ambient `std::time`).
 
 mod byte_ring;
 mod daw;
@@ -26,8 +25,8 @@ mod transport;
 mod wav;
 
 pub use byte_ring::ByteRing;
-pub use daw::{DawControl, drain_ring_into};
-pub use dsp::{Biquad, PeakEnvelope};
+pub use daw::DawControl;
+pub use dsp::Biquad;
 pub use electrical::{
     Cable, Farads, InputZ, Ohms, OnePole, OutputZ, PhantomLoad, PhantomSupply, Thevenin,
     divider_gain,

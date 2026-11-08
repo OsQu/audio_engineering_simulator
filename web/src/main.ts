@@ -1,7 +1,6 @@
 // Entry point: mount the Svelte app. `Root` owns the router and picks the view root by URL — the scene
 // view (App.svelte) or the device workbench (Workbench.svelte); engine bring-up and the control
-// transport live in engine.ts. (The page is the throwaway harness; this infrastructure carries into
-// the real UI — Story 4.2 onward.)
+// transport live in engine.ts.
 
 import { mount } from "svelte";
 // Design-system tokens: puts the --ae-* custom properties on :root + registers

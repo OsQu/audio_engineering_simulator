@@ -1,4 +1,4 @@
-// Story 10.5.1: resolved objects, semantic paint layers, and the total physical order.
+// Resolved objects, semantic paint layers, and the total physical order.
 import { describe, expect, it } from "vitest";
 import type { PlacementPreview } from "../src/effective-placement";
 import {

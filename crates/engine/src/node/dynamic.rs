@@ -185,7 +185,7 @@ mod tests {
 
     #[test]
     fn end_to_end_source_over_air_to_mic_recovers_pressure_times_sensitivity() {
-        // The Story 8.1 gate: a SoundSource radiates over an ideal acoustic edge into a dynamic mic,
+        // End to end: a SoundSource radiates over an ideal acoustic edge into a dynamic mic,
         // whose balanced output a receiver differences back to single-ended. The recovered audio is
         // `pressure · sensitivity`: a 94 dB SPL (peak 1.00237 Pa) source into a 2 mV/Pa mic ⇒ a
         // 2.0047 mV peak (the mic→receiver edge is ≈unity: 1e9/(200 + 1e9) ≈ 1).

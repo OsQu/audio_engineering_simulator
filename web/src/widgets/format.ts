@@ -22,3 +22,11 @@ export function formatParam(p: ParamDescriptor, value: number): string {
   const text = Number.isInteger(value) ? String(value) : value.toFixed(2);
   return p.unit ? `${text} ${p.unit}` : text;
 }
+
+/** Readings at or below this (dB) are treated as silence — the meter floors read −60/−120. */
+export const READING_FLOOR_DB = -55;
+
+/** Format a meter reading to one decimal; an off-scale reading (at or below the floor) shows a dash. */
+export function fmtReading(v: number): string {
+  return v <= READING_FLOOR_DB ? "—" : v.toFixed(1);
+}

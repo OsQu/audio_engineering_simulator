@@ -15,12 +15,12 @@ import type { Connection } from "./scene";
 export type Pt = { x: number; y: number };
 
 // An in-progress patch from a source jack: the logical source end (never a cached anchor — renderers
-// re-resolve it every frame through cable-resolution `resolveHeldCable`, Story 10.6), the moving free end
+// re-resolve it every frame through cable-resolution `resolveHeldCable`), the moving free end
 // (surface coords), and — when hovering a candidate jack — the verdict so the cable can be coloured.
 // `mode` is "drag" while the pointer is held (same-view patching), or "pending" after a *click* — a held
 // cable that survives a wall/room switch, so a cross-view patch completes by clicking the source jack,
 // turning to the other wall/room, and clicking the destination. `rejection` is the reason the last
-// release on an illegal socket didn't connect (Story 10.7): it stays visible until the pointer leaves that
+// release on an illegal socket didn't connect: it stays visible until the pointer leaves that
 // socket, so the user can choose another destination.
 export type PatchState = {
   source: Endpoint;
@@ -103,7 +103,7 @@ export function pointerDown(state: PatchState, hit: JackHit | null): PatchResult
 
 // Track the free end while dragging or holding a pending cable. If the pointer is over another jack,
 // evaluate legality and snap the free end to it (a magnetic feel); else follow the cursor. This is
-// feedback only — release re-resolves its own target (Story 10.7). A shown rejection survives only while
+// feedback only — release re-resolves its own target. A shown rejection survives only while
 // the pointer stays on the socket that was rejected.
 export function pointerMove(
   state: PatchState,
