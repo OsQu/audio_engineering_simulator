@@ -7,6 +7,7 @@
 import {
   type CableType,
   type Connector,
+  type Describe,
   type DeviceDescriptor,
   descriptorFor,
   type PortDomain,
@@ -32,13 +33,8 @@ export const connKey = (c: Connection): string =>
   `${c.from.device}:${c.from.port}->${c.to.device}:${c.to.port}`;
 
 // The carrier domain of a connection (from its output port), or null if unknown.
-export function connectionDomain(
-  scene: Scene,
-  catalog: DeviceDescriptor[],
-  c: Connection,
-): PortDomain | null {
-  const dev = deviceById(scene, c.from.device);
-  const desc = dev ? descriptorFor(catalog, dev.typeId) : undefined;
+export function connectionDomain(describe: Describe, c: Connection): PortDomain | null {
+  const desc = describe(c.from.device);
   return desc?.ports.find((p) => p.direction === "output" && p.id === c.from.port)?.domain ?? null;
 }
 
@@ -53,23 +49,19 @@ export function eventsInputDriven(scene: Scene, desc: DeviceDescriptor, deviceId
 
 // The connector kind of a connection (from its output port) — picks the cable's colour from the signal
 // palette. Falls back to "line" (neutral grey) when the port can't be resolved.
-export function connectionKind(scene: Scene, catalog: DeviceDescriptor[], c: Connection): PortKind {
-  const dev = deviceById(scene, c.from.device);
-  const desc = dev ? descriptorFor(catalog, dev.typeId) : undefined;
+export function connectionKind(describe: Describe, c: Connection): PortKind {
+  const desc = describe(c.from.device);
   return desc?.ports.find((p) => p.direction === "output" && p.id === c.from.port)?.kind ?? "line";
 }
 
 // The physical connectors of a connection. A cable fits only if its two ends match this pair (in either
 // orientation); `null` when either endpoint can no longer be resolved.
 export function connectionConnectors(
-  scene: Scene,
-  catalog: DeviceDescriptor[],
+  describe: Describe,
   c: Connection,
 ): [Connector, Connector] | null {
-  const fromDevice = deviceById(scene, c.from.device);
-  const toDevice = deviceById(scene, c.to.device);
-  const from = fromDevice ? descriptorFor(catalog, fromDevice.typeId) : undefined;
-  const to = toDevice ? descriptorFor(catalog, toDevice.typeId) : undefined;
+  const from = describe(c.from.device);
+  const to = describe(c.to.device);
   const fromConnector = from?.ports.find(
     (p) => p.direction === "output" && p.id === c.from.port,
   )?.connector;
@@ -80,13 +72,8 @@ export function connectionConnectors(
 }
 
 // The cable presets that physically fit `c`, including an asymmetric adapter in either orientation.
-export function cablesFor(
-  scene: Scene,
-  catalog: DeviceDescriptor[],
-  cables: CableType[],
-  c: Connection,
-): CableType[] {
-  const connectors = connectionConnectors(scene, catalog, c);
+export function cablesFor(describe: Describe, cables: CableType[], c: Connection): CableType[] {
+  const connectors = connectionConnectors(describe, c);
   if (!connectors) return [];
   const [from, to] = connectors;
   return cables.filter(
@@ -102,7 +89,7 @@ export function cablesFor(
 // is ordered that way) — not always the ¼" patch cable; digital/event stay ideal. **Caller must hot-swap.**
 export function commitCable(
   scene: Scene,
-  catalog: DeviceDescriptor[],
+  describe: Describe,
   cables: CableType[],
   v: ConnectVerdict,
 ): void {
@@ -115,8 +102,8 @@ export function commitCable(
   // Preserve every field the verdict carries — notably `duplex` (a USB-C link expands to both edges at
   // build); reconstructing from `from`/`to` alone silently dropped it, leaving a one-way cable.
   const conn: Connection = { ...v.connection };
-  if (connectionDomain(scene, catalog, conn) === "analog") {
-    const cable = cablesFor(scene, catalog, cables, conn)[0];
+  if (connectionDomain(describe, conn) === "analog") {
+    const cable = cablesFor(describe, cables, conn)[0];
     if (cable) conn.cable = cableSpec(cable);
   }
   scene.patch.connections = [...conns, conn];
@@ -146,13 +133,8 @@ const isComputer = (scene: Scene, deviceId: string): boolean =>
 // The channel counts a device publishes on its USB jack — its USB **output** (the "send", → the
 // computer's `usb_sends`) and USB **input** (the "return", → `usb_returns`) lane counts, from its
 // descriptor. `null` if it has no USB output/input pair.
-function usbShape(
-  scene: Scene,
-  catalog: DeviceDescriptor[],
-  deviceId: string,
-): { sends: number; returns: number } | null {
-  const dev = deviceById(scene, deviceId);
-  const desc = dev ? descriptorFor(catalog, dev.typeId) : undefined;
+function usbShape(describe: Describe, deviceId: string): { sends: number; returns: number } | null {
+  const desc = describe(deviceId);
   if (!desc) return null;
   const send = desc.ports.find((p) => p.direction === "output" && p.connector === "usb");
   const ret = desc.ports.find((p) => p.direction === "input" && p.connector === "usb");
@@ -162,18 +144,14 @@ function usbShape(
 // The non-computer interface currently cabled to `computerId` over USB (the peer of its one duplex USB
 // link), or `null` if nothing's attached. A computer↔computer USB link is deliberately skipped — neither
 // side adapts to the other (the equal-count check still guards that edge).
-function attachedInterface(
-  scene: Scene,
-  catalog: DeviceDescriptor[],
-  computerId: string,
-): string | null {
+function attachedInterface(scene: Scene, describe: Describe, computerId: string): string | null {
   for (const c of scene.patch.connections) {
     if (!c.duplex) continue;
     const ends = [c.from.device, c.to.device];
     if (!ends.includes(computerId)) continue;
     const peer = ends.find((id) => id !== computerId);
     if (!peer || isComputer(scene, peer)) continue;
-    if (connectionConnectors(scene, catalog, c)?.[0] !== "usb") continue;
+    if (connectionConnectors(describe, c)?.[0] !== "usb") continue;
     return peer;
   }
   return null;
@@ -191,16 +169,12 @@ function currentUsb(dev: DeviceInstance): [number, number] {
 // Returns whether the shape changed. On a change the matrix is reset to the loopback default — the
 // crosspoint ids reshuffle with the return count, so saved overrides no longer map (reset, not remap).
 // A no-op for a connection touching no computer, or a computer↔computer USB link. **Caller must hot-swap.**
-export function enumerateComputerUsb(
-  scene: Scene,
-  catalog: DeviceDescriptor[],
-  conn: Connection,
-): boolean {
+export function enumerateComputerUsb(scene: Scene, describe: Describe, conn: Connection): boolean {
   const computerId = [conn.from.device, conn.to.device].find((id) => isComputer(scene, id));
   if (!computerId) return false;
 
-  const peer = attachedInterface(scene, catalog, computerId);
-  const shape = peer ? usbShape(scene, catalog, peer) : null;
+  const peer = attachedInterface(scene, describe, computerId);
+  const shape = peer ? usbShape(describe, peer) : null;
   const sends = shape?.sends ?? DEFAULT_USB_CHANNELS;
   const returns = shape?.returns ?? DEFAULT_USB_CHANNELS;
 

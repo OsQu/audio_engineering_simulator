@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import type { DeviceDescriptor } from "../src/catalog";
+import { type DeviceDescriptor, typeDescriber } from "../src/catalog";
 import type { ControlMessage } from "../src/engine";
 import { key, paramValue, pushParams, seedParamValues } from "../src/params";
 import type { Scene } from "../src/scene-store";
@@ -38,7 +38,7 @@ describe("key", () => {
 
 describe("seedParamValues", () => {
   it("prefers a saved value over the descriptor default, else uses the default", () => {
-    const values = seedParamValues(scene, CATALOG);
+    const values = seedParamValues(scene, typeDescriber(scene, CATALOG));
     expect(values).toEqual({ "amp1:0": 3, "amp1:1": 0 }); // 0 saved (3), 1 defaulted (0)
   });
 
@@ -47,7 +47,7 @@ describe("seedParamValues", () => {
       ...scene,
       patch: { ...scene.patch, devices: [{ id: "x", typeId: "ghost" }] },
     };
-    expect(seedParamValues(orphan, CATALOG)).toEqual({});
+    expect(seedParamValues(orphan, typeDescriber(orphan, CATALOG))).toEqual({});
   });
 });
 
@@ -69,7 +69,7 @@ describe("pushParams", () => {
     const sendFn = vi.fn((m: ControlMessage) => {
       if (m.type === "param") sent.push({ device: m.device, paramId: m.paramId, value: m.value });
     });
-    pushParams(sendFn, scene, CATALOG, { "amp1:0": 3, "amp1:1": 0 });
+    pushParams(sendFn, scene, typeDescriber(scene, CATALOG), { "amp1:0": 3, "amp1:1": 0 });
     expect(sendFn).toHaveBeenCalledTimes(2); // two params, one message each
     expect(sent).toEqual([
       { device: "amp1", paramId: 0, value: 3 },

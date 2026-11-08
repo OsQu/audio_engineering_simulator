@@ -162,9 +162,10 @@ export interface EngineControl {
    *  user gesture, per the Epic-6 autoplay policy) — so this must be called from a user gesture to hear
    *  anything. The scene view calls it from its start button; the workbench from the first interaction. */
   resume: () => Promise<void>;
-  /** Release this engine's browser resources. Callers that mount a short-lived engine (such as the
-   *  real-worklet browser smoke) must close its context when they unmount. */
-  close: () => Promise<void>;
+  /** Tear the engine down: stop listening to the worklet, close its port, disconnect the graph and
+   *  close the AudioContext. Every view that starts an engine must dispose it when it unmounts, or the
+   *  context keeps sounding and counts toward the browser's AudioContext limit. Idempotent. */
+  dispose: () => Promise<void>;
 }
 
 /** Callbacks the host drives as the worklet reports back. */
@@ -228,7 +229,8 @@ export function healthSummary(h: HealthMessage): string {
 /**
  * Bring the engine up in an AudioWorklet from `patch`, wiring the worklet's messages to `handlers`.
  * Resolves once the node is created (audio starts on `ready`); throws on setup failure so the caller
- * can surface it. The returned cleanup is unused today (the page lives for the session).
+ * can surface it (the AudioContext is closed before rethrowing). The caller owns the returned handle's
+ * `dispose()`.
  */
 export async function startEngine(
   patch: Patch,
@@ -249,26 +251,33 @@ export async function startEngine(
   });
   handlers.onStatus(`AudioContext @ ${audio.sampleRate} Hz — loading worklet…`);
 
-  // public/ assets are served from the web root by Vite (dev and build).
-  await audio.audioWorklet.addModule("/processor.js");
-  handlers.onStatus("worklet module loaded — fetching wasm and SoundFont…");
-  const [bytes, soundfont] = await Promise.all([
-    fetch("/wasm_bindings_bg.wasm").then((response) => response.arrayBuffer()),
-    fetch("/soundfonts/TimGM6mb.sf2").then((response) => response.arrayBuffer()),
-  ]);
+  let node: AudioWorkletNode;
+  try {
+    // public/ assets are served from the web root by Vite (dev and build).
+    await audio.audioWorklet.addModule("/processor.js");
+    handlers.onStatus("worklet module loaded — fetching wasm and SoundFont…");
+    const [bytes, soundfont] = await Promise.all([
+      fetch("/wasm_bindings_bg.wasm").then((response) => response.arrayBuffer()),
+      fetch("/soundfonts/TimGM6mb.sf2").then((response) => response.arrayBuffer()),
+    ]);
 
-  // Deliver the wasm bytes *and* the runnable patch at construction; the processor instantiates the
-  // module and builds SceneEngine(patch) synchronously in its constructor.
-  const node = new AudioWorkletNode(audio, "scene-processor", {
-    outputChannelCount: [2],
-    processorOptions: {
-      bytes,
-      patch,
-      soundfonts: [{ id: "tim_gm_6mb", bytes: soundfont }],
-      topologyProtocolVersion: expectedTopologyProtocolVersion,
-      topologyBuildVersion: options.topologyBuildVersion ?? TOPOLOGY_BUILD_VERSION,
-    },
-  });
+    // Deliver the wasm bytes *and* the runnable patch at construction; the processor instantiates the
+    // module and builds SceneEngine(patch) synchronously in its constructor.
+    node = new AudioWorkletNode(audio, "scene-processor", {
+      outputChannelCount: [2],
+      processorOptions: {
+        bytes,
+        patch,
+        soundfonts: [{ id: "tim_gm_6mb", bytes: soundfont }],
+        topologyProtocolVersion: expectedTopologyProtocolVersion,
+        topologyBuildVersion: options.topologyBuildVersion ?? TOPOLOGY_BUILD_VERSION,
+      },
+    });
+  } catch (err) {
+    // A failed bring-up must not leave a context behind.
+    void audio.close();
+    throw err;
+  }
   // The transport boundary owns the wire shape: a loadPatch carries only its transaction's metadata,
   // however much the caller's request object holds (see `wireTransaction`).
   const send = (msg: ControlMessage): void =>
@@ -352,7 +361,14 @@ export async function startEngine(
       monitor.gain.value = Math.max(0, gain);
     },
     resume: (): Promise<void> => audio.resume(),
-    close: (): Promise<void> => audio.close(),
+    dispose: async (): Promise<void> => {
+      node.port.onmessage = null;
+      node.onprocessorerror = null;
+      node.port.close();
+      node.disconnect();
+      monitor.disconnect();
+      if (audio.state !== "closed") await audio.close();
+    },
   };
 }
 
@@ -420,21 +436,30 @@ export function wireKeyboard(onNote: NoteSink): () => void {
 
 /** Request Web MIDI access **once** (the permission) and route every input's note-on/off to `onNote`.
  *  The *target* device is the caller's concern (it follows focus), so this only decodes + forwards —
- *  access is not re-requested when focus moves. */
-export function wireMidi(onNote: NoteSink, onStatus: (message: string) => void): void {
+ *  access is not re-requested when focus moves. Returns a **detach** function that unbinds every input
+ *  (and the hot-plug listener), or makes a still-pending access request bind nothing. */
+export function wireMidi(onNote: NoteSink, onStatus: (message: string) => void): () => void {
   const nav = navigator as Navigator & {
     requestMIDIAccess?: () => Promise<MIDIAccess>;
   };
   if (!nav.requestMIDIAccess) {
     onStatus("MIDI: not supported in this browser");
-    return;
+    return () => {};
   }
+  let detached = false;
+  let bound: MIDIAccess | null = null;
+  // One handler shared by every input, so detach clears only what this wiring bound (inputs can be
+  // shared with a newer wiring that has already re-bound them).
+  const onMessage = (e: MIDIMessageEvent): void => handleMidi(onNote, e.data);
+  let attach: (() => void) | null = null;
   nav.requestMIDIAccess().then(
     (access) => {
-      const attach = (): void => {
+      if (detached) return;
+      bound = access;
+      attach = (): void => {
         const names: string[] = [];
         for (const input of access.inputs.values()) {
-          input.onmidimessage = (e) => handleMidi(onNote, e.data);
+          input.onmidimessage = onMessage;
           names.push(input.name ?? "unknown");
         }
         onStatus(names.length ? `MIDI: ${names.join(", ")}` : "MIDI: no inputs connected");
@@ -443,9 +468,17 @@ export function wireMidi(onNote: NoteSink, onStatus: (message: string) => void):
       access.onstatechange = attach; // re-attach when a device is plugged/unplugged
     },
     (err) => {
-      onStatus(`MIDI: access denied (${err})`);
+      if (!detached) onStatus(`MIDI: access denied (${err})`);
     },
   );
+  return () => {
+    detached = true;
+    if (!bound) return;
+    if (bound.onstatechange === attach) bound.onstatechange = null;
+    for (const input of bound.inputs.values())
+      if (input.onmidimessage === onMessage) input.onmidimessage = null;
+    bound = null;
+  };
 }
 
 /** Decode a raw MIDI message and forward note-on/off — note-on with velocity 0 means note-off. */

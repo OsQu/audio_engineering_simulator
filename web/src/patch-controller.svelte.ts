@@ -77,7 +77,7 @@ export class PatchController implements GeometryRegistrar {
   #hitOfTarget(target: SocketTarget): JackHit | null {
     const key = patching.aliasFor(target.aliases, this.dragCable?.source ?? null);
     if (!key) return null;
-    const endpoint = patching.endpointFromJackKey(this.#session.scene, this.#session.catalog, key);
+    const endpoint = patching.endpointFromJackKey(this.#session.descriptorOf, key);
     return endpoint ? { key, endpoint, anchor: target.point, aliases: [...target.aliases] } : null;
   }
 
@@ -150,8 +150,8 @@ export class PatchController implements GeometryRegistrar {
   commitCable(v: ConnectVerdict): void {
     if (!v.ok) return;
     this.#session.proposeTopology("connect cable", (scene) => {
-      sceneOps.commitCable(scene, this.#session.catalog, this.#session.cables, v);
-      sceneOps.enumerateComputerUsb(scene, this.#session.catalog, v.connection);
+      sceneOps.commitCable(scene, this.#session.descriptorOf, this.#session.cables, v);
+      sceneOps.enumerateComputerUsb(scene, this.#session.descriptorOf, v.connection);
     });
   }
 
@@ -163,7 +163,7 @@ export class PatchController implements GeometryRegistrar {
       const connection = scene.patch.connections.find((x) => sceneOps.connKey(x) === key);
       if (!connection) return;
       sceneOps.disconnect(scene, connection);
-      sceneOps.enumerateComputerUsb(scene, this.#session.catalog, connection);
+      sceneOps.enumerateComputerUsb(scene, this.#session.descriptorOf, connection);
     });
   }
 
