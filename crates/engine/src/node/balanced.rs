@@ -108,13 +108,10 @@ impl Node for BalancedReceiver {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::signal::{AnalogRate, VoltageBuffer, Volts};
+    use crate::signal::{VoltageBuffer, Volts};
     use crate::test_util::process_voltage;
+    use crate::test_util::rate;
     use approx::assert_relative_eq;
-
-    fn rate() -> AnalogRate {
-        AnalogRate::new(384_000.0)
-    }
 
     #[test]
     fn driver_declares_unbalanced_in_balanced_out() {

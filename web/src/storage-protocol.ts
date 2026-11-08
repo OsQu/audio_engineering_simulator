@@ -1,4 +1,4 @@
-// The message contract between the main thread and the OPFS storage worker (Story 5.11.6).
+// The message contract between the main thread and the OPFS storage worker.
 //
 // The main thread relays take bytes between the audio worklet (which owns the WAV codec + rings) and the
 // worker (which owns OPFS). Every command but `append` is request/reply, correlated by `id`; `append` is

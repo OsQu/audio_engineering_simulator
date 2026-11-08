@@ -1,5 +1,5 @@
 //! A SoundFont-based instrument voice: the first node driven by the event lane that emits on the
-//! **digital** side, the black-box core of Epic 9's played instruments.
+//! **digital** side, the black-box core of the played instruments.
 
 use std::error::Error;
 use std::fmt;
@@ -68,17 +68,17 @@ impl SoundFontBank {
 /// A **SoundFont instrument voice**: MIDI note-on/off + velocity in (the event lane), a recognizable
 /// polyphonic General-MIDI voice out (the digital [`Sample`](crate::Lane::Sample) lane @ 48 kHz).
 ///
-/// Modeled honestly as a **digital sound module** (`PROJECT_PLAN` §5.6): SoundFont sample playback
+/// Modeled honestly as a **digital sound module**: SoundFont sample playback
 /// at its own digital rate, which the downstream [`DaConverter`](super::DaConverter) lifts to analog
 /// volts (48 kHz → 8× → the 384 kHz analog rate — a fixed integer ratio, no fractional resampler).
 /// The DA is the domain bridge, exactly as everywhere else; this node stays entirely on the digital
 /// side and never produces volts itself.
 ///
 /// The DSP is delegated wholesale to [`rustysynth`](https://crates.io/crates/rustysynth), the
-/// black-box synth core (`PROJECT_PLAN` §3 permits delegating internal DSP): it owns voice
-/// allocation / stealing, velocity layers, and the SoundFont sample engine. This satisfies Epic 1's
-/// deferred *polyphony / voice allocation* item by delegation. Instruments are deliberately
-/// **recognizable, not realistic** (`PROJECT_PLAN` §6) — the realism budget stays on the
+/// black-box synth core (a device's internal DSP may be delegated): it owns voice allocation /
+/// stealing, velocity layers, and the SoundFont sample engine, so *polyphony / voice allocation*
+/// comes by delegation. Instruments are deliberately
+/// **recognizable, not realistic** — the realism budget stays on the
 /// volts-and-converters layer downstream.
 ///
 /// - **Events** (the [`Events`](crate::Domain::Events) input) carry the note lifecycle:
@@ -99,7 +99,7 @@ impl SoundFontBank {
 /// [`NoteOff`]: EventMessage::NoteOff
 pub struct SoundFontSource {
     /// The black-box synth owns a fresh voice pool over its source bank; its `render` grows nothing
-    /// (proven zero-alloc by the Story 9.1 spike).
+    /// (zero-alloc).
     synth: Synthesizer,
     /// Interpolation/decimation factor `M = analog rate / 48 kHz`, baked at [`prepare`](Node::prepare);
     /// an event at analog offset `o` maps to digital frame `o / M`. `1` until prepared.

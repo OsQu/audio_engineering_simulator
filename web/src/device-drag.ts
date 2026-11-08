@@ -6,7 +6,7 @@
 // rule, and where the committed value is stored — is injected by the caller, mirroring how both stages
 // feed one cable-resolution pipeline and share one `PatchController`.
 //
-// Which press is a device move is decided once by the stage arbiter (stage-gestures.ts, Story 10.7):
+// Which press is a device move is decided once by the stage arbiter (stage-gestures.ts):
 // controls and near-socket presses never reach here. `beginMove` runs on the shared pointer session, so
 // the pointer is captured and a cancel never commits.
 

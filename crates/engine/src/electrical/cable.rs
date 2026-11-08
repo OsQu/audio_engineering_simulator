@@ -168,11 +168,8 @@ mod tests {
     use crate::electrical::divider_gain;
     use crate::signal::Volts;
     use crate::test_util::measure_gain;
+    use crate::test_util::rate;
     use approx::assert_relative_eq;
-
-    fn rate() -> AnalogRate {
-        AnalogRate::new(384_000.0)
-    }
 
     #[test]
     fn no_capacitance_is_pass_through() {

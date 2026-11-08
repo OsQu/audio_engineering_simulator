@@ -7,11 +7,6 @@ the `devices` crate), controlled generically by device id, hot-swapped to a new 
 boundary, and exposing its captured host block **zero-copy** (`out_ptr`/`out_len`) for a
 `Float32Array` view over wasm memory. Plus the thin catalog bridge (`catalog`, `parse_patch`).
 
-(Through Epic 3 the real-time surface was `RtEngine`, hardcoded to the canonical patch; Story 4.1
-generalized it to `SceneEngine`. The Story 3.1 compute-only feasibility-benchmark fixture
-`BenchEngine` and its throwaway `bench/` page were removed once Epic 3's gate was passed — recover
-them from git history if the scaling probe is wanted again at Epic-5 scale.)
-
 ## Prerequisites (one-time, user-run system installs)
 
 The `wasm32-unknown-unknown` target is already pinned in `rust-toolchain.toml`. You also need

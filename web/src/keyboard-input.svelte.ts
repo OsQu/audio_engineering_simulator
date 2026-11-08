@@ -1,6 +1,6 @@
 // Shared computer-keyboard (QWERTY) note capture, bound to a session + a view-supplied target accessor —
 // so the scene view and the workbench bench drive the identical glue instead of each re-wiring it. The
-// **target selection** stays view-side (the 6.1 discipline: App derives it from focus; the bench points
+// **target selection** stays view-side (App derives it from focus; the bench points
 // at its source/DUT); this owns only the reusable bit — the `playNote` wrapper that routes to the
 // session's target-explicit `playNote`, and the attach/detach lifecycle (capture QWERTY only while a
 // target is present). MIDI + the on-screen Keybed feed the same returned `playNote`.

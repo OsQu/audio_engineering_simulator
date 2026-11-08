@@ -9,7 +9,7 @@ use crate::signal::Lane;
 /// A speaker — the **terminus** of the simulated signal chain: `out = sensitivity · in`.
 ///
 /// This is where the simulation stops. We deliberately do **not** model acoustics (no cone
-/// physics, no V→SPL, no air or room — PROJECT_PLAN §5.5): the speaker stays in the voltage
+/// physics, no V→SPL, no air or room): the speaker stays in the voltage
 /// domain, applying a single **sensitivity** gain to the drive voltage it's fed, and its output
 /// is the voltage the harness *taps and captures* as "what we hear" (the implicit
 /// analog→digital capture lives off-engine, in the render harness). The output port is therefore a
@@ -70,13 +70,10 @@ impl Node for Speaker {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::signal::{AnalogRate, VoltageBuffer, Volts};
+    use crate::signal::{VoltageBuffer, Volts};
     use crate::test_util::process_voltage;
+    use crate::test_util::rate;
     use approx::assert_relative_eq;
-
-    fn rate() -> AnalogRate {
-        AnalogRate::new(384_000.0)
-    }
 
     fn speaker(sensitivity: f32) -> Speaker {
         Speaker::new(sensitivity, InputZ::new(Ohms::new(10_000.0)))

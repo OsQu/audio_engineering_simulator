@@ -9,14 +9,14 @@
   // **bottom** edge, so it maps straight to CSS `bottom` (floor = 0); pan/zoom is one CSS transform on
   // the surface, so items stay in raw world coordinates.
   //
-  // Interaction (Story 10.7): one capture-phase arbiter on the viewport (`stageGestures`) classifies every
+  // Interaction: one capture-phase arbiter on the viewport (`stageGestures`) classifies every
   // press exactly once — control/chrome, socket, visible cable, device move, or backdrop pan — and hands it
   // to that one owner. Controls keep their own gestures; a press near a socket patches (the parent's
   // `gestures.pick` + `gestures.socket`), so it can never start a device move; a device-body press moves
   // the unit (`beginMove`) and anything else pans (`camera.beginPan`). Every owned gesture runs on the
   // shared pointer session, so release and cancel stay distinct.
   //
-  // Physical order (Story 10.5) is resolver-owned: `items` arrive in their total paint order and each
+  // Physical order is resolver-owned: `items` arrive in their total paint order and each
   // carries a semantic layer mapped to one fixed z band. Hover, focus, toolbar grace and dragging never
   // touch a chassis' z. Toolbars and the drag/legality outline live in a separate **interaction layer**
   // keyed by object ID, so revealing them can't raise (or trap) a chassis.
@@ -73,7 +73,7 @@
     /** Bound out to the parent so it can convert coordinates outside the overlay snippet (e.g. to
      *  DOM-measure jack positions into surface space). `undefined` until the surface mounts. */
     api?: WorldApi;
-    /** The parent's patch-side gesture owners (Story 10.7): which socket a press means, and what to do
+    /** The parent's patch-side gesture owners: which socket a press means, and what to do
      *  with a socket or cable press. Device moves and panning stay here. */
     gestures?: {
       pick: (e: PointerEvent) => SocketPick;

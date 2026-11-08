@@ -4,6 +4,7 @@
   // node's* reading, addressed by (device, readout id). The presentation matches the quantity: a VU
   // reading sweeps the analog `VuFace` needle; a dBu/dBFS level is a horizontal LED bar. The per-unit
   // range lives here (one source), so both presentations map the reading onto the same 0..1 position.
+  import { READING_FLOOR_DB } from "./format";
   import VuFace from "./VuFace.svelte";
 
   interface Props {
@@ -26,13 +27,11 @@
     dBFS: { min: -60, max: 0 },
   };
   const range = $derived(RANGES[unit] ?? { min: -60, max: 0 });
-  // Below ~this the reading is treated as silence (the meter floors read −60/−120).
-  const OFF_SCALE = -55;
 
   const pct = $derived(
     Math.max(0, Math.min(100, ((value - range.min) / (range.max - range.min)) * 100)),
   );
-  const readout = $derived(value <= OFF_SCALE ? "—" : `${value.toFixed(1)} ${unit}`);
+  const readout = $derived(value <= READING_FLOOR_DB ? "—" : `${value.toFixed(1)} ${unit}`);
 </script>
 
 {#if unit === "VU"}

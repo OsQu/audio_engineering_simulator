@@ -2,7 +2,7 @@
 // the stage's own surface-local pixel space — without any consumer touching the pan/zoom transform. Both
 // stages implement it: the scene view's `WorldView` (a spatial room) and the workbench `BenchStage` (one
 // bolted-down device). It lives here, not inside a widget, so the bench doesn't import a type from the
-// scene-view widget it deliberately isn't (Story 6.3).
+// scene-view widget it deliberately isn't.
 
 import type { StageFrame } from "./stage-gestures";
 
@@ -27,6 +27,6 @@ export interface WorldApi {
   clientToSurface: (clientX: number, clientY: number) => SurfacePoint;
   stageRoot: () => HTMLElement | null;
   /** The stage's current client frame for socket picking (camera zoom + origin, viewport clip, UI
-   *  blockers), or null before it mounts (Story 10.7). */
+   *  blockers), or null before it mounts. */
   pickFrame: () => StageFrame | null;
 }

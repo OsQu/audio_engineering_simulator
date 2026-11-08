@@ -1,6 +1,6 @@
 <script lang="ts">
   // An on-screen piano keybed: two octaves of clickable keys that emit note-on/off. Purely a UI
-  // affordance for the focused instrument's *events input* (Story 4.8) — it is not an engine node; the
+  // affordance for the focused instrument's *events input* — it is not an engine node; the
   // note it sends is host-injected into the device's open event input, exactly like a QWERTY keypress.
   // Keys held from any source (mouse, QWERTY, MIDI) are highlighted via `held` so the two input paths
   // read as one instrument.

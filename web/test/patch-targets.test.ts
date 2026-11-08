@@ -1,4 +1,4 @@
-// Story 10.7.1: patchable socket targets and the client-pixel picker.
+// Patchable socket targets and the client-pixel picker.
 import { describe, expect, it } from "vitest";
 import type { CableResolutionInput, Membership, SurfaceSilhouette } from "../src/cable-resolution";
 import {

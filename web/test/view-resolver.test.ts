@@ -132,7 +132,7 @@ describe("view resolver contract matrix", () => {
   });
 });
 
-describe("benchCableInput (U2)", () => {
+describe("benchCableInput", () => {
   // A DUT presenting both faces and a supporting device turned front-on, whose only socket is on its
   // hidden back. Faces 100 × 50; the support frame sits at (0, 300), scale 1.
   const scene = structuredClone(benchScene);

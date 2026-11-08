@@ -1,6 +1,6 @@
 //! Electrical primitives and the local solve.
 //!
-//! We model **between** devices, not inside them (PROJECT_PLAN §5.3). Each output is a
+//! We model **between** devices, not inside them. Each output is a
 //! Thévenin source ([`Thevenin`]: ideal voltage + series output impedance), each input
 //! has an input impedance ([`InputZ`]), and impedances are [`Ohms`]. Because pro devices
 //! buffer their I/O, connections solve **locally** — a voltage divider, no global nodal

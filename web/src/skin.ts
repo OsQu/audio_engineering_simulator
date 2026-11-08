@@ -7,16 +7,14 @@
 // visual skin (faceplate finish + knob cap finish), so the UI can dress each
 // device without the engine ever knowing about colour.
 //
-// Finish/cap keys are derived from the token definitions (tokens.ts) so a skin
-// can only name a finish/cap that actually exists.
+// The finish/cap unions are the closed set of looks the widgets render (the
+// `--ae-*` faceplate and cap tokens in styles/tokens.css).
 // ============================================================================
 
-import type { KNOB_CAP, PANEL_FINISH } from "./tokens";
-
-/** A device faceplate finish (see PANEL_FINISH in tokens.ts): grey | slate | black. */
-export type Finish = keyof typeof PANEL_FINISH;
-/** A knob cap finish (see KNOB_CAP in tokens.ts): dark | chrome | red | blue | cream. */
-export type CapFinish = keyof typeof KNOB_CAP;
+/** A device faceplate finish: grey | slate | black. */
+export type Finish = "grey" | "slate" | "black";
+/** A knob cap finish: dark | chrome | red | blue | cream. */
+export type CapFinish = "dark" | "chrome" | "red" | "blue" | "cream";
 
 export interface DeviceSkin {
   /** Faceplate finish for the front panel. */

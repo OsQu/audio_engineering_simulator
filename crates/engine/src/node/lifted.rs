@@ -118,12 +118,9 @@ impl Node for Lifted {
 mod tests {
     use super::*;
     use crate::electrical::Ohms;
-    use crate::signal::{AnalogRate, VoltageBuffer, Volts};
+    use crate::signal::{VoltageBuffer, Volts};
     use crate::test_util::process_voltage;
-
-    fn rate() -> AnalogRate {
-        AnalogRate::new(384_000.0)
-    }
+    use crate::test_util::rate;
 
     /// A 1-in/1-out node with internal state: a running sum of its input. State makes lane
     /// independence observable — if two lanes shared `acc`, conductor 1 would see conductor 0's

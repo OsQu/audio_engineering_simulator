@@ -89,10 +89,7 @@ impl PressureBuffer {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    fn rate() -> AnalogRate {
-        AnalogRate::new(384_000.0)
-    }
+    use crate::test_util::rate;
 
     #[test]
     fn zeros_has_len_and_is_silent() {

@@ -1,4 +1,4 @@
-// Press ownership (Story 10.7): every stage press is classified exactly once, synchronously, before any
+// Press ownership: every stage press is classified exactly once, synchronously, before any
 // gesture adapter captures the pointer or mutates anything. Pure — the stage adapter reads the DOM facts
 // (is the target a control? which socket is picked? is it on a cable or a device?) and this decides.
 //

@@ -25,7 +25,7 @@
   // on a ¼" link. The current type id resolves the connection's stored R·C back to a preset (else ideal).
   const cables = $derived(sceneOps.cablesFor(session.descriptorOf, session.cables, conn));
   const currentType = $derived(cableTypeIdFor(session.cables, conn.cable));
-  // The loading loss (§5.3 divider) in dB, from the static per-connection losses — null for a digital link.
+  // The loading loss (impedance voltage divider) in dB, from the static per-connection losses — null for a digital link.
   const loss = $derived.by((): number | null => {
     const i = session.scene.patch.connections.findIndex(
       (c) => sceneOps.connKey(c) === sceneOps.connKey(conn),
@@ -56,7 +56,7 @@
     <!-- Static impedance loading loss (how far the loaded input sits below the source's open-circuit V). -->
     <span class="ci-loss">loading {loss !== null ? `${loss.toFixed(2)} dB` : "—"}</span>
   {:else if domain === "acoustic"}
-    <!-- Air is ideal (Story 8.2): no R·C, no length, no loading — a unity acoustic edge. -->
+    <!-- Air is ideal: no R·C, no length, no loading — a unity acoustic edge. -->
     <span class="ci-ideal">acoustic link — ideal air (no cable)</span>
   {:else}
     <span class="ci-ideal">digital link — ideal (no cable)</span>

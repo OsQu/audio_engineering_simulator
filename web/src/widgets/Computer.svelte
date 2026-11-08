@@ -1,5 +1,5 @@
 <script lang="ts">
-  // The `computer` faceplate (Story 5.7.8; config-driven since 5.10) — the interface's USB peer, drawn as
+  // The `computer` faceplate (config-driven) — the interface's USB peer, drawn as
   // a plain box: it exists so the multichannel USB cluster has a legal partner and the interface can be
   // played end-to-end. The **front** is the DAW's per-lane input meters (one per metered "send" lane it
   // records); the **back** carries the one USB connector split into its input (send) and output (return)

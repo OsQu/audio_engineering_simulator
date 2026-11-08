@@ -49,12 +49,9 @@ impl Node for TestSource {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::signal::{AnalogRate, VoltageBuffer};
+    use crate::signal::VoltageBuffer;
     use crate::test_util::process_voltage;
-
-    fn rate() -> AnalogRate {
-        AnalogRate::new(384_000.0)
-    }
+    use crate::test_util::rate;
 
     #[test]
     fn declares_one_output_no_inputs() {

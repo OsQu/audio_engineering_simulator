@@ -1,4 +1,4 @@
-// The face-geometry DOM adapter (Story 10.4): measures one face slot's sockets into face-local mm and
+// The face-geometry DOM adapter: measures one face slot's sockets into face-local mm and
 // registers them in the pure socket-geometry index. It replaces the old global `[data-jack]` sweep, which
 // read every jack through the camera transform on a rAF + fixed settle timer and so coupled socket truth
 // to pan/zoom/placement/animation state.

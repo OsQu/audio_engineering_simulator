@@ -1,6 +1,6 @@
 <script lang="ts">
   // A mixing-console focus surface: the SAME device descriptor as the in-rack panel, re-laid-out as a
-  // channel strip (Story 4.8). The rack panel lays a device's params out in one horizontal row; a
+  // channel strip. The rack panel lays a device's params out in one horizontal row; a
   // console groups them into signal-flow **sections** (by the leading word of each label — "Input",
   // "Output", …) rendered as side-by-side channel columns, with level controls drawn as tall vertical
   // faders (the console idiom) rather than knobs. It reads values and applies edits through the same

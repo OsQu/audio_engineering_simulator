@@ -1,10 +1,9 @@
-// The engine session: the view-agnostic consumer surface over the worklet engine (PROJECT_PLAN §7 —
-// the UI is a pure consumer of the engine API, factored here so a second view root can construct the
-// same interaction path). It owns the engine lifecycle, the live readout state streaming from the
-// worklet, the authoritative `Scene`, and the param/config control lanes that mutate it. Note routing
-// and patching move in over the rest of Story 6.1. A class with `$state` fields (the codebase's first
-// `.svelte.ts` rune module), constructed once per view root with its initial scene — App seeds from
-// `loadScene() ?? defaultScene()`; the 6.3 workbench will seed from the URL.
+// The engine session: the view-agnostic consumer surface over the worklet engine (the UI is a pure
+// consumer of the engine API, factored here so a second view root can construct the same interaction
+// path). It owns the engine lifecycle, the live readout state streaming from the worklet, the
+// authoritative `Scene`, and the param/config control lanes that mutate it. A class with `$state`
+// fields (a `.svelte.ts` rune module), constructed once per view root with its initial scene — App
+// seeds from `loadScene() ?? defaultScene()`; the workbench seeds from the URL.
 
 import {
   type CableType,
@@ -14,6 +13,7 @@ import {
   type ParamDescriptor,
 } from "./catalog";
 import { DawController } from "./daw";
+import type { DawUi } from "./device-ui";
 import {
   type ControlMessage,
   type EngineControl,
@@ -272,7 +272,7 @@ export class SceneSession {
     return true;
   }
 
-  // Compatibility seam for the Story 10.1 browser fixture; production paths use proposeTopology.
+  // Compatibility seam for the browser fixture; production paths use proposeTopology.
   submitPatchCandidate(candidate: Scene): boolean {
     return this.proposeTopology("patch change", (scene) => Object.assign(scene, candidate));
   }
@@ -385,10 +385,36 @@ export class SceneSession {
     );
   }
 
-  // A structural edit → rebuild the engine from the new patch (compile + block-boundary hot-swap, in the
-  // worklet) and re-apply param values. Edits are rare gestures, so the off-block
-  // compile cost is acceptable; the live audio thread swaps at a block boundary.
   // --- DAW: transport, tracks, record/playback ----------------------------------------------------
+
+  /** The DAW control seam for a device's mixer surface — session-backed, with reactive getters so the
+   *  surface re-renders as the transport advances / the track model changes. Harmless on a non-DAW
+   *  device (its commands no-op in the engine). */
+  dawUi(device: string): DawUi {
+    // The getters below run with the returned object as `this`, so capture the session.
+    const session = this;
+    return {
+      get transport() {
+        return session.transportOf(device);
+      },
+      get tracks() {
+        return session.tracksOf(device);
+      },
+      get sends() {
+        return session.sendsOf(device);
+      },
+      waveform: (t) => session.waveformOf(device, t),
+      play: () => session.play(device),
+      stop: () => session.stop(device),
+      setRecordEnabled: (on) => session.setRecordEnabled(device, on),
+      seek: (pos) => session.seek(device, pos),
+      setTrackInput: (t, l) => session.setTrackInput(device, t, l),
+      setTrackArmed: (t, a) => session.setTrackArmed(device, t, a),
+      setTrackMonitoring: (t, on) => session.setTrackMonitoring(device, t, on),
+      setTrackLevel: (t, v) => session.setTrackLevel(device, t, v),
+      setTrackCount: (n) => session.setTrackCount(device, n),
+    };
+  }
 
   /** A DAW device's live transport state (playhead + rolling/recording), or undefined if none yet. */
   transportOf(device: string): TransportState | undefined {

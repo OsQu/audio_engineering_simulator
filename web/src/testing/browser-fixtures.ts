@@ -150,7 +150,7 @@ const cableHover: BrowserFixture = {
   ),
 };
 
-// Story 10.6: two portals from the front wall to sinks on the back wall — one from a visible rear socket
+// Two portals from the front wall to sinks on the back wall — one from a visible rear socket
 // (back-shown source), one from a hidden-face socket (front-shown source; generic jacks are on the back).
 const cablePortal: BrowserFixture = {
   id: "cable-portal",
@@ -192,7 +192,7 @@ const patchGestures: BrowserFixture = {
   ),
 };
 
-// Story 10.7: the gesture matrix — two back-shown sources (so output → output is an illegal target that
+// The gesture matrix — two back-shown sources (so output → output is an illegal target that
 // still has a presented socket) and one sink.
 const patchMatrix: BrowserFixture = {
   id: "patch-matrix",

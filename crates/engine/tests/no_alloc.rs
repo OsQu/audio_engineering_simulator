@@ -250,9 +250,9 @@ fn voice_with_events_and_params_is_allocation_free() {
 }
 
 fn soundfont_chassis_is_allocation_free() {
-    // The Epic 9 instrument chassis on the hot path: a `SoundFontSource` (event-driven `rustysynth`
-    // render → mono fold → ±1 clamp) into a `DaConverter` (8× to the analog rate). The 9.1 spike
-    // proved raw `render()` over fixed 128-slices is zero-alloc; this proves the *node's* real
+    // The instrument chassis on the hot path: a `SoundFontSource` (event-driven `rustysynth`
+    // render → mono fold → ±1 clamp) into a `DaConverter` (8× to the analog rate). Raw `rustysynth`
+    // `render()` over fixed 128-slices is zero-alloc; this proves the *node's* real
     // `process` — event drain, sub-sliced chunked render, the fold — plus the DA, all through a
     // compiled schedule. Font read + parse + `compile` allocate freely at construction; the assert
     // is only on the render loop.

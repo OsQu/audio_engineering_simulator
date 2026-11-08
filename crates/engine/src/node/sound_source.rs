@@ -9,7 +9,7 @@ use crate::signal::{AnalogRate, Lane, Pascals};
 /// loudness into the air. The first node whose output is a [`Pressure`](crate::Lane::Pressure)
 /// lane — a source you *mic*, not a line-out.
 ///
-/// Deliberately simple (PROJECT_PLAN §2): recognizable, not realistic. The sine is a stand-in for
+/// Deliberately simple: recognizable, not realistic. The sine is a stand-in for
 /// whatever is making the sound (a voice, a drum, an amp); what matters for the simulation is that
 /// it produces a real sound pressure at a real loudness, so the whole front-end story — mic choice,
 /// phantom, gain staging, the pad — follows. Kept generic on purpose: the catalog dresses one

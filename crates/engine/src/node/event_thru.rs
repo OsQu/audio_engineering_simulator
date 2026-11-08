@@ -15,7 +15,7 @@ use crate::signal::Lane;
 /// node's **open event input** (host-fed when a human plays the focused device, edge-fed when a
 /// cable is patched), the same source-agnostic "performance in" every event-consuming device has.
 /// So a controller is this node with a MIDI-IN/MIDI-OUT face; no keyboard node, no internal
-/// keys→voice edge (that would import MIDI where a device has none — PROJECT_PLAN §5 inside-the-box
+/// keys→voice edge (that would import MIDI where a device has none — the inside-the-box
 /// boundary).
 ///
 /// No analog or digital I/O, no params: it is pure event plumbing.
@@ -59,12 +59,9 @@ mod tests {
     use crate::graph::Graph;
     use crate::node::SynthVoice;
     use crate::schedule::{EventQueue, compile};
-    use crate::signal::{AnalogRate, EventMessage, VoltageBuffer, Volts};
+    use crate::signal::{EventMessage, VoltageBuffer, Volts};
+    use crate::test_util::rate;
     use crate::test_util::rms;
-
-    fn rate() -> AnalogRate {
-        AnalogRate::new(384_000.0)
-    }
 
     /// The controller's forwarder drives a downstream synth: a note-on injected into the pass-through's
     /// **open** event input reaches the voice through the `EventRoute` edge and makes it sound — the

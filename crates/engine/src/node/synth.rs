@@ -43,7 +43,7 @@ enum Stage {
 /// The oscillator runs in the oversampled analog domain, so a naive sawtooth's harmonics extend up
 /// toward the analog Nyquist; the modeled **AD converter's** anti-alias filter removes
 /// the ones that would fold — no band-limiting tricks are needed here, which is the converter
-/// payoff, not a special case. Instruments are deliberately simple (PROJECT_PLAN §6): recognizable,
+/// payoff, not a special case. Instruments are deliberately simple: recognizable,
 /// not realistic. No analog input; one analog output with a real source impedance.
 pub struct SynthVoice {
     rate_hz: f64,
@@ -288,11 +288,8 @@ mod tests {
     use crate::param::ParamQueue;
     use crate::schedule::{EventQueue, compile};
     use crate::signal::{EventMessage, VoltageBuffer};
+    use crate::test_util::rate;
     use crate::test_util::{rms, tone_amplitude};
-
-    fn rate() -> AnalogRate {
-        AnalogRate::new(384_000.0)
-    }
 
     /// note 69 = A4 = 440 Hz exactly (the tuning reference).
     #[test]

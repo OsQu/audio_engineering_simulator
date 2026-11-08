@@ -15,7 +15,7 @@ const LEVEL_FLOOR: f64 = 1e-12;
 ///
 /// The classic downward compressor, in the digital domain (between the modeled AD and DA). Stages,
 /// per sample:
-/// 1. **Detect** — a [`PeakEnvelope`] follows the rectified input with `attack` / `release` time
+/// 1. **Detect** — a `PeakEnvelope` follows the rectified input with `attack` / `release` time
 ///    constants (baked at [`prepare`](Node::prepare)).
 /// 2. **Compute gain** (in **dB**, where threshold / ratio / knee are natural): the envelope level
 ///    in dBFS, the amount it sits over the threshold scaled by `1/ratio − 1`, smoothed through an

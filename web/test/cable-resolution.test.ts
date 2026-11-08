@@ -1,4 +1,4 @@
-// Story 10.6.1: unified endpoint resolution, hidden-face exits, mask passes, portals, held leads.
+// Unified endpoint resolution, hidden-face exits, mask passes, portals, held leads.
 import { describe, expect, it } from "vitest";
 import {
   type CableResolutionInput,
@@ -319,7 +319,7 @@ describe("portals", () => {
     expect(r).toMatchObject({ kind: "none", reason: "not-local" });
   });
 
-  it("a suppressed end hides the whole lead, full or portal (U1)", () => {
+  it("a suppressed end hides the whole lead, full or portal", () => {
     const r = resolveConnection(
       input([
         { id: "a", frame: FRAME, shown: "front", order: 0, suppressed: true },

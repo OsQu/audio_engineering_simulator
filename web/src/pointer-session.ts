@@ -1,4 +1,4 @@
-// The shared primary-pointer lifecycle (Story 10.7) every owned stage gesture — patching, device move,
+// The shared primary-pointer lifecycle every owned stage gesture — patching, device move,
 // pan, cable select — runs on. One session per stage root at a time:
 //   - only a primary pointer's primary button begins one; presses by other pointers are ignored while it
 //     runs (multi-pointer), as are their moves and releases;

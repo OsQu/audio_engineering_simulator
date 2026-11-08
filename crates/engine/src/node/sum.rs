@@ -15,7 +15,7 @@ use crate::signal::Lane;
 /// attenuates (roughly `1/N`) and couples its sources to one another through the shared bus.
 /// We model a unity sum and leave that make-up/attenuation to a downstream
 /// [`GainStage`](super::GainStage); the inter-source bus coupling is not modeled. This is the
-/// "correct-enough, never false" line (PROJECT_PLAN §3): the loading is real, the
+/// "correct-enough, never false" line: the loading is real, the
 /// mixing-resistor network is abstracted.
 ///
 /// `n` inputs; one output.
@@ -63,13 +63,10 @@ impl Node for PassiveSum {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::signal::{AnalogRate, VoltageBuffer, Volts};
+    use crate::signal::{VoltageBuffer, Volts};
     use crate::test_util::process_voltage;
+    use crate::test_util::rate;
     use approx::assert_relative_eq;
-
-    fn rate() -> AnalogRate {
-        AnalogRate::new(384_000.0)
-    }
 
     fn sum(n: usize) -> PassiveSum {
         PassiveSum::new(vec![InputZ::new(Ohms::new(10_000.0)); n], Ohms::new(150.0))

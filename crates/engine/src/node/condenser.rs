@@ -20,7 +20,7 @@ use crate::signal::{Lane, Volts};
 /// The mic **declares** its DC appetite on its output port (a [`phantom_load`](Node::phantom_load):
 /// [`Z_DC_OHMS`](Self::Z_DC_OHMS), [`V_MIN_VOLTS`](Self::V_MIN_VOLTS)) and receives its power from
 /// the patch: `compile` solves the DC operating point against whatever engaged supply faces this
-/// output (the §17 superposition split) and delivers the terminal volts via
+/// output (the superposition split) and delivers the terminal volts via
 /// [`resolve_phantom`](Node::resolve_phantom). The pedestal on the wire is therefore **earned from
 /// the bias network** — sag from the feed resistors and cable R is already in the number — never
 /// self-asserted. The mic emits it as common-mode DC with the transduced audio differentially on
@@ -175,7 +175,7 @@ mod tests {
 
     #[test]
     fn powered_mic_transduces_pressure_on_the_pedestal() {
-        // Deliver the §17 operating point 48·12 700/16 100 = 37.86 V (≥ 35 V minimum). At the 94 dB
+        // Deliver the P48 operating point 48·12 700/16 100 = 37.86 V (≥ 35 V minimum). At the 94 dB
         // SPL anchor (1 Pa) with 10 mV/Pa sensitivity, the differential is 1 Pa · 0.01 V/Pa = 10 mV,
         // riding as common-mode 37.86 V: hot = 37.86 + 0.005, cold = 37.86 − 0.005. Two oracles:
         //   1. common-mode (V+ + V−)/2 = the pedestal, exactly — the audio is purely differential.

@@ -1,4 +1,4 @@
-// Story 10.7.2: the primary-pointer session reducer.
+// The primary-pointer session reducer.
 import { describe, expect, it } from "vitest";
 import {
   IDLE,

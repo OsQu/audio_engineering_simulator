@@ -8,9 +8,8 @@
  * face, an LED ladder) noted per component.
  *
  * NOTE (this repo): we do NOT import this file globally. It is the reference we
- * copy recipe blocks FROM into each widget's own scoped <style> during the
- * Phase B re-skin (Story 4.2). The --ae-* tokens live globally on :root (see
- * tokens.css), so the copied blocks resolve their vars for free.
+ * copy recipe blocks FROM into each widget's own scoped <style>. The --ae-* tokens live globally on :root
+ * (see tokens.css), so the copied blocks resolve their vars for free.
  *
  * Requires tokens.css to be loaded on an ancestor (for the --ae-* vars).
  * ============================================================================ */

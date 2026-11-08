@@ -4,8 +4,7 @@
 //! the receiving device's input, and a DC load inside the mic drawing through its output pair. Both
 //! ends are **circuit-topology declarations** — the same class of port-fact as
 //! [`InputZ`]/[`OutputZ`](super::OutputZ), never labels on the signal. Because the
-//! network is linear and stationary, superposition splits the problem (`osku_physics_concepts.md`
-//! §17): the DC **operating point** is solved once at compile with the same local divider as the
+//! network is linear and stationary, superposition splits the problem: the DC **operating point** is solved once at compile with the same local divider as the
 //! audio solve, and the per-sample AC rides on top of the solved pedestal.
 
 use super::{InputZ, Ohms, divider_gain};
@@ -67,7 +66,7 @@ impl PhantomSupply {
     ///   V_dc = V_supply · Z_load / (feed/2 + R_cable + Z_load)
     /// ```
     ///
-    /// Reference hand calc (§17): 48 V, 6.8 kΩ per leg, no cable, into a 12.7 kΩ load ⇒
+    /// Reference hand calc: 48 V, 6.8 kΩ per leg, no cable, into a 12.7 kΩ load ⇒
     /// `48 · 12 700 / (3 400 + 0 + 12 700) = 37.86 V` — sag emerges from the divider. A
     /// **disengaged** supply delivers 0 V (total, so callers needn't special-case the switch).
     ///
@@ -134,7 +133,7 @@ mod tests {
 
     #[test]
     fn operating_point_matches_the_hand_calc() {
-        // The §17 reference: 48 · 12 700 / (3 400 + 0 + 12 700) = 609 600 / 16 100 = 37.863 V.
+        // The P48 reference: 48 · 12 700 / (3 400 + 0 + 12 700) = 609 600 / 16 100 = 37.863 V.
         let v = p48(true).terminal_volts(Ohms::ZERO, reference_load());
         assert_relative_eq!(v.get(), 37.863, epsilon = 1e-3);
     }

@@ -4,8 +4,8 @@
 //
 // The world stores a **single 3-D coordinate truth** per object (position + size + facing); every
 // rendered view is a *projection* of it. Storing per-view 2-D positions is the trap that drifts views
-// out of sync, so we never do it. Story 4.3 renders only the front elevation; the projection seam
-// here is general so top/side views (Story 4.6) are a few lines, not a refactor.
+// out of sync, so we never do it. The projection seam is general, so every view is a few lines, not a
+// refactor.
 
 import type { FormFactor } from "./catalog";
 
@@ -33,12 +33,11 @@ export interface Rect2 {
   height: number;
 }
 
-/** Which 2-D plane a 3-D box projects onto: front uses (x,y), top uses (x,z), side uses (z,y). Story
- *  4.3 renders only "front"; "top"/"side" exist so the projection seam is proven (Story 4.6). */
+/** Which 2-D plane a 3-D box projects onto: front uses (x,y), top uses (x,z), side uses (z,y). */
 export type ViewKind = "front" | "top" | "side";
 
 /** Which wall of a rectangular room a device stands against — the elevation view it appears in. A
- *  placement carries this tag (Story 4.6); the wall view is a *projection* of its 3-D truth, never a
+ *  placement carries this tag; the wall view is a *projection* of its 3-D truth, never a
  *  stored per-view position. front/back run along x; left/right run along z (the shorter sides when
  *  depth < width). */
 export type Wall = "front" | "back" | "left" | "right";
@@ -98,11 +97,11 @@ export function orientedSize(size: Size3, wall: Wall): Size3 {
 
 /** Project a positioned 3-D box onto one wall's **elevation** — the horizontal axis runs *along* that
  *  wall, the vertical is always world y (up). This is the multi-view generalization of `project(…,
- *  "front")` (Story 4.6): each wall is a projection of the single 3-D truth, never a stored 2-D position.
+ *  "front")`: each wall is a projection of the single 3-D truth, never a stored 2-D position.
  *
  *  Convention — you stand inside the room looking outward at the wall, screen-x increasing to *your
  *  right*. Turning between walls flips left/right where it physically should:
- *  - **front** (far wall, looking +z): screen-x = world x (identity — matches the pre-4.6 single view).
+ *  - **front** (far wall, looking +z): screen-x = world x (identity).
  *  - **back** (near wall, turned 180°, looking −z): x mirrored about the room width.
  *  - **left** (x=0 wall, turned left, looking −x): screen-x = world z (uses the depth axis).
  *  - **right** (x=W wall, turned right, looking +x): z mirrored about the room depth.
@@ -157,7 +156,7 @@ export function elevationToWorld(
 }
 
 /** Which wall a floor point is nearest — used to re-tag a device's `wall` when it's dragged across the
- *  top-down floor plan (Story 4.6.4). Compares the point's distance to each of the four wall edges. */
+ *  top-down floor plan. Compares the point's distance to each of the four wall edges. */
 export function nearestWall(center: { x: number; z: number }, room: Room): Wall {
   const dLeft = center.x;
   const dRight = room.width - center.x;
@@ -176,7 +175,7 @@ export function rectsOverlap(a: Rect2, b: Rect2): boolean {
 }
 
 /** Snap a coordinate to the nearest multiple of `step` — the free-placement grid the world layer drops
- *  gear onto (Story 4.6). A non-positive step is a no-op (returns `v` unchanged), so a caller can pass 0
+ *  gear onto. A non-positive step is a no-op (returns `v` unchanged), so a caller can pass 0
  *  to disable snapping without a branch. */
 export function snapToGrid(v: number, step: number): number {
   return step > 0 ? Math.round(v / step) * step : v;
@@ -206,7 +205,7 @@ export function rackRunsOverlap(a: RackOccupant, b: RackOccupant): boolean {
 }
 
 /** Can `occ` be placed in `rack` given the `existing` occupants — in-bounds and no slot collision?
- *  The placement-legality predicate the world layer (Stories 4.3.4 / 4.3.5) gates moves on. */
+ *  The placement-legality predicate the world layer gates moves on. */
 export function canPlaceInRack(
   rack: RackSpec,
   occ: RackOccupant,
@@ -217,7 +216,7 @@ export function canPlaceInRack(
 
 /** The free start-slot nearest `desired` where a `units`-high device fits in `rack` given the
  *  `existing` occupants (exclude the device being placed), or `null` if nothing fits. Searches
- *  outward from `desired` — the drag-snap target finder (Story 4.3.5). */
+ *  outward from `desired` — the drag-snap target finder. */
 export function nearestFreeSlot(
   rack: RackSpec,
   existing: RackOccupant[],

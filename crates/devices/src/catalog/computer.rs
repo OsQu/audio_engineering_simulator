@@ -3,10 +3,16 @@ use engine::{BitDepth, DigitalMeter, Matrix, MultitrackRecorder, SampleRate};
 use crate::{
     Connector, DeviceConfig, ParamKind, PortKind,
     catalog::{
-        BITS, CatalogEntry, FormFactor, GridAxis, GridSpec, HOST_RATE_HZ, InternalEdge, MeterBank,
-        NodeSpec, PortUi, ReadoutSpec, ReadoutUi,
+        descriptor::FormFactor,
+        spec::{
+            BITS, CatalogEntry, GridAxis, GridSpec, InternalEdge, MeterBank, NodeSpec, PortUi,
+            ReadoutSpec, ReadoutUi,
+        },
     },
 };
+
+/// The computer's own digital clock (its USB audio clock), matching the interface it pairs with.
+const COMPUTER_CLOCK_HZ: f64 = 48_000.0;
 
 const USB_SENDS: &str = "usb_sends";
 const USB_RETURNS: &str = "usb_returns";
@@ -83,7 +89,7 @@ pub(super) const COMPUTER: CatalogEntry = CatalogEntry {
         NodeSpec::Plain(|cfg| {
             let (sends, _returns) = usb_channel_count(cfg);
             Box::new(DigitalMeter::new(
-                SampleRate::new(HOST_RATE_HZ),
+                SampleRate::new(COMPUTER_CLOCK_HZ),
                 BitDepth::new(BITS),
                 sends as u16,
             ))
@@ -93,7 +99,7 @@ pub(super) const COMPUTER: CatalogEntry = CatalogEntry {
             let (sends, _returns) = usb_channel_count(cfg);
             let tracks = track_count(cfg);
             Box::new(MultitrackRecorder::new(
-                SampleRate::new(HOST_RATE_HZ),
+                SampleRate::new(COMPUTER_CLOCK_HZ),
                 BitDepth::new(BITS),
                 sends,
                 tracks,
@@ -103,7 +109,7 @@ pub(super) const COMPUTER: CatalogEntry = CatalogEntry {
         NodeSpec::Plain(|cfg| {
             let tracks = track_count(cfg);
             Box::new(DigitalMeter::new(
-                SampleRate::new(HOST_RATE_HZ),
+                SampleRate::new(COMPUTER_CLOCK_HZ),
                 BitDepth::new(BITS),
                 tracks as u16,
             ))
@@ -113,7 +119,7 @@ pub(super) const COMPUTER: CatalogEntry = CatalogEntry {
             let (_sends, returns) = usb_channel_count(cfg);
             let tracks = track_count(cfg);
             Box::new(Matrix::new_single_ports(
-                SampleRate::new(HOST_RATE_HZ),
+                SampleRate::new(COMPUTER_CLOCK_HZ),
                 BitDepth::new(BITS),
                 tracks,
                 returns,
@@ -124,7 +130,7 @@ pub(super) const COMPUTER: CatalogEntry = CatalogEntry {
         NodeSpec::Plain(|cfg| {
             let (_sends, returns) = usb_channel_count(cfg);
             Box::new(DigitalMeter::new(
-                SampleRate::new(HOST_RATE_HZ),
+                SampleRate::new(COMPUTER_CLOCK_HZ),
                 BitDepth::new(BITS),
                 returns as u16,
             ))
@@ -236,8 +242,9 @@ mod tests {
     use engine::Graph;
 
     use super::crossbar_defaults;
+    use crate::catalog::expand::instantiate;
     use crate::scene::ConfigSetting;
-    use crate::{DeviceConfig, PortDirection, describe_device, descriptors, instantiate};
+    use crate::{DeviceConfig, PortDirection, describe_device, descriptors};
 
     /// The crossbar default routes every track → return 0 (master), muting everything else
     /// (row-major `t·m + j`).

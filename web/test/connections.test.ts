@@ -322,7 +322,7 @@ describe("cableAllowed", () => {
     expect(cableAllowed("analog")).toBe(true);
     expect(cableAllowed("digital")).toBe(false);
     expect(cableAllowed("events")).toBe(false);
-    // Air is ideal — an acoustic edge carries no R·C cable (Story 8.2).
+    // Air is ideal — an acoustic edge carries no R·C cable.
     expect(cableAllowed("acoustic")).toBe(false);
   });
 });

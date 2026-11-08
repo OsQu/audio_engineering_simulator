@@ -1,6 +1,6 @@
 // The computer-keyboard → MIDI-note mapping as pure functions — no DOM, no Svelte. Lifted out of the
 // old global keyboard listener (engine.ts) so the note layout is unit-testable and can be shared by
-// both the physical-key capture and the on-screen keybed surface (Story 4.8).
+// both the physical-key capture and the on-screen keybed surface.
 //
 // One octave of a piano over the QWERTY home rows: white keys on A–K, black keys on the W/E/T/Y/U row
 // above — the de-facto layout (Ableton, many soft synths). Z/X transpose the base octave.

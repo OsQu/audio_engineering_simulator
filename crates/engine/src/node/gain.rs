@@ -184,13 +184,10 @@ impl Node for GainStage {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::signal::{AnalogRate, VoltageBuffer};
+    use crate::signal::VoltageBuffer;
     use crate::test_util::process_voltage;
+    use crate::test_util::rate;
     use approx::assert_relative_eq;
-
-    fn rate() -> AnalogRate {
-        AnalogRate::new(384_000.0)
-    }
 
     fn stage(gain: f32, rail: f32) -> GainStage {
         GainStage::new(

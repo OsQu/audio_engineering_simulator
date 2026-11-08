@@ -71,7 +71,7 @@ export function transitionForObject(
   return presentation.flips[transitionOwner(scene, objectId)];
 }
 
-/** Current Story-10.4 policy: no physical lead is drawn while its object or parent rack flips. */
+/** Policy: no physical lead is drawn while its object or parent rack flips. */
 export function physicalLeadsSuppressed(
   scene: Scene,
   presentation: PresentationState,
@@ -176,7 +176,7 @@ export function resolveFaces(input: FaceResolutionInput): ResolvedFace[] {
   return resolveFocusFace(input);
 }
 
-// --- Resolved objects & physical paint order (Story 10.5) ---------------------------------------------
+// --- Resolved objects & physical paint order ---------------------------------------------
 // Every rendered chassis (rack frame or device) gets a semantic layer and a position in one total order.
 // Hover, keyboard focus, toolbar grace, and dragging are deliberately *not* inputs: interaction can never
 // change physical occlusion. Controls live in a separate interaction overlay keyed by object ID.
@@ -228,7 +228,7 @@ export interface ResolvedObject {
   readonly rect: Rect2 | null;
 }
 
-/** An opaque chassis outline; Story 10.6 consumes these for cable mask sets. */
+/** An opaque chassis outline; cable resolution consumes these for mask sets. */
 export interface Silhouette {
   readonly objectId: string;
   readonly rect: Rect2;
