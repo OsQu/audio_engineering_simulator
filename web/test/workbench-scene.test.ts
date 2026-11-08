@@ -88,6 +88,20 @@ describe("benchScene", () => {
     expect(scene?.patch.output).toEqual({ device: BENCH_DEVICE, port: 0 });
   });
 
+  it("brings the speaker onto the bench when a digital-only DUT taps it", () => {
+    const computer = descWith("computer", [
+      { id: 0, direction: "input", domain: "digital" },
+      { id: 0, direction: "output", domain: "digital" },
+    ]);
+    const scene = benchScene(computer, [computer, speaker]);
+    expect(scene?.patch.output).toEqual({ device: SPEAKER_DEVICE, port: 0 });
+    expect(scene?.patch.devices.map((d) => d.id)).toContain(scene?.patch.output.device);
+    expect(scene?.patch.devices).toEqual([
+      { id: BENCH_DEVICE, typeId: "computer" },
+      { id: SPEAKER_DEVICE, typeId: "speaker" },
+    ]);
+  });
+
   it("is undefined when the catalog has no speaker (a catalog regression, not a normal state)", () => {
     const dut = descWith("amp", [{ id: 0, direction: "output", domain: "analog" }]);
     expect(benchScene(dut, [dut])).toBeUndefined();

@@ -67,19 +67,18 @@ export function defaultBenchTap(
   return undefined;
 }
 
-/** The bench scene for a device-under-test: the DUT plus the fixed supporting cast (synth source, DA,
- *  speaker), all **unwired** and ordered left→right by signal flow (source → DUT → DA → speaker) for the
- *  bench layout. `output` starts at {@link defaultBenchTap} (user-retargetable by clicking an analog output
- *  jack, Story 6.3). Needs the live catalog to resolve the speaker descriptor + the default tap; returns
+/** The bench scene for a device-under-test: the DUT alone, unwired — plus the speaker when the DUT has
+ *  no analog output and the tap falls back to it. `output` starts at {@link defaultBenchTap}
+ *  (user-retargetable by clicking an analog output jack). Needs the live catalog to resolve the speaker descriptor + the default tap; returns
  *  `undefined` if the speaker is missing from the catalog or no analog tap resolves (a catalog regression). */
 export function benchScene(dut: DeviceDescriptor, catalog: DeviceDescriptor[]): Scene | undefined {
   const speaker = catalog.find((d) => d.typeId === SPEAKER_TYPE);
   if (!speaker) return undefined;
   const output = defaultBenchTap(dut, speaker);
   if (!output) return undefined;
-  return sceneOf({
-    devices: [{ id: BENCH_DEVICE, typeId: dut.typeId }],
-    connections: [],
-    output,
-  });
+  // The patch's output must name a device in the patch: when the tap falls back to the speaker (a
+  // digital-only DUT), the speaker instance comes onto the bench with it.
+  const devices = [{ id: BENCH_DEVICE, typeId: dut.typeId }];
+  if (output.device === SPEAKER_DEVICE) devices.push({ id: SPEAKER_DEVICE, typeId: SPEAKER_TYPE });
+  return sceneOf({ devices, connections: [], output });
 }
