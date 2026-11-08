@@ -385,8 +385,8 @@ export class SceneSession {
     );
   }
 
-  // A structural edit → rebuild the engine from the new patch (compile + ScheduleSlot hot-swap, in the
-  // worklet, the Story 4.1 path) and re-apply param values. Edits are rare gestures, so the off-block
+  // A structural edit → rebuild the engine from the new patch (compile + block-boundary hot-swap, in the
+  // worklet) and re-apply param values. Edits are rare gestures, so the off-block
   // compile cost is acceptable; the live audio thread swaps at a block boundary.
   // --- DAW: transport, tracks, record/playback ----------------------------------------------------
 

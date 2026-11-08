@@ -2514,19 +2514,24 @@ pub fn instantiate_with_assets(
     g: &mut Graph,
     context: &BuildContext,
 ) -> Result<Option<BuiltDevice>, AssetBuildError> {
+    Ok(instantiate_described(type_id, config, g, context)?.map(|(built, _)| built))
+}
+
+/// [`instantiate_with_assets`] that also returns this instance's [`DeviceDescriptor`] — described
+/// from the **same expansion** (the nodes actually added to `g`), so the descriptor matches the
+/// instance's config-driven face and the device's nodes are built only once. `build_patch` validates
+/// every connection against it and hands it to the host as the per-instance descriptor.
+pub fn instantiate_described(
+    type_id: &str,
+    config: &DeviceConfig,
+    g: &mut Graph,
+    context: &BuildContext,
+) -> Result<Option<(BuiltDevice, DeviceDescriptor)>, AssetBuildError> {
     let Some(entry) = entry(type_id) else {
         return Ok(None);
     };
-    let Expansion {
-        nodes,
-        face:
-            FaceExpansion {
-                inputs,
-                outputs,
-                params,
-                readouts,
-            },
-    } = build_expansion(entry, config, context)?;
+    let Expansion { nodes, face } = build_expansion(entry, config, context)?;
+    let descriptor = describe_face(entry, &face);
 
     let node_ids: Vec<NodeId> = nodes.into_iter().map(|node| g.add_boxed(node)).collect();
     for edge in entry.internal {
@@ -2538,10 +2543,19 @@ pub fn instantiate_with_assets(
         );
     }
 
-    Ok(Some(BuiltDevice {
-        inputs: inputs.iter().map(|p| (node_ids[p.node], p.port)).collect(),
-        outputs: outputs.iter().map(|p| (node_ids[p.node], p.port)).collect(),
-        params: params
+    let built = BuiltDevice {
+        inputs: face
+            .inputs
+            .iter()
+            .map(|p| (node_ids[p.node], p.port))
+            .collect(),
+        outputs: face
+            .outputs
+            .iter()
+            .map(|p| (node_ids[p.node], p.port))
+            .collect(),
+        params: face
+            .params
             .iter()
             .map(|p| {
                 p.targets
@@ -2550,9 +2564,14 @@ pub fn instantiate_with_assets(
                     .collect()
             })
             .collect(),
-        readouts: readouts.iter().map(|r| (node_ids[r.node], r.id)).collect(),
+        readouts: face
+            .readouts
+            .iter()
+            .map(|r| (node_ids[r.node], r.id))
+            .collect(),
         nodes: node_ids,
-    }))
+    };
+    Ok(Some((built, descriptor)))
 }
 
 /// The full catalog of device descriptors, one per `CATALOG` entry. Each is built by reading freshly
@@ -2566,11 +2585,15 @@ pub fn descriptors() -> Vec<DeviceDescriptor> {
         .collect()
 }
 
-/// Build one descriptor: numeric param fields + port domains from the exposed face, labels from the entry.
+/// Build one descriptor for `config`, describing a fresh (face-only) expansion. The type catalog
+/// passes the EMPTY config — the device's *default* face (2×2 for the config-driven computer).
 fn describe(entry: &CatalogEntry, config: &DeviceConfig) -> DeviceDescriptor {
-    // The type-catalog descriptor is built with the EMPTY config — the device's *default* face (2×2
-    // for the config-driven computer). A per-instance, config-aware descriptor is a later story.
-    let face = describe_expansion(entry, config);
+    describe_face(entry, &describe_expansion(entry, config))
+}
+
+/// Build one descriptor from an already-computed exposed face: numeric param fields + port domains
+/// from the face, labels from the entry.
+fn describe_face(entry: &CatalogEntry, face: &FaceExpansion) -> DeviceDescriptor {
     // The grid's column (return) count — the summed exposed output lanes.
     let m_out = face.outputs.iter().map(|o| usize::from(o.channels)).sum();
 

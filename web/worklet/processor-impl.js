@@ -30,20 +30,6 @@ const RECORD_DRAIN_EVERY = 4;
 const TOPOLOGY_PROTOCOL_VERSION = 1;
 const TOPOLOGY_BUILD_VERSION = "topology-transactions-v1";
 
-// The per-instance device descriptors, keyed by scene device id: each device described against *its
-// own* config, so a config-driven face (the computer's usb_sends/usb_returns) reports its actual shape
-// (channels/params/readouts), not the type catalog's default. Recomputed whenever the scene builds or
-// hot-swaps. `config` is optional in the IR — default to [] (every key falls back to its default).
-function deviceDescriptors(devices) {
-  if (typeof wasm_bindgen.describe_device !== "function")
-    throw new Error("describe_device missing from glue");
-  const map = {};
-  for (const device of devices) {
-    map[device.id] = wasm_bindgen.describe_device(device.typeId, device.config ?? []);
-  }
-  return map;
-}
-
 class SceneProcessor extends AudioWorkletProcessor {
   constructor(options) {
     super();
@@ -177,9 +163,10 @@ class SceneProcessor extends AudioWorkletProcessor {
               // post-swap re-send so the page's static readouts (cable inspector / levels panel) refresh.
               this.lossesDirty = true;
               // These engine-derived values become valid only after the next render-quantum install.
+              // The queued scene's per-instance descriptors (by device id), described once at build.
               this.pendingPatchInstall = {
                 transaction,
-                deviceDescriptors: deviceDescriptors(d.patch.devices),
+                deviceDescriptors: this.engine.pending_device_descriptors(),
               };
               if (transaction) {
                 this.port.postMessage({ type: "topologyAccepted", transaction });
@@ -214,8 +201,9 @@ class SceneProcessor extends AudioWorkletProcessor {
         cables,
         // Static per-connection loading loss (dB, or null for digital) for the initial scene.
         losses: this.engine.connection_losses(),
-        // Per-instance device descriptors (by scene id), sized to each device's config.
-        deviceDescriptors: deviceDescriptors(patch.devices),
+        // Per-instance device descriptors (by scene id), sized to each device's config — described
+        // once by the scene build, not re-derived here.
+        deviceDescriptors: this.engine.device_descriptors(),
         topologyProtocolVersion: TOPOLOGY_PROTOCOL_VERSION,
         topologyBuildVersion: TOPOLOGY_BUILD_VERSION,
       });
@@ -283,8 +271,11 @@ class SceneProcessor extends AudioWorkletProcessor {
         const recording = this.engine.is_recording(device);
         for (let t = 0; t < tracks; t++) {
           const key = `${device}:${t}`;
-          const bytes = this.engine.drain_record(device, t);
-          if (bytes.length > 0) {
+          // The engine drains into its own pre-sized scratch (no Rust allocation on this thread);
+          // copy the bytes out of wasm memory only when there are some, to transfer to the page.
+          const n = this.engine.drain_record(device, t);
+          if (n > 0) {
+            const bytes = new Uint8Array(this.memory.buffer, this.engine.record_ptr(), n).slice();
             if (!this.capturing.has(key)) {
               // First bytes since idle → open the take file with a placeholder (length-0) header.
               this.capturing.set(key, 0);

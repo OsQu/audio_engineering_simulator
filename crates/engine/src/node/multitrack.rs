@@ -44,7 +44,7 @@
 
 use super::Node;
 use crate::byte_ring::ByteRing;
-use crate::daw::{DawControl, drain_ring};
+use crate::daw::{DawControl, drain_ring_into};
 use crate::param::{Params, Smoother, smooth_samples};
 use crate::port::{AudioFormat, DigitalFace, InputPort, OutputPort};
 use crate::signal::{BitDepth, Lane, SampleRate};
@@ -84,7 +84,7 @@ impl MultitrackRecorder {
 
     /// Bytes reserved per track per direction for the in-flight PCM stream. 32 KiB ≈ 8k `f32` frames
     /// ≈ 64 blocks of 128 — ample slack for the host to service the rings a few blocks behind.
-    const STREAM_RING_BYTES: usize = 1 << 15;
+    pub const STREAM_RING_BYTES: usize = 1 << 15;
 
     /// A recorder with `n_sends` send lanes in and `n_tracks` mono track channels out, all ports at
     /// `rate`/`bits`. Tracks default to input-monitoring their own send (track `t` → send
@@ -319,11 +319,10 @@ impl DawControl for MultitrackRecorder {
         self.inbound.get_mut(track).is_some_and(|r| r.write(bytes))
     }
 
-    fn drain_record(&mut self, track: usize) -> Vec<u8> {
+    fn drain_record_into(&mut self, track: usize, out: &mut [u8]) -> usize {
         self.outbound
             .get_mut(track)
-            .map(drain_ring)
-            .unwrap_or_default()
+            .map_or(0, |ring| drain_ring_into(ring, out))
     }
 }
 
@@ -550,14 +549,16 @@ mod tests {
         let mut outs = tracks_out(2, 4);
         r.process(&Params::EMPTY, &ins, &mut outs);
 
-        let captured = r.daw().unwrap().drain_record(1);
+        let mut buf = vec![0u8; MultitrackRecorder::STREAM_RING_BYTES];
+        let n = r.daw().unwrap().drain_record_into(1, &mut buf);
         assert_eq!(
-            unpcm(&captured),
+            unpcm(&buf[..n]),
             vec![0.7; 4],
             "the armed send drains back through the facade"
         );
-        assert!(
-            r.daw().unwrap().drain_record(1).is_empty(),
+        assert_eq!(
+            r.daw().unwrap().drain_record_into(1, &mut buf),
+            0,
             "a second drain is empty"
         );
     }
@@ -577,8 +578,9 @@ mod tests {
             !daw.feed_playback(9, &pcm(&[0.1])),
             "no such track ⇒ not stored"
         );
-        assert!(
-            daw.drain_record(9).is_empty(),
+        assert_eq!(
+            daw.drain_record_into(9, &mut [0u8; 16]),
+            0,
             "no such track ⇒ empty drain"
         );
 

@@ -13,6 +13,12 @@ test("generated worklet accepts then installs a compatible topology transaction"
   await page.getByRole("button", { name: "Submit compatible patch" }).click();
   await expect(state).toHaveAttribute("data-state", "installed", { timeout: 30_000 });
   await expect(state).toHaveAttribute("data-events", "accepted,installed");
+
+  // Per-instance descriptors come from the built scene, keyed by every device id.
+  const deviceIds = await state.getAttribute("data-device-ids");
+  expect(deviceIds).toBeTruthy();
+  await expect(state).toHaveAttribute("data-ready-descriptors", deviceIds ?? "");
+  await expect(state).toHaveAttribute("data-installed-descriptors", deviceIds ?? "");
 });
 
 test("generated worklet rejects an invalid topology transaction without installing it", async ({
