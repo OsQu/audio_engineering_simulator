@@ -19,9 +19,11 @@ import {
   type EngineControl,
   type HealthMessage,
   healthSummary,
+  type NoteSink,
   type ReadyMessage,
   startEngine,
   type TransportState,
+  wireMidi,
 } from "./engine";
 import { DEFAULT_VELOCITY } from "./notes";
 import * as params from "./params";
@@ -119,6 +121,7 @@ export class SceneSession {
   // The OPFS storage worker client + the record/playback orchestrator. Created on engine `ready`
   // (the orchestrator needs the worklet `send`); null before then.
   #storage: StorageClient | null = null;
+  #storageWorker: Worker | null = null;
   #daw: DawController | null = null;
 
   // --- The authoritative scene + its control-param lane -------------------------------------------
@@ -148,6 +151,13 @@ export class SceneSession {
   // Resume the (suspended) AudioContext — must be called from a user gesture (see `resume`).
   #resume: (() => Promise<void>) | null = null;
 
+  // --- Teardown -----------------------------------------------------------------------------------
+  // The running engine's teardown, the Web MIDI unbind, and whether the owning view has gone — a view
+  // root can unmount while `start()` is still bringing the engine up (see `dispose`).
+  #disposeEngine: (() => Promise<void>) | null = null;
+  #unwireMidi: (() => void) | null = null;
+  #disposed = false;
+
   constructor(initialScene: Scene) {
     this.scene = initialScene;
   }
@@ -167,6 +177,39 @@ export class SceneSession {
   // is the gesture); the workbench calls it on the first interaction. A no-op before the engine is up.
   async resume(): Promise<void> {
     await this.#resume?.();
+  }
+
+  /** Request Web MIDI and route every input's notes to `onNote`. The session owns the binding so
+   *  {@link dispose} can unbind it — a dead view's handler must not keep receiving notes. Rewiring
+   *  replaces the previous binding. */
+  wireMidi(onNote: NoteSink): void {
+    if (this.#disposed) return;
+    this.#unwireMidi?.();
+    this.#unwireMidi = wireMidi(onNote, (m) => {
+      this.midiStatus = m;
+    });
+  }
+
+  /** Release everything this session holds in the browser: the AudioContext + worklet, the OPFS
+   *  storage worker, the Web MIDI binding and the topology deadline timer. The owning view root calls
+   *  it on unmount; each view builds its own session, so without this every view switch leaks a
+   *  sounding context. Safe to call before or during `start()` (bring-up is torn down as it lands). */
+  dispose(): void {
+    if (this.#disposed) return;
+    this.#disposed = true;
+    this.#unwireMidi?.();
+    this.#unwireMidi = null;
+    if (this.#topologyDeadline) clearTimeout(this.#topologyDeadline);
+    this.#topologyDeadline = null;
+    this.#daw?.stopPlayback();
+    this.#daw = null;
+    this.#storageWorker?.terminate();
+    this.#storageWorker = null;
+    this.#storage = null;
+    void this.#disposeEngine?.();
+    this.#disposeEngine = null;
+    this.send = null;
+    this.ready = false;
   }
 
   // Route one note-on/off to an explicit target device: update the held set (for the highlight) and
@@ -500,13 +543,14 @@ export class SceneSession {
   async start(
     onReady: (r: ReadyMessage, send: (msg: ControlMessage) => void) => void,
   ): Promise<void> {
-    if (this.started) return;
+    if (this.started || this.#disposed) return;
     this.started = true;
     // The OPFS storage worker owns the take files (sync access handles need a Worker). Create it once
     // here; the record/playback orchestrator that drives it is built on `ready` (it needs `send`).
-    this.#storage = new StorageClient(
-      new Worker(new URL("./storage-worker.ts", import.meta.url), { type: "module" }),
-    );
+    this.#storageWorker = new Worker(new URL("./storage-worker.ts", import.meta.url), {
+      type: "module",
+    });
+    this.#storage = new StorageClient(this.#storageWorker);
     try {
       const control: EngineControl = await startEngine(
         this.plainPatch(),
@@ -582,6 +626,12 @@ export class SceneSession {
         },
         this.volume,
       );
+      // The view unmounted while the engine was coming up: tear it straight down.
+      if (this.#disposed) {
+        await control.dispose();
+        return;
+      }
+      this.#disposeEngine = control.dispose;
       this.#setVolume = control.setVolume;
       this.#resume = control.resume;
     } catch (err) {

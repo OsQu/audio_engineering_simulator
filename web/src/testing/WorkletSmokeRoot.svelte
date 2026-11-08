@@ -65,7 +65,7 @@
           : {},
       );
       control = next;
-      if (destroyed) await control.close();
+      if (destroyed) await control.dispose();
       else await control.resume();
     } catch (error) {
       smokeState = "error";
@@ -89,7 +89,7 @@
 
   onDestroy(() => {
     destroyed = true;
-    void control?.close();
+    void control?.dispose();
   });
 </script>
 

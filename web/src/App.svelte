@@ -10,7 +10,6 @@
   import { type DawUi, deviceUi, focusUi, hasFocusSurface } from "./device-ui";
   import { isFocusable } from "./focus";
   import { skinFor } from "./skin";
-  import { wireMidi } from "./engine";
   import { wireKeyboardInput } from "./keyboard-input.svelte";
   import { SceneSession } from "./session.svelte";
   import { PatchController } from "./patch-controller.svelte";
@@ -80,6 +79,10 @@
   }
 
   let { session = new SceneSession(loadScene() ?? defaultScene()) }: Props = $props();
+
+  // Tear the session's engine, storage worker and MIDI binding down when this view unmounts (a switch
+  // to the workbench) — otherwise its AudioContext keeps sounding behind the next view.
+  $effect(() => () => session.dispose());
 
   // The engine session: the view-agnostic consumer surface over the worklet engine (engine lifecycle,
   // live readout state, monitor volume, the authoritative scene + param/config lanes). App constructs
@@ -550,12 +553,7 @@
     await session.start(() => {
       // Request Web MIDI once (the permission); the note target follows focus via playNote. The
       // computer keyboard is wired per-focus by the effect above, not here.
-      wireMidi(
-        (on, note, velocity) => playNote(on, note, velocity),
-        (m) => {
-          session.midiStatus = m;
-        },
-      );
+      session.wireMidi((on, note, velocity) => playNote(on, note, velocity));
     });
     await session.resume();
   }
