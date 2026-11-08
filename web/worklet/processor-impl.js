@@ -271,8 +271,11 @@ class SceneProcessor extends AudioWorkletProcessor {
         const recording = this.engine.is_recording(device);
         for (let t = 0; t < tracks; t++) {
           const key = `${device}:${t}`;
-          const bytes = this.engine.drain_record(device, t);
-          if (bytes.length > 0) {
+          // The engine drains into its own pre-sized scratch (no Rust allocation on this thread);
+          // copy the bytes out of wasm memory only when there are some, to transfer to the page.
+          const n = this.engine.drain_record(device, t);
+          if (n > 0) {
+            const bytes = new Uint8Array(this.memory.buffer, this.engine.record_ptr(), n).slice();
             if (!this.capturing.has(key)) {
               // First bytes since idle → open the take file with a placeholder (length-0) header.
               this.capturing.set(key, 0);

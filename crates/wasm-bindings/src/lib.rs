@@ -19,8 +19,8 @@ use devices::{
     cable_types, descriptors,
 };
 use engine::{
-    AnalogRate, EventMessage, EventQueue, ParamHandle, ParamQueue, SampleRate, SoundFontBank,
-    SoundFontError, VoltageBuffer,
+    AnalogRate, EventMessage, EventQueue, MultitrackRecorder, ParamHandle, ParamQueue, SampleRate,
+    SoundFontBank, SoundFontError, VoltageBuffer,
 };
 use serde::{
     Deserialize,
@@ -240,6 +240,10 @@ const EVENT_QUEUE_CAP: usize = 64;
 
 /// A scene compiled off-block and waiting to go live, plus the initial param values to apply once it
 /// is installed (resolved against the *new* scene's handles, so they're applied after the swap).
+///
+/// After the install the same value holds the **retired** scene: `render_quantum` swaps the scenes in
+/// place and parks the whole thing (old scene + the spent `initial` list) in
+/// [`SceneEngine::retired`], so nothing is freed on the audio thread's render call.
 struct Pending {
     scene: BuiltScene,
     initial: Vec<(ParamHandle, f32)>,
@@ -275,8 +279,12 @@ pub struct SceneEngine {
     /// The live scene: compiled schedule + control resolution by device id.
     current: BuiltScene,
     /// A scene built off-block by [`load_patch`](Self::load_patch), installed at the next
-    /// [`render_quantum`](Self::render_quantum) boundary (where the old one is dropped off-block).
+    /// [`render_quantum`](Self::render_quantum) boundary.
     pending: Option<Pending>,
+    /// The scene the last install replaced, still allocated. `render_quantum` runs inside the
+    /// AudioWorklet's `process()` on the audio thread, so it only *moves* the old scene here; the next
+    /// call that arrives from a message handler (`load_patch` or a control setter) frees it.
+    retired: Option<Pending>,
     capture: Capture,
     /// Pending control input, drained each `render_quantum` via `process_io`. Params are latest-wins
     /// target values; events are note-on/off stamped at the current block.
@@ -285,6 +293,10 @@ pub struct SceneEngine {
     /// Per-quantum scratch: the speaker-voltage tap (analog rate) and the captured host samples.
     out: VoltageBuffer,
     host: Vec<f32>,
+    /// Pre-sized scratch the record drain copies into ([`drain_record`](Self::drain_record)), so the
+    /// worklet's per-quantum drain allocates nothing in Rust. Sized to one track's record ring, so a
+    /// drain empties it. JS reads it through [`record_ptr`](Self::record_ptr).
+    record: Vec<u8>,
     /// Quanta rendered so far. `blocks * BLOCK_LEN` is the absolute analog-sample time of the next
     /// block's first sample — the timeline [`note_on`](Self::note_on) / [`note_off`](Self::note_off)
     /// stamp against.
@@ -325,8 +337,7 @@ impl SceneEngine {
     ///
     /// # Errors
     /// A [`BuildError`] if the patch can't be assembled or compiled.
-    #[cfg(test)]
-    pub(crate) fn from_patch(patch: &Patch) -> Result<Self, BuildError> {
+    pub fn from_patch(patch: &Patch) -> Result<Self, BuildError> {
         Self::from_soundfonts(patch, Vec::new())
     }
 
@@ -356,11 +367,13 @@ impl SceneEngine {
             soundfonts,
             current,
             pending: None,
+            retired: None,
             capture,
             params,
             events: EventQueue::with_capacity(EVENT_QUEUE_CAP),
             out: VoltageBuffer::zeros(BLOCK_LEN, analog_rate),
             host,
+            record: vec![0u8; MultitrackRecorder::STREAM_RING_BYTES],
             blocks: 0,
             event_drops: 0,
             param_drops: 0,
@@ -386,11 +399,27 @@ impl SceneEngine {
     ///
     /// # Errors
     /// A [`BuildError`] if the patch can't be assembled or compiled (the live scene keeps running).
-    pub(crate) fn queue_patch(&mut self, patch: &Patch) -> Result<(), BuildError> {
+    pub fn queue_patch(&mut self, patch: &Patch) -> Result<(), BuildError> {
+        // Free the previously retired scene first (we're off the render call), so at most three
+        // scenes are ever alive: live, retired-until-now, and the one being built.
+        self.release_retired();
         let scene = Self::build_scene(patch, &self.soundfonts)?;
         let initial = initial_params(patch, &scene);
         self.pending = Some(Pending { scene, initial });
         Ok(())
+    }
+
+    /// Free the scene the last install retired, if any. Called from every entry point the worklet
+    /// reaches from a message handler — never from `render_quantum` or the getters/drain it calls
+    /// from `process()`.
+    fn release_retired(&mut self) {
+        self.retired = None;
+    }
+
+    /// Whether a replaced scene is still parked, waiting for a message-handler call to free it.
+    #[must_use]
+    pub fn has_retired_scene(&self) -> bool {
+        self.retired.is_some()
     }
 
     /// Enqueue a latest-wins param target, counting a drop if the queue was full. The setter routes
@@ -428,7 +457,7 @@ impl SceneEngine {
 
     /// Replace the running scene. Compiles the new `patch` **off-block** (here, between quanta) and
     /// queues it; the swap installs at the next [`render_quantum`](Self::render_quantum) boundary,
-    /// dropping the old scene there. This is the structural-edit path — value-only knob changes go
+    /// which retires the old scene for the next call like this one to free. This is the structural-edit path — value-only knob changes go
     /// through [`set_param`](Self::set_param) with no recompile.
     ///
     /// # Errors
@@ -443,14 +472,18 @@ impl SceneEngine {
     /// Render exactly one AudioWorklet quantum — one engine block (`BLOCK_LEN` analog samples) →
     /// `BLOCK_LEN / M` host samples — into the engine-owned host buffer.
     ///
-    /// First **installs a queued scene** if one is pending: swap it in at this block boundary (the old
-    /// scene — and its schedule — drops here, between blocks, off the per-sample path), clear the stale
-    /// control queues (their handles index the old scene's stores), and apply the new scene's saved
-    /// param values. Then drains both control lanes and renders one block. The steady path (no pending
-    /// scene) is zero-alloc; read the result via [`out_ptr`](Self::out_ptr) / [`out_len`](Self::out_len).
+    /// First **installs a queued scene** if one is pending: swap it in at this block boundary, clear
+    /// the stale control queues (their handles index the old scene's stores), and apply the new
+    /// scene's saved param values. The old scene is not dropped here — this runs on the audio thread —
+    /// but parked in `retired` for the next message-handler call to free. Then drains both control
+    /// lanes and renders one block. Zero-alloc and zero-free on every call, including the installing
+    /// one; read the result via [`out_ptr`](Self::out_ptr) / [`out_len`](Self::out_len).
     pub fn render_quantum(&mut self) {
-        if let Some(pending) = self.pending.take() {
-            self.current = pending.scene; // old BuiltScene (+ schedule) dropped here, off-block
+        if let Some(mut swap) = self.pending.take() {
+            // After the swap, `swap.scene` is the old scene; park it (and the spent `initial` list)
+            // whole. `queue_patch` always empties `retired` before a new `pending` exists, so this
+            // assignment never drops a previous retiree here.
+            std::mem::swap(&mut self.current, &mut swap.scene);
             self.params.clear();
             self.events.clear();
             // The fresh schedule's event clock (`sample_pos`) restarts at 0, so the note-stamping clock
@@ -458,9 +491,10 @@ impl SceneEngine {
             // schedule's elapsed samples. Without this reset, a note after a deep-session swap lands
             // tens of thousands of samples in the new schedule's future (a multi-second firing lag).
             self.blocks = 0;
-            for (handle, value) in pending.initial {
+            for &(handle, value) in &swap.initial {
                 let _ = self.params.set(handle, value);
             }
+            self.retired = Some(swap);
         }
         self.current
             .schedule_mut()
@@ -475,6 +509,7 @@ impl SceneEngine {
     /// the engine's `Smoother` de-zippers it — so *not* `AudioParam`). A no-op if the device/param is
     /// unknown in the live scene. Off the hot path — JS calls it on slider input.
     pub fn set_param(&mut self, device: &str, param_id: u32, value: f32) {
+        self.release_retired();
         // A param id may resolve to several handles — a device-level param group (e.g. the 8i6's
         // single power switch driving every stage's `powered`). Fan the one value out to all of them.
         // Copy the (few, Copy) handles first so the immutable scene borrow is dropped before the
@@ -490,6 +525,7 @@ impl SceneEngine {
     /// the next quantum," ~2.7 ms granularity. A no-op if the device has no event input; an overflow of
     /// a full queue is dropped and counted in [`event_drops`](Self::event_drops). Off the hot path.
     pub fn note_on(&mut self, device: &str, note: u8, velocity: u8) {
+        self.release_retired();
         if let Some(ev) = self.current.event_input(device) {
             let when = self.blocks * BLOCK_LEN as u64;
             if !self
@@ -504,6 +540,7 @@ impl SceneEngine {
     /// Release `note` on `device`. Stamped at the block about to render, like [`note_on`](Self::note_on);
     /// a no-op if the device has no event input.
     pub fn note_off(&mut self, device: &str, note: u8) {
+        self.release_retired();
         if let Some(ev) = self.current.event_input(device) {
             let when = self.blocks * BLOCK_LEN as u64;
             if !self.events.push(when, ev, EventMessage::NoteOff { note }) {
@@ -583,6 +620,7 @@ impl SceneEngine {
 
     /// Start (or resume) `device`'s transport rolling. No-op if `device` isn't a DAW.
     pub fn transport_play(&mut self, device: &str) {
+        self.release_retired();
         if let Some(daw) = self.current.daw(device) {
             daw.transport_mut().play();
         }
@@ -590,6 +628,7 @@ impl SceneEngine {
 
     /// Stop `device`'s transport (the playhead holds — no rewind). No-op if `device` isn't a DAW.
     pub fn transport_stop(&mut self, device: &str) {
+        self.release_retired();
         if let Some(daw) = self.current.daw(device) {
             daw.transport_mut().stop();
         }
@@ -598,6 +637,7 @@ impl SceneEngine {
     /// Enable or disable recording on `device`, independently of rolling (armed tracks capture only
     /// when both hold — the overdub gate). No-op if `device` isn't a DAW.
     pub fn transport_record_enable(&mut self, device: &str, on: bool) {
+        self.release_retired();
         if let Some(daw) = self.current.daw(device) {
             daw.transport_mut().set_record_enabled(on);
         }
@@ -606,6 +646,7 @@ impl SceneEngine {
     /// Jump `device`'s playhead to digital-sample position `pos` (negative clamps to 0). No-op if
     /// `device` isn't a DAW.
     pub fn transport_seek(&mut self, device: &str, pos: f64) {
+        self.release_retired();
         if let Some(daw) = self.current.daw(device) {
             daw.transport_mut().seek(pos.max(0.0) as u64);
         }
@@ -650,6 +691,7 @@ impl SceneEngine {
     /// Assign track `track`'s record/monitor source to send lane `lane`. No-op if `device` isn't a
     /// DAW or the track is out of range.
     pub fn set_track_input(&mut self, device: &str, track: u32, lane: u32) {
+        self.release_retired();
         if let Some(daw) = self.current.daw(device) {
             daw.set_track_input(track as usize, lane as usize);
         }
@@ -658,6 +700,7 @@ impl SceneEngine {
     /// Arm or disarm track `track` for recording. No-op if `device` isn't a DAW or the track is out
     /// of range.
     pub fn set_track_armed(&mut self, device: &str, track: u32, armed: bool) {
+        self.release_retired();
         if let Some(daw) = self.current.daw(device) {
             daw.set_track_armed(track as usize, armed);
         }
@@ -666,6 +709,7 @@ impl SceneEngine {
     /// Enable or disable input monitoring for track `track`. No-op if `device` isn't a DAW or the
     /// track is out of range.
     pub fn set_track_monitoring(&mut self, device: &str, track: u32, on: bool) {
+        self.release_retired();
         if let Some(daw) = self.current.daw(device) {
             daw.set_track_monitoring(track as usize, on);
         }
@@ -674,6 +718,7 @@ impl SceneEngine {
     /// Set track `track`'s fader to `level` (de-zippered, clamped to the recorder's gain range). No-op
     /// if `device` isn't a DAW or the track is out of range.
     pub fn set_track_level(&mut self, device: &str, track: u32, level: f32) {
+        self.release_retired();
         if let Some(daw) = self.current.daw(device) {
             daw.set_track_level(track as usize, level);
         }
@@ -683,20 +728,31 @@ impl SceneEngine {
     /// Returns `true` if stored, `false` if it didn't fit whole (retry next block), the track is out
     /// of range, or `device` isn't a DAW. The worklet calls this per block from OPFS read-ahead.
     pub fn feed_playback(&mut self, device: &str, track: u32, bytes: &[u8]) -> bool {
+        self.release_retired();
         self.current
             .daw(device)
             .is_some_and(|daw| daw.feed_playback(track as usize, bytes))
     }
 
-    /// Drain **all** buffered raw PCM from track `track`'s **record** stream (a whole number of `f32`
-    /// frames), for the worklet to append to an OPFS file. Empty if nothing is buffered, the track is
-    /// out of range, or `device` isn't a DAW.
+    /// Drain the buffered raw PCM from track `track`'s **record** stream (a whole number of `f32`
+    /// frames) into the engine-owned record scratch, for the worklet to append to an OPFS file.
+    /// Returns the byte count; JS reads the bytes at [`record_ptr`](Self::record_ptr). 0 if nothing is
+    /// buffered, the track is out of range, or `device` isn't a DAW. Called from the worklet's
+    /// `process()`, so it allocates nothing (and does not free a retired scene).
     #[must_use]
-    pub fn drain_record(&mut self, device: &str, track: u32) -> Vec<u8> {
-        self.current
-            .daw(device)
-            .map(|daw| daw.drain_record(track as usize))
-            .unwrap_or_default()
+    pub fn drain_record(&mut self, device: &str, track: u32) -> usize {
+        match self.current.daw(device) {
+            Some(daw) => daw.drain_record_into(track as usize, &mut self.record),
+            None => 0,
+        }
+    }
+
+    /// Pointer to the record scratch in WASM linear memory — the bytes the last
+    /// [`drain_record`](Self::drain_record) wrote, valid until the next drain. JS copies them out
+    /// (`new Uint8Array(memory.buffer, record_ptr(), n).slice()`) before posting.
+    #[must_use]
+    pub fn record_ptr(&self) -> *const u8 {
+        self.record.as_ptr()
     }
 
     /// Pointer to the captured host block in WASM linear memory. JS builds **one**
@@ -1224,8 +1280,9 @@ mod tests {
             engine.feed_playback("computer", 0, &take),
             "the chunk fits the playback ring"
         );
-        assert!(
-            engine.drain_record("computer", 0).is_empty(),
+        assert_eq!(
+            engine.drain_record("computer", 0),
+            0,
             "nothing recorded yet"
         );
     }
@@ -1278,7 +1335,7 @@ mod tests {
                 !engine.feed_playback(id, 0, &[0, 0, 0, 0]),
                 "{id} stores nothing"
             );
-            assert!(engine.drain_record(id, 0).is_empty(), "{id} drains nothing");
+            assert_eq!(engine.drain_record(id, 0), 0, "{id} drains nothing");
         }
         // The real DAW is unaffected by the inert calls on its neighbours.
         assert!(!engine.is_rolling("computer"));

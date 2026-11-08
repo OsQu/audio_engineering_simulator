@@ -26,7 +26,7 @@ mod transport;
 mod wav;
 
 pub use byte_ring::ByteRing;
-pub use daw::{DawControl, drain_ring};
+pub use daw::{DawControl, drain_ring_into};
 pub use dsp::{Biquad, PeakEnvelope};
 pub use electrical::{
     Cable, Farads, InputZ, Ohms, OnePole, OutputZ, PhantomLoad, PhantomSupply, Thevenin,
