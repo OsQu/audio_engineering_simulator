@@ -1,6 +1,6 @@
 Codebase hygiene: drop plan ids from source, prune dead code, split the giant files
 
-Behavior-neutral cleanup from the codebase audit. All gates are green, and `cargo test` runs the same 534 tests, with the same names, before and after. Vitest runs 423 before and after. Nothing a user sees changes. The WASM catalog JSON is unchanged, so no `pnpm run wasm` is needed.
+Behavior-neutral cleanup from the codebase audit. All gates are green, and `cargo test` ran the same 534 tests, with the same names, before and after the hygiene commits (536 after merging main, which added 4 tests and removed 2). Vitest runs 423 before and after. Nothing a user sees changes. The WASM catalog JSON is unchanged, so no `pnpm run wasm` is needed.
 
 ## Commits (one per section; review them in order)
 1. **Remove project-plan references.** Story/Task/Epic ids, bare ids (`pre-4.6`), `PROJECT_PLAN §x` refs and `osku_*` pointers are gone from `crates/` and `web/`. Comments now say what the code does, in the present tense. A plan section ref became the name of its concept, e.g. "the clock-domain rule" or "the DC operating point". The `SCHEMA_VERSION` changelog is one line now. A few web test titles lost their ids. Approved-decision ids (U1/U2/U3) were treated as plan ids too.
@@ -28,7 +28,7 @@ Behavior-neutral cleanup from the codebase audit. All gates are green, and `carg
 - **Catalog visibility.** Spec types and their fields are now `pub(super)` so that sibling files can build entries. Nothing new leaves the crate.
 - **`session.dawUi(device)`.** It captures `this` as `session` because the getters run with the returned object as `this`. It behaves the same as the old per-view `dawFor`.
 
-## Noticed, not changed (behavior)
-`benchScene` builds the device under test alone. When the device has no analog output, `defaultBenchTap` falls back to a `spk` device that isn't in the scene. This needs a follow-up check.
+## Merged with main
+main's per-instance descriptors were ported onto the split catalog: `instantiate_described` lives in `catalog/expand.rs`, and `instantiate_with_assets` is now a test-only wrapper. The new `drain_ring_into` is crate-private, like the `drain_ring` it replaced. The bench speaker issue noted in an earlier draft was fixed on main.
 
 🤖 Generated with [Claude Code](https://claude.com/claude-code)

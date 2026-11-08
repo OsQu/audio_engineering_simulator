@@ -24,3 +24,25 @@
 - **Learned:** the catalog split was clean as a scripted line-range cut plus generated imports; the
   only manual work was `pub(super)` on spec fields and re-pointing intra-doc links.
 - **Next:** none — PR draft written.
+
+## 2026-11-08 — merge origin/main (ship conflict)
+- **Picked up:** branch was finished; the human asked to merge origin/main (12 commits: per-instance
+  descriptors, ScheduleSlot removal, allocation-free record drain, bench speaker fix, worklet teardown).
+- **Conflicts & resolution:**
+  - `devices/build.rs` + `catalog.rs`: main edited code this branch had moved. Took main's build.rs, re-cut
+    its tests into `build/tests.rs` (3-way merged with the branch's moved tests → main's two new
+    computer tests landed cleanly), re-applied the one doc-link change. Ported main's
+    `instantiate_described` / `describe_face` into `catalog/expand.rs`. `instantiate_with_assets` lost
+    its only production caller, so it is now a `#[cfg(test)]` wrapper; seam docs + intra-doc links
+    moved to `instantiate_described`.
+  - `engine/daw.rs`, `lib.rs`: took main's `drain_ring_into`, made `pub(crate)` (no external users,
+    same as the `drain_ring` it replaces); `PeakEnvelope` stays crate-private.
+  - `schedule/swap.rs`: main deleted it; deletion kept (the branch only had the `rate()` swap there).
+  - `wasm-bindings/lib.rs`: main's `descriptors_to_js` replaces `describe_device`.
+  - web: `connectionConnectors` exported again (main's new test imports it); `benchScene` doc from
+    main (it now adds the speaker); `wireMidi` imports dropped (main moved it onto the session);
+    `fmtReading`/`dawUi` kept; orphan session comment dropped.
+- **Verified:** all Rust gates + plan-refs + web format/check/typecheck/test green. 536 Rust tests =
+  534 − 2 (main removed swap.rs) + 4 (main's new); Vitest 429.
+- **Learned:** local `main` was fast-forwarded mid-merge by another process — diff against
+  `git merge-base HEAD MERGE_HEAD`, not `main`.
