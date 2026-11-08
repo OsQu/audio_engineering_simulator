@@ -145,14 +145,11 @@ pub fn decode_wav(bytes: &[u8]) -> Result<DecodedWav, JsValue> {
     })
 }
 
-#[wasm_bindgen]
-pub fn describe_device(type_id: String, configs: JsValue) -> Result<JsValue, JsValue> {
-    let settings: Vec<devices::ConfigSetting> = serde_wasm_bindgen::from_value(configs)?;
-
-    let descriptor = devices::describe_device(&type_id, &devices::DeviceConfig::new(&settings))
-        .ok_or_else(|| JsValue::from_str("Device not found"))?;
-
-    serde_wasm_bindgen::to_value(&descriptor).map_err(Into::into)
+/// A built scene's per-instance device descriptors as a plain JS object keyed by device id (the
+/// `Record<string, DeviceDescriptor>` the UI consumes — maps serialize as objects, not `Map`s).
+fn descriptors_to_js(scene: &BuiltScene) -> Result<JsValue, JsValue> {
+    let serializer = serde_wasm_bindgen::Serializer::new().serialize_maps_as_objects(true);
+    serde::Serialize::serialize(scene.device_descriptors(), &serializer).map_err(Into::into)
 }
 
 /// Deserialize a runnable [`Patch`] from the structured JS object the UI posts to the worklet.
@@ -551,6 +548,29 @@ impl SceneEngine {
     /// Returns the serializer error as a `JsValue` if serialization fails (it does not in practice).
     pub fn connection_losses(&self) -> Result<JsValue, JsValue> {
         serde_wasm_bindgen::to_value(self.current.connection_losses()).map_err(Into::into)
+    }
+
+    /// The live scene's **per-instance** device descriptors, keyed by device id — each sized to its
+    /// own config (the computer's `usb_sends`/`usb_returns`), built once with the scene. The worklet
+    /// ships these in `ready`. Static per scene, so not polled.
+    ///
+    /// # Errors
+    /// Returns the serializer error as a `JsValue` if serialization fails (it does not in practice).
+    pub fn device_descriptors(&self) -> Result<JsValue, JsValue> {
+        descriptors_to_js(&self.current)
+    }
+
+    /// The per-instance device descriptors of the scene queued by [`load_patch`](Self::load_patch)
+    /// (not yet installed), or `null` if none is pending. The worklet reads them right after
+    /// `load_patch`, off the render callback, and posts them once the swap installs.
+    ///
+    /// # Errors
+    /// Returns the serializer error as a `JsValue` if serialization fails (it does not in practice).
+    pub fn pending_device_descriptors(&self) -> Result<JsValue, JsValue> {
+        match &self.pending {
+            Some(pending) => descriptors_to_js(&pending.scene),
+            None => Ok(JsValue::NULL),
+        }
     }
 
     // --- DAW control: transport, tracks, and file-byte streams by device id (+ track). ------------
