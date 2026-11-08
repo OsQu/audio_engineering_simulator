@@ -50,7 +50,7 @@ pub use param::{ParamDecl, ParamHandle, ParamId, ParamQueue, Params};
 pub use port::{AcousticFace, AudioFormat, DigitalFace, EventFace, InputPort, OutputPort};
 pub use readout::{ReadoutDecl, ReadoutHandle, ReadoutId};
 pub use rng::Rng;
-pub use schedule::{CompileError, EventInputId, EventQueue, Schedule, ScheduleSlot, compile};
+pub use schedule::{CompileError, EventInputId, EventQueue, Schedule, compile};
 pub use signal::{
     AnalogRate, BitDepth, ClockDomainId, Domain, EventBuffer, EventMessage, Lane, Pascals,
     PressureBuffer, SampleBuffer, SampleRate, TimedEvent, VoltageBuffer, Volts,

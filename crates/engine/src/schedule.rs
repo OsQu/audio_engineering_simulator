@@ -47,11 +47,9 @@
 
 mod events;
 mod hum;
-mod swap;
 mod topo;
 
 pub use events::{EventInputId, EventQueue};
-pub use swap::ScheduleSlot;
 
 use hum::HumGen;
 
