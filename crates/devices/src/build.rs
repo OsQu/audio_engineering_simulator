@@ -18,7 +18,6 @@
 //! in like any control change.
 
 use std::collections::BTreeMap;
-use std::collections::btree_map::Entry;
 use std::fmt;
 
 use crate::assets::{AssetBuildError, BuildContext, SoundFontBankLibrary};
@@ -30,7 +29,7 @@ use engine::{
 use crate::cable_matches_connectors;
 use crate::catalog::{
     BuiltDevice, Connector, DeviceConfig, DeviceDescriptor, PortDescriptor, PortDirection,
-    PortDomain, connectors_compatible, describe_device, instantiate_with_assets,
+    PortDomain, connectors_compatible, instantiate_described,
 };
 use crate::scene::{CableSpec, Connection, Patch, PortRef};
 
@@ -166,6 +165,10 @@ pub struct BuiltScene {
     /// attenuation), or `None` for a digital/event connection (ideal, no resistive loading). The
     /// static analog-domain readout the UI shows per cable.
     connection_losses: Vec<Option<f32>>,
+    /// device id → its **per-instance** [`DeviceDescriptor`], described from the same expansion that
+    /// built the device (so a config-driven face — the computer's `usb_sends`/`usb_returns` — reports
+    /// its actual ports/params/readouts). The host reads these instead of re-describing each device.
+    descriptors: BTreeMap<String, DeviceDescriptor>,
 }
 
 impl fmt::Debug for BuiltScene {
@@ -264,6 +267,13 @@ impl BuiltScene {
     pub fn connection_loading_loss(&self, index: usize) -> Option<f32> {
         self.connection_losses.get(index).copied().flatten()
     }
+
+    /// Every device's per-instance descriptor, keyed by scene device id — each sized to that
+    /// instance's own config, built once alongside the device.
+    #[must_use]
+    pub fn device_descriptors(&self) -> &BTreeMap<String, DeviceDescriptor> {
+        &self.descriptors
+    }
 }
 
 /// A linear voltage gain as decibels: `20·log10(gain)`. For a loading divider (gain ≤ 1) this is
@@ -294,17 +304,16 @@ fn resolve_output(
 
 /// The [`PortDescriptor`] for a scene device's `direction` port `port`, or `None` if the device/port
 /// isn't found — used to read a port's physical connector (and domain) for connector-compatibility.
-/// `descs` is keyed by type-id, `types` maps scene device id → type-id.
+/// `descs` is keyed by scene device id: each instance's own descriptor, so two instances of a type
+/// with different configs are each checked against their own face.
 fn port_descriptor<'a>(
     descs: &'a BTreeMap<String, DeviceDescriptor>,
-    types: &BTreeMap<&str, &str>,
     device: &str,
     direction: PortDirection,
     port: u32,
 ) -> Option<&'a PortDescriptor> {
-    let type_id = types.get(device)?;
     descs
-        .get(*type_id)?
+        .get(device)?
         .ports
         .iter()
         .find(|p| p.direction == direction && p.id == port)
@@ -338,7 +347,6 @@ fn add_edge(
     graph: &mut Graph,
     devices: &BTreeMap<String, BuiltDevice>,
     descs: &BTreeMap<String, DeviceDescriptor>,
-    types: &BTreeMap<&str, &str>,
     from: &PortRef,
     to: &PortRef,
     cable: &Option<CableSpec>,
@@ -349,8 +357,8 @@ fn add_edge(
     // Same-domain physical-fit checks (a cross-domain wire is the engine's `DomainMismatch` at compile,
     // mirroring the UI's domain-then-connector precedence). Both ports resolved above.
     if let (Some(fp), Some(tp)) = (
-        port_descriptor(descs, types, &from.device, PortDirection::Output, from.port),
-        port_descriptor(descs, types, &to.device, PortDirection::Input, to.port),
+        port_descriptor(descs, &from.device, PortDirection::Output, from.port),
+        port_descriptor(descs, &to.device, PortDirection::Input, to.port),
     ) && fp.domain == tp.domain
     {
         // Connector-shape compatibility — a hard mechanical constraint (an XLR won't seat in a ¼" jack).
@@ -384,7 +392,7 @@ fn add_edge(
     // through a delayed edge — the *hint* that places the block of latency on the physically-correct
     // leg; `compile` would otherwise auto-break the cycle at some digital edge. Latency is a digital
     // round-trip, so it overrides any cable (a delayed edge is an ideal copy).
-    let delayed = port_descriptor(descs, types, &from.device, PortDirection::Output, from.port)
+    let delayed = port_descriptor(descs, &from.device, PortDirection::Output, from.port)
         .is_some_and(|fp| fp.delayed);
 
     match (delayed, cable) {
@@ -409,12 +417,10 @@ fn add_edge(
 /// X's paired **input**. Errors [`BuildError::NotDuplex`] if either endpoint isn't a duplex jack.
 fn duplex_reverse(
     descs: &BTreeMap<String, DeviceDescriptor>,
-    types: &BTreeMap<&str, &str>,
     conn: &Connection,
 ) -> Result<(PortRef, PortRef), BuildError> {
     let x_in = port_descriptor(
         descs,
-        types,
         &conn.from.device,
         PortDirection::Output,
         conn.from.port,
@@ -424,18 +430,12 @@ fn duplex_reverse(
         device: conn.from.device.clone(),
         port: conn.from.port,
     })?;
-    let y_out = port_descriptor(
-        descs,
-        types,
-        &conn.to.device,
-        PortDirection::Input,
-        conn.to.port,
-    )
-    .and_then(|p| p.duplex_partner)
-    .ok_or_else(|| BuildError::NotDuplex {
-        device: conn.to.device.clone(),
-        port: conn.to.port,
-    })?;
+    let y_out = port_descriptor(descs, &conn.to.device, PortDirection::Input, conn.to.port)
+        .and_then(|p| p.duplex_partner)
+        .ok_or_else(|| BuildError::NotDuplex {
+            device: conn.to.device.clone(),
+            port: conn.to.port,
+        })?;
     Ok((
         PortRef {
             device: conn.to.device.clone(),
@@ -476,40 +476,29 @@ pub fn build_patch_with_assets(
     let context = BuildContext::new(soundfonts);
     let mut graph = Graph::new();
 
-    // 1. Instantiate every device, keyed by its (unique) scene id.
+    // 1. Instantiate every device, keyed by its (unique) scene id, together with its per-instance
+    //    descriptor (from the same expansion — each device is built once). The descriptors drive the
+    //    connector / channel-count / duplex / output-tap checks below, against each instance's own
+    //    config-driven face.
     let mut devices: BTreeMap<String, BuiltDevice> = BTreeMap::new();
+    let mut descs: BTreeMap<String, DeviceDescriptor> = BTreeMap::new();
     for device in &patch.devices {
-        let config = DeviceConfig::new(&device.config);
-        let built = instantiate_with_assets(&device.type_id, &config, &mut graph, &context)?
-            .ok_or_else(|| BuildError::UnknownType {
+        if devices.contains_key(&device.id) {
+            return Err(BuildError::DuplicateDevice {
                 id: device.id.clone(),
-                type_id: device.type_id.clone(),
-            })?;
-        match devices.entry(device.id.clone()) {
-            Entry::Occupied(_) => {
-                return Err(BuildError::DuplicateDevice {
+            });
+        }
+        let config = DeviceConfig::new(&device.config);
+        let (built, descriptor) =
+            instantiate_described(&device.type_id, &config, &mut graph, &context)?.ok_or_else(
+                || BuildError::UnknownType {
                     id: device.id.clone(),
-                });
-            }
-            Entry::Vacant(slot) => slot.insert(built),
-        };
+                    type_id: device.type_id.clone(),
+                },
+            )?;
+        devices.insert(device.id.clone(), built);
+        descs.insert(device.id.clone(), descriptor);
     }
-
-    // Connector taxonomy (per device type) + scene-id → type-id, for the connector-compatibility gate
-    // below. Cold path (a user gesture), so rebuilding the catalog descriptors here is fine.
-    let descs: BTreeMap<String, DeviceDescriptor> = patch
-        .devices
-        .iter()
-        .filter_map(|d| {
-            describe_device(&d.type_id, &DeviceConfig::new(&d.config))
-                .map(|device| (d.type_id.clone(), device))
-        })
-        .collect();
-    let types: BTreeMap<&str, &str> = patch
-        .devices
-        .iter()
-        .map(|d| (d.id.as_str(), d.type_id.as_str()))
-        .collect();
 
     // 2. Remap each scene connection (and the output tap) through the device maps to graph edges,
     //    recording each connection's graph edge index (edges are appended in call order, after the
@@ -524,7 +513,6 @@ pub fn build_patch_with_assets(
             &mut graph,
             &devices,
             &descs,
-            &types,
             &conn.from,
             &conn.to,
             &conn.cable,
@@ -534,12 +522,11 @@ pub fn build_patch_with_assets(
         // (device Y's paired output → device X's paired input). The two edges form a digital cycle,
         // which `compile` breaks with one block of round-trip latency.
         if conn.duplex {
-            let (rev_from, rev_to) = duplex_reverse(&descs, &types, conn)?;
+            let (rev_from, rev_to) = duplex_reverse(&descs, conn)?;
             add_edge(
                 &mut graph,
                 &devices,
                 &descs,
-                &types,
                 &rev_from,
                 &rev_to,
                 &conn.cable,
@@ -554,7 +541,6 @@ pub fn build_patch_with_assets(
     // that impossible case only defers to the pre-existing render behavior.)
     if let Some(pd) = port_descriptor(
         &descs,
-        &types,
         &patch.output.device,
         PortDirection::Output,
         patch.output.port,
@@ -649,6 +635,7 @@ pub fn build_patch_with_assets(
         readouts,
         connection_losses,
         daw_nodes,
+        descriptors: descs,
     })
 }
 
@@ -1857,6 +1844,76 @@ mod tests {
             connections: vec![conn("if", 0, "computer", 0)],
             output: PortRef {
                 device: "computer".into(),
+                port: 0,
+            },
+        };
+        let err = build_patch(&patch, BLOCK_LEN, rate(), 0).unwrap_err();
+        assert!(
+            matches!(
+                err,
+                BuildError::ChannelCountMismatch {
+                    from_channels: 8,
+                    to_channels: 2,
+                    ..
+                }
+            ),
+            "got {err:?}"
+        );
+    }
+
+    /// Two `computer`s on **different** `usb_sends`/`usb_returns` configs: each connection is checked
+    /// against *its own* instance's descriptor. The wide (8×6) computer accepts the 8i6's 8-ch send even
+    /// though a default (2×2) computer is listed after it — a type-keyed descriptor map (last instance
+    /// wins) would have checked it against the 2-ch face and wrongly rejected it.
+    #[test]
+    fn each_computer_is_validated_against_its_own_config() {
+        let patch = Patch {
+            devices: vec![
+                device("if", "scarlett_8i6"),
+                computer_8x6("wide"),
+                device("narrow", "computer"),
+                device("spk", "speaker"),
+            ],
+            connections: vec![
+                conn("if", 0, "wide", 0), // 8i6 USB send (8 ch) → wide computer USB in (8 ch)
+                conn("if", 2, "spk", 0),  // 8i6 Line Out 1 → speaker
+            ],
+            output: PortRef {
+                device: "spk".into(),
+                port: 0,
+            },
+        };
+        let scene = build_patch(&patch, BLOCK_LEN, rate(), 0)
+            .expect("the 8-ch send matches the wide computer's own 8-ch input");
+
+        // The scene carries each instance's own descriptor: 8 send lanes vs the default 2.
+        let usb_in_channels = |id: &str| {
+            scene.device_descriptors()[id]
+                .ports
+                .iter()
+                .find(|p| p.direction == PortDirection::Input && p.id == 0)
+                .map(|p| p.channels)
+        };
+        assert_eq!(usb_in_channels("wide"), Some(8));
+        assert_eq!(usb_in_channels("narrow"), Some(2));
+        assert_eq!(scene.device_descriptors().len(), 4, "one per device");
+    }
+
+    /// The flip side: the 8i6's 8-ch send into the **narrow** computer is a legible
+    /// `ChannelCountMismatch` even when a wide computer is listed after it (with a type-keyed map, the
+    /// wide face would have passed the pre-compile check, leaving only the engine's lane error).
+    #[test]
+    fn a_narrow_computer_rejects_the_wide_send_regardless_of_order() {
+        let patch = Patch {
+            devices: vec![
+                device("if", "scarlett_8i6"),
+                device("narrow", "computer"),
+                computer_8x6("wide"),
+                device("spk", "speaker"),
+            ],
+            connections: vec![conn("if", 0, "narrow", 0), conn("if", 2, "spk", 0)],
+            output: PortRef {
+                device: "spk".into(),
                 port: 0,
             },
         };
