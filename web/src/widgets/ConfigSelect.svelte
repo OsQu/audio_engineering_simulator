@@ -2,7 +2,8 @@
   // A structural enumerated choice — unlike a smoothed param, changing it rebuilds the device through
   // the scene config seam. The choices come from the catalog descriptor, so a faceplate never repeats
   // GM program numbers or labels.
-  import { getDeviceHandle } from "../device-handle";
+  import { getDeviceHandle, resolveConfigWidget } from "../device-handle";
+  import MissingConfig from "./MissingConfig.svelte";
 
   interface Props {
     key: string;
@@ -11,12 +12,13 @@
   let { key, label }: Props = $props();
 
   const handle = getDeviceHandle();
-  const desc = $derived(handle.configDesc(key));
+  const resolved = $derived(resolveConfigWidget(handle, key, "select"));
+  const desc = $derived(resolved.desc);
   const text = $derived(label ?? desc?.label ?? key);
   const value = $derived(handle.config(key));
 </script>
 
-{#if desc?.kind === "select"}
+{#if desc}
   <label class="config-select">
     <span>{text}</span>
     <select
@@ -29,6 +31,8 @@
       {/each}
     </select>
   </label>
+{:else}
+  <MissingConfig {key} problem={resolved.problem ?? ""} />
 {/if}
 
 <style>

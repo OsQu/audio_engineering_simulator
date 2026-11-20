@@ -4,7 +4,8 @@
   // and rebuilds the engine, a recompile like repatching — never a smoothed param set). Used for the
   // 8i6's global 48V phantom switch: a latching front-panel button whose integrated lamp lights while
   // engaged. Sized in **mm** (faceplates are 1 px/mm; the world/bench zoom scales it), like Led/Switch.
-  import { getDeviceHandle } from "../device-handle";
+  import { getDeviceHandle, resolveConfigWidget } from "../device-handle";
+  import MissingConfig from "./MissingConfig.svelte";
 
   interface Props {
     /** Structural config key (matches a `ConfigDescriptor.key`). */
@@ -17,7 +18,8 @@
   let { key, label, size = 6 }: Props = $props();
 
   const handle = getDeviceHandle();
-  const desc = $derived(handle.configDesc(key));
+  const resolved = $derived(resolveConfigWidget(handle, key));
+  const desc = $derived(resolved.desc);
   const on = $derived(handle.config(key) >= 0.5);
   const text = $derived(label ?? desc?.label ?? key);
   const sizeVars = $derived(
@@ -40,6 +42,8 @@
     </button>
     <span class="label">{text}</span>
   </div>
+{:else}
+  <MissingConfig {key} problem={resolved.problem ?? ""} />
 {/if}
 
 <style>

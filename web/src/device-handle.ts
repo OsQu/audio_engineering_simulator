@@ -13,6 +13,7 @@
 import { getContext, setContext } from "svelte";
 import type {
   ConfigDescriptor,
+  ConfigKind,
   ParamDescriptor,
   PortDescriptor,
   PortDirection,
@@ -79,6 +80,34 @@ export function makeHandle(src: HandleSource): DeviceHandle {
     setConfig: (key, v) => src.onConfig?.(key, v),
     configDesc: (key) => (src.configs ?? []).find((x) => x.key === key),
   };
+}
+
+/** What a bound config widget resolved its key to: the descriptor, or why it has none. */
+export type ConfigWidgetResolution =
+  | { desc: ConfigDescriptor; problem?: undefined }
+  | { desc?: undefined; problem: string };
+
+/** Resolve the descriptor a bound config widget renders from. A miss is a wiring bug — a typo'd key, or a
+ *  stale WASM artifact whose catalog predates the key — so instead of an invisible widget, the caller
+ *  gets a message naming the device and key to surface. `kind` narrows to widgets that only fit one
+ *  control kind (a select needs authored options). */
+export function resolveConfigWidget(
+  handle: Pick<DeviceHandle, "device" | "configDesc">,
+  key: string,
+  kind?: ConfigKind,
+): ConfigWidgetResolution {
+  const desc = handle.configDesc(key);
+  if (!desc) {
+    return {
+      problem: `config key "${key}" is not in device "${handle.device}"'s descriptor (typo, or a stale WASM build?)`,
+    };
+  }
+  if (kind && desc.kind !== kind) {
+    return {
+      problem: `config key "${key}" on device "${handle.device}" is a ${desc.kind}, not a ${kind}`,
+    };
+  }
+  return { desc };
 }
 
 /** Context key for the device handle — a Symbol so it can't collide with any string-keyed context. */
