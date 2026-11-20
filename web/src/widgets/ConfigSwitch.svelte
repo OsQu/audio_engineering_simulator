@@ -3,7 +3,8 @@
   // the ambient `DeviceHandle`, and flipping it edits the scene and rebuilds the engine (a recompile,
   // like repatching) rather than a smoothed param set. Used for INST/hi-Z, which changes the preamp's
   // input impedance — baked into the loading divider at compile, so it's structural, not a knob.
-  import { getDeviceHandle } from "../device-handle";
+  import { getDeviceHandle, resolveConfigWidget } from "../device-handle";
+  import MissingConfig from "./MissingConfig.svelte";
 
   interface Props {
     /** Structural config key (matches a `ConfigDescriptor.key`). */
@@ -14,7 +15,8 @@
   let { key, label }: Props = $props();
 
   const handle = getDeviceHandle();
-  const desc = $derived(handle.configDesc(key));
+  const resolved = $derived(resolveConfigWidget(handle, key));
+  const desc = $derived(resolved.desc);
   const on = $derived(handle.config(key) >= 0.5);
   const text = $derived(label ?? desc?.label ?? key);
 </script>
@@ -33,6 +35,8 @@
     </button>
     <span class="label">{text}</span>
   </div>
+{:else}
+  <MissingConfig {key} problem={resolved.problem ?? ""} />
 {/if}
 
 <style>
