@@ -468,11 +468,8 @@
     clearPlacementPreview();
   };
 
-  // Spaces (rooms) + cross-space moves + flip — UI-only scene furniture (no hot-swap). Thin wrappers
-  // over scene-ops; addSpace returns the new id so we switch to it.
-  const addSpace = (): void => {
-    currentSpace = sceneOps.addSpace(scene);
-  };
+  // Cross-space moves + flip — UI-only scene furniture (no hot-swap). Thin wrappers over scene-ops. The
+  // spaces themselves are authored data (`studio-spaces.json`), never created here.
   const moveDeviceToSpace = (id: string, spaceId: string): void =>
     sceneOps.moveDeviceToSpace(scene, id, spaceId);
   const moveRackToSpace = (id: string, spaceId: string): void =>
@@ -557,7 +554,6 @@
             {space.name}
           </button>
         {/each}
-        <button type="button" class="space-tab add" onclick={addSpace}>+ space</button>
       </div>
 
       <!-- View switcher: turn to face each wall of the room, or look down on the top-down floor plan. -->
@@ -1378,11 +1374,6 @@
     background: var(--ae-bg-panel);
     color: var(--ae-text-primary);
     border-color: var(--ae-line-panel);
-  }
-  .space-tab.add {
-    color: var(--ae-text-faint);
-    background: transparent;
-    border-style: dashed;
   }
   .space-select {
     font: inherit;

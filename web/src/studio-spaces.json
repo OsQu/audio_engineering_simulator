@@ -1,0 +1,12 @@
+[
+  {
+    "id": "control-room",
+    "name": "Control Room",
+    "room": { "width": 4000, "depth": 3000, "height": 1400 }
+  },
+  {
+    "id": "live-room",
+    "name": "Live Room",
+    "room": { "width": 6000, "depth": 4500, "height": 1400 }
+  }
+]

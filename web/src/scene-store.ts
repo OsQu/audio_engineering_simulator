@@ -10,13 +10,16 @@
 
 import type { Patch } from "./scene";
 import type { Room, Vec3, Wall } from "./spatial";
+import studioSpaces from "./studio-spaces.json";
 
 /** Bump when a saved scene can no longer load correctly; old saves are discarded. */
 export const SCHEMA_VERSION = 18;
 
 /** A space (room) in the studio — a UI grouping over the one engine graph (the engine never knows
  *  about rooms). A space is a **rectangular room**: gear stands against one of four walls, each an
- *  elevation view you turn between, over a top-down floor plan. */
+ *  elevation view you turn between, over a top-down floor plan. Spaces are authored data (the studio's
+ *  rooms are declared in `studio-spaces.json`); the operator moves gear between them but never creates
+ *  one. */
 export interface Space {
   /** Stable space id, referenced by a device's `Placement.space` and a `Rack.space`. */
   id: string;
@@ -147,21 +150,47 @@ export interface Scene {
   patch: Patch;
 }
 
-/** Default room dimensions for a space (world mm) — a 4 m × 3 m room, 1.4 m of wall shown. */
-const DEFAULT_ROOM: Room = { width: 4000, depth: 3000, height: 1400 };
-
-/** A fresh space with default room dimensions — used by the default scene and the "add space" control. */
-export function newSpace(id: string, name: string): Space {
-  return { id, name, room: { ...DEFAULT_ROOM } };
+/** Validate a list of authored spaces: at least one, unique non-empty ids, a name, and positive room
+ *  dimensions. Returns the typed list, or throws naming the first problem — the studio's rooms are
+ *  authored data, so a malformed file is a build-time mistake to surface loudly, not a runtime state. */
+export function parseSpaces(raw: unknown): Space[] {
+  if (!Array.isArray(raw) || raw.length === 0) {
+    throw new Error("studio spaces: expected a non-empty array of spaces");
+  }
+  const seen = new Set<string>();
+  return raw.map((entry, i): Space => {
+    const { id, name, room } = (entry ?? {}) as Partial<Space>;
+    if (typeof id !== "string" || id === "") throw new Error(`studio spaces[${i}]: missing id`);
+    if (seen.has(id)) throw new Error(`studio spaces[${i}]: duplicate id "${id}"`);
+    seen.add(id);
+    if (typeof name !== "string" || name === "") {
+      throw new Error(`studio spaces[${i}] "${id}": missing name`);
+    }
+    const dims = [room?.width, room?.depth, room?.height];
+    if (!room || !dims.every((d) => typeof d === "number" && Number.isFinite(d) && d > 0)) {
+      throw new Error(`studio spaces[${i}] "${id}": room needs positive width/depth/height (mm)`);
+    }
+    return { id, name, room: { width: room.width, depth: room.depth, height: room.height } };
+  });
 }
 
-/** The studio's single default space — a 4 m × 3 m control room, 1.4 m of wall shown. */
-const CONTROL_ROOM: Space = newSpace("control-room", "Control Room");
+/** The studio's authored rooms, from `studio-spaces.json`. The first is the control room, where the
+ *  default scene's gear stands. */
+const STUDIO_SPACES: readonly Space[] = parseSpaces(studioSpaces);
+
+/** A fresh copy of the studio's authored spaces — what a new scene's `ui.spaces` starts as. A copy, so
+ *  editing one scene's rooms can never reach another scene or the authored list. */
+export function studioSpaceList(): Space[] {
+  return STUDIO_SPACES.map((s) => ({ ...s, room: { ...s.room } }));
+}
+
+/** The control room's id — the default scene places every device here. */
+const CONTROL_ROOM_ID = STUDIO_SPACES[0].id;
 
 /** A free-standing placement on the floor against `wall`, at floor position `(x, z)` world mm. */
 function free(wall: Wall, x: number, z: number): Placement {
   return {
-    space: CONTROL_ROOM.id,
+    space: CONTROL_ROOM_ID,
     wall,
     position: { x, y: 0, z },
     facing: "front",
@@ -178,7 +207,8 @@ function free(wall: Wall, x: number, z: number): Placement {
  * DAW 1 → Line Out 1 on the playback side), and the unit is switched on with its monitor open, so you
  * play out of the box by focusing the controller (its events cable also drives the synth's keybed).
  *
- * All five devices are desktop gear standing along the **front** wall (no rack). The `typeId`s match the
+ * All five devices are desktop gear standing along the control room's **front** wall (no rack); the
+ * scene carries every authored space, so the other rooms start empty. The `typeId`s match the
  * `devices` catalog; device ids are what control messages address. */
 export function defaultScene(): Scene {
   const patch: Patch = {
@@ -225,11 +255,11 @@ export function defaultScene(): Scene {
     output: { device: "spk", port: 0 },
   };
 
-  const frontZ = 2600; // desktop gear stands near the front wall (room depth 3000)
+  const frontZ = 2600; // desktop gear stands near the control room's front wall (room depth 3000)
   return {
     schemaVersion: SCHEMA_VERSION,
     ui: {
-      spaces: [CONTROL_ROOM],
+      spaces: studioSpaceList(),
       racks: [],
       placements: {
         synth: free("front", 300, frontZ),

@@ -6,7 +6,6 @@ import type { Connection } from "../src/scene";
 import {
   addBenchDevice,
   addDevice,
-  addSpace,
   cablesFor,
   commitCable,
   connectionDomain,
@@ -457,13 +456,6 @@ describe("removeRack", () => {
 });
 
 describe("space + flip furniture", () => {
-  it("addSpace appends a uniquely-named space and returns its id", () => {
-    const scene = makeScene({});
-    const id = addSpace(scene);
-    expect(id).toBe("space-2"); // one space already exists (s1); counter is length+1
-    expect(scene.ui.spaces.map((s) => s.id)).toContain("space-2");
-  });
-
   it("moveDeviceToSpace re-homes a device to the floor origin, un-mounted", () => {
     const scene = makeScene({
       placements: { d1: place("s1", "front", { id: "r1", uSlot: 0 }) },
