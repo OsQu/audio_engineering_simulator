@@ -56,30 +56,6 @@ function refIs(ref: PortRef, device: string, port: number): boolean {
   return ref.device === device && ref.port === port;
 }
 
-/** Coarse device-graph reachability, retained for diagnostics/tests. It must not decide a connection:
- *  a device-level loop can contain an eligible digital/acoustic engine edge, while a pure analogue
- *  loop cannot. */
-export function wouldCreateCycle(
-  fromDevice: string,
-  toDevice: string,
-  existing: Connection[],
-): boolean {
-  if (fromDevice === toDevice) return true;
-  const seen = new Set<string>();
-  const stack = [toDevice];
-  while (stack.length > 0) {
-    const cur = stack.pop();
-    if (cur === undefined) break;
-    if (cur === fromDevice) return true;
-    if (seen.has(cur)) continue;
-    seen.add(cur);
-    for (const c of existing) {
-      if (c.from.device === cur) stack.push(c.to.device);
-    }
-  }
-  return false;
-}
-
 /** Evaluate a prospective drag between two jacks against the engine's connection rules, given the
  *  patch's `existing` connections. Order-independent — pass the two endpoints in either order. */
 export function evaluateConnection(
@@ -90,8 +66,8 @@ export function evaluateConnection(
 ): ConnectVerdict {
   // A **duplex** link (USB-C, Ethernet): one physical connector carries both directions. Both jacks
   // are duplex (each bound to its output side), so the drag authors a single duplex `Connection` that
-  // `build_patch` expands into both edges. It intentionally forms a cycle — the engine breaks it with
-  // one block of round-trip latency — so the feedback-loop check below is deliberately skipped.
+  // `build_patch` expands into both edges. It intentionally forms a cycle, which the engine breaks with
+  // one block of round-trip latency.
   const aDup = a.duplexPartner !== undefined;
   const bDup = b.duplexPartner !== undefined;
   if (aDup || bDup) {

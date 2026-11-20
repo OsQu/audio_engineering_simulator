@@ -644,9 +644,11 @@ _Open decisions (non-blocking):_
 - **(i)** `SCHEMA_VERSION` was **not** bumped for duplex, so a pre-duplex saved scene with a one-way USB
   link loads verbatim (silent monitoring). Left as-is because a one-way USB is a *legal* patch — decide
   whether to bump (force-discard stale benches) when it bites.
-- **(ii)** the web's `wouldCreateCycle` still rejects a **one-way** digital loop authored by drag even
+- ~**(ii)** the web's `wouldCreateCycle` still rejects a **one-way** digital loop authored by drag even
   though the engine (post-#2) would auto-break it; only duplex bypasses it today. Make the web cycle check
-  domain-aware if UI-authored digital loops become a case.
+  domain-aware if UI-authored digital loops become a case.~ RESOLVED (superseded) — patch edits are
+  engine-validated transactions, so the compiler alone decides cycle legality; the coarse web check was
+  removed. See `docs/bugs/2026-09-09-luma_loop.md`.
 
 ### Story 5.10 — Dynamic computer I/O — ✅ **Done**
 
