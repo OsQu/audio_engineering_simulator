@@ -1,8 +1,8 @@
-// Scene mutations: device/rack/space CRUD and connection edits. Pure given their inputs — they write
+// Scene mutations: device/rack CRUD, cross-space moves and connection edits. Pure given their inputs — they write
 // through the `scene` proxy (reactive) but never reassign it, and **know nothing about the engine**:
 // none of them hot-swap. The caller rebuilds the engine after the ones that change the runnable patch
 // (commitCable, disconnect, setCableType, addDevice, removeDevice); the rest are UI-only furniture
-// (spaces, racks, flip, cross-space moves) and need no rebuild. Each doc comment says which it is.
+// (racks, flip, cross-space moves) and need no rebuild. Each doc comment says which it is.
 
 import {
   type CableType,
@@ -18,14 +18,7 @@ import { type EjectionPlan, eject } from "./ejection";
 import { wallSpawn } from "./placement";
 import { deviceById, FRAME_MARGIN, type LayoutCtx, type PlacedItem, rackById } from "./projection";
 import type { Connection, DeviceInstance } from "./scene";
-import {
-  type BenchWatch,
-  defaultTrack,
-  flip,
-  newSpace,
-  type Scene,
-  type TrackUi,
-} from "./scene-store";
+import { type BenchWatch, defaultTrack, flip, type Scene, type TrackUi } from "./scene-store";
 import { footprint, RACK_DEPTH_MM, RACK_UNIT_MM, RACK_WIDTH_MM, type Size3 } from "./spatial";
 
 // A stable key for a connection (its two endpoints), for the {#each} in the cable overlay.
@@ -244,16 +237,6 @@ export function setCableType(
   const updated: Connection = { from: { ...c.from }, to: { ...c.to } };
   if (preset) updated.cable = cableSpec(preset);
   scene.patch.connections[idx] = updated;
-}
-
-// Add a new space (room). UI-only furniture — no hot-swap. Returns the new space's id so the caller can
-// switch to it.
-export function addSpace(scene: Scene): string {
-  let n = scene.ui.spaces.length + 1;
-  while (scene.ui.spaces.some((s) => s.id === `space-${n}`)) n++;
-  const space = newSpace(`space-${n}`, `Space ${n}`);
-  scene.ui.spaces.push(space);
-  return space.id;
 }
 
 // Send a free-standing device to another space (it lands at that space's floor origin). UI-only.
