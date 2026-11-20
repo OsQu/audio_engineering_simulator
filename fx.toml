@@ -19,6 +19,57 @@ RUSTC_WRAPPER = "sccache"
 # broker's PATH by default, hence cargo's env.
 setup = '. "$HOME/.cargo/env" && cd web && pnpm install --frozen-lockfile && pnpm run wasm'
 
+# What a finished ticket is checked with: the CI gate re-run on the branch, the web gate, then fx's
+# quality check, review and risk rating. Checks only warn; nothing is blocked.
+[[checks]]
+name = "gate"
+run = '. "$HOME/.cargo/env" && scripts/check-plan-refs.sh && cargo fmt --check && cargo lint && cargo test && cargo wasm && cargo docs'
+timeout = "30m"
+
+[[checks]]
+name = "web"
+run = "cd web && pnpm run check && pnpm run typecheck && pnpm run test"
+timeout = "10m"
+
+[[checks]]
+uses = "quality"
+
+[[checks]]
+uses = "review"
+
+[[checks]]
+uses = "risk"
+
+[review]
+skill = "aes-review"
+
+[risk]
+prompt = """
+This is a voltage-native audio simulator: a Rust engine (crates/engine, crates/devices, crates/capture)
+compiled to WASM and driven from an AudioWorklet by a Svelte UI (web/). A panic, allocation or lock in
+the audio path kills the audio stream in the browser, and the Rust gates don't rebuild the WASM the
+browser loads, so a broken engine/UI contract can pass every test.
+
+High:
+- Changes to the real-time process path (Node::process, Schedule::process, SceneEngine::render_quantum,
+  web/worklet/): any allocation, unwrap/expect/panicking index, Result, lock or ambient time/randomness.
+- Anything that converts between VoltageBuffer and SampleBuffer, or shares their rate, outside an AD/DA
+  converter; anything that introduces a global analog/digital rate relationship.
+- Changes to the Patch/scene IR, catalog()/cable_catalog()/parse_patch or other JS bridge shapes without
+  the matching web/ change, or that break loading existing saved patches.
+- Changes to seeding/Rng that make renders non-deterministic.
+
+Medium:
+- crates/wasm-bindings, web/worklet/ or the postMessage boundary (web/src/engine.ts,
+  web/src/session.svelte.ts) changes.
+- New or changed device models whose analog behaviour isn't pinned by a hand-calculated test.
+- Dependency changes (Cargo.toml/Cargo.lock, web/package.json, pnpm-lock.yaml), CI or fx.toml changes.
+
+Low:
+- Docs and plans, web styling/layout, tests only, harness/demo code, refactors with unchanged behaviour
+  that existing tests cover.
+"""
+
 [quality]
 # Per-function complexity, recorded by fx at each merge. scripts/rust-code-analysis.sh runs the
 # pinned rust-code-analysis-cli (install once: scripts/rust-code-analysis.sh --install). It covers
@@ -31,3 +82,24 @@ command = "scripts/rust-code-analysis.sh -m -O json -p crates -p web/src -X '**/
 [quality.limits]
 cognitive = 20
 cyclomatic = 15
+
+# Areas the change overview flags when a change touches them. boundary = the engine/UI contract: a
+# change there needs `pnpm run wasm` before the browser sees it.
+[quality.review]
+deps = ["Cargo.toml", "Cargo.lock", "web/package.json", "web/pnpm-lock.yaml"]
+plans = ["docs/PROJECT_PLAN.md", "docs/IMPLEMENTATION_PLAN.md"]
+boundary = ["crates/wasm-bindings/**", "crates/devices/src/**"]
+worklet = ["web/worklet/**", "web/src/engine.ts", "web/src/session.svelte.ts"]
+ci = [".github/**", "fx.toml", "scripts/**", ".cargo/**", "biome.json"]
+tests = ["**/tests/**", "**/tests.rs", "**/test_util.rs", "**/testing/**", "*.test.ts"]
+
+# Record agent sessions with swarmia-cli (the local POC build in ~/go/bin):
+# line attribution and token usage per merge in the quality ledger.
+[agents]
+recorder = "swarmia-cli"
+
+# Factory runs load only fx's MCP server and these: the browser for
+# checking the UI, and none of the claude.ai connectors.
+[mcp.playwright]
+command = "npx"
+args = ["@playwright/mcp@latest"]
