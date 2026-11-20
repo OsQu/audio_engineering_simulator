@@ -10,7 +10,6 @@ import {
   distanceToCable,
   evaluateConnection,
   isPointNearCable,
-  wouldCreateCycle,
 } from "../src/connections";
 import type { Connection } from "../src/scene";
 
@@ -264,8 +263,7 @@ describe("evaluateConnection — duplex (USB-C)", () => {
   });
 
   it("is accepted even though it forms a cycle — the engine breaks the digital loop with latency", () => {
-    // A one-way digital edge closing this loop would be rejected by wouldCreateCycle; a duplex link
-    // (which is a cycle by design) is not, because build_patch + compile handle it.
+    // A duplex link is a cycle by design; build_patch + compile break it, so the UI accepts it.
     const existing: Connection[] = [conn("if", 1, "computer", 5)];
     const v = evaluateConnection(dup("if", 0, 7), dup("computer", 0, 0), existing);
     expect(v.ok).toBe(true);
@@ -292,21 +290,9 @@ describe("evaluateConnection — duplex (USB-C)", () => {
   });
 });
 
-describe("wouldCreateCycle / engine-authoritative feedback validation", () => {
+describe("engine-authoritative feedback validation", () => {
   // A → B → C already wired.
   const chain = [conn("a", 0, "b", 0), conn("b", 0, "c", 0)];
-
-  it("detects a loop closing the chain (C → A)", () => {
-    expect(wouldCreateCycle("c", "a", chain)).toBe(true);
-  });
-
-  it("allows an edge that doesn't close a loop (A → C is a forward skip)", () => {
-    expect(wouldCreateCycle("a", "c", chain)).toBe(false);
-  });
-
-  it("treats a self edge as a cycle", () => {
-    expect(wouldCreateCycle("a", "a", [])).toBe(true);
-  });
 
   it("submits a loop-closing drag (C.out → A.in) for engine-level validation", () => {
     const v = evaluateConnection(out("c"), inp("a"), chain);
